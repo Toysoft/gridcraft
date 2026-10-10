@@ -1,15 +1,25 @@
 # Decisions
 
-## Formula localization uses the existing interface preference
+## Formula localization follows Excel: names follow the interface language, separators the region
 
-PR #98 builds on the persisted `UiState.language` introduced by #31 and extended by #104.
-Español selects the Spanish function table and list/decimal separators; there is no competing
-locale setting. Formula syntax without a supplied translation table falls back to English.
-The editor translates to canonical English before engine commands, and translates back only
-for display. API, clipboard and XLSX syntax remain stable. Existing names override aliases.
+PR #98 introduced Spanish formula entry on the interface-language preference, with Spanish
+separators. M12 (#191) generalizes it the way Excel works: function names, booleans and errors
+follow the interface language (seven sourced catalogs; Japanese, Korean and Chinese keep English),
+argument, decimal and array separators follow the regional format, chosen separately. Stored
+formulas, XLSX, the journal and API parameters without a `Local` suffix stay canonical English.
 
-The revision is based directly on main after #31/#104 and Portuguese interface support (#82)
-merged. Those locales retain their existing formula fallback; this change adds only Spanish.
+From #98 M12 keeps the rule that names win: defined names visible from the sheet, table names
+and LET/LAMBDA bindings in scope take precedence over a localized function name or boolean
+(`=LET(SUMA;LAMBDA(x;x+1);SUMA(2))` calls the binding in Spanish). Where a built-in's local
+spelling is taken by such a name, it is written `_xlfn.SUM(…)` (a boolean `_xlfn.FALSE()`) so the
+text still reads back as the built-in. An edit in progress is rewritten into the new language when
+the language changes, instead of keeping the old one.
+
+Only English is required to add a worksheet function. A function a language file doesn't list
+yet keeps its English spelling in that language, and its description falls back to en-US;
+`cargo xtask locales` lists both as warnings instead of failing. Contributors who add a function
+aren't asked to source eleven translations, and a language catches up when its data is next
+sourced. Typing the English name in that language works until then, like the documented gaps.
 
 ## Preserve array evaluation when exporting formulas (#64)
 
