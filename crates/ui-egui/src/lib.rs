@@ -44,6 +44,22 @@ use serde_json::{Value as Json, json};
 pub use control::{ControlRequest, ControlResponse};
 pub mod desktop_theme;
 
+/// One native workbook window shown by the desktop shell.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkbookWindowInfo {
+    pub id: u64,
+    pub title: String,
+    pub dirty: bool,
+    pub active: bool,
+}
+
+/// An action requested from the workbook switcher in a native window title bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkbookWindowAction {
+    Focus(u64),
+    Close(u64),
+}
+
 /// Persisted UI preferences.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -763,7 +779,10 @@ impl SheetApp {
 
     pub fn open_path(&mut self, path: &str) {
         match self.run("file.open", json!({"path": path})) {
-            Ok(r) => self.after_open(Some(path), &r),
+            Ok(r) => {
+                self.after_document_change();
+                self.after_open(Some(path), &r);
+            }
             // A password-protected workbook: ask for the password; the dialog opens it.
             Err(e) if e.contains(gridcraft_engine::io::PASSWORD_REQUIRED) => self.open_dialog("openPassword", json!({"path": path})),
             Err(e) => self.message = Some(("GridCraft".into(), clean_error(&e))),
@@ -813,6 +832,39 @@ impl SheetApp {
             };
             self.notice = Some(Notice { text, kind: NoticeKind::Info, action: None });
         }
+    }
+
+    /// Switches the workbook shown by this app instance and clears transient state from the
+    /// previous workbook. Callers should use this instead of invoking `window.activate` directly.
+    pub fn activate_document(&mut self, index: usize) {
+        if index == self.session.active_index() {
+            return;
+        }
+        if self.session.run("window.activate", json!({"index": index})).is_ok() {
+            self.after_document_change();
+        }
+        self.after_engine();
+    }
+
+    /// Closes one of the workbooks shown by the workbook switcher. Dirty workbooks use the
+    /// existing Save Changes dialog unless `force` is set by that dialog's confirmed action.
+    pub fn close_document(&mut self, index: usize, force: bool) {
+        if index >= self.session.documents().len() {
+            return;
+        }
+        self.activate_document(index);
+        match self.run("file.close", json!({"force": force})) {
+            Ok(result) if result.get("closed").and_then(Json::as_bool) == Some(true) => self.after_document_change(),
+            Ok(_) => {}
+            Err(e) => self.message = Some(("GridCraft".into(), clean_error(&e))),
+        }
+    }
+
+    fn after_document_change(&mut self) {
+        self.cancel_edit();
+        self.selected_chart = None;
+        self.name_box = None;
+        self.grid.ensure_visible = true;
     }
 
     pub fn view_key(&self) -> Option<(u64, usize)> {
@@ -996,6 +1048,16 @@ impl SheetApp {
 
     /// Per-frame logic (control channel, screenshots). Call before `ui`.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        self.logic_inner(ctx, true);
+    }
+
+    /// Per-frame logic for a desktop window whose lifetime is managed by the native shell.
+    /// Unlike [`Self::logic`], this leaves an emptied session empty so the shell can close it.
+    pub fn logic_for_workbook_window(&mut self, ctx: &egui::Context) {
+        self.logic_inner(ctx, false);
+    }
+
+    fn logic_inner(&mut self, ctx: &egui::Context, ensure_document: bool) {
         // A keytip control request lives one frame: the ribbon consumes it during `ui`, and
         // anything that never reached a control (collapsed ribbon, tab switch) is dropped.
         self.ui.keytip_invoke = None;
@@ -1085,7 +1147,7 @@ impl SheetApp {
             }
             self.after_engine();
         }
-        if self.session.active().is_none() {
+        if ensure_document && self.session.active().is_none() {
             self.session.new_workbook();
         }
     }
@@ -1098,11 +1160,16 @@ impl SheetApp {
 
     /// Lays out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        let _ = self.ui_with_workbook_windows(ui, None);
+    }
+
+    /// Lays out a native workbook window and reports actions for the desktop window manager.
+    pub fn ui_with_workbook_windows(&mut self, ui: &mut egui::Ui, workbooks: Option<&[WorkbookWindowInfo]>) -> Option<WorkbookWindowAction> {
         let ctx = ui.ctx().clone();
         self.poll_printing(&ctx);
         if !self.fonts_ready || self.fonts_rebind {
             ctx.request_repaint();
-            return;
+            return None;
         }
         let t0 = now_ms();
         text_box::before_ui(self, &ctx);
@@ -1112,7 +1179,7 @@ impl SheetApp {
         if self.backstage.is_none() {
             self.ribbon_keys(&ctx);
         }
-        ribbon::title_bar(self, ui);
+        let window_action = ribbon::title_bar(self, ui, workbooks);
         if self.backstage.is_some() {
             // File tab: the Backstage view replaces everything below the title bar.
             backstage::show(self, ui);
@@ -1170,6 +1237,7 @@ impl SheetApp {
                 self.grid.last_title = Some(title);
             }
         }
+        window_action
     }
 
     fn ribbon_keys(&mut self, ctx: &egui::Context) {

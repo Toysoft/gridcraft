@@ -311,6 +311,8 @@ impl NativeMenu {
                 app.copy_to_clipboard(ctx, &id);
             } else if id == "edit.paste" {
                 app.paste_from_clipboard();
+            } else if id == "file.close" {
+                app.close_document(app.session.active_index(), false);
             } else {
                 app.run_or_alert(&id, json!({}));
             }
