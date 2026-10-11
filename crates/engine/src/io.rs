@@ -2,6 +2,7 @@
 
 use std::fmt::Write as _;
 
+use gridcraft_core::parse::DataConversion;
 use gridcraft_core::{CellRef, RangeRef};
 use gridcraft_model::{Sheet, Workbook};
 
@@ -52,11 +53,17 @@ pub fn open_bytes(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
     open_bytes_with_password(name, bytes, None)
 }
 
-/// [`open_bytes`], first decrypting a password-protected workbook with `password`. Errors never
-/// quote the password.
+/// [`open_bytes_converting`] with the default data conversion.
 pub fn open_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>) -> Result<(Workbook, Vec<String>)> {
+    open_bytes_converting(name, bytes, password, &DataConversion::default())
+}
+
+/// [`open_bytes`], first decrypting a password-protected workbook with `password`, under the
+/// Automatic Data Conversion options that decide which CSV/TSV fields become numbers (workbook
+/// formats store their types and ignore them). Errors never quote the password.
+pub fn open_bytes_converting(name: &str, bytes: &[u8], password: Option<&str>, conversion: &DataConversion) -> Result<(Workbook, Vec<String>)> {
     if gridcraft_xlsx::sniff(bytes) != gridcraft_xlsx::Format::Encrypted {
-        return open_plain(name, bytes);
+        return open_plain(name, bytes, conversion);
     }
     // A scheme no password opens is said straight away, rather than after asking for one.
     let decrypt_error = |e: gridcraft_xlsx::DecryptError| EngineError::Other(decrypt_message(name, e));
@@ -68,7 +75,7 @@ pub fn open_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>
     if gridcraft_xlsx::sniff(&plain) == gridcraft_xlsx::Format::Encrypted {
         return Err(EngineError::Other(format!("We can't open '{name}': the encrypted file is damaged (it holds another encrypted file).")));
     }
-    let (wb, mut warnings) = open_plain(name, &plain)?;
+    let (wb, mut warnings) = open_plain(name, &plain, conversion)?;
     warnings.insert(0, DECRYPTED_NOTICE.into());
     Ok((wb, warnings))
 }
@@ -85,7 +92,7 @@ fn decrypt_message(name: &str, e: gridcraft_xlsx::DecryptError) -> String {
 }
 
 /// Parses bytes that aren't encrypted.
-fn open_plain(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
+fn open_plain(name: &str, bytes: &[u8], conversion: &DataConversion) -> Result<(Workbook, Vec<String>)> {
     let kind = FileKind::from_path(name);
     let sniffed = gridcraft_xlsx::sniff(bytes);
     if sniffed == gridcraft_xlsx::Format::Xls {
@@ -123,7 +130,7 @@ fn open_plain(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
             Ok((wb, vec![]))
         }
         Some(FileKind::Tsv) => {
-            let opts = gridcraft_xlsx::CsvOptions { delimiter: b'\t', ..Default::default() };
+            let opts = gridcraft_xlsx::CsvOptions { delimiter: b'\t', conversion: *conversion, ..Default::default() };
             let mut wb = gridcraft_xlsx::read_csv(bytes, &opts).map_err(|e| EngineError::Other(e.to_string()))?;
             // Tab is what makes it a .tsv/.txt; saved as .csv it gets the CSV default.
             wb.csv_delimiter = None;
@@ -131,7 +138,7 @@ fn open_plain(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
             Ok((wb, vec![]))
         }
         _ => {
-            let opts = gridcraft_xlsx::CsvOptions { delimiter: 0, ..Default::default() };
+            let opts = gridcraft_xlsx::CsvOptions { delimiter: 0, conversion: *conversion, ..Default::default() };
             let mut wb = gridcraft_xlsx::read_csv(bytes, &opts).map_err(|e| EngineError::Other(e.to_string()))?;
             rename_first_sheet(&mut wb, name);
             Ok((wb, vec![]))
