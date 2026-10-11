@@ -80,7 +80,8 @@ pub fn formula_hidden(wb: &Workbook, sheet: &Sheet, c: CellRef) -> bool {
     wb.styles.get(sheet.style_id(at)).protection.hidden
 }
 
-/// The text a cell shows (full precision General; the grid narrows General to fit the column).
+/// The text a cell shows (General up to the 11-character cell width; the grid narrows General
+/// further to fit the column).
 pub fn cell_text(wb: &Workbook, sheet: &Sheet, c: CellRef) -> String {
     if sheet.show_formulas
         && let Some(f) = sheet.cell(c).and_then(|x| x.formula.as_ref())
@@ -88,12 +89,24 @@ pub fn cell_text(wb: &Workbook, sheet: &Sheet, c: CellRef) -> String {
     {
         return format!("={}", f.text);
     }
-    value_text(wb, sheet, c)
+    shown_text(wb, sheet, c)
 }
 
 /// A cell's value with its number format applied, independent of column width: no `#####`
-/// and no General narrowing (Save As CSV/Text writes this). Formulas give their result.
+/// and no General narrowing (Save As CSV/Text writes this). Formulas give their result. A
+/// General number reads as `&` turns it into text (`124412140710`, not `1.24412E+11`).
 pub fn value_text(wb: &Workbook, sheet: &Sheet, c: CellRef) -> String {
+    if let Value::Number(n) = sheet.value(c)
+        && n.is_finite()
+        && parsed(wb.styles.get(sheet.style_id(c)).num_fmt.as_str()).is_general()
+    {
+        return gridcraft_core::number_to_text(n);
+    }
+    shown_text(wb, sheet, c)
+}
+
+/// A cell's value through its number format, General at the 11-character cell width.
+fn shown_text(wb: &Workbook, sheet: &Sheet, c: CellRef) -> String {
     let style = wb.styles.get(sheet.style_id(c));
     let f = format(&sheet.value(c), style.num_fmt.as_str(), wb);
     match f.fill {
