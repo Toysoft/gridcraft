@@ -317,7 +317,25 @@ pub fn font_definitions_for_language(language: crate::i18n::Language) -> FontDef
     let base_mono: Vec<String> = fonts.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
     // The non-Latin fallback faces have to sit at the end of each chain: a Latin font owns Latin,
     // and epaint picks the first face that has the glyph, so they only catch their own scripts.
-    let fallback = load_fallback(&mut fonts, HanOrder::of(language));
+    let mut fallback = load_fallback(&mut fonts, HanOrder::of(language));
+
+    // Arabic font fallback: preserve the original Unicode text.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let arabic_paths = [
+            "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
+            "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ];
+        let paths: Vec<(&str, u32)> =
+            arabic_paths.iter().map(|p| (*p, 0)).collect();
+
+        if let Some(fd) = try_load(&paths) {
+            let key = "sys-arabic".to_string();
+            fonts.font_data.insert(key.clone(), Arc::new(fd));
+            fallback.insert(0, key);
+        }
+    }
     for role in [UI, UI_BOLD, CELL, CELL_BOLD, CELL_ITALIC, CELL_BOLD_ITALIC, SERIF, MONO] {
         let paths = candidates(role);
         let refs: Vec<(&str, u32)> = paths.iter().map(|(p, i)| (p.as_str(), *i)).collect();
@@ -336,6 +354,31 @@ pub fn font_definitions_for_language(language: crate::i18n::Language) -> FontDef
         chain.retain(|k| fonts.font_data.contains_key(k));
         fonts.families.insert(FontFamily::Name(role.into()), chain);
     }
+    // Dedicated Arabic cell renderer: retain Latin fallback.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let path = "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf";
+        if let Ok(bytes) = std::fs::read(path) {
+            let key = "gridcraft-arabic-font".to_string();
+            fonts.font_data.insert(
+                key.clone(),
+                Arc::new(FontData::from_owned(bytes)),
+            );
+
+            let mut chain = vec![key];
+            if let Some(existing) =
+                fonts.families.get(&FontFamily::Name(CELL.into()))
+            {
+                chain.extend(existing.iter().cloned());
+            }
+
+            fonts.families.insert(
+                FontFamily::Name("cell-arabic".into()),
+                chain,
+            );
+        }
+    }
+
     // Default proportional text in widgets uses the UI font.
     if let Some(ui) = fonts.families.get(&FontFamily::Name(UI.into())).cloned() {
         fonts.families.insert(FontFamily::Proportional, ui);

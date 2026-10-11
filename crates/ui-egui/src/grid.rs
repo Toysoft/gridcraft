@@ -615,6 +615,19 @@ fn paint_quadrant(p: &Painter, geo: &Geo, wb: &Workbook, si: usize, sh: &Sheet, 
         if text.is_empty() {
             continue;
         }
+        // Prefer a dedicated Arabic font for imported XLSX text.
+        let has_arabic = text.chars().any(|ch| {
+            ('\u{0600}'..='\u{06FF}').contains(&ch)
+                || ('\u{0750}'..='\u{077F}').contains(&ch)
+                || ('\u{08A0}'..='\u{08FF}').contains(&ch)
+        });
+        let font = if has_arabic {
+            FontId::new(size, egui::FontFamily::Name("cell-arabic".into()))
+        } else {
+            font
+        };
+
+
         let color = ncolor.unwrap_or(lk.text_color);
         let halign = match st.align.h {
             HAlign::General => match v {
@@ -643,12 +656,27 @@ fn paint_quadrant(p: &Painter, geo: &Geo, wb: &Workbook, si: usize, sh: &Sheet, 
                 HAlign::Right => rect.right() - pad,
                 _ => text_left + pad + indent,
             };
-            let y = match st.align.v {
-                VAlign::Top => rect.top() + 1.0,
-                VAlign::Center => rect.center().y - galley.size().y / 2.0,
-                _ => rect.bottom() - galley.size().y - 1.0,
+            let available_height = (rect.height() - 2.0).max(0.0);
+            let y = if galley.size().y > available_height {
+                // Oversized wrapped text: display the first line inside
+                // the original row rather than centering above it.
+                rect.top() + 1.0
+            } else {
+                match st.align.v {
+                    VAlign::Top => rect.top() + 1.0,
+                    VAlign::Center => rect.center().y - galley.size().y / 2.0,
+                    _ => rect.bottom() - galley.size().y - 1.0,
+                }
             };
-            p.with_clip_rect(rect.intersect(p.clip_rect())).galley(pos2(x, y), galley, color);
+            // Keep wrapped text within its cell's vertical boundaries.
+            // Preserve horizontal clipping while preventing overlap with
+            // adjacent rows when an imported XLSX has fixed row heights.
+            let cell_clip = egui::Rect::from_min_max(
+                egui::pos2(rect.left(), rect.top()),
+                egui::pos2(rect.right(), rect.bottom()),
+            );
+            p.with_clip_rect(cell_clip.intersect(p.clip_rect()))
+                .galley(pos2(x, y), galley, color);
             continue;
         }
         let first_line = text.lines().next().unwrap_or("").to_string();
