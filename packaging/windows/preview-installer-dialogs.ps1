@@ -68,7 +68,7 @@ function Assert-MsiResult([uint32] $Result, [string] $Operation) {
 [uint32] $preview = 0
 try {
   Assert-MsiResult ([GridcraftMsiPreview]::MsiOpenDatabaseW($Msi, [IntPtr]::Zero, [ref] $database)) 'Open read-only MSI'
-  $dialogs = 'DesktopShortcutDlg', 'SetupCompleteDlg', 'SetupCanceledDlg', 'SetupFailedDlg', 'GridcraftErrorDlg', 'FilesInUse'
+  $dialogs = 'DesktopShortcutDlg', 'InstallFolderDlg', 'BrowseFolderDlg', 'SetupCompleteDlg', 'SetupCanceledDlg', 'SetupFailedDlg', 'GridcraftErrorDlg', 'FilesInUse'
   foreach ($dialog in $dialogs) {
     # Give each dialog its own preview session; closing its handle releases the UI.
     Assert-MsiResult ([GridcraftMsiPreview]::MsiEnableUIPreview($database, [ref] $preview)) "Enable preview for $dialog"
