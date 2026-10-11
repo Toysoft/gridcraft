@@ -1,9 +1,10 @@
 //! Design tokens and fonts.
 //!
 //! Colours are our own, tuned to read like a modern desktop spreadsheet. Fonts come from the
-//! operating system at runtime (nothing bundled): the UI uses the platform UI font, cells use the
-//! best available match for the workbook font (Calibri/Carlito/Aptos/Arial…) with egui's built-in
-//! fonts as the last resort.
+//! operating system at runtime: the UI uses the platform UI font, cells use the best available
+//! match for the workbook font (Calibri/Carlito/Aptos/Arial…) with egui's built-in fonts as the
+//! last resort. A web build has no system fonts, so it also bakes in the CJK face of the optional
+//! craft-fonts build input (`CRAFT_FONTS_DIR`; see [`CraftFont`] and `load_fallback`).
 
 use std::sync::Arc;
 
@@ -371,9 +372,31 @@ fn load_fallback(fonts: &mut FontDefinitions, han: HanOrder) -> Vec<String> {
     keys
 }
 
+/// A font baked in from the optional craft-fonts build input (`CRAFT_FONTS_DIR`; see
+/// storytold/craft-fonts `docs/integration.md`). The table is empty unless the web build had it,
+/// and only the web build bakes anything in, so a desktop binary is unchanged.
+pub struct CraftFont {
+    pub family: &'static str,
+    pub style: &'static str,
+    /// ISO 15924 scripts the font covers, e.g. `"Hans"` for Simplified Chinese.
+    pub scripts: &'static [&'static str],
+    pub bytes: &'static [u8],
+}
+
+include!(concat!(env!("OUT_DIR"), "/craft_fonts.rs"));
+
+/// A browser has no system fonts to fall back on, so on wasm the fallback faces are the ones baked
+/// in at build time from the optional craft-fonts input (see `CraftFont`). Empty when the build had
+/// no `CRAFT_FONTS_DIR`, which keeps the old behaviour (CJK shows as boxes) but never fails.
 #[cfg(target_arch = "wasm32")]
-fn load_fallback(_fonts: &mut FontDefinitions, _han: HanOrder) -> Vec<String> {
-    Vec::new()
+fn load_fallback(fonts: &mut FontDefinitions, _han: HanOrder) -> Vec<String> {
+    let mut keys = Vec::new();
+    for (i, f) in CRAFT_FONTS.iter().enumerate() {
+        let key = format!("craft-fonts-{i}");
+        fonts.font_data.insert(key.clone(), Arc::new(FontData::from_static(f.bytes)));
+        keys.push(key);
+    }
+    keys
 }
 
 /// Every fallback face we look for, in chain order: `(key, candidate files)`. One file per script

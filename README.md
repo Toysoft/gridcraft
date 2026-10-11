@@ -313,7 +313,8 @@ with its author, source and license in [ATTRIBUTION.md](ATTRIBUTION.md).
 
 All UI icons are drawn in code and are original; the sample workbooks and every screenshot in
 this README were made with GridCraft itself. GridCraft bundles no fonts: it uses the fonts
-installed on your system.
+installed on your system — the web build is the exception, baking the optional craft-fonts CJK
+face into its wasm (a browser has no system fonts); see [`packaging/web/README.md`](packaging/web/README.md).
 
 The ArtCraft name, wordmark and logos in [`docs/brand/`](docs/brand/) are trademarks of the
 ArtCraft Team and are not covered by this license. They may be used only unmodified, and only as

@@ -50,6 +50,18 @@ location /gridcraft/ {
 
 Local test: `python3 -m http.server 8765` inside the folder, then open http://localhost:8765/.
 
+## Fonts
+
+The web build bakes its fonts into the wasm: a browser has no system fonts to fall back on, and
+egui's own defaults carry no CJK glyphs, so Chinese, Japanese and Korean text would show as empty
+boxes. A build made with the optional `CRAFT_FONTS_DIR` input (see
+[`storytold/craft-fonts`](https://github.com/storytold/craft-fonts) `docs/integration.md`) embeds
+the Simplified-Chinese face, subset first by `cargo xtask subset-fonts` (HarfBuzz) down to the
+characters a UI and its documents need — the full Noto Sans CJK SC is ~16 MiB, over what hosts cap
+in a single file. Widen `WEB_FONTS` in `crates/ui-egui/build.rs` (and `xtask/src/fonts.rs`) to
+embed more faces if the size budget allows. The licence of each embedded font ships beside the site
+as `OFL-<family>.txt`.
+
 ## Embedding in a page (iframe)
 
 ```html
