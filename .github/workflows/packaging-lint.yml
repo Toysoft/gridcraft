@@ -38,6 +38,8 @@ jobs:
           dotnet tool install --tool-path "$env:RUNNER_TEMP\wix" wix --version 5.0.2
           if ($LASTEXITCODE -ne 0) { throw 'Could not install WiX' }
           $env:PATH = "$env:RUNNER_TEMP\wix;$env:PATH"
+          wix extension add -g WixToolset.UI.wixext/5.0.2
+          if ($LASTEXITCODE -ne 0) { throw 'Could not install WiX UI extension' }
           ./packaging/windows/test-desktop-shortcut.ps1 -Arch '${{ matrix.arch }}'
       - name: Capture native MSI dialog previews
         shell: pwsh

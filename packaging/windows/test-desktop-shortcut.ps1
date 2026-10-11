@@ -74,8 +74,8 @@ function Get-ProductCode([string] $Msi) {
 }
 
 function Assert-FolderTargets([string] $Msi) {
-  # Ignore installed machine state and run only costing actions: safe even with -BuildOnly.
-  # Exercise both command-line properties before costing and UI target changes after costing.
+  # Ignore installed machine state for costing: safe even with -BuildOnly. Exercise both
+  # command-line properties before costing and UI target changes after costing.
   $installer = New-Object -ComObject WindowsInstaller.Installer
   $installer.UILevel = 2
   try {
@@ -92,6 +92,26 @@ function Assert-FolderTargets([string] $Msi) {
         $uiPath = Join-Path $WorkDir 'UI Selected Apps\GridCraft'
         $session.TargetPath('INSTALLFOLDER') = $uiPath
         Assert-That ($session.TargetPath('INSTALLFOLDER').TrimEnd('\') -ieq $uiPath.TrimEnd('\')) 'MSI did not update the UI target folder'
+      } finally {
+        [Runtime.InteropServices.Marshal]::FinalReleaseComObject($session) | Out-Null
+      }
+    }
+    # Ignore-machine-state sessions prohibit DLL custom actions. In a separate normal
+    # session, invoke ONLY the immediate property-checking action: no install sequence.
+    # ARM64's DLL cannot run on an x64 runner; all architectures still link it at build time.
+    if ($Arch -ne 'arm64') {
+      $session = $installer.OpenPackage($Msi, 0)
+      try {
+        $suffix = if ($Arch -eq 'x86') { 'X86' } else { 'X64' }
+        $validate = "WixUIValidatePath_$suffix"
+        $localPath = Join-Path $WorkDir 'Validated Apps\GridCraft'
+        foreach ($path in $localPath, '\\gridcraft-invalid-host\share\GridCraft', $localPath) {
+          $session.Property('INSTALLFOLDER') = $path
+          Assert-That ($session.DoAction($validate) -eq 1) 'WiX path validation failed'
+          $expectedValid = if ($path.StartsWith('\\')) { '0' } else { '1' }
+          Assert-That ($session.Property('WIXUI_INSTALLDIR_VALID') -eq $expectedValid) 'WiX did not correctly validate the selected path'
+        }
+        Write-Host "ok native WiX local/network/corrected path validation ($Arch)"
       } finally {
         [Runtime.InteropServices.Marshal]::FinalReleaseComObject($session) | Out-Null
       }
@@ -218,10 +238,12 @@ foreach ($fixture in @(@('gridcraft.exe', 'winexe'), @('gridcraft-cli.exe', 'exe
   if ($LASTEXITCODE -ne 0) { throw 'Could not compile installer fixture' }
 }
 $packages = @()
+$InstallerArt = Join-Path $WorkDir 'installer-art'
+& (Join-Path $PSScriptRoot 'installer-art.ps1') -OutputDir $InstallerArt
 foreach ($version in '90.0.0', '90.0.1', '90.0.2') {
   $msi = Join-Path $WorkDir "gridcraft-$version.msi"
-  & wix build (Join-Path $PSScriptRoot 'gridcraft.wxs') -arch $Arch -wx `
-    -d "Version=$version" -d "BinDir=$Bin" -d "IconPath=$Icon" -o $msi | Write-Host
+  & wix build (Join-Path $PSScriptRoot 'gridcraft.wxs') -arch $Arch -wx -ext WixToolset.UI.wixext -culture en-US `
+    -d "Version=$version" -d "BinDir=$Bin" -d "IconPath=$Icon" -d "InstallerArtDir=$InstallerArt" -o $msi | Write-Host
   if ($LASTEXITCODE -ne 0) { throw "WiX failed to build $version" }
   $packages += [pscustomobject]@{ Path = $msi; Code = (Get-ProductCode $msi); Version = $version }
 }

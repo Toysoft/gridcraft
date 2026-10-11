@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  GridCraft MSI (WiX Toolset v5: `dotnet tool install -g wix`). Built by package.ps1:
+  GridCraft MSI (WiX Toolset v5 with WixToolset.UI.wixext). Built by package.ps1:
 
-    wix build gridcraft.wxs -arch x64 -d Version=1.2.3 -d BinDir=... -d IconPath=... -o out.msi
+    wix build gridcraft.wxs -arch x64 -ext WixToolset.UI.wixext -culture en-US
+      -d Version=1.2.3 -d BinDir=... -d IconPath=... -d InstallerArtDir=... -o out.msi
 
   Per-machine install into a user-selected folder (Program Files by default), a Start Menu shortcut, an optional desktop shortcut,
   App Paths (Win+R `gridcraft`),
@@ -44,7 +45,15 @@
     </Property>
     <SetProperty Id="INSTALLFOLDER" Action="LoadInstallFolder" Value="[SAVEDINSTALLFOLDER]"
         After="AppSearch" Sequence="first" Condition="NOT INSTALLFOLDER AND SAVEDINSTALLFOLDER" />
-    <Property Id="InstallBrowseProperty" Value="INSTALLFOLDER" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <UIRef Id="WixUI_Common" />
+    <!-- Use WiX's browser and validation, with original build-generated artwork. -->
+    <WixVariable Id="WixUIBannerBmp" Value="$(var.InstallerArtDir)\banner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="$(var.InstallerArtDir)\banner.bmp" />
+    <WixVariable Id="WixUIUpIco" Value="$(var.InstallerArtDir)\up.ico" />
+    <WixVariable Id="WixUINewIco" Value="$(var.InstallerArtDir)\new.ico" />
+    <WixVariable Id="WixUIExclamationIco" Value="$(var.InstallerArtDir)\warning.ico" />
+    <WixVariable Id="WixUIInfoIco" Value="$(var.InstallerArtDir)\warning.ico" />
 
     <!-- An explicit command-line value wins. Otherwise retain the previous installation's
          choice, defaulting to off for a fresh install. Run only in the first sequence so the
@@ -66,7 +75,14 @@
     <Property Id="ErrorDialog" Value="GridcraftErrorDlg" />
     <EnsureTable Id="ListBox" />
     <UI>
+      <DialogRef Id="BrowseDlg" />
+      <DialogRef Id="InvalidDirDlg" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="DoAction"
+          Value="WixUIValidatePath_$(sys.BUILDARCHSHORT)" Order="3" Condition="NOT WIXUI_DONTVALIDATEPATH" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="SpawnDialog" Value="InvalidDirDlg" Order="4"
+          Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
       <TextStyle Id="GridcraftUIFont" FaceName="Segoe UI" Size="9" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Segoe UI" Size="9" Bold="yes" />
       <Dialog Id="DesktopShortcutDlg" Width="320" Height="150" Title="GridCraft Setup" NoMinimize="yes">
         <Control Id="Heading" Type="Text" X="15" Y="15" Width="290" Height="20" Text="Install GridCraft" />
         <Control Id="Description" Type="Text" X="15" Y="40" Width="290" Height="28"
@@ -94,41 +110,21 @@
             Text="Installation &amp;folder:" TabSkip="no" />
         <Control Id="Folder" Type="PathEdit" X="15" Y="95" Width="230" Height="20" Property="INSTALLFOLDER" />
         <Control Id="Browse" Type="PushButton" X="255" Y="95" Width="70" Height="20" Text="&amp;Browse...">
-          <Publish Event="SetTargetPath" Value="INSTALLFOLDER" />
-          <Publish Event="SpawnDialog" Value="BrowseFolderDlg" />
+          <Publish Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1" />
+          <Publish Event="SpawnDialog" Value="BrowseDlg" Order="2" />
         </Control>
         <Control Id="Install" Type="PushButton" X="185" Y="150" Width="65" Height="20"
             Default="yes" ElevationShield="yes" Text="&amp;Install">
-          <!-- SetTargetPath validates and re-costs the directory before starting installation.
-               Invalid paths block the following EndDialog event. -->
-          <Publish Event="SetTargetPath" Value="INSTALLFOLDER" />
-          <Publish Event="EndDialog" Value="Return" />
+          <Publish Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1" />
+          <Publish Event="DoAction" Value="WixUIValidatePath_$(sys.BUILDARCHSHORT)" Order="2"
+              Condition="NOT WIXUI_DONTVALIDATEPATH" />
+          <Publish Event="SpawnDialog" Value="InvalidDirDlg" Order="3"
+              Condition="NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
+          <Publish Event="EndDialog" Value="Return" Order="4"
+              Condition="WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
         </Control>
         <Control Id="Cancel" Type="PushButton" X="260" Y="150" Width="65" Height="20" Cancel="yes" Text="Cancel">
           <Publish Event="EndDialog" Value="Exit" />
-        </Control>
-      </Dialog>
-      <Dialog Id="BrowseFolderDlg" Width="340" Height="265" Title="GridCraft Setup" NoMinimize="yes">
-        <Control Id="Heading" Type="Text" X="15" Y="15" Width="310" Height="20" Text="Choose an installation folder" />
-        <Control Id="DirectoryCombo" Type="DirectoryCombo" X="15" Y="45" Width="230" Height="80"
-            Property="InstallBrowseProperty" Indirect="yes" Fixed="yes" Remote="yes">
-          <Subscribe Event="IgnoreChange" Attribute="IgnoreChange" />
-        </Control>
-        <Control Id="Up" Type="PushButton" X="255" Y="45" Width="70" Height="20" Text="&amp;Up one level">
-          <Publish Event="DirectoryListUp" Value="0" />
-        </Control>
-        <Control Id="Folders" Type="DirectoryList" X="15" Y="75" Width="310" Height="105"
-            Property="InstallBrowseProperty" Indirect="yes" Sunken="yes" TabSkip="no" />
-        <Control Id="FolderLabel" Type="Text" X="15" Y="190" Width="310" Height="12" Text="&amp;Folder:" TabSkip="no" />
-        <Control Id="Folder" Type="PathEdit" X="15" Y="205" Width="310" Height="20"
-            Property="InstallBrowseProperty" Indirect="yes" />
-        <Control Id="OK" Type="PushButton" X="185" Y="235" Width="65" Height="20" Default="yes" Text="OK">
-          <Publish Event="SetTargetPath" Value="[InstallBrowseProperty]" />
-          <Publish Event="EndDialog" Value="Return" />
-        </Control>
-        <Control Id="Cancel" Type="PushButton" X="260" Y="235" Width="65" Height="20" Cancel="yes" Text="Cancel">
-          <Publish Event="Reset" Value="0" />
-          <Publish Event="EndDialog" Value="Return" />
         </Control>
       </Dialog>
 

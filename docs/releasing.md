@@ -129,8 +129,11 @@ the MSI, and zips a portable build.
   *Settings › Default apps* but never silently becomes the default. The MSI version is the
   numeric `X.Y.Z`; same-version upgrades let release candidates replace each other.
 - **Installation folder (x86, x64 and ARM64):** full installer UI offers a folder page after
-  the shortcut choice. Users can type a path or use **Browse**; Windows Installer validates
-  the path before installing. Unattended installs can set
+  the shortcut choice. Users can type a path or use WiX's standard **Browse** dialog, including
+  creating a new folder. Windows Installer re-costs the selected path, then the WiX UI
+  path-validation action rejects network and removable-drive destinations and shows an
+  invalid-folder message when needed before
+  installation proceeds. The browser also runs that validation. Unattended installs can set
   `msiexec /i gridcraft.msi /qn INSTALLFOLDER="D:\Apps\GridCraft"`. The selected folder is
   stored per machine and reused for repair and major upgrades; an explicit `INSTALLFOLDER`
   overrides the saved folder on a new installation or major upgrade. Maintenance UI does
@@ -151,7 +154,9 @@ the MSI, and zips a portable build.
   for installation tests. Packaging lint runs the lifecycle on x64 and x86, including custom
   folders with spaces, saved paths on repair/upgrade, explicit relocation on major upgrade,
   registrations and shortcuts. All architectures check default/custom paths and UI target
-  changes in read-only MSI sessions. ARM64 validates MSI builds without installing on the x64 runner;
+  changes in read-only MSI sessions. x64 and x86 also invoke the native WiX validation action
+  without installing, checking local, network and corrected local paths. ARM64 validates
+  MSI builds without installing or executing its native validation DLL on the x64 runner;
   the separate Windows ARM64 workflow remains the native install/run check. To build fixture
   MSIs locally without installing, use `-BuildOnly -Arch x64|x86|arm64 -WorkDir PATH`.
 - **Installer review images:** the same Windows job renders the compiled MSI's dialogs through
@@ -159,7 +164,7 @@ the MSI, and zips a portable build.
   `desktop-shortcut-msi-evidence-<arch>`, on success or failure. These are native dialog previews;
   the separate silent lifecycle test verifies installation behavior. Normal full UI presents
   the shortcut choice, installation folder and then completion; the folder page opens a browse
-  dialog, and cancel/failure and files-in-use dialogs are support
+  dialog; invalid-folder, cancel/failure and files-in-use dialogs are support
   paths. To review on a maintainer branch, run **Packaging lint** with that branch selected
   (or `gh workflow run packaging-lint.yml --repo storytold/gridcraft --ref BRANCH`). No release
   environment, signing credentials or Rust build is required. Interactive checkbox behavior
@@ -170,7 +175,10 @@ the MSI, and zips a portable build.
   Signing** (`AZURE_*`, the storytold setup). With neither it warns and leaves files unsigned.
 
 Locally on Windows: `dotnet tool install -g wix --version 5.0.2`, then
-`pwsh packaging/windows/package.ps1 -Arch x64`.
+`pwsh packaging/windows/package.ps1 -Arch x64`. Packaging installs the pinned
+`WixToolset.UI.wixext/5.0.2` extension and draws original browser artwork into the build
+directory using `installer-art.ps1`. For fixture builds, first run
+`wix extension add -g WixToolset.UI.wixext/5.0.2`.
 
 ### Linux
 
