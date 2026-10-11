@@ -968,3 +968,12 @@ fn trim_references() {
     t.set("K20", "=SUM(Q1:.Q9)");
     assert_eq!(t.get("K20"), Value::Error(CellError::Calc));
 }
+
+#[test]
+fn formula_language_tables_only_name_functions_the_engine_knows() {
+    // A typo'd canonical name in a language table would turn a valid local name into #NAME?.
+    for locale in gridcraft_formula::FormulaLocale::ALL {
+        let unknown: Vec<&str> = locale.translations().iter().map(|(en, _)| *en).filter(|en| !crate::eval::is_known_function(en)).collect();
+        assert!(unknown.is_empty(), "{locale:?}: {unknown:?}");
+    }
+}
