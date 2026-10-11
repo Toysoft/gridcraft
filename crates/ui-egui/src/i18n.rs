@@ -9,6 +9,8 @@
 
 use serde::{Deserialize, Serialize};
 
+mod de;
+mod fr;
 mod ko;
 mod pt;
 mod ru;
@@ -24,12 +26,14 @@ pub enum Language {
     Ja,
     Ko,
     Ru,
+    Fr,
+    De,
     #[serde(rename = "pt")]
     PtBr,
 }
 
 impl Language {
-    pub const ALL: [Self; 7] = [Self::En, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::PtBr];
+    pub const ALL: [Self; 9] = [Self::En, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::Fr, Self::De, Self::PtBr];
 
     /// The language's own name, shown in the switcher.
     pub fn name(self) -> &'static str {
@@ -40,6 +44,8 @@ impl Language {
             Self::Ja => "日本語",
             Self::Ko => "한국어",
             Self::Ru => "Русский",
+            Self::Fr => "Français",
+            Self::De => "Deutsch",
             Self::PtBr => "Português (Brasil)",
         }
     }
@@ -53,6 +59,8 @@ impl Language {
             Self::Ja => "ja",
             Self::Ko => "ko",
             Self::Ru => "ru",
+            Self::Fr => "fr",
+            Self::De => "de",
             Self::PtBr => "pt",
         }
     }
@@ -69,6 +77,8 @@ impl Language {
             "ja" => Some(Self::Ja),
             "ko" => Some(Self::Ko),
             "ru" => Some(Self::Ru),
+            "fr" => Some(Self::Fr),
+            "de" => Some(Self::De),
             "pt" => Some(Self::PtBr),
             _ => None,
         }
@@ -102,6 +112,8 @@ impl Language {
             Self::Zh => zh::translate(text),
             Self::Ko => ko::translate(text),
             Self::Ru => ru::translate(text),
+            Self::Fr => fr::translate(text),
+            Self::De => de::translate(text),
             Self::PtBr => pt::translate(text),
         };
         translated.unwrap_or_else(|| text.rsplit_once('|').map_or(text, |(_, label)| label))
@@ -433,12 +445,16 @@ mod tests {
             assert!(zh::translate(english).is_some_and(|text| !text.is_empty()), "missing Simplified Chinese: {english}");
             assert!(ko::translate(english).is_some_and(|text| !text.is_empty()), "missing Korean: {english}");
             assert!(ru::translate(english).is_some_and(|text| !text.is_empty()), "missing Russian: {english}");
+            assert!(fr::translate(english).is_some_and(|text| !text.is_empty()), "missing French: {english}");
+            assert!(de::translate(english).is_some_and(|text| !text.is_empty()), "missing German: {english}");
             assert!(pt::translate(english).is_some_and(|text| !text.is_empty()), "missing Portuguese: {english}");
         }
         assert_eq!(Language::Ja.tr("Data"), "データ");
         assert_eq!(Language::Zh.tr("Data"), "数据");
         assert_eq!(Language::Ko.tr("Data"), "데이터");
         assert_eq!(Language::Ru.tr("Data"), "Данные");
+        assert_eq!(Language::Fr.tr("Data"), "Données");
+        assert_eq!(Language::De.tr("Data"), "Daten");
         assert_eq!(Language::PtBr.tr("Data"), "Dados");
         assert_eq!(Language::PtBr.tr("Date"), "Data");
         assert_eq!(Language::PtBr.tr("Sheet1!A1"), "Sheet1!A1");
@@ -476,7 +492,9 @@ mod tests {
         assert_eq!(Language::from_tag("zh-Hans-CN"), Some(Language::Zh));
         assert_eq!(Language::from_tag("ko-KR"), Some(Language::Ko));
         assert_eq!(Language::from_tag("RU_ru"), Some(Language::Ru));
-        assert_eq!(Language::from_tag("de-DE"), None);
+        assert_eq!(Language::from_tag("fr-FR"), Some(Language::Fr));
+        assert_eq!(Language::from_tag("de-DE"), Some(Language::De));
+        assert_eq!(Language::from_tag("it-IT"), None);
         assert_eq!(Language::from_tag("pt-BR"), Some(Language::PtBr));
         assert_eq!(Language::parse("pt"), Some(Language::PtBr));
         assert_eq!(Language::parse("pt-br"), Some(Language::PtBr));
