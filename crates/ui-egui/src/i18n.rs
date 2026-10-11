@@ -134,6 +134,16 @@ impl Language {
     }
 }
 
+/// The region the operating system (or the browser) is set to, best effort; en-US when it is
+/// unknown. Used as the first-run default of the regional format while nothing is saved.
+pub fn system_region() -> &'static gridcraft_engine::core::Region {
+    #[cfg(not(target_arch = "wasm32"))]
+    let tag = sys_locale::get_locale();
+    #[cfg(target_arch = "wasm32")]
+    let tag = web_sys::window().and_then(|window| window.navigator().language());
+    tag.map_or_else(gridcraft_engine::core::region::default_region, |tag| gridcraft_engine::core::region::lookup(&tag))
+}
+
 /// Deserializes a saved language leniently: an unknown or malformed value (a language removed in a
 /// later version, a hand-edited `ui.json`) reads as English instead of failing the whole `UiState`,
 /// which would reset every other preference with it.
@@ -404,6 +414,7 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Light", "ライト"),
     ("Dark", "ダーク"),
     ("Interface language", "表示言語"),
+    ("Regional format", "地域の形式"),
     ("Interface size", "表示サイズ"),
     ("Auto", "自動"),
     ("Drag to freeze columns", "ドラッグして列を固定"),

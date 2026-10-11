@@ -20,11 +20,10 @@ pub(crate) fn canonical(
     if locale == FormulaLocale::En || wb.sheet(sheet).is_some_and(|sh| wb.styles.get(sh.style_id(cell)).num_fmt.as_str() == "@") {
         return Ok(text.to_string());
     }
-    // Same formula detection as the engine's `input_to_cell` (no trimming: " =1" is text).
+    // The engine's own formula detection (no trimming: " =1" is text), which also lets a number
+    // the region reads, such as `-R$ 5` in pt-BR, through as a constant.
     let body = text;
-    if body.starts_with('=')
-        || ((body.starts_with('+') || body.starts_with('-')) && body.chars().nth(1).is_some_and(|c| c.is_ascii_alphabetic() || c == '('))
-    {
+    if gridcraft_engine::cmd::edit::is_formula_input(body, wb.date_system, wb.region) {
         let known = |name: &str| wb.name(name, sheet).is_some() || wb.table(name).is_some();
         // Match the engine's existing convenience for missing closing parentheses.
         let mut body = body.to_string();
@@ -38,12 +37,8 @@ pub(crate) fn canonical(
         }
         return Ok(format!("={}", formula::print(&expr?)));
     }
-    // Decimal-comma number entry follows the same preference, without rewriting text or dates.
-    let normalized = body.trim().replace(locale.decimal_separator(), ".");
-    let number = normalized.strip_suffix('%').unwrap_or(&normalized);
-    if number.parse::<f64>().is_ok_and(f64::is_finite) {
-        return Ok(normalized);
-    }
+    // Typed constants (numbers, dates, text) pass through: the engine reads them in the workbook's
+    // region (Options › Regional format), which is independent of the formula language.
     Ok(text.to_string())
 }
 

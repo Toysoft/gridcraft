@@ -142,6 +142,20 @@ impl DocState {
     pub fn is_dirty(&self) -> bool {
         !Arc::ptr_eq(&self.wb, &self.saved)
     }
+    /// Gives the workbook the session's region (`Workbook::region` is not saved, so every
+    /// document, and every snapshot undo brings back, gets it from the session). Only the display
+    /// changes, never a value; a clean workbook stays clean.
+    pub(crate) fn apply_region(&mut self, region: &'static gridcraft_core::Region) {
+        if *self.wb.region == *region {
+            return;
+        }
+        let clean = !self.is_dirty();
+        Arc::make_mut(&mut self.wb).region = region;
+        if clean {
+            self.saved = self.wb.clone();
+        }
+        self.revision += 1;
+    }
     pub fn sheet_index(&self) -> usize {
         self.wb.active_sheet
     }
@@ -199,6 +213,10 @@ pub struct Prefs {
     pub user_dictionary: Vec<String>,
     /// View › Show › Formula Bar (an application option in Excel, not saved in the file).
     pub formula_bar: bool,
+    /// The regional format (Options › Region), a tag from [`core::region::all`]: how numbers,
+    /// dates and times are typed and shown. The apps start it from the system region on first
+    /// run; `app.region` changes it. An unknown tag reads as en-US.
+    pub region: String,
 }
 
 impl Default for Prefs {
@@ -213,6 +231,7 @@ impl Default for Prefs {
             r1c1: false,
             user_dictionary: vec![],
             formula_bar: true,
+            region: gridcraft_core::region::default_region().tag.into(),
         }
     }
 }
@@ -258,9 +277,37 @@ pub struct Session {
     pub show_all_notes: bool,
 }
 
+/// The region a tag names (`pt-BR`, case and `_` insensitive); an error listing the valid tags
+/// when there is none.
+pub fn find_region(tag: &str) -> Result<&'static gridcraft_core::Region> {
+    gridcraft_core::region::find(tag).ok_or_else(|| {
+        let tags: Vec<&str> = gridcraft_core::region::all().iter().map(|r| r.tag).collect();
+        EngineError::Other(format!("unknown region {tag:?} (use one of {})", tags.join(", ")))
+    })
+}
+
 impl Session {
     pub fn new() -> Session {
         Session::default()
+    }
+    /// The region documents are typed and shown in: `prefs.region`, en-US when it names none.
+    pub fn region(&self) -> &'static gridcraft_core::Region {
+        gridcraft_core::region::find(&self.prefs.region).unwrap_or_else(gridcraft_core::region::default_region)
+    }
+    /// Sets the region (a tag such as `pt-BR`) and applies it to every open document.
+    pub fn set_region(&mut self, tag: &str) -> Result<&'static gridcraft_core::Region> {
+        let region = find_region(tag)?;
+        self.prefs.region = region.tag.into();
+        self.apply_region();
+        Ok(region)
+    }
+    /// Applies `prefs.region` to every open document: for after the preferences were replaced
+    /// (the apps load them from a file).
+    pub fn apply_region(&mut self) {
+        let region = self.region();
+        for d in &mut self.docs {
+            d.apply_region(region);
+        }
     }
     pub fn documents(&self) -> &[DocState] {
         &self.docs
@@ -285,7 +332,8 @@ impl Session {
     pub fn doc_mut(&mut self) -> Result<&mut DocState> {
         self.active_mut().ok_or(EngineError::NoDocument)
     }
-    pub fn add_document(&mut self, d: DocState) -> usize {
+    pub fn add_document(&mut self, mut d: DocState) -> usize {
+        d.apply_region(self.region());
         self.docs.push(d);
         self.active = self.docs.len() - 1;
         self.active

@@ -62,6 +62,33 @@ workbook (Agile or Standard encryption). Without `password` it returns an error 
 password returns "The password is incorrect." The password is left out of the journal and never
 quoted in an error. The opened workbook has no save path, so Save asks where to save it, without
 the password, and never replaces the encrypted original.
+`{command: "app.region", params: {region: "en-GB"}}` sets the regional format: the decimal and
+group separators, the date order and the month and day names that typed cell input is read with
+and cells are shown with. It never changes a stored value, formula or number format code, only
+how they are typed and displayed, so switching back shows the same dates in the old layout.
+Formula syntax (function names, argument separators) is not part of the region. `region` is a tag
+from the list below, matched strictly (an unknown tag is an error that lists the valid ones):
+`en-US` (default), `en-GB`, `en-IN`, `es-ES`, `de-DE`, `fr-FR`, `it-IT`, `pt-BR`, `pt-PT`,
+`ru-RU`, `cs-CZ`, `ja-JP`, `ko-KR`, `zh-CN`, `zh-TW`. Without `region` the command only reports
+the current one: `{region, name, decimal, group, dateOrder, shortDate, longDate, available}`. The
+region is a session preference, applied to every open and new workbook and saved in `prefs.json`;
+the desktop app starts from the system region on first run, the web app from
+`navigator.language`, and headless sessions (CLI, MCP, tests) from `en-US`. The command is
+journaled but not undoable.
+
+**Command text is canonical (en-US), whatever the region preference is.** A script, a recorded
+action or an agent that sends `cell.set {input: "25/09/2026"}` always gets the same result: text
+in an en-US session and in a de-DE one. To say that text was typed in a region, add
+`region: "<tag>"` to the call: `cell.set {cell: "A1", input: "25/09/2026", region: "en-GB"}`
+stores the date 46290. The parameter is accepted by the commands that take typed constants:
+`cell.set` (`input`, or a string `value`; a JSON number or boolean is a value and is never
+re-read), `range.fill`, `range.setValues` (string cells), `edit.paste` (`text`), `data.validate`
+(`input`) and `data.forecastSheet` (`end`). The tag is part of the journal and of recorded
+scripts, so a replay does not depend on the preference. The interface passes the workbook's
+region on every edit it commits, which is why typing `25/09/2026` in the grid works in en-GB. Files
+are canonical too: CSV and TSV are written and read with en-US separators and dates (a de-DE
+`#,##0` cell holding 1000 saves as `"1,000"`), and Get Data from a range copies values, not the
+region's text. Only the system clipboard and HTML copy carry the displayed (regional) text.
 
 For a headless equivalent (no window), use `gridcraft-cli mcp` or `gridcraft-cli run`;
 see [`mcp.md`](mcp.md) and [`cli.md`](cli.md).

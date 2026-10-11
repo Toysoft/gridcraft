@@ -220,6 +220,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Unfreeze Panes" => "Снять закрепление областей",
         "Dark Mode" => "Тёмный режим",
         "Interface language" => "Язык интерфейса",
+        "Regional format" => "Региональный формат",
         "Interface size" => "Размер интерфейса",
         "Auto" => "Авто",
         "Drag to freeze columns" => "Перетащите, чтобы закрепить столбцы",

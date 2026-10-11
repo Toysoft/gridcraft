@@ -955,6 +955,18 @@ fn options(app: &mut SheetApp, ui: &mut Ui) {
             }
         });
         ui.end_row();
+        // Regional format: how numbers, dates and times are typed and shown. It is independent of
+        // the interface language, as in Excel.
+        ui.label(lang.tr("Regional format"));
+        let region = app.session.region();
+        egui::ComboBox::from_id_salt("backstage_region").width(220.0).selected_text(region.name).show_ui(ui, |ui| {
+            for r in gridcraft_engine::core::region::all() {
+                if ui.selectable_label(r.tag == region.tag, r.name).clicked() {
+                    app.run_or_alert("app.region", json!({"region": r.tag}));
+                }
+            }
+        });
+        ui.end_row();
     });
     ui.add_space(6.0);
     let mut formula_bar = app.session.prefs.formula_bar;
