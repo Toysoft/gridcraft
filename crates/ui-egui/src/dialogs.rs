@@ -570,6 +570,8 @@ impl Dialog {
             "saveCopy" => Dialog::custom("saveCopy", "Save a Copy", json!({"format": p("format")})),
             "saveChanges" => Dialog::custom("saveChanges", "Save Changes?", json!({"title": p("title")})),
             "start" => Dialog::custom("start", "GridCraft", json!({})),
+            // The File page: a dialog to the rest of the app, drawn over the whole window.
+            crate::backstage::NAME => Dialog::custom(crate::backstage::NAME, "File", crate::backstage::values(app, &params)?),
             "comments" => {
                 app.grid.pane = Some("comments".into());
                 return None;
@@ -648,6 +650,10 @@ fn build_params(d: &Dialog) -> Json {
 }
 
 pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
+    // The File page fills the window instead of being a window in it.
+    if crate::backstage::show(app, ctx) {
+        return;
+    }
     let Some(mut d) = app.dialog.take() else { return };
     if d.name == "pasteSpecial" {
         paste_special_shortcuts(&mut d, ctx);

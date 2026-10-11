@@ -39,6 +39,13 @@ Errors come back as `{"id": …, "ok": false, "error": "…"}`.
 
 Any other method name that is a command id (e.g. `home.bold`) runs that command.
 
+The File button opens the File page, which fills the window. To an agent it is the dialog
+`backstage`: `ui.dialog {name: "backstage", page?}` opens it (`page` is `"home"`, `"new"`,
+`"open"`, `"info"` or `"export"`; anything else shows Home), `ui.dialog.set {field: "page",
+value}` turns the page, `ui.dialog.cancel` goes back to the workbook and `ui.inspect` reports it.
+Its buttons run the file commands (`file.new`, `file.open`, `file.save`…), which remain the way
+to do the same without the page.
+
 Use `engine.execute` with `{command: "view.theme", params: {mode: "system"}}`
 to choose the display theme; `mode` accepts `"system"`, `"light"`, or `"dark"`.
 System follows live OS appearance changes and falls back to Light when the platform supplies no preference.
