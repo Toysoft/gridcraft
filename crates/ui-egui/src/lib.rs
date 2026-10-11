@@ -25,6 +25,7 @@ pub mod ribbon;
 pub mod tabs;
 pub mod text_box;
 pub mod theme;
+mod theme_favorites;
 pub mod widgets;
 
 use std::collections::HashMap;
@@ -43,6 +44,8 @@ pub struct UiState {
     /// The manual preference, retained when following the system appearance.
     pub dark: bool,
     pub system_theme: bool,
+    #[serde(deserialize_with = "deserialize_favorite_themes")]
+    pub favorite_themes: Vec<String>,
     pub ribbon_tab: String,
     pub ribbon_collapsed: bool,
     pub formula_bar: bool,
@@ -62,6 +65,7 @@ impl Default for UiState {
         UiState {
             dark: false,
             system_theme: false,
+            favorite_themes: Vec::new(),
             ribbon_tab: "Home".into(),
             ribbon_collapsed: false,
             formula_bar: true,
@@ -71,6 +75,24 @@ impl Default for UiState {
             language: i18n::Language::En,
         }
     }
+}
+
+fn validate_favorite_themes(value: &Json) -> Result<Vec<String>, String> {
+    let items = value.as_array().ok_or("favorite themes must be a list")?;
+    let mut favorites = Vec::new();
+    for item in items {
+        let id = item.as_str().ok_or("favorite theme ids must be strings")?;
+        if !matches!(id, "light" | "dark") || favorites.iter().any(|saved| saved == id) {
+            return Err(format!("unknown or duplicate favorite theme `{id}`"));
+        }
+        favorites.push(id.to_string());
+    }
+    Ok(favorites)
+}
+
+fn deserialize_favorite_themes<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
+    let value = Json::deserialize(deserializer)?;
+    validate_favorite_themes(&value).map_err(serde::de::Error::custom)
 }
 
 impl UiState {
@@ -307,6 +329,13 @@ impl SheetApp {
                 self.ui.dark = p.get("on").and_then(Json::as_bool).unwrap_or(!current);
                 self.ui.system_theme = false;
                 Ok(json!({"on": self.ui.dark}))
+            }
+            "view.themeFavorites" => {
+                match validate_favorite_themes(p.get("themes").unwrap_or(&Json::Null)) {
+                    Ok(favorites) => self.ui.favorite_themes = favorites,
+                    Err(error) => return Some(Err(error)),
+                }
+                Ok(json!({"themes": self.ui.favorite_themes}))
             }
             "view.theme" => {
                 match p.get("mode").and_then(Json::as_str) {
@@ -745,4 +774,30 @@ pub fn now_ms() -> f64 {
 
 pub fn cell(r: u32, c: u32) -> CellRef {
     CellRef::new(r, c)
+}
+
+#[cfg(test)]
+mod theme_favorite_tests {
+    use super::*;
+    #[test]
+    fn favorites_validate_and_roundtrip_with_ui_settings() {
+        let mut app = SheetApp::new(Session::new(), Services::default());
+        app.run("view.themeFavorites", json!({"themes": ["dark", "light"]})).unwrap();
+        let saved = serde_json::to_string(&app.ui).unwrap();
+        let restored: UiState = serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored.favorite_themes, vec!["dark", "light"]);
+        for themes in [json!(["other"]), json!(["dark", "dark"]), json!([1]), json!(null), json!("light")] {
+            assert!(app.run("view.themeFavorites", json!({"themes": themes})).is_err());
+            assert_eq!(app.ui.favorite_themes, vec!["dark", "light"]);
+            let mut saved = serde_json::to_value(&app.ui).unwrap();
+            saved["favoriteThemes"] = themes;
+            assert!(serde_json::from_value::<UiState>(saved).is_err());
+        }
+        let legacy: UiState = serde_json::from_str("{}").unwrap();
+        assert!(legacy.favorite_themes.is_empty());
+        app.run("view.theme", json!({"mode": "system"})).unwrap();
+        app.run("view.theme", json!({"mode": "light"})).unwrap();
+        assert_eq!(app.ui.theme_mode(), "light");
+        assert_eq!(app.ui.favorite_themes, restored.favorite_themes);
+    }
 }

@@ -1682,10 +1682,54 @@ fn view(app: &mut SheetApp, ui: &mut Ui) {
             "dark" => "Dark",
             _ => "Light",
         };
-        egui::ComboBox::from_id_salt("display_theme").selected_text(lang.tr(label)).width(88.0).show_ui(ui, |ui| {
-            for (value, label) in [("system", "System"), ("light", "Light"), ("dark", "Dark")] {
-                if ui.selectable_label(mode == value, lang.tr(label)).clicked() {
-                    act(app, "view.theme", json!({"mode": value}));
+        let response = egui::ComboBox::from_id_salt("display_theme")
+            .selected_text(lang.tr(label))
+            .width(110.0)
+            .show_ui(ui, |ui| {
+                for (value, label) in [("system", "System"), ("light", "Light"), ("dark", "Dark")] {
+                    let row = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 24.0));
+                    let hovered = ui.ctx().pointer_hover_pos().is_some_and(|pos| row.contains(pos));
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(mode == value, lang.tr(label)).clicked() {
+                            act(app, "view.theme", json!({"mode": value}));
+                            ui.close();
+                        }
+                        if value != "system" {
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let favorite = app.ui.favorite_themes.iter().any(|id| id == value);
+                                let action = if favorite { "Remove from favorites" } else { "Add to favorites" };
+                                let label = format!("{}: {}", lang.tr(action), lang.tr(label));
+                                let r = crate::theme_favorites::star(ui, favorite, favorite || hovered, t.accent, &label);
+                                if r.clicked() {
+                                    let mut favorites = app.ui.favorite_themes.clone();
+                                    if favorite {
+                                        favorites.retain(|id| id != value);
+                                    } else {
+                                        favorites.push(value.into());
+                                    }
+                                    act(app, "view.themeFavorites", json!({"themes": favorites}));
+                                }
+                            });
+                        }
+                    });
+                }
+            })
+            .response;
+        // The combo box keeps its popup state under `id.with("popup")`, the same id a plain
+        // context menu would use, so the shortcut menu needs its own.
+        egui::Popup::context_menu(&response).id(response.id.with("appearance_shortcuts")).show(|ui| {
+            if ui.button(lang.tr("Appearance Settings…")).clicked() {
+                app.ui.ribbon_tab = "View".into();
+                app.ui.ribbon_collapsed = false;
+                ui.close();
+            }
+            for (id, label) in [("light", "Light"), ("dark", "Dark")] {
+                if app.ui.favorite_themes.iter().any(|saved| saved == id) {
+                    ui.separator();
+                    if ui.selectable_label(mode == id, lang.tr(label)).clicked() {
+                        act(app, "view.theme", json!({"mode": id}));
+                        ui.close();
+                    }
                 }
             }
         });
@@ -1909,4 +1953,44 @@ pub fn shortcut(app: &mut SheetApp, key: Key, m: Modifiers) {
 #[allow(dead_code)]
 fn unused(_: &Tokens, _: Icon) {
     let _ = icons::GREEN;
+}
+
+#[cfg(test)]
+mod theme_favorite_ui_tests {
+    use super::*;
+    use egui_kittest::{Harness, kittest::Queryable};
+    #[test]
+    fn star_and_context_menu_select_theme_without_losing_favorites() {
+        let mut session = gridcraft_engine::Session::new();
+        session.new_workbook();
+        let mut app = SheetApp::new(session, Default::default());
+        app.ui.ribbon_tab = "View".into();
+        let mut h = Harness::builder().with_size(vec2(1600.0, 700.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+            |ui, app| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            app,
+        );
+        h.run_steps(4);
+        h.get_all_by_role(egui::accesskit::Role::ComboBox).next().expect("display theme combo").click();
+        h.run_steps(3);
+        h.get_by_label("Add to favorites: Dark").click();
+        h.run_steps(3);
+        assert_eq!(h.state().ui.favorite_themes, vec!["dark"]);
+        // Close the picker, then open the appearance shortcut menu on its button.
+        h.key_press(egui::Key::Escape);
+        h.run_steps(3);
+        h.get_by_value("Light").click_secondary();
+        h.run_steps(3);
+        assert!(h.query_by_label("Appearance Settings…").is_some());
+        if let Some(path) = std::env::var_os("GRIDCRAFT_FAVORITES_SCREENSHOT") {
+            h.render().unwrap().save(path).unwrap();
+        }
+        h.get_by_label("Dark").click();
+        h.run_steps(3);
+        assert_eq!(h.state().ui.theme_mode(), "dark");
+        assert_eq!(h.state().ui.favorite_themes, vec!["dark"]);
+    }
 }
