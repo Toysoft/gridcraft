@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "GridCraft workspace tooling: cargo xtask ci | layers | assets | wasm | parity | version | stats | ico"
+description = "GridCraft workspace tooling: cargo xtask ci | layers | assets | wasm | parity | version | stats | ico | subset-fonts"
 
 [lints]
 workspace = true
@@ -14,7 +14,14 @@ workspace = true
 # version or the layer/asset checks run with --no-default-features and skip compiling it.
 default = ["engine"]
 engine = ["dep:gridcraft-engine"]
+# `cargo xtask subset-fonts` bundles HarfBuzz to cut the web fonts down to a UI character set.
+# Behind a feature so the everyday commands (ci, layers, assets, …) never compile it.
+fonts = ["dep:hb-subset", "dep:encoding_rs"]
 
 [dependencies]
 serde_json = { workspace = true }
 gridcraft-engine = { workspace = true, optional = true }
+# Only for `subset-fonts` (the `fonts` feature): `bundled` compiles HarfBuzz, so it is never a
+# dependency of a normal build.
+hb-subset = { version = "0.3", features = ["bundled"], optional = true }
+encoding_rs = { version = "0.8", optional = true }

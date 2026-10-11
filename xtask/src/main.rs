@@ -6,6 +6,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod assets;
+mod fonts;
 mod ico;
 mod layers;
 #[cfg_attr(not(feature = "engine"), allow(dead_code))]
@@ -32,6 +33,9 @@ commands:
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
   ico <out.ico> <in.png>...
                   pack square PNGs (<= 256 px) into a Windows .ico (see packaging/icons.sh)
+  subset-fonts <craft-fonts> <out>
+                  write a craft-fonts checkout trimmed to the web faces, subset to the characters a
+                  UI needs (needs --features fonts; see crates/ui-egui/build.rs, packaging/web)
 ";
 
 fn main() -> ExitCode {
@@ -45,6 +49,7 @@ fn main() -> ExitCode {
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
         Some("parity") => parity::run(&root(), &rest),
         Some("ico") => ico::run(&rest),
+        Some("subset-fonts") => fonts::run(&rest),
         Some("version") => version::run(&root(), &rest),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");
