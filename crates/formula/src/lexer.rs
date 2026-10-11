@@ -160,12 +160,17 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                 for e in CellError::ALL {
                     let t = e.as_str();
                     if rest.len() >= t.len() && rest.get(..t.len()).is_some_and(|p| p.eq_ignore_ascii_case(t)) {
-                        found = Some(e);
+                        found = Some((e, t.chars().count()));
                         break;
                     }
                 }
-                let Some(e) = found else { return Err(LexError { msg: "unknown error literal".into(), pos: start }) };
-                let len = e.as_str().chars().count();
+                // The language's own spelling (`#NV`, `#Н/Д`); the longer match wins.
+                if let Some((e, len)) = locale.error_prefix(rest)
+                    && found.is_none_or(|(_, english)| len > english)
+                {
+                    found = Some((e, len));
+                }
+                let Some((e, len)) = found else { return Err(LexError { msg: "unknown error literal".into(), pos: start }) };
                 // `#REF!A1` style is not valid; `#REF!` is an error literal.
                 push(&mut out, Tok::Error(e), i + len);
                 i += len;
@@ -192,7 +197,8 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                         Some(_) => j += 1,
                     }
                 }
-                let inner = src.get(pos_of(i + 1)..pos_of(j.saturating_sub(1))).unwrap_or("").to_string();
+                let inner = src.get(pos_of(i + 1)..pos_of(j.saturating_sub(1))).unwrap_or("");
+                let inner = if locale == crate::FormulaLocale::En { inner.to_string() } else { locale.struct_to_canonical(inner) };
                 push(&mut out, Tok::Struct(inner), j);
                 i = j;
             }
@@ -213,8 +219,11 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                 while ch(j).is_some_and(|d| d.is_ascii_digit()) {
                     j += 1;
                 }
-                // Row ranges `1:3`, and the trim forms `1.:3`, `1:.3`, `1.:.3`.
-                let is_row_ref = {
+                // Row ranges `1:3`, and the trim forms `1.:3`, `1:.3`, `1.:.3`. Array constants hold
+                // no references, so where `:` separates array rows (ru-RU) a number followed by `:`
+                // inside braces is a number.
+                let rows_by_colon = array_depth > 0 && locale.array_row_separator() == ':';
+                let is_row_ref = !rows_by_colon && {
                     let mut k = j;
                     if ch(k) == Some('.') && ch(k + 1) == Some(':') {
                         k += 1;
@@ -290,7 +299,10 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                 i += 1;
             }
             ':' => {
-                if ch(i + 1) == Some('.') && starts_range_end(ch(i + 2)) {
+                if array_depth > 0 && locale.array_row_separator() == ':' {
+                    push(&mut out, Tok::Semicolon, i + 1);
+                    i += 1;
+                } else if ch(i + 1) == Some('.') && starts_range_end(ch(i + 2)) {
                     push(&mut out, Tok::Trim(TrimMode::Trailing), i + 2);
                     i += 2;
                 } else {

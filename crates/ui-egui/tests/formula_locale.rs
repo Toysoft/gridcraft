@@ -172,18 +172,38 @@ fn canonical_engine_templates_enter_the_selected_formula_language() {
 }
 
 #[test]
-fn portuguese_interface_retains_its_canonical_formula_fallback() {
+fn portuguese_interface_enters_and_shows_portuguese_formulas() {
     let mut app = app();
     app.run("app.language.set", json!({"code":"pt-BR"})).unwrap();
     assert_eq!(app.ui.language, Language::PtBr);
     assert_eq!(app.ui.language.tr("Data"), "Dados");
-    assert!(enter(&mut app, "=SUM(1.5,2.25)"));
+    assert!(enter(&mut app, "=SOMA(1,5;2,25)"));
+    assert_eq!(formula(&app), "SUM(1.5,2.25)");
     app.begin_edit(None, true);
-    assert_eq!(app.editor.as_ref().unwrap().text, "=SUM(1.5,2.25)");
-    assert!(!enter(&mut app, "=SUMA(1;2)"));
+    assert_eq!(app.editor.as_ref().unwrap().text, "=SOMA(1,5;2,25)");
+    app.cancel_edit();
+    // English separators are not Portuguese syntax.
+    assert!(!enter(&mut app, "=SUM(1.5,2.25)"));
     let restored: UiState = serde_json::from_str(&serde_json::to_string(&app.ui).unwrap()).unwrap();
     assert_eq!(restored.language, Language::PtBr);
     assert_eq!(Language::Es.tr("Page Layout|Orientation"), "Orientación");
+}
+
+#[test]
+fn german_and_russian_interfaces_enter_and_show_their_formulas() {
+    for (code, local, canonical, value) in [
+        ("de", "=WENN(WAHR;SUMME({1.2;3,5.4});#NV)", "IF(TRUE,SUM({1,2;3.5,4}),#N/A)", 10.5),
+        ("ru", "=ЕСЛИ(ИСТИНА;СУММ({1;2:3;4});#Н/Д)", "IF(TRUE,SUM({1,2;3,4}),#N/A)", 10.0),
+    ] {
+        let mut app = app();
+        app.run("app.language.set", json!({"code": code})).unwrap();
+        assert!(enter(&mut app, local), "{code}");
+        assert_eq!(formula(&app), canonical, "{code}");
+        assert_eq!(app.session.active().unwrap().wb.active().unwrap().value(CellRef::new(0, 0)), Value::Number(value), "{code}");
+        app.begin_edit(None, true);
+        assert_eq!(app.editor.as_ref().unwrap().text, local, "{code}");
+        app.cancel_edit();
+    }
 }
 
 #[test]
