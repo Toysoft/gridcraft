@@ -11,7 +11,7 @@ Install GridCraft 0.5.0 or newer. From 0.5.0 on, the Windows app starts with Dir
 
 - You start GridCraft and no window appears.
 - GridCraft shows up in Task Manager for a moment and then quits.
-- Windows Event Viewer logs a crash in `igvk64.dll` (Intel's Vulkan driver) or `atio6axx.dll` (an AMD driver), with exception code `0xc0000005`.
+- Windows Event Viewer logs a crash in `igvk64.dll` (Intel's Vulkan driver) or `atio6axx.dll` (an AMD driver). The Intel crash logs in issues #59 and #120 show exception code `0xc0000005`.
 
 ## Fix
 
@@ -23,9 +23,7 @@ Install GridCraft 0.5.0 or newer. From 0.5.0 on, the Windows app starts with Dir
        Remove-Item Env:WGPU_BACKEND
 
    The last line restores the default for later launches. A maintainer suggested this workaround in issue #59.
-3. If 0.5.0 still does not open, try another graphics backend the same way, with `vulkan` in place of `dx12`. Try one at a time.
-
-Be careful with the override. Setting `WGPU_BACKEND` to `gl` can bring back the AMD driver crash, and setting it to `vulkan` can bring back the Intel one.
+3. If 0.5.0 still does not open, report it (see **Still stuck?** below). The README names `vulkan` as another value for `WGPU_BACKEND`, but do not use it on Intel graphics: Vulkan is what crashed there ([issue #59](https://github.com/storytold/gridcraft/issues/59), [issue #120](https://github.com/storytold/gridcraft/issues/120)).
 
 ## Why this happens
 

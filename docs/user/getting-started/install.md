@@ -14,9 +14,9 @@ Download the file for your system from the [latest release](https://github.com/s
 3. Run the file and follow the installer. It offers an optional desktop shortcut, which is unchecked on a new installation.
 4. Start GridCraft.
 
-For a Windows on Arm PC such as a Snapdragon laptop, download the `arm64` installer instead. The release also has an `x86` installer for 32-bit Windows.
+For a Windows on Arm PC such as a Snapdragon laptop, download the `arm64` installer instead.
 
-To run GridCraft without installing it, download `gridcraft-<version>-windows-x64-portable.zip`, unzip it and run `gridcraft.exe`. The `arm64` and `x86` builds have portable zips too.
+To run GridCraft without installing it, download `gridcraft-<version>-windows-x64-portable.zip`, unzip it and run `gridcraft.exe`. The `arm64` build has a portable zip too.
 
 If the app does not start, see [The app does not open on Windows](../troubleshooting/windows-app-does-not-open.md).
 

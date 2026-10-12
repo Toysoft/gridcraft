@@ -9,7 +9,7 @@ GridCraft is free and open source. The README lists no subscription, no licence 
 
 ## Where does it run?
 
-- Windows 11, in x64, arm64 and x86 builds.
+- Windows 11, in x64 and arm64 builds.
 - macOS, as one universal app for Apple silicon and Intel Macs.
 - Linux, on x86_64 and aarch64, as AppImage, Flatpak, `.deb`, `.rpm` or tarball. A RISC-V tarball exists too.
 - FreeBSD, on x86_64.

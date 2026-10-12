@@ -6,7 +6,7 @@ verified: 0.5.0
 
 GridCraft is a free, open-source spreadsheet app and an alternative to Microsoft Excel. It uses a ribbon, formula bar, Name Box and sheet tabs like Excel's, and saves to the .xlsx format.
 
-It is made by the ArtCraft team and runs on macOS, Windows, Linux, FreeBSD and in a web browser. It has no subscription, no licence server and no telemetry. GridCraft is in alpha: the core workflow works, but depth and file compatibility are still rough, so keep a copy of important workbooks.
+It is made by the ArtCraft team and runs on macOS, Windows, Linux, FreeBSD, plus a web build. It has no subscription, no licence server and no telemetry. GridCraft is in alpha: the core workflow works, but depth and file compatibility are still rough, so keep a copy of important workbooks.
 
 ## Start here
 
