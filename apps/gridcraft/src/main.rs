@@ -16,6 +16,7 @@ mod graphics;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
+mod x11_scale;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -330,6 +331,9 @@ fn main() -> eframe::Result<()> {
     if let Some(i) = icon() {
         viewport = viewport.with_icon(i);
     }
+    // X11: prefer the desktop's DPI (Xft.dpi, then the server screen) over the
+    // panel's physical density before winit reads it; explicit user override wins.
+    x11_scale::apply();
     let options = eframe::NativeOptions { viewport, ..Default::default() };
     // Before eframe creates the wgpu instance: Windows starts on DirectX 12, or OpenGL when
     // DirectX 12 has no GPU driver, and never touches Vulkan unless asked (see graphics.rs).
