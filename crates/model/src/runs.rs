@@ -177,6 +177,98 @@ impl CellRuns {
         }
         Ok(Some(CellRuns { runs: coalesced }))
     }
+
+    /// Re-derives the runs after a text edit: `self` is valid for `old_text`, the result for
+    /// `new_text`. The edit reduces to a kept common byte prefix, a kept common byte suffix,
+    /// and the middle — deleted from `old_text`, inserted into `new_text`: covered run
+    /// portions are dropped, and the inserted bytes take the font of the surviving run they
+    /// land in (the preceding run at a run boundary, the first run at the text start).
+    /// Returns `None` when the result is flat — empty (`new_text` empty, or a full retype with
+    /// no surviving run to inherit a font from), or one all-default run covering all of
+    /// `new_text` — or defensively when the pieces cannot be kept valid for `new_text` (e.g.
+    /// `self` was not actually valid for `old_text`). Never panics.
+    pub fn edited(&self, old_text: &str, new_text: &str) -> Option<CellRuns> {
+        if new_text.is_empty() {
+            return None;
+        }
+        let old_len = old_text.len();
+        let new_len = new_text.len();
+        // Longest common byte prefix, snapped back to a UTF-8 boundary (the kept bytes are
+        // identical, so boundary-ness agrees in both texts).
+        let mut p = 0;
+        for (a, b) in old_text.as_bytes().iter().zip(new_text.as_bytes()) {
+            if a != b {
+                break;
+            }
+            p += 1;
+        }
+        while p > 0 && !old_text.is_char_boundary(p) {
+            p -= 1;
+        }
+        // Longest common suffix over the remainders; zipping caps it at the shorter remainder,
+        // so the kept parts never overlap.
+        let old_tail = old_text.as_bytes().get(p..).unwrap_or(&[]);
+        let new_tail = new_text.as_bytes().get(p..).unwrap_or(&[]);
+        let mut s = 0;
+        for (a, b) in old_tail.iter().rev().zip(new_tail.iter().rev()) {
+            if a != b {
+                break;
+            }
+            s += 1;
+        }
+        while s > 0 && !old_text.is_char_boundary(old_len - s) {
+            s -= 1;
+        }
+        let new_mid = (new_len - s).saturating_sub(p); // bytes inserted into the middle of new
+        let k2_old = old_len - s; // kept-suffix start, old coordinates (deleted: p..k2_old)
+        let k2_new = new_len - s; // kept-suffix start, new coordinates
+        let shift = k2_new as i64 - k2_old as i64;
+        // Kept pieces: each old run contributes its head (before the middle) and its tail
+        // (after the middle, shifted into new coordinates); the covered middle is dropped.
+        let mut pieces: Vec<Run> = Vec::with_capacity(self.runs.len() + 1);
+        for old in &self.runs {
+            let rs = old.start as usize;
+            let re = rs.saturating_add(old.len as usize);
+            let head_end = re.min(p);
+            if head_end > rs {
+                pieces.push(Run { start: old.start, len: (head_end - rs) as u32, font: old.font.clone() });
+            }
+            let tail_start = rs.max(k2_old);
+            if re > tail_start {
+                let start = (tail_start as i64).checked_add(shift).and_then(|start| u32::try_from(start).ok());
+                if let Some(start) = start {
+                    pieces.push(Run { start, len: (re - tail_start) as u32, font: old.font.clone() });
+                }
+            }
+        }
+        // The inserted middle takes the font of the run it lands in: the last surviving run
+        // starting before `p` (the preceding run at a boundary), or the first run at `p == 0`.
+        if new_mid > 0 {
+            let split = pieces.iter().rposition(|r| (r.start as usize) < p);
+            // The `?` fires only when nothing survives (full retype) — flat.
+            let font = pieces.get(split.unwrap_or(0))?.font.clone();
+            pieces.insert(split.map_or(0, |i| i + 1), Run { start: p as u32, len: new_mid as u32, font });
+        }
+        let mut coalesced: Vec<Run> = Vec::with_capacity(pieces.len());
+        for r in pieces {
+            match coalesced.last_mut() {
+                Some(last) if last.font == r.font && (last.start as usize).saturating_add(last.len as usize) == r.start as usize => {
+                    last.len = last.len.saturating_add(r.len);
+                }
+                _ => coalesced.push(r),
+            }
+        }
+        let flat = match coalesced.as_slice() {
+            [] => true,
+            [one] => one.start == 0 && one.len as usize == new_text.len() && one.font == RunFont::default(),
+            _ => false,
+        };
+        if flat {
+            return None;
+        }
+        let edited = CellRuns { runs: coalesced };
+        if edited.valid_for(new_text) { Some(edited) } else { None }
+    }
 }
 
 #[cfg(test)]
@@ -260,6 +352,10 @@ mod tests {
 
     fn red_font() -> RunFont {
         RunFont { color: Some(Color::rgb(255, 0, 0)), ..none_font() }
+    }
+
+    fn green_font() -> RunFont {
+        RunFont { color: Some(Color::rgb(0, 128, 0)), ..none_font() }
     }
 
     #[test]
@@ -349,6 +445,97 @@ mod tests {
             Some(CellRuns { runs: vec![run_font(0, 6, bold_font()), run_font(6, 2, RunFont { color: Some(Color::rgb(255, 0, 0)), ..bold_font() })] })
         );
         assert!(out.unwrap().valid_for("é ok è"));
+    }
+
+    fn black_red_green() -> CellRuns {
+        // "black red green": red on "red" (bytes 6..9), green on "green" (bytes 10..15).
+        CellRuns { runs: vec![run(0, 6), run_font(6, 3, red_font()), run(9, 1), run_font(10, 5, green_font())] }
+    }
+
+    #[test]
+    fn edited_insert_before_run() {
+        // Typing "x" at byte 0: the first run absorbs it; the red run shifts to 7..10.
+        let out = black_red_green().edited("black red green", "xblack red green");
+        assert_eq!(out, Some(CellRuns { runs: vec![run(0, 7), run_font(7, 3, red_font()), run(10, 1), run_font(11, 5, green_font())] }));
+    }
+
+    #[test]
+    fn edited_insert_inside_run() {
+        // Typing "x" at byte 7 (inside "red"): the inserted byte joins the red run ("rxed").
+        let out = black_red_green().edited("black red green", "black rxed green");
+        assert_eq!(out, Some(CellRuns { runs: vec![run(0, 6), run_font(6, 4, red_font()), run(10, 1), run_font(11, 5, green_font())] }));
+    }
+
+    #[test]
+    fn edited_insert_at_run_boundary() {
+        // Typing "x" at byte 6, between "black " and "red": the inserted bytes join the
+        // *preceding* run (byte 6 is that run's end), so red stays 3 bytes, shifted to 7..10.
+        let out = black_red_green().edited("black red green", "black xred green");
+        assert_eq!(out, Some(CellRuns { runs: vec![run(0, 7), run_font(7, 3, red_font()), run(10, 1), run_font(11, 5, green_font())] }));
+    }
+
+    #[test]
+    fn edited_insert_after_run() {
+        // Typing at the very end: runs unchanged except the trailing green run grows.
+        let out = black_red_green().edited("black red green", "black red greenx");
+        assert_eq!(out, Some(CellRuns { runs: vec![run(0, 6), run_font(6, 3, red_font()), run(9, 1), run_font(10, 6, green_font())] }));
+    }
+
+    #[test]
+    fn edited_delete_spans_runs() {
+        // Deleting bytes 3..12 ("ck red gr"): covered portions are gone; "bla" meets the
+        // green tail ("een") at the delete point.
+        let out = black_red_green().edited("black red green", "blaeen");
+        assert_eq!(out, Some(CellRuns { runs: vec![run(0, 3), run_font(3, 3, green_font())] }));
+    }
+
+    #[test]
+    fn edited_paste_over_selection() {
+        // Replacing "black red" (bytes 0..9) with "B&W": one run in the first run's font
+        // (paste plus kept space coalesce), green tail preserved.
+        let out = black_red_green().edited("black red green", "B&W green");
+        assert_eq!(out, Some(CellRuns { runs: vec![run(0, 4), run_font(4, 5, green_font())] }));
+    }
+
+    #[test]
+    fn edited_delete_all_is_none() {
+        assert_eq!(black_red_green().edited("black red green", ""), None);
+    }
+
+    #[test]
+    fn edited_retype_full() {
+        // No common prefix or suffix: nothing survives to keep formatting — flat.
+        let cr = CellRuns { runs: vec![run_font(0, 3, bold_font())] };
+        assert_eq!(cr.edited("abc", "xyz"), None);
+    }
+
+    #[test]
+    fn edited_ime_multibyte() {
+        // IME inserts "é" (two bytes) mid-run; the red run absorbs both bytes.
+        let out = black_red_green().edited("black red green", "black réed green");
+        assert_eq!(out, Some(CellRuns { runs: vec![run(0, 6), run_font(6, 5, red_font()), run(11, 1), run_font(12, 5, green_font())] }));
+        assert!(out.unwrap().valid_for("black réed green"));
+    }
+
+    #[test]
+    fn edited_result_always_valid() {
+        // Property over the shapes above: the result is always `None` or valid for the new text.
+        let shapes = [
+            ("black red green", "xblack red green"),
+            ("black red green", "black rxed green"),
+            ("black red green", "black xred green"),
+            ("black red green", "black red greenx"),
+            ("black red green", "blaeen"),
+            ("black red green", "B&W green"),
+            ("black red green", ""),
+            ("black red green", "black réed green"),
+            ("abc", "xyz"),
+        ];
+        for (old, new) in shapes {
+            if let Some(out) = black_red_green().edited(old, new) {
+                assert!(out.valid_for(new), "edited({old:?} → {new:?}) produced runs not valid for the new text");
+            }
+        }
     }
 
     #[test]
