@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~25 points of "ready for real work" and ~160–240 h away
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (ribbon groups collapse into launcher popups when narrow) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (x14 conditional formats import, render and round-trip) · **Target:** Microsoft Excel (Microsoft 365)
 
 GridCraft aims at full Microsoft Excel parity, and at being better in places: faster, open (XLSX
 is the native format), fully scriptable by agents (MCP, control channel, CLI), and on the web.
@@ -132,6 +132,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
+| 2026-10-12 | x14 conditional-format extensions import, render and round-trip: Excel 2010 data-bar settings (solid fill, border, negative fill and border, axis, length limits), custom per-position icon picks and the x14-only icon sets 3Stars, 3Triangles and 5Boxes with original artwork (#703) |
 | 2026-10-12 | Responsive ribbon: when the window is too narrow for a tab, its groups collapse rightmost-first into launcher buttons that open the group in a dropdown popup, re-expanding as space returns; per-tab plan with 24 px hysteresis and a ≈ 540 px collapse floor on Home, below which the scroll arrows take over (#434) |
 | 2026-10-11 | UI building blocks: theme tokens with a WCAG contrast test over both themes (icons and reference colours follow dark mode); ribbon scroll arrows and a large split button (Formulas › AutoSum opens its menu); the formula bar grows from one to five lines, then scrolls; a code editor widget with Python and LaTeX colouring |
 | 2026-10-11 | Command-sequence fuzzing: random command sequences checked against undo/redo, XLSX round-trip and full recalculation; fixes for the table, legacy-array, spill, AutoSum, Watch Window and sheet-copy bugs it found |
@@ -179,6 +180,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | x14 conditional-format extensions import, render and round-trip (#703); progress log row |
 | 2026-10-12 | minor | Ribbon groups collapse into launcher popups when narrow, rightmost first (#434); progress log row |
 | 2026-10-11 | minor | UI building blocks; progress log row |
 | 2026-10-11 | minor | Password-encrypted workbooks open (#11); progress log row |
