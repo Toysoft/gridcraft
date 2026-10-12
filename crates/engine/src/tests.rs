@@ -2797,5 +2797,6 @@ fn a_decrypted_workbook_never_overwrites_its_encrypted_original() {
 }
 
 mod python_cells;
+mod python_commands;
 mod python_run;
 mod seams;

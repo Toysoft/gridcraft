@@ -116,7 +116,8 @@ pub struct Clipboard {
     pub trust: Trust,
 }
 
-/// Whether a document's active content (macros) may run without asking the person first.
+/// Whether a document's active content (Python cells, macros) may run without asking the person
+/// first.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Trust {
@@ -126,12 +127,14 @@ pub enum Trust {
     /// Opened from a file, or holding content pasted from one: active content asks before it
     /// runs.
     FromFile,
+    /// Opened from a file whose active content the person allowed to run (`python.enable`).
+    Trusted,
 }
 
 impl Trust {
     /// Whether active content may run without asking.
     pub fn allows_code(self) -> bool {
-        self == Trust::Local
+        self != Trust::FromFile
     }
 
     /// The trust of a document after it receives content from a document with trust `source`:
@@ -411,6 +414,9 @@ impl Session {
         });
         // What Python cells see as the edit: the workbook before a top-level command.
         let python_before = if self.depth == 0 { before.as_ref().map(|(uid, wb, _)| (*uid, wb.clone())) } else { None };
+        if self.depth == 0 {
+            self.python.refreshed = false;
+        }
         self.depth = self.depth.saturating_add(1);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (spec.run)(self, &params)));
         self.depth = self.depth.saturating_sub(1);
@@ -463,7 +469,7 @@ impl Session {
             d.redo.clear();
             d.revision += 1;
         }
-        if result.is_ok() {
+        if python_before.is_some() && !std::mem::take(&mut self.python.refreshed) && result.is_ok() {
             self.python_after_command(id, python_before);
         }
         result
