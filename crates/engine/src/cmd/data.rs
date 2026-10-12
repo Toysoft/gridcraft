@@ -1129,6 +1129,7 @@ fn group(s: &mut Session, p: &Json, on: bool) -> Result<Json> {
         {
             e.collapsed = false;
         }
+        cx.structural = true; // ungrouping reveals hidden rows: SUBTOTAL(10x) depends on it
         Ok(Json::Null)
     })
 }

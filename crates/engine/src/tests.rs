@@ -2866,3 +2866,19 @@ fn analysis_add_sparklines_one_per_row_in_one_undo_step() {
     assert!(s.doc().unwrap().wb.active().unwrap().sparklines.is_empty());
     assert!(s.execute("analysis.addSparklines", json!({"range": "A1:A4"})).is_err());
 }
+
+#[test]
+fn subtotal_109_recalculates_when_row_height_or_autofit_reveals_rows() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [[1], [2], [4], [8]]})).unwrap();
+    s.execute("cell.set", json!({"cell": "C1", "input": "=SUBTOTAL(109,A1:A4)"})).unwrap();
+    s.execute("home.hideRows", json!({"rows": "2:3"})).unwrap();
+    assert_eq!(v(&s, "C1"), Value::Number(9.0));
+    // A non-zero height unhides the rows (the fuzz found the stale SUBTOTAL).
+    s.execute("home.rowHeight", json!({"rows": "2:3", "height": 60.0})).unwrap();
+    assert_eq!(v(&s, "C1"), Value::Number(15.0));
+    s.execute("home.hideRows", json!({"rows": "2:3"})).unwrap();
+    assert_eq!(v(&s, "C1"), Value::Number(9.0));
+    s.execute("home.autofitRowHeight", json!({"rows": "2:3"})).unwrap();
+    assert_eq!(v(&s, "C1"), Value::Number(15.0));
+}
