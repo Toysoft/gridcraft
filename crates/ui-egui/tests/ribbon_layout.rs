@@ -184,6 +184,27 @@ fn collapsed_group_dropdown_survives_nested_control_popups() {
 }
 
 #[test]
+fn tab_switch_without_a_click_does_not_reopen_a_dropdown() {
+    // Tab switches that no pointer click carries (the control channel, a command, header/footer
+    // editing) must close an open group dropdown for good: returning to the tab must not
+    // re-open it without a click on its launcher.
+    let mut h = app_at(640.0, "Home");
+    assert!(gridcraft_ui_egui::ribbon::collapsed_names(&h.ctx, "Home").iter().any(|n| n == "Font"), "Font is collapsed at 640 px");
+    h.get_by_label("Font").click();
+    h.run_steps(2);
+    assert!(h.query_by_label("Bold (⌘B)").is_some(), "dropdown open on Home");
+    // The control channel's path: `ribbon_tab` set directly, no click in the frame.
+    h.state_mut().ui.ribbon_tab = "Insert".into();
+    h.run_steps(2);
+    h.state_mut().ui.ribbon_tab = "Home".into();
+    h.run_steps(2);
+    assert!(h.query_by_label("Bold (⌘B)").is_none(), "returning to Home must not re-open the dropdown");
+    h.get_by_label("Font").click();
+    h.run_steps(2);
+    assert!(h.query_by_label("Bold (⌘B)").is_some(), "clicking the launcher re-opens it");
+}
+
+#[test]
 fn formulas_autosum_runs_on_the_icon_and_opens_its_menu_on_the_label() {
     let mut h = app_at(1600.0, "Formulas");
     h.get_by_label("AutoSum").click();
@@ -267,6 +288,27 @@ fn every_tab_survives_320_px() {
         let h = app_at(320.0, tab); // implicit no-panic assertion
         assert!(RibbonOverflow::get(&h.ctx).visible_height > 0.0, "{tab}: card laid out");
         assert!(RibbonOverflow::get(&h.ctx).content_height <= RibbonOverflow::get(&h.ctx).visible_height + 0.5, "{tab}: still fits the card height");
+    }
+}
+
+#[test]
+fn every_tab_at_700_px_overflows_only_when_collapse_is_exhausted() {
+    // The mixed regime's width: the card may still fit (nothing collapsed needed) or collapse a
+    // few groups — but if it still overflows, every group whose launcher saves width must already
+    // be a launcher (scroll arrows are the last resort, never the first).
+    for tab in TABS {
+        let h = app_at(700.0, tab);
+        assert!(RibbonOverflow::get(&h.ctx).visible_height > 0.0, "{tab}: card laid out");
+        assert!(RibbonOverflow::get(&h.ctx).content_height <= RibbonOverflow::get(&h.ctx).visible_height + 0.5, "{tab}: still fits the card height");
+        if RibbonOverflow::get(&h.ctx).overflows() {
+            let plan = gridcraft_ui_egui::ribbon::collapsed_names(&h.ctx, tab);
+            let saving: Vec<_> =
+                gridcraft_ui_egui::ribbon::group_measures(&h.ctx).iter().filter(|m| (m.width - m.launcher) > 0.5).map(|m| m.name.clone()).collect();
+            assert!(
+                saving.iter().all(|s| plan.contains(s)),
+                "{tab}: overflows at 700 px with saving>0 groups {saving:?} not all collapsed in {plan:?}"
+            );
+        }
     }
 }
 

@@ -171,6 +171,16 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
 }
 
 pub fn show(app: &mut SheetApp, ui: &mut Ui) {
+    // A dropdown open on another tab is not open here — and must not be waiting to re-open when
+    // that tab comes back: forget it the moment the tab it names is left (a switch that no click
+    // on this tab carried). `group`'s tab-keyed check alone cannot do this: on the other tab the
+    // named launcher never renders, so nothing there would ever clear it.
+    ui.ctx().data_mut(|d| {
+        let open: Option<(String, String)> = d.get_temp(group_dropdown_open_id()).unwrap_or_default();
+        if open.as_ref().is_some_and(|(tab, _)| tab != &app.ui.ribbon_tab) {
+            d.insert_temp::<Option<(String, String)>>(group_dropdown_open_id(), None);
+        }
+    });
     let t = Tokens::get(ui.ctx());
     let collapsed = app.ui.ribbon_collapsed;
     let h = if collapsed { 34.0 } else { 34.0 + 92.0 };
@@ -247,6 +257,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 // And this tab's collapse plan, where `group` can find it.
                 let plan = ui.ctx().data(|d| d.get_temp::<Vec<String>>(group_plan_id(&app.ui.ribbon_tab))).unwrap_or_default();
                 ui.ctx().data_mut(|d| d.insert_temp(group_plan_active_id(), plan));
+                ui.ctx().data_mut(|d| d.insert_temp(active_tab_id(), app.ui.ribbon_tab.clone()));
                 let scroll = egui::ScrollArea::horizontal()
                     .id_salt("ribbon_scroll")
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
@@ -502,8 +513,18 @@ fn group_plan_active_id() -> egui::Id {
     egui::Id::new("ribbon_group_plan_active")
 }
 
-/// Where the name of the group whose collapsed dropdown is open lives (None = none open; only one
-/// at a time, as in Excel). The dropdown is an [`egui::Area`], not a `Popup`: egui keeps a single
+/// Where [`show`] files the active tab's name for [`group`] to read, written next to
+/// [`group_plan_active_id`]'s plan each frame (same reason: `group` renders without knowing
+/// which tab it is on).
+fn active_tab_id() -> egui::Id {
+    egui::Id::new("ribbon_active_tab")
+}
+
+/// Where the collapsed dropdown that is open lives, keyed by the tab and the group it was opened
+/// on (None = none open; only one at a time, as in Excel). The tab in the key keeps a tab switch
+/// that no pointer click carried (control channel, a command, header/footer editing) from leaving
+/// the dropdown open — or re-opening it — on the tab it was left behind. The dropdown is an
+/// [`egui::Area`], not a `Popup`: egui keeps a single
 /// popup slot per viewport, so a `Popup`-based group popup would be replaced — and then abandoned
 /// — by the first control inside it that opens a popup of its own (a font combo, a split menu).
 fn group_dropdown_open_id() -> egui::Id {
@@ -528,6 +549,7 @@ fn expanded_widths(ctx: &egui::Context) -> HashMap<String, f32> {
 /// the group's widget temp-state (combo drafts, popup memory) survives the move. Records the
 /// width it took and the launcher size for this frame.
 pub(crate) fn group(ui: &mut Ui, name: &str, hero: Icon, body: impl FnOnce(&mut Ui)) {
+    let tab: String = ui.ctx().data(|d| d.get_temp(active_tab_id())).unwrap_or_default();
     let collapsed = ui.ctx().data(|d| d.get_temp::<Vec<String>>(group_plan_active_id())).is_some_and(|plan| plan.iter().any(|g| g == name));
     // The measure starts before the separator: a group's row slot is the lead (separator and its
     // spacing) plus the content plus the row's trailing spacing, so plans sum to the real row.
@@ -539,8 +561,10 @@ pub(crate) fn group(ui: &mut Ui, name: &str, hero: Icon, body: impl FnOnce(&mut 
     let (launcher, width) = if collapsed {
         let r = launcher_button(ui, hero, name);
         let dropdown_id = egui::Id::new(("ribbon_group_dropdown", name));
-        let shared: Option<String> = ui.ctx().data(|d| d.get_temp(group_dropdown_open_id())).unwrap_or_default();
-        let was_open = shared.as_deref() == Some(name);
+        let shared: Option<(String, String)> = ui.ctx().data(|d| d.get_temp(group_dropdown_open_id())).unwrap_or_default();
+        // The tab in the key must be this one: a dropdown opened on another tab (and left there by
+        // a switch that no click carried) is not open here.
+        let was_open = matches!(&shared, Some((t, g)) if t.as_str() == tab && g == name);
         let mut open = was_open;
         if r.clicked() {
             open = !open;
@@ -562,11 +586,11 @@ pub(crate) fn group(ui: &mut Ui, name: &str, hero: Icon, body: impl FnOnce(&mut 
             }
         }
         ui.ctx().data_mut(|d| {
-            let current: Option<String> = d.get_temp(group_dropdown_open_id()).unwrap_or_default();
+            let current: Option<(String, String)> = d.get_temp(group_dropdown_open_id()).unwrap_or_default();
             if open {
-                d.insert_temp(group_dropdown_open_id(), Some(name.to_owned()));
-            } else if current.as_deref() == Some(name) {
-                d.insert_temp::<Option<String>>(group_dropdown_open_id(), None);
+                d.insert_temp(group_dropdown_open_id(), Some((tab.clone(), name.to_owned())));
+            } else if matches!(&current, Some((t, g)) if t.as_str() == tab && g == name) {
+                d.insert_temp::<Option<(String, String)>>(group_dropdown_open_id(), None);
             }
         });
         if open {
@@ -585,12 +609,13 @@ pub(crate) fn group(ui: &mut Ui, name: &str, hero: Icon, body: impl FnOnce(&mut 
         let expanded = expanded_widths(ui.ctx()).get(name).copied();
         (row, expanded.unwrap_or(row))
     } else {
-        // The group is expanded while its dropdown temp names it: the plan changed under the open
-        // dropdown, so close it — it must not re-open without a click on the launcher.
+        // The group is expanded while its dropdown temp names it (on this tab): the plan changed
+        // under the open dropdown, so close it — it must not re-open without a click on the
+        // launcher.
         ui.ctx().data_mut(|d| {
-            let open: Option<String> = d.get_temp(group_dropdown_open_id()).unwrap_or_default();
-            if open.as_deref() == Some(name) {
-                d.insert_temp::<Option<String>>(group_dropdown_open_id(), None);
+            let open: Option<(String, String)> = d.get_temp(group_dropdown_open_id()).unwrap_or_default();
+            if matches!(&open, Some((t, g)) if t.as_str() == tab && g == name) {
+                d.insert_temp::<Option<(String, String)>>(group_dropdown_open_id(), None);
             }
         });
         ui.push_id(("ribbon_group", name), |ui| body(ui));
