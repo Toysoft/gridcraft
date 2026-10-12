@@ -819,6 +819,12 @@ impl SheetApp {
         self.session.active().map(|d| (d.uid, d.wb.active_sheet))
     }
 
+    /// Stable egui state scoped to the active workbook. A shared egui context must not let
+    /// editors, dialogs, overlays, or resizable panels leak state between workbooks.
+    pub fn widget_id(&self, source: impl std::hash::Hash + std::fmt::Debug) -> egui::Id {
+        egui::Id::new(("workbook", self.session.active().map(|document| document.uid).unwrap_or(0))).with(source)
+    }
+
     pub fn view(&self) -> SheetView {
         self.view_key().and_then(|k| self.views.get(&k).copied()).unwrap_or_else(|| self.saved_view())
     }

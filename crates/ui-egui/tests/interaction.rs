@@ -213,7 +213,8 @@ fn name_box_enter_goes_to_the_typed_cell_not_the_one_below() {
     let mut h = harness(blank());
     h.state_mut().session.run("selection.set", json!({"cell": "C5"})).unwrap();
     h.run_steps(2);
-    h.ctx.memory_mut(|m| m.request_focus(egui::Id::new("gridcraft.name_box")));
+    let name_box = h.state().widget_id("gridcraft.name_box");
+    h.ctx.memory_mut(|m| m.request_focus(name_box));
     h.run_steps(2);
     h.input_mut().events.push(Event::Key { key: Key::A, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::COMMAND });
     h.input_mut().events.push(Event::Text("A1".into()));
