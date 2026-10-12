@@ -894,7 +894,26 @@ fn x14_extensions_round_trip() {
         priority: 2,
         stop_if_true: false,
     });
-    // (c) Custom icon set: classic set with per-position icons from another set.
+    // (c) Bare solid bar: solid fill is x14-only, everything else stays default — flags and
+    // colour elements omitted, axisPosition="none".
+    s.cond_formats.push(CondFormat {
+        ranges: vec![rr("G2:G10")],
+        rule: CfRule::DataBar {
+            min: CfValueKind::Min,
+            max: CfValueKind::Max,
+            color: Color::Rgb(0x638EC6),
+            gradient: false,
+            show_value: true,
+            border: None,
+            negative_fill: None,
+            negative_border: None,
+            axis: None,
+            limits: None,
+        },
+        priority: 3,
+        stop_if_true: false,
+    });
+    // (d) Custom icon set: classic set with per-position icons from another set.
     s.cond_formats.push(CondFormat {
         ranges: vec![rr("D2:D10")],
         rule: CfRule::IconSet {
@@ -904,17 +923,17 @@ fn x14_extensions_round_trip() {
             show_value: true,
             icons: Some((0..3).map(|id| IconChoice { set: "3Triangles".into(), id }).collect()),
         },
-        priority: 3,
-        stop_if_true: false,
-    });
-    // (d) `5Boxes` exists only in x14: an x14-only rule with no classic counterpart.
-    s.cond_formats.push(CondFormat {
-        ranges: vec![rr("E2:E10")],
-        rule: CfRule::IconSet { set: "5Boxes".into(), thresholds: default_icon_thresholds("5Boxes"), reverse: false, show_value: true, icons: None },
         priority: 4,
         stop_if_true: false,
     });
-    // (e) A sparkline sharing the worksheet extLst.
+    // (e) `5Boxes` exists only in x14: an x14-only rule with no classic counterpart.
+    s.cond_formats.push(CondFormat {
+        ranges: vec![rr("E2:E10")],
+        rule: CfRule::IconSet { set: "5Boxes".into(), thresholds: default_icon_thresholds("5Boxes"), reverse: false, show_value: true, icons: None },
+        priority: 5,
+        stop_if_true: false,
+    });
+    // (f) A sparkline sharing the worksheet extLst.
     s.sparklines.push(Sparkline {
         cell: at("F2"),
         source: "Sheet1!B2:B10".into(),
@@ -927,17 +946,38 @@ fn x14_extensions_round_trip() {
     let (xml, _) = sheet1_xml(&bytes);
     // The id ext sits inside the rule element (Excel's shape, PR #610), not after it.
     assert!(xml.contains("<x14:id>{00000000-0000-0000-0000-000000000001}</x14:id></ext></extLst></dataBar>"), "{xml}");
-    assert!(xml.contains("<x14:id>{00000000-0000-0000-0000-000000000003}</x14:id></ext></extLst></iconSet>"), "{xml}");
+    assert!(xml.contains("<x14:id>{00000000-0000-0000-0000-000000000004}</x14:id></ext></extLst></iconSet>"), "{xml}");
     // x14 cfvo values are xm:f children, never val attributes.
     assert!(xml.contains("<x14:cfvo type=\"num\"><xm:f>0</xm:f></x14:cfvo><x14:cfvo type=\"num\"><xm:f>100</xm:f></x14:cfvo>"), "{xml}");
     for rest in xml.split("<x14:cfvo ").skip(1) {
         let head = rest.split('>').next().unwrap();
         assert!(!head.contains("val="), "an x14 cfvo carries a val attribute: {head}");
     }
+    // MS-XLSX §2.6.30: the colour children are flat color-attribute elements, in the schema
+    // sequence, each with its same-as-positive flag "0"; fillColor mirrors the classic colour.
+    assert!(
+        xml.contains(
+            "<x14:dataBar minLength=\"10\" maxLength=\"90\" gradient=\"0\" border=\"1\" negativeBarColorSameAsPositive=\"0\" negativeBarBorderColorSameAsPositive=\"0\">\
+<x14:cfvo type=\"num\"><xm:f>0</xm:f></x14:cfvo><x14:cfvo type=\"num\"><xm:f>100</xm:f></x14:cfvo>\
+<x14:fillColor rgb=\"FF638EC6\"/><x14:borderColor rgb=\"FFFF0000\"/><x14:negativeFillColor rgb=\"FFFF00FF\"/>\
+<x14:negativeBorderColor rgb=\"FF0000FF\"/><x14:axisColor rgb=\"FF00FF00\"/></x14:dataBar>"
+        ),
+        "{xml}"
+    );
+    // A bare solid bar: omitted flags and elements, no axis, no border.
+    assert!(
+        xml.contains(
+            "<x14:dataBar gradient=\"0\" axisPosition=\"none\">\
+<x14:cfvo type=\"autoMin\"/><x14:cfvo type=\"autoMax\"/><x14:fillColor rgb=\"FF638EC6\"/></x14:dataBar>"
+        ),
+        "{xml}"
+    );
+    // The nested container shape does not exist in the schema.
+    assert!(!xml.contains("<x14:border>") && !xml.contains("<x14:negativeFill>") && !xml.contains("<x14:axis>"), "{xml}");
     // The conditional-format ext precedes the sparkline ext; one worksheet extLst holds both.
     let (cf_at, spark_at) = (xml.find("{78C0D931").unwrap(), xml.find("{05C60535").unwrap());
     assert!(cf_at < spark_at, "{xml}");
-    assert_eq!(xml.matches("<extLst>").count(), 3, "one inside each extended rule element plus the worksheet's: {xml}");
+    assert_eq!(xml.matches("<extLst>").count(), 4, "one inside each extended rule element plus the worksheet's: {xml}");
     // The plain gradient bar's rule stays classic-only.
     let plain = xml.split("<conditionalFormatting sqref=\"C2:C10\">").nth(1).unwrap().split("</conditionalFormatting>").next().unwrap();
     assert!(!plain.contains("extLst") && !plain.contains("x14:"), "a plain gradient bar grows an ext: {plain}");

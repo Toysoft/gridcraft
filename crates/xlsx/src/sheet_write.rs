@@ -72,12 +72,6 @@ fn x14_cfvo_xml(v: &CfValueKind) -> String {
     }
 }
 
-/// An `x14:` element wrapping a colour: `border`, `negativeFill`, `negativeBorderColor` and
-/// `axis` all use this element form (not an `x14:axisColor`-style attribute).
-fn x14_color_el(name: &str, c: &Color) -> String {
-    format!("<x14:{name}><x14:color {}/></x14:{name}>", color_attrs(c))
-}
-
 /// The icon sets Excel 2010 added in x14 only (`3Stars`, `3Triangles`, `5Boxes`): a rule using
 /// one is written as an x14-only rule with no classic counterpart, because the classic
 /// `iconSet` attribute has no value for them.
@@ -935,6 +929,7 @@ fn cf_rule_xml(cf: &CondFormat, priority: u32, out: &mut Out) -> CfXml {
             // a plain gradient bar is fully classic and must not grow an extension.
             let extended =
                 !*gradient || border.is_some() || negative_fill.is_some() || negative_border.is_some() || axis.is_some() || limits.is_some();
+            let col = if *color == Color::Auto { "rgb=\"FF638EC6\"".to_string() } else { color_attrs(color) };
             let x14 = extended.then(|| {
                 let mut a = String::new();
                 if let Some((lo, hi)) = limits {
@@ -946,25 +941,36 @@ fn cf_rule_xml(cf: &CondFormat, priority: u32, out: &mut Out) -> CfXml {
                 if border.is_some() {
                     a.push_str(" border=\"1\"");
                 }
-                if let Some(c) = negative_fill {
-                    let _ = write!(a, " negativeBarColorAsSame=\"{}\"", u8::from(c == color));
+                // MS-XLSX MUST-exist-iff: each same-as-positive flag is "0" exactly when its
+                // colour element exists; a missing pair is Excel's default (negative fill red,
+                // negative border same as positive), which is what the model's `None` means.
+                if negative_fill.is_some() {
+                    a.push_str(" negativeBarColorSameAsPositive=\"0\"");
                 }
-                if let Some(c) = negative_border {
-                    let _ = write!(a, " negativeBarBorderColorAsSame=\"{}\"", u8::from(c == color));
+                if negative_border.is_some() {
+                    a.push_str(" negativeBarBorderColorSameAsPositive=\"0\"");
+                }
+                if axis.is_none() {
+                    a.push_str(" axisPosition=\"none\"");
                 }
                 let mut b = format!("<x14:cfRule type=\"dataBar\" id=\"{}\" priority=\"{priority}\"><x14:dataBar{a}>", x14_guid(priority));
                 b.push_str(&x14_cfvo_xml(min));
                 b.push_str(&x14_cfvo_xml(max));
-                for (name, c) in [("border", border), ("negativeFill", negative_fill), ("negativeBorderColor", negative_border), ("axis", axis)] {
+                // Schema sequence: cfvo ×2, then the colour elements — flat color-attribute
+                // elements (MS-XLSX §2.6.30), fillColor mirroring the classic colour (it MUST
+                // exist whenever the rule carries a priority, which ours always do).
+                let _ = write!(b, "<x14:fillColor {col}/>");
+                for (name, c) in
+                    [("borderColor", border), ("negativeFillColor", negative_fill), ("negativeBorderColor", negative_border), ("axisColor", axis)]
+                {
                     if let Some(c) = c {
-                        b.push_str(&x14_color_el(name, c));
+                        let _ = write!(b, "<x14:{name} {}/>", color_attrs(c));
                     }
                 }
                 b.push_str("</x14:dataBar></x14:cfRule>");
                 b
             });
             let id = extended.then(|| id_ext(priority));
-            let col = if *color == Color::Auto { "rgb=\"FF638EC6\"".to_string() } else { color_attrs(color) };
             CfXml {
                 classic: Some(format!(
                     "<cfRule type=\"dataBar\" priority=\"{priority}\"{stop}><dataBar{}>{}{}<color {col}/>{}</dataBar></cfRule>",

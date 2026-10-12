@@ -279,7 +279,8 @@ Check this</t></r></text></comment></commentList></comments>"#;
 }
 
 /// An Excel-shaped x14 data bar: the classic rule carries a GUID ext, the sheet-level ext holds
-/// the x14 refinement linked by that GUID.
+/// the x14 refinement linked by that GUID. Colour children are flat color-attribute elements
+/// (MS-XLSX §2.6.30).
 const X14_DATABAR_SHEET: &str = r#"<sheetData>
 <row r="1"><c r="A1"><v>1</v></c><c r="B1"><v>-5</v></c></row>
 </sheetData>
@@ -290,12 +291,13 @@ const X14_DATABAR_SHEET: &str = r#"<sheetData>
 <extLst><ext xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}">
 <x14:conditionalFormattings><x14:conditionalFormatting xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">
 <x14:cfRule type="dataBar" id="{D4A5D3C2-6B7E-4E8F-9A01-2C3B4D5E6F70}" priority="1">
-<x14:dataBar minLength="0" maxLength="100" gradient="0" border="1" negativeBarColorAsSame="0" negativeBarBorderColorAsSame="0">
+<x14:dataBar minLength="0" maxLength="100" gradient="0" border="1" negativeBarColorSameAsPositive="0" negativeBarBorderColorSameAsPositive="0">
 <x14:cfvo type="autoMin"/><x14:cfvo type="autoMax"/>
-<x14:border><x14:color rgb="FF638EC8"/></x14:border>
-<x14:negativeFill><x14:color rgb="FFFF0000"/></x14:negativeFill>
-<x14:negativeBorderColor><x14:color rgb="FF000000"/></x14:negativeBorderColor>
-<x14:axis><x14:color rgb="FF000000"/></x14:axis>
+<x14:fillColor rgb="FF638EC8"/>
+<x14:borderColor rgb="FF638EC8"/>
+<x14:negativeFillColor rgb="FFFF0000"/>
+<x14:negativeBorderColor rgb="FF000000"/>
+<x14:axisColor rgb="FF000000"/>
 </x14:dataBar></x14:cfRule>
 <xm:sqref>A1:B1</xm:sqref>
 </x14:conditionalFormatting></x14:conditionalFormattings>
@@ -332,7 +334,10 @@ fn pre_610_id_placement_still_links() {
 #[test]
 fn unmodelled_and_hostile_x14() {
     // An attribute outside the modelled set warns, while what is modelled still imports.
-    let body = X14_DATABAR_SHEET.replace(r#"negativeBarBorderColorAsSame="0">"#, r#"negativeBarBorderColorAsSame="0" direction="rtl">"#);
+    // (`negativeBarColorAsSame` was this writer's pre-schema-fix invention; MS-XLSX names it
+    // `negativeBarColorSameAsPositive`.)
+    let body = X14_DATABAR_SHEET
+        .replace(r#"border="1" negativeBarColorSameAsPositive="0""#, r#"border="1" negativeBarColorAsSame="0" negativeBarColorSameAsPositive="0""#);
     let (wb, rep) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
     let CfRule::DataBar { gradient, .. } = &wb.sheet(0).unwrap().cond_formats[0].rule else { panic!("not a data bar") };
     assert!(!*gradient);
@@ -433,6 +438,39 @@ fn x14_only_icon_set_imports() {
     );
     assert!(icons.is_none());
     assert!(!rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
+}
+
+/// The flat colour children of an x14 data bar: `fillColor` overrides the classic bar colour,
+/// `axisPosition="none"` leaves the axis unset, and a same-as-positive flag with no element
+/// takes the (overridden) positive colour.
+#[test]
+fn flat_databar_colour_elements_parse() {
+    let body = X14_DATABAR_SHEET
+        .replace(r#"<x14:fillColor rgb="FF638EC8"/>"#, r#"<x14:fillColor rgb="FF00B0F0"/>"#)
+        .replace(r#"<x14:axisColor rgb="FF000000"/>"#, "")
+        .replace(r#"negativeBarColorSameAsPositive="0""#, r#"negativeBarColorSameAsPositive="1""#)
+        .replace(r#"<x14:negativeFillColor rgb="FFFF0000"/>"#, "");
+    let (wb, rep) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
+    let CfRule::DataBar { color, negative_fill, axis, .. } = &wb.sheet(0).unwrap().cond_formats[0].rule else {
+        panic!("not a data bar: {:?}", wb.sheet(0).unwrap().cond_formats[0].rule)
+    };
+    assert_eq!(*color, Color::Rgb(0x00B0F0), "fillColor overrides the classic colour");
+    assert_eq!(*negative_fill, Some(Color::Rgb(0x00B0F0)), "the flag takes the positive colour");
+    assert_eq!(*axis, None, "axisPosition=\"none\" keeps the axis unset");
+    assert!(!rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
+}
+
+/// The nested container shape (`<x14:border><x14:color/></x14:border>`) is not in MS-XLSX;
+/// its element names are unknown children and warn, importing nothing.
+#[test]
+fn nested_databar_colour_containers_warn() {
+    let body = X14_DATABAR_SHEET
+        .replace(r#"<x14:borderColor rgb="FF638EC8"/>"#, r#"<x14:border><x14:color rgb="FF638EC8"/></x14:border>"#)
+        .replace(r#"<x14:axisColor rgb="FF000000"/>"#, r#"<x14:axis><x14:color rgb="FF000000"/></x14:axis>"#);
+    let (wb, rep) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
+    let CfRule::DataBar { border, axis, .. } = &wb.sheet(0).unwrap().cond_formats[0].rule else { panic!("not a data bar") };
+    assert!(border.is_none() && axis.is_none());
+    assert!(rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
 }
 
 #[test]

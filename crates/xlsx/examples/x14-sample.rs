@@ -62,6 +62,24 @@ fn run(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         priority: 2,
         stop_if_true: false,
     });
+    // Bare solid bar: solid fill is x14-only, everything else default (no axis, no flags).
+    s.cond_formats.push(CondFormat {
+        ranges: vec![gridcraft_core::RangeRef::parse("G2:G10").ok_or("range")?],
+        rule: CfRule::DataBar {
+            min: CfValueKind::Min,
+            max: CfValueKind::Max,
+            color: Color::Rgb(0x638EC6),
+            gradient: false,
+            show_value: true,
+            border: None,
+            negative_fill: None,
+            negative_border: None,
+            axis: None,
+            limits: None,
+        },
+        priority: 5,
+        stop_if_true: false,
+    });
     // Custom icon set: 3Arrows with every position drawn from 3Triangles.
     s.cond_formats.push(CondFormat {
         ranges: vec![gridcraft_core::RangeRef::parse("D2:D10").ok_or("range")?],

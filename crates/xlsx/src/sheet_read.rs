@@ -1132,12 +1132,23 @@ fn merge_x14_data_bar(cx: &Ctx<'_>, db: &El, rule: &mut CfRule) -> bool {
     };
     let mut skipped = false;
     for (name, _) in &db.attrs {
-        if !matches!(name.as_str(), "minLength" | "maxLength" | "gradient" | "border" | "negativeBarColorAsSame" | "negativeBarBorderColorAsSame") {
+        if !matches!(
+            name.as_str(),
+            "minLength"
+                | "maxLength"
+                | "showValue"
+                | "border"
+                | "gradient"
+                | "direction"
+                | "negativeBarColorSameAsPositive"
+                | "negativeBarBorderColorSameAsPositive"
+                | "axisPosition"
+        ) {
             skipped = true;
         }
     }
     for child in &db.children {
-        if !matches!(child.name.as_str(), "cfvo" | "border" | "negativeFill" | "negativeBorderColor" | "axis") {
+        if !matches!(child.name.as_str(), "cfvo" | "fillColor" | "borderColor" | "negativeFillColor" | "negativeBorderColor" | "axisColor") {
             skipped = true;
         }
     }
@@ -1147,13 +1158,23 @@ fn merge_x14_data_bar(cx: &Ctx<'_>, db: &El, rule: &mut CfRule) -> bool {
         (None, None) => None,
         (lo, hi) => Some((lo.unwrap_or(10).min(100) as u8, hi.unwrap_or(90).min(100) as u8)),
     };
-    let ext_color = |name: &str| db.child(name).and_then(|e| e.child("color")).map(|c| read_color(c, &cx.palette));
-    *border = ext_color("border");
-    *negative_fill = ext_color("negativeFill");
-    *negative_border = ext_color("negativeBorderColor");
-    *axis = ext_color("axis");
-    if db.flag("negativeBarColorAsSame", false) {
+    // MS-XLSX §2.6.30: the colour children are flat color-attribute elements (`rgb`/`theme`/
+    // `tint`/`auto` directly, like the classic `<color>`); `fillColor` overrides the classic
+    // bar colour. No negative-fill element means Excel's default red — the model's `None` —
+    // unless a same-as-positive flag pins it to the positive colour.
+    let flat = |name: &str| db.child(name).map(|e| read_color(e, &cx.palette));
+    if let Some(c) = flat("fillColor") {
+        *color = c;
+    }
+    *border = flat("borderColor");
+    *negative_fill = flat("negativeFillColor");
+    *negative_border = flat("negativeBorderColor");
+    *axis = flat("axisColor");
+    if db.flag("negativeBarColorSameAsPositive", false) {
         *negative_fill = Some(*color);
+    }
+    if db.attr("axisPosition") == Some("none") {
+        *axis = None;
     }
     let cfvos: Vec<&El> = db.kids("cfvo").collect();
     if cfvos.len() > 2 {
