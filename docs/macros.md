@@ -1,6 +1,6 @@
 # Macros
 
-> **Last updated:** 2026-10-11 · **Change:** major (created: the macro engine and its commands)
+> **Last updated:** 2026-10-11 · **Change:** minor (Record Macro takes a name, shortcut and description)
 
 GridCraft macros are typed, declarative lists of commands, not VBA. Every step runs a GridCraft
 command (the same ids the ribbon, CLI and MCP use) or one of three bounded control steps. A macro
@@ -101,13 +101,21 @@ parameters of the step that just ran, and the cells changed so far.
 
 ## Recording
 
-`macro.record` toggles recording (`relative: false` for absolute references; `name` and
-`description` when stopping). With relative references the selection when recording starts is the
+`macro.record` toggles recording (`relative: false` for absolute references). When it starts,
+`name`, `shortcut` and `description` give the macro its name, Ctrl+Shift shortcut letter
+(`"Ctrl+Shift+K"` or `"K"`) and description; they are checked at once, so a name that is taken,
+too long or holds line breaks, or a letter that GridCraft or another macro uses, is refused
+before anything is recorded. Without a name the macro is called `Macro1`, `Macro2` and so on. A
+`name` or `description` given when stopping wins over the one given when starting. With relative references the selection when recording starts is the
 example input: references in and near it become tokens, and the input's shape, header and column
 types are inferred. Toggles such as Bold are recorded with the state they set (`"on": true`), so
 playing them back sets them rather than flipping them. Commands a macro may not run are left out
 and listed in the result; a macro run while recording is replaced by its steps when it has no
 inputs, and an Automate script run by the script's steps.
+
+GridCraft keeps the Ctrl+Shift letters it uses itself on some platform: F, G, H, J, K, L, R, S, T
+and Z (`macros::RESERVED_SHORTCUTS`). A shortcut a file brings with it on one of these letters is
+kept but does not run the macro.
 
 ## Other commands and storage
 
