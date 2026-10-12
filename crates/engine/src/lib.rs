@@ -51,6 +51,12 @@ pub enum EngineError {
     NoDocument,
     #[error("{0}")]
     Other(String),
+    /// The command would replace something; run it again with `overwrite: true` to go ahead.
+    #[error("confirm: {0} (run again with `overwrite: true`)")]
+    Confirm(String),
+    /// Active content (a macro) asks to run; run it again with `approve: true` to allow it.
+    #[error("approve: {0} (run again with `approve: true`)")]
+    Approve(String),
     #[error("internal error in `{0}` (the workbook was kept as it was): {1}")]
     Internal(String, String),
 }
@@ -169,6 +175,9 @@ pub struct DocState {
     pub unlocked_ranges: Vec<(String, String)>,
     /// Whether the workbook's active content may run without asking.
     pub trust: Trust,
+    /// While a macro's footprint is measured: every cell a command wrote, by sheet name, even
+    /// where it wrote what was already there.
+    pub touched: Option<Vec<(String, CellRef)>>,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -194,6 +203,7 @@ impl DocState {
             sheet_selections: vec![],
             unlocked_ranges: vec![],
             trust: Trust::Local,
+            touched: None,
         }
     }
     pub fn is_dirty(&self) -> bool {
@@ -307,6 +317,8 @@ pub struct Session {
     pub recorder: Option<record::Recorder>,
     /// How many `execute` calls are running (0 between top-level commands).
     depth: u32,
+    /// Macros the person allowed to run in this session: (document uid, macro content hash).
+    pub macro_approvals: std::collections::HashSet<(u64, u64)>,
     /// Windows hidden with View › Hide.
     pub hidden_windows: Vec<usize>,
     /// Draw tab tool: "" (select), "pen" or "eraser"; pen colour and width.

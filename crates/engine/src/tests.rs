@@ -2810,4 +2810,5 @@ fn row_height_that_shows_or_hides_rows_recalculates_subtotal() {
     assert_eq!(v(&s, "B1"), Value::Number(3.0), "a height of 0 hides row 3");
 }
 
+mod macros;
 mod seams;

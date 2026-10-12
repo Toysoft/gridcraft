@@ -192,4 +192,9 @@ fn names() {
     assert_eq!(unique_name(&wb, ""), "Macro");
     assert_eq!(find(&wb, " MACRO1 "), Some(0));
     assert_eq!(find(&wb, "Macro2"), None);
+    let a = sample_macro("A");
+    let mut b = a.clone();
+    assert_eq!(hash(&a), hash(&b));
+    b.steps[0].note = "changed".into();
+    assert_ne!(hash(&a), hash(&b));
 }
