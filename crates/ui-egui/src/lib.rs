@@ -27,6 +27,7 @@ pub mod outline;
 pub mod panes;
 pub mod paper_view;
 pub mod pivot_pane;
+pub mod python_ui;
 pub mod ribbon;
 pub mod selection_glide;
 pub mod tabs;
@@ -162,6 +163,8 @@ pub struct Notice {
 pub struct Services {
     pub pick_open: Option<Box<dyn Fn() -> Option<String>>>,
     pub pick_save: Option<Box<dyn Fn(&str) -> Option<String>>>,
+    /// Native picker for a program (Python Options' interpreter).
+    pub pick_program: Option<Box<dyn Fn() -> Option<String>>>,
     /// Native picture picker (PNG/JPEG), separate from workbook opening.
     pub pick_picture: Option<Box<dyn Fn() -> Option<String>>>,
     /// Browser picture picker. Each dialog owns its inbox, so canceled picks cannot
@@ -535,6 +538,12 @@ impl SheetApp {
                 let name = p.get("name").and_then(Json::as_str).unwrap_or("");
                 self.open_dialog(name, p.clone());
                 Ok(json!({"dialog": self.dialog.as_ref().map(|d| d.name())}))
+            }
+            "ui.pane" => {
+                // `{name}` shows a task pane (comments, watch, selection, formatChart,
+                // pythonDiagnostics); no name closes it.
+                self.grid.pane = p.get("name").and_then(Json::as_str).filter(|n| !n.is_empty()).map(str::to_string);
+                Ok(json!({"pane": self.grid.pane}))
             }
             "ui.message.dismiss" => {
                 self.message = None;
@@ -1108,6 +1117,7 @@ impl SheetApp {
             if self.session.prefs.formula_bar || self.editor.as_ref().is_some_and(|e| e.python) {
                 formula_bar::show(self, ui);
             }
+            python_ui::enable_bar(self, ui);
             if self.ui.status_bar {
                 tabs::status_bar(self, ui);
             }

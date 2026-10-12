@@ -408,6 +408,45 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Diagnostics" => "诊断",
         "Python Diagnostics: every run, its output and errors" => "Python 诊断: 每次运行及其输出和错误",
         "Python" => "Python",
+        "This sheet" => "此工作表",
+        "Errors only" => "仅错误",
+        "Options…" => "选项…",
+        "Python Options: which Python runs cells, and the time limit" => "Python 选项: 运行单元格的 Python 及时间限制",
+        "Python Options…" => "Python 选项…",
+        "No Python runs yet." => "尚无 Python 运行记录。",
+        "Initialization" => "初始化",
+        "OK" => "确定",
+        "Cancel" => "取消",
+        "Error" => "错误",
+        "Time limit" => "时间限制",
+        "Memory limit" => "内存限制",
+        "Stopped" => "已停止",
+        "Turned off" => "已关闭",
+        "Cycle" => "循环",
+        "Output" => "输出",
+        "Errors" => "错误输出",
+        "Show Diagnostics" => "显示诊断",
+        "Python cells are turned off for this workbook." => "此工作簿的 Python 单元格已关闭。",
+        "Python cells run with your Python at {path}, with full access to your files and network. Enable only for workbooks you trust." => {
+            "Python 单元格使用位于 {path} 的 Python 运行，可完全访问你的文件和网络。仅对你信任的工作簿启用。"
+        }
+        "Python runs in a sandbox with no file or network access." => "Python 在无法访问文件或网络的沙盒中运行。",
+        "Enable Python" => "启用 Python",
+        "Dismiss this message" => "关闭此消息",
+        "Version" => "版本",
+        "Program" => "程序",
+        "Found in" => "查找位置",
+        "not installed" => "未安装",
+        "Python interpreter" => "Python 解释器",
+        "Detect Again" => "重新检测",
+        "Look for Python again (after installing Python or a package)" => "重新查找 Python (安装 Python 或包之后)",
+        "Time limit per cell" => "每个单元格的时间限制",
+        "Not used ({count})" => "未使用 ({count})",
+        "This code runs first, before any Python cell, each time Python starts. Put imports and shared definitions here." => {
+            "每次 Python 启动时，此代码都会在任何 Python 单元格之前运行。请将导入和共享定义放在这里。"
+        }
+        "Py: built-in" => "Py: 内置",
+        "Py: off" => "Py: 关闭",
         _ => return None,
     })
 }

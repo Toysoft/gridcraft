@@ -225,6 +225,8 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
                     gridcraft_engine::Mode::Point => "Point",
                 };
                 ui.label(egui::RichText::new(app.ui.language.tr(mode)).font(theme::ui_font(12.5)).color(t.text_dim));
+                // Which Python runs cells, on workbooks that have them.
+                crate::python_ui::status(app, ui);
                 // Python cells running in the background, with a Stop button (Esc does the same).
                 if app.session.python_busy() {
                     ui.add_space(12.0);

@@ -418,6 +418,45 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Diagnostics" => "Diagnósticos",
         "Python Diagnostics: every run, its output and errors" => "Diagnósticos de Python: cada ejecución, su salida y sus errores",
         "Python" => "Python",
+        "This sheet" => "Esta hoja",
+        "Errors only" => "Solo errores",
+        "Options…" => "Opciones…",
+        "Python Options: which Python runs cells, and the time limit" => "Opciones de Python: qué Python ejecuta las celdas y el límite de tiempo",
+        "Python Options…" => "Opciones de Python…",
+        "No Python runs yet." => "Aún no hay ejecuciones de Python.",
+        "Initialization" => "Inicialización",
+        "OK" => "Aceptar",
+        "Cancel" => "Cancelar",
+        "Error" => "Error",
+        "Time limit" => "Límite de tiempo",
+        "Memory limit" => "Límite de memoria",
+        "Stopped" => "Detenido",
+        "Turned off" => "Desactivado",
+        "Cycle" => "Ciclo",
+        "Output" => "Salida",
+        "Errors" => "Errores",
+        "Show Diagnostics" => "Mostrar diagnósticos",
+        "Python cells are turned off for this workbook." => "Las celdas de Python están desactivadas en este libro.",
+        "Python cells run with your Python at {path}, with full access to your files and network. Enable only for workbooks you trust." => {
+            "Las celdas de Python se ejecutan con su Python en {path}, con acceso completo a sus archivos y a la red. Habilítelo solo para libros de confianza."
+        }
+        "Python runs in a sandbox with no file or network access." => "Python se ejecuta en un entorno aislado sin acceso a archivos ni a la red.",
+        "Enable Python" => "Habilitar Python",
+        "Dismiss this message" => "Descartar este mensaje",
+        "Version" => "Versión",
+        "Program" => "Programa",
+        "Found in" => "Encontrado en",
+        "not installed" => "no instalado",
+        "Python interpreter" => "Intérprete de Python",
+        "Detect Again" => "Volver a detectar",
+        "Look for Python again (after installing Python or a package)" => "Volver a buscar Python (después de instalar Python o un paquete)",
+        "Time limit per cell" => "Límite de tiempo por celda",
+        "Not used ({count})" => "No usados ({count})",
+        "This code runs first, before any Python cell, each time Python starts. Put imports and shared definitions here." => {
+            "Este código se ejecuta primero, antes que cualquier celda de Python, cada vez que se inicia Python. Ponga aquí las importaciones y las definiciones compartidas."
+        }
+        "Py: built-in" => "Py: integrado",
+        "Py: off" => "Py: desactivado",
         _ => return None,
     })
 }

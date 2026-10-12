@@ -416,6 +416,45 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Diagnostics" => "Diagnostika",
         "Python Diagnostics: every run, its output and errors" => "Diagnostika Pythonu: každé spuštění, jeho výstup a chyby",
         "Python" => "Python",
+        "This sheet" => "Tento list",
+        "Errors only" => "Jen chyby",
+        "Options…" => "Možnosti…",
+        "Python Options: which Python runs cells, and the time limit" => "Možnosti Pythonu: který Python spouští buňky a časový limit",
+        "Python Options…" => "Možnosti Pythonu…",
+        "No Python runs yet." => "Zatím žádná spuštění Pythonu.",
+        "Initialization" => "Inicializace",
+        "OK" => "OK",
+        "Cancel" => "Zrušit",
+        "Error" => "Chyba",
+        "Time limit" => "Časový limit",
+        "Memory limit" => "Limit paměti",
+        "Stopped" => "Zastaveno",
+        "Turned off" => "Vypnuto",
+        "Cycle" => "Cyklus",
+        "Output" => "Výstup",
+        "Errors" => "Chybový výstup",
+        "Show Diagnostics" => "Zobrazit diagnostiku",
+        "Python cells are turned off for this workbook." => "Buňky Pythonu jsou v tomto sešitu vypnuté.",
+        "Python cells run with your Python at {path}, with full access to your files and network. Enable only for workbooks you trust." => {
+            "Buňky Pythonu běží ve vašem Pythonu v {path} s plným přístupem k souborům a síti. Povolte jen u sešitů, kterým důvěřujete."
+        }
+        "Python runs in a sandbox with no file or network access." => "Python běží v izolovaném prostředí bez přístupu k souborům a síti.",
+        "Enable Python" => "Povolit Python",
+        "Dismiss this message" => "Zavřít tuto zprávu",
+        "Version" => "Verze",
+        "Program" => "Program",
+        "Found in" => "Nalezeno v",
+        "not installed" => "nenainstalováno",
+        "Python interpreter" => "Interpret Pythonu",
+        "Detect Again" => "Znovu zjistit",
+        "Look for Python again (after installing Python or a package)" => "Znovu vyhledat Python (po instalaci Pythonu nebo balíčku)",
+        "Time limit per cell" => "Časový limit na buňku",
+        "Not used ({count})" => "Nepoužito ({count})",
+        "This code runs first, before any Python cell, each time Python starts. Put imports and shared definitions here." => {
+            "Tento kód se spouští jako první, před všemi buňkami Pythonu, při každém spuštění Pythonu. Umístěte sem importy a sdílené definice."
+        }
+        "Py: built-in" => "Py: vestavěný",
+        "Py: off" => "Py: vypnuto",
         _ => return None,
     })
 }

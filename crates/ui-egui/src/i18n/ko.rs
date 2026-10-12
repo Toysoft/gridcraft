@@ -418,6 +418,45 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Diagnostics" => "진단",
         "Python Diagnostics: every run, its output and errors" => "Python 진단: 모든 실행과 그 출력 및 오류",
         "Python" => "Python",
+        "This sheet" => "이 시트",
+        "Errors only" => "오류만",
+        "Options…" => "옵션…",
+        "Python Options: which Python runs cells, and the time limit" => "Python 옵션: 셀을 실행하는 Python과 시간 제한",
+        "Python Options…" => "Python 옵션…",
+        "No Python runs yet." => "아직 Python 실행이 없습니다.",
+        "Initialization" => "초기화",
+        "OK" => "확인",
+        "Cancel" => "취소",
+        "Error" => "오류",
+        "Time limit" => "시간 제한",
+        "Memory limit" => "메모리 제한",
+        "Stopped" => "중지됨",
+        "Turned off" => "꺼짐",
+        "Cycle" => "순환",
+        "Output" => "출력",
+        "Errors" => "오류 출력",
+        "Show Diagnostics" => "진단 표시",
+        "Python cells are turned off for this workbook." => "이 통합 문서의 Python 셀이 꺼져 있습니다.",
+        "Python cells run with your Python at {path}, with full access to your files and network. Enable only for workbooks you trust." => {
+            "Python 셀은 {path}의 Python으로 실행되며 파일과 네트워크에 완전히 액세스할 수 있습니다. 신뢰하는 통합 문서에서만 사용하도록 설정하세요."
+        }
+        "Python runs in a sandbox with no file or network access." => "Python은 파일이나 네트워크에 액세스할 수 없는 샌드박스에서 실행됩니다.",
+        "Enable Python" => "Python 사용",
+        "Dismiss this message" => "이 메시지 닫기",
+        "Version" => "버전",
+        "Program" => "프로그램",
+        "Found in" => "찾은 위치",
+        "not installed" => "설치되지 않음",
+        "Python interpreter" => "Python 인터프리터",
+        "Detect Again" => "다시 검색",
+        "Look for Python again (after installing Python or a package)" => "Python을 다시 찾습니다(Python 또는 패키지를 설치한 후)",
+        "Time limit per cell" => "셀당 시간 제한",
+        "Not used ({count})" => "사용 안 함({count})",
+        "This code runs first, before any Python cell, each time Python starts. Put imports and shared definitions here." => {
+            "이 코드는 Python이 시작될 때마다 모든 Python 셀보다 먼저 실행됩니다. 가져오기와 공유 정의를 여기에 넣으세요."
+        }
+        "Py: built-in" => "Py: 기본 제공",
+        "Py: off" => "Py: 꺼짐",
         _ => return None,
     })
 }

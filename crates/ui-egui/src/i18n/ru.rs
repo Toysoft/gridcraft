@@ -418,6 +418,45 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Diagnostics" => "Диагностика",
         "Python Diagnostics: every run, its output and errors" => "Диагностика Python: все запуски, их вывод и ошибки",
         "Python" => "Python",
+        "This sheet" => "Этот лист",
+        "Errors only" => "Только ошибки",
+        "Options…" => "Параметры…",
+        "Python Options: which Python runs cells, and the time limit" => "Параметры Python: какой Python выполняет ячейки и ограничение времени",
+        "Python Options…" => "Параметры Python…",
+        "No Python runs yet." => "Запусков Python пока нет.",
+        "Initialization" => "Инициализация",
+        "OK" => "ОК",
+        "Cancel" => "Отмена",
+        "Error" => "Ошибка",
+        "Time limit" => "Ограничение времени",
+        "Memory limit" => "Ограничение памяти",
+        "Stopped" => "Остановлено",
+        "Turned off" => "Отключено",
+        "Cycle" => "Цикл",
+        "Output" => "Вывод",
+        "Errors" => "Ошибки",
+        "Show Diagnostics" => "Показать диагностику",
+        "Python cells are turned off for this workbook." => "Ячейки Python в этой книге отключены.",
+        "Python cells run with your Python at {path}, with full access to your files and network. Enable only for workbooks you trust." => {
+            "Ячейки Python выполняются вашим Python ({path}) с полным доступом к файлам и сети. Включайте только для книг, которым доверяете."
+        }
+        "Python runs in a sandbox with no file or network access." => "Python выполняется в изолированной среде без доступа к файлам и сети.",
+        "Enable Python" => "Включить Python",
+        "Dismiss this message" => "Закрыть это сообщение",
+        "Version" => "Версия",
+        "Program" => "Программа",
+        "Found in" => "Найден в",
+        "not installed" => "не установлен",
+        "Python interpreter" => "Интерпретатор Python",
+        "Detect Again" => "Найти снова",
+        "Look for Python again (after installing Python or a package)" => "Снова найти Python (после установки Python или пакета)",
+        "Time limit per cell" => "Ограничение времени на ячейку",
+        "Not used ({count})" => "Не используются ({count})",
+        "This code runs first, before any Python cell, each time Python starts. Put imports and shared definitions here." => {
+            "Этот код выполняется первым, перед любой ячейкой Python, при каждом запуске Python. Поместите сюда импорты и общие определения."
+        }
+        "Py: built-in" => "Py: встроенный",
+        "Py: off" => "Py: выкл.",
         _ => return None,
     })
 }
