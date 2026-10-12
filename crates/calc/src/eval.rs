@@ -84,6 +84,8 @@ pub struct Evaluator<'h> {
     pub at: CellRef,
     env: Vec<(String, Ev)>,
     depth: usize,
+    /// How many values were read from linked workbooks' saved data (see [`Self::external`]).
+    linked_reads: usize,
 }
 
 struct FnCtx<'a, 'h> {
@@ -128,7 +130,7 @@ impl Ctx for FnCtx<'_, '_> {
 
 impl<'h> Evaluator<'h> {
     pub fn new(host: &'h mut dyn Host, sheet: usize, at: CellRef) -> Self {
-        Evaluator { host, sheet, at, env: Vec::new(), depth: 0 }
+        Evaluator { host, sheet, at, env: Vec::new(), depth: 0, linked_reads: 0 }
     }
 
     /// Evaluates to a value (references are dereferenced; multi-cell → array).
@@ -152,6 +154,88 @@ impl<'h> Evaluator<'h> {
     pub fn reference_areas(&self, r: &Reference) -> Result<Vec<Area>, CellError> {
         let range = r.range();
         Ok(self.resolve_sheet(&r.sheet)?.into_iter().map(|sheet| Area { sheet, range }).collect())
+    }
+
+    /// A reference into a linked workbook (`'[2]Prices'!B2`): the values saved with the link, as
+    /// Excel calculates while the source is closed. A block is an array of the reference's size;
+    /// large ones stop at the last cached row and column, like references into the used range.
+    /// `None` = not a reference into a linked workbook.
+    fn external(&self, r: &Reference) -> Option<Value> {
+        let SheetSel::Named(name) = &r.sheet else { return None };
+        let (book, sheet) = external_sheet(name)?;
+        let wb = self.host.workbook();
+        let Some(sheet) = book.checked_sub(1).and_then(|i| wb.external_books.get(i)).and_then(|b| b.sheet(sheet)) else {
+            return Some(Value::Error(CellError::Ref));
+        };
+        // The last update of the link failed for this sheet (`refreshError`): Excel keeps the
+        // values it had and shows `#REF!` for anything it hadn't saved.
+        let range = r.range();
+        if range.is_single() {
+            let v = sheet.value(range.start);
+            return Some(if v.is_empty() && sheet.refresh_error { Value::Error(CellError::Ref) } else { v });
+        }
+        if sheet.refresh_error && sheet.cells.is_empty() {
+            return Some(Value::Error(CellError::Ref));
+        }
+        let range = if u64::from(range.height()) * u64::from(range.width()) > FULL_SIZE_CELLS {
+            let (r1, c1) = match sheet.extent() {
+                Some(e) => (range.end.row.min(e.end.row.max(range.start.row)), range.end.col.min(e.end.col.max(range.start.col))),
+                None => (range.start.row, range.start.col),
+            };
+            RangeRef::new(range.start, CellRef::new(r1, c1))
+        } else {
+            range
+        };
+        let (h, w) = (range.height() as usize, range.width() as usize);
+        if (h as u64) * (w as u64) > MAX_CELLS {
+            return Some(Value::Error(CellError::Num));
+        }
+        let mut data = Vec::with_capacity(h * w);
+        for row in range.start.row..=range.end.row {
+            for col in range.start.col..=range.end.col {
+                let v = sheet.value(CellRef::new(row, col));
+                data.push(if v.is_empty() && sheet.refresh_error { Value::Error(CellError::Ref) } else { v });
+            }
+        }
+        Some(Array::new(h, w, data).map(Value::from).unwrap_or(Value::Error(CellError::Value)))
+    }
+
+    /// A defined name of a linked workbook (`[1]!Rates`, `[1]Prices!Rates`): what it refers to in
+    /// that workbook, read from the values saved with the link.
+    fn external_name(&mut self, book: usize, sheet: &str, name: &str) -> Ev {
+        // `[0]!Name`: book 0 is the workbook itself.
+        if book == 0 {
+            return self.eval(&Expr::Name(if sheet.is_empty() { name.to_string() } else { format!("{sheet}!{name}") }));
+        }
+        let wb = self.host.workbook();
+        let Some(b) = book.checked_sub(1).and_then(|i| wb.external_books.get(i)) else { return err(CellError::Ref) };
+        let Some(def) = b.name(name, (!sheet.is_empty()).then_some(sheet)) else { return err(CellError::Ref) };
+        let scope = def.sheet.and_then(|i| b.sheets.get(i)).map(|s| format!("[{book}]{}", s.name));
+        let Ok(expr) = gridcraft_formula::parse(&def.refers_to) else { return err(CellError::Ref) };
+        // Everything it names is in the linked workbook: its sheets and names. A sheet range, a
+        // sheetless reference in a workbook-level name and a table can't be read from the
+        // values saved with the link.
+        let expr = expr.map(&mut |e| match e {
+            Expr::Ref(mut r) => {
+                r.sheet = match r.sheet {
+                    SheetSel::Named(s) => SheetSel::Named(format!("[{book}]{s}")),
+                    SheetSel::Current => match &scope {
+                        Some(s) => SheetSel::Named(s.clone()),
+                        None => return Expr::Error(CellError::Ref),
+                    },
+                    SheetSel::Span(..) => return Expr::Error(CellError::Ref),
+                };
+                Expr::Ref(r)
+            }
+            Expr::Name(n) => Expr::Name(match (n.split_once('!'), &scope) {
+                (Some(_), _) => format!("[{book}]{n}"),
+                (None, Some(s)) => format!("{s}!{n}"),
+                (None, None) => format!("[{book}]!{n}"),
+            }),
+            Expr::Struct(_) => Expr::Error(CellError::Ref),
+            e => e,
+        });
+        self.eval(&expr)
     }
 
     /// Dereferences: one cell → its value; a block → an array (trimmed to the used range);
@@ -237,7 +321,13 @@ impl<'h> Evaluator<'h> {
             }
             Expr::Ref(r) => match self.reference_areas(r) {
                 Ok(a) => Ev::R(a),
-                Err(x) => err(x),
+                Err(x) => match self.external(r) {
+                    Some(v) => {
+                        self.linked_reads += 1;
+                        Ev::V(v)
+                    }
+                    None => err(x),
+                },
             },
             Expr::Name(n) => self.name(n),
             Expr::Struct(s) => self.structured(s),
@@ -258,6 +348,9 @@ impl<'h> Evaluator<'h> {
     fn name(&mut self, n: &str) -> Ev {
         if let Some((_, v)) = self.env.iter().rev().find(|(k, _)| k.eq_ignore_ascii_case(n)) {
             return v.clone();
+        }
+        if let Some((book, sheet, bare)) = external_name(n) {
+            return self.external_name(book, sheet, bare);
         }
         let wb = self.host.workbook();
         // Sheet-qualified `Sheet1!Name`.
@@ -818,6 +911,7 @@ impl<'h> Evaluator<'h> {
         // Database functions: the criteria range (argument 2), whose formulas are computed criteria.
         let mut criteria = None;
         for (i, a) in args.iter().enumerate() {
+            let linked_reads = self.linked_reads;
             let mut ev = self.eval(a);
             if spec.category == gridcraft_functions::Category::Database
                 && i == 2
@@ -825,6 +919,17 @@ impl<'h> Evaluator<'h> {
                 && let [area] = areas.as_slice()
             {
                 criteria = Some(*area);
+            }
+            // Range parameters of the *IF(S) family take only references. Values read from a
+            // linked workbook's saved data aren't one: Excel answers `#VALUE!` (or the value's
+            // error) while the source workbook is closed. A written error (`#REF!` left by a
+            // deleted range) is that error.
+            let refused = self.linked_reads != linked_reads || matches!(a, Expr::Error(_));
+            if takes_reference(spec.name, i) && refused && !matches!(ev, Ev::R(_)) {
+                return err(match self.deref(ev) {
+                    Value::Error(e) => e,
+                    _ => CellError::Value,
+                });
             }
             if resizes_sum_range(name, args.len()) {
                 if i == 0 {
@@ -1729,6 +1834,36 @@ pub fn resized_sum_range(sum: RangeRef, height: u32, width: u32) -> RangeRef {
     let row = sum.start.row.saturating_add(height.saturating_sub(1)).min(MAX_ROWS - 1);
     let col = sum.start.col.saturating_add(width.saturating_sub(1)).min(MAX_COLS - 1);
     RangeRef::new(sum.start, CellRef::new(row, col))
+}
+
+/// `[2]!Rates` → linked workbook 2, no sheet, `Rates`; `[2]Prices!Rates` → sheet `Prices`.
+fn external_name(name: &str) -> Option<(usize, &str, &str)> {
+    let (book, rest) = name.strip_prefix('[')?.split_once(']')?;
+    let (sheet, bare) = rest.split_once('!')?;
+    if book.is_empty() || !book.bytes().all(|b| b.is_ascii_digit()) || bare.is_empty() {
+        return None;
+    }
+    Some((book.parse().ok()?, sheet, bare))
+}
+
+/// Whether argument `i` of `name` is a range parameter that takes only a reference.
+fn takes_reference(name: &str, i: usize) -> bool {
+    match name {
+        "SUMIF" | "AVERAGEIF" => i == 0 || i == 2,
+        "COUNTIF" | "COUNTBLANK" => i == 0,
+        "COUNTIFS" => i.is_multiple_of(2),
+        "SUMIFS" | "AVERAGEIFS" | "MAXIFS" | "MINIFS" => i == 0 || i % 2 == 1,
+        _ => false,
+    }
+}
+
+/// `[2]Prices` (the sheet part of `'[2]Prices'!B2`) → linked workbook 2, sheet `Prices`.
+fn external_sheet(name: &str) -> Option<(usize, &str)> {
+    let (book, sheet) = name.strip_prefix('[')?.split_once(']')?;
+    if book.is_empty() || !book.bytes().all(|b| b.is_ascii_digit()) || sheet.is_empty() {
+        return None;
+    }
+    Some((book.parse().ok()?, sheet))
 }
 
 /// Collects the static references of an expression with their sheets resolved; `dynamic` is

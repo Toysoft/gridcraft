@@ -53,6 +53,24 @@ fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '_' | '.' | '$' | '\\' | '?')
 }
 
+/// `[1]Prices!` or `[1]!` (before a linked workbook's name) at `i`: the position of the `!` after
+/// a linked workbook's index and an unquoted sheet name.
+fn external_sheet_end(chars: &[(usize, char)], i: usize) -> Option<usize> {
+    let ch = |k: usize| chars.get(k).map(|c| c.1);
+    let mut j = i + 1;
+    while ch(j).is_some_and(|c| c.is_ascii_digit()) {
+        j += 1;
+    }
+    if j == i + 1 || ch(j) != Some(']') {
+        return None;
+    }
+    let mut k = j + 1;
+    while ch(k).is_some_and(is_word_char) {
+        k += 1;
+    }
+    (ch(k) == Some('!')).then_some(k)
+}
+
 /// `A1`, `$A$1`, `A`, `$A`, `1`, `$1`: a word that can end a range, so `A1.:` is a trim
 /// reference and not a name ending in a dot.
 fn is_range_end(w: &str) -> bool {
@@ -169,6 +187,14 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                 // `#REF!A1` style is not valid; `#REF!` is an error literal.
                 push(&mut out, Tok::Error(e), i + len);
                 i += len;
+            }
+            '[' if external_sheet_end(&chars, i).is_some() => {
+                // Sheet in a linked workbook, unquoted: `[1]Prices!B2` (`'[1]My Prices'!B2` is
+                // lexed as a quoted sheet name).
+                let bang = external_sheet_end(&chars, i).unwrap_or(i);
+                let sheet: String = chars.get(i..bang).map(|s| s.iter().map(|c| c.1).collect()).unwrap_or_default();
+                push(&mut out, Tok::Sheet(sheet, None), bang + 1);
+                i = bang + 1;
             }
             '[' => {
                 // Structured reference body: balanced brackets.
