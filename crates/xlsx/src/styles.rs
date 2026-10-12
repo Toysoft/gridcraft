@@ -6,12 +6,12 @@ use std::fmt::Write as _;
 
 use gridcraft_model::style::Protection;
 use gridcraft_model::{
-    Alignment, BorderLine, BorderStyle, Borders, Color, Fill, Font, HAlign, NumFmt, PatternType, RunFont, Style, Underline, VAlign, VertAlign,
-    Workbook,
+    Alignment, BorderLine, BorderStyle, Borders, CellRuns, Color, Fill, Font, HAlign, NumFmt, PatternType, RunFont, Style, Underline, VAlign,
+    VertAlign, Workbook,
 };
 
 use crate::tables::{INDEXED, builtin_format, builtin_id};
-use crate::xml::{El, esc_attr, num};
+use crate::xml::{El, esc_attr, num, t_el};
 
 // ---------------------------------------------------------------- reading
 
@@ -463,6 +463,80 @@ fn font_xml(f: &Font, dxf: bool) -> String {
     }
     s.push_str("</font>");
     s
+}
+
+/// A rich-text run's `<rPr>`: only the properties the delta states, in [`font_xml`]'s order.
+/// A set boolean is `<b/>` (on) or `<b val="0"/>` (explicitly off, not inherited); the font
+/// name is `<rFont>` with no `<family>` (neither belongs to a run's properties).
+pub fn run_rpr_xml(rf: &RunFont) -> String {
+    let mut s = String::from("<rPr>");
+    for (tag, set) in [("b", rf.bold), ("i", rf.italic), ("strike", rf.strike)] {
+        if let Some(v) = set {
+            if v {
+                let _ = write!(s, "<{tag}/>");
+            } else {
+                let _ = write!(s, "<{tag} val=\"0\"/>");
+            }
+        }
+    }
+    match rf.underline {
+        Some(Underline::Single) => s.push_str("<u/>"),
+        Some(Underline::None) => s.push_str("<u val=\"none\"/>"),
+        Some(Underline::Double) => s.push_str("<u val=\"double\"/>"),
+        Some(Underline::SingleAccounting) => s.push_str("<u val=\"singleAccounting\"/>"),
+        Some(Underline::DoubleAccounting) => s.push_str("<u val=\"doubleAccounting\"/>"),
+        None => {}
+    }
+    match rf.vert {
+        Some(VertAlign::Superscript) => s.push_str("<vertAlign val=\"superscript\"/>"),
+        Some(VertAlign::Subscript) => s.push_str("<vertAlign val=\"subscript\"/>"),
+        Some(VertAlign::Baseline) => s.push_str("<vertAlign val=\"baseline\"/>"),
+        None => {}
+    }
+    if let Some(sz) = rf.size {
+        let _ = write!(s, "<sz val=\"{}\"/>", num(sz as f64));
+    }
+    if let Some(c) = &rf.color {
+        let _ = write!(s, "<color {}/>", color_attrs(c));
+    }
+    if let Some(n) = &rf.name {
+        let _ = write!(s, "<rFont val=\"{}\"/>", esc_attr(n));
+    }
+    s.push_str("</rPr>");
+    s
+}
+
+/// True when the delta states at least one property: a run with everything unset inherits the
+/// cell's font completely, so like Excel it is written without an `<rPr>`.
+fn run_font_set(rf: &RunFont) -> bool {
+    rf.name.is_some()
+        || rf.size.is_some()
+        || rf.bold.is_some()
+        || rf.italic.is_some()
+        || rf.underline.is_some()
+        || rf.strike.is_some()
+        || rf.color.is_some()
+        || rf.vert.is_some()
+}
+
+/// The rich-text runs of a shared-string item: `<r><rPr>…</rPr><t>slice</t></r>` per run, in
+/// [`t_el`]'s escaped form (leading/trailing spaces preserved). `None` when the runs do not
+/// line up with `text`; the caller writes the plain `<t>` then.
+pub fn si_runs_xml(text: &str, runs: &CellRuns) -> Option<String> {
+    if !runs.valid_for(text) {
+        return None;
+    }
+    let mut s = String::new();
+    for (i, run) in runs.runs.iter().enumerate() {
+        let slice = runs.run_text(text, i)?;
+        s.push_str("<r>");
+        if run_font_set(&run.font) {
+            s.push_str(&run_rpr_xml(&run.font));
+        }
+        s.push_str(&t_el(slice));
+        s.push_str("</r>");
+    }
+    Some(s)
 }
 
 fn fill_xml(f: &Fill, dxf: bool) -> String {

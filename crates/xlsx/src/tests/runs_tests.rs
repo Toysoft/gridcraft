@@ -1,14 +1,18 @@
 //! Shared-string rich-text runs: splitting an `<si>` into text + run parts, reading `<rPr>`
-//! deltas and assembling `CellRuns` under the caps (issue #774).
+//! deltas and assembling `CellRuns` under the caps, and writing them back (issue #774).
+
+use std::io::Read;
+use std::sync::Arc;
 
 use gridcraft_core::{CellRef, Value};
-use gridcraft_model::{Color, MAX_RUNS_PER_CELL, RunFont};
+use gridcraft_model::{Cell, CellRuns, Color, MAX_RUNS_PER_CELL, Run, RunFont, Sheet, StyleId, Workbook};
 
 use super::minimal;
 use crate::read_xlsx;
 use crate::runs::Si;
 use crate::styles::read_run_font;
 use crate::tables::INDEXED;
+use crate::write_xlsx;
 use crate::xml::{El, parse, si_parts};
 
 fn si(xml: &str) -> El {
@@ -311,4 +315,101 @@ fn spill_override_leaves_no_stale_entry() {
     assert!(s.cell_runs.get(&at("A1")).is_some_and(|cr| cr.valid_for("spilled rich")));
     assert_eq!(s.value(at("A2")), Value::Empty, "the spilled cell's cached value is dropped");
     assert!(!s.cell_runs.contains_key(&at("A2")));
+}
+
+// Writing packages: rich runs go back to sharedStrings as `<si><r><rPr>…</rPr><t>…</t></r>…`
+// items, deduplicated by text + runs (issue #774).
+
+/// A workbook whose only sheet holds `(cell, text, runs)` triples.
+fn runs_workbook(cells: &[(&str, &str, CellRuns)]) -> Workbook {
+    let mut s = Sheet::new("Data");
+    for (a, text, runs) in cells {
+        s.cells.set(at(a), Cell { value: Value::text(*text), formula: None, style: StyleId::DEFAULT });
+        s.cell_runs.insert(at(a), runs.clone());
+    }
+    let mut wb = Workbook::new();
+    wb.sheets = vec![Arc::new(s)];
+    wb
+}
+
+/// One part of a written package, as text.
+fn part(bytes: &[u8], name: &str) -> String {
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut out = String::new();
+    z.by_name(name).unwrap().read_to_string(&mut out).unwrap();
+    out
+}
+
+/// The #774 repro written back: A3's three colour forms and A4's bold+size lead keep their
+/// slices (leading spaces preserved), and everything reads back into an equal `cell_runs`.
+#[test]
+fn runs_roundtrip() {
+    let a3 = CellRuns {
+        runs: vec![
+            Run { start: 0, len: 14, font: RunFont { color: Some(Color::Auto), ..none_font() } },
+            Run { start: 14, len: 13, font: RunFont { color: Some(Color::Rgb(0xFF0000)), ..none_font() } },
+            Run { start: 27, len: 14, font: RunFont { color: Some(Color::Rgb(0x00B050)), ..none_font() } },
+        ],
+    };
+    let a4 = CellRuns {
+        runs: vec![
+            Run { start: 0, len: 14, font: RunFont { bold: Some(true), size: Some(14.0), ..none_font() } },
+            Run { start: 14, len: 8, font: RunFont { color: Some(Color::Rgb(0xFF0000)), ..none_font() } },
+        ],
+    };
+    let wb = runs_workbook(&[("A3", "this is black, this is red, this is black", a3.clone()), ("A4", "bold fourteen red tail", a4.clone())]);
+    let bytes = write_xlsx(&wb).unwrap();
+    let xml = part(&bytes, "xl/sharedStrings.xml");
+    assert!(xml.contains("<r><rPr><color auto=\"1\"/></rPr><t>this is black,</t></r>"), "{xml}");
+    assert!(xml.contains("<r><rPr><color rgb=\"FFFF0000\"/></rPr><t xml:space=\"preserve\"> this is red,</t></r>"), "{xml}");
+    assert!(xml.contains("<r><rPr><color rgb=\"FF00B050\"/></rPr><t xml:space=\"preserve\"> this is black</t></r>"), "{xml}");
+    assert!(xml.contains("<r><rPr><b/><sz val=\"14\"/></rPr><t xml:space=\"preserve\">bold fourteen </t></r>"), "{xml}");
+
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    let s = back.sheet(0).unwrap();
+    assert_eq!(s.value(at("A3")), Value::text("this is black, this is red, this is black"));
+    assert_eq!(s.value(at("A4")), Value::text("bold fourteen red tail"));
+    assert_eq!(s.cell_runs.get(&at("A3")), Some(&a3));
+    assert_eq!(s.cell_runs.get(&at("A4")), Some(&a4));
+}
+
+/// Identical text and runs share one `<si>`; the same text with different runs gets its own.
+#[test]
+fn sst_dedup_shares_and_splits() {
+    let text = "red text";
+    let colored = |c: Color| CellRuns {
+        runs: vec![Run { start: 0, len: 3, font: RunFont { color: Some(c), ..none_font() } }, Run { start: 3, len: 5, font: none_font() }],
+    };
+    let (red, green) = (colored(Color::Rgb(0xFF0000)), colored(Color::Rgb(0x00B050)));
+
+    let wb = runs_workbook(&[("A1", text, red.clone()), ("B1", text, red.clone())]);
+    let xml = part(&write_xlsx(&wb).unwrap(), "xl/sharedStrings.xml");
+    assert!(xml.contains("count=\"2\" uniqueCount=\"1\""), "{xml}");
+    assert_eq!(xml.matches("<si>").count(), 1, "{xml}");
+
+    let wb = runs_workbook(&[("A1", text, red.clone()), ("B1", text, green.clone())]);
+    let bytes = write_xlsx(&wb).unwrap();
+    let xml = part(&bytes, "xl/sharedStrings.xml");
+    assert!(xml.contains("count=\"2\" uniqueCount=\"2\""), "{xml}");
+    assert_eq!(xml.matches("<si>").count(), 2, "{xml}");
+    assert!(xml.contains("FFFF0000") && xml.contains("FF00B050"), "{xml}");
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    let s = back.sheet(0).unwrap();
+    assert_eq!(s.cell_runs.get(&at("A1")), Some(&red));
+    assert_eq!(s.cell_runs.get(&at("B1")), Some(&green));
+}
+
+/// A side-table entry that does not line up with the cell's text is written as plain text.
+#[test]
+fn invalid_runs_write_plain() {
+    let stale = CellRuns { runs: vec![Run { start: 0, len: 5, font: RunFont { bold: Some(true), ..none_font() } }] };
+    let wb = runs_workbook(&[("A1", "hello world", stale)]);
+    let bytes = write_xlsx(&wb).unwrap();
+    let xml = part(&bytes, "xl/sharedStrings.xml");
+    assert!(xml.contains("<si><t>hello world</t></si>"), "{xml}");
+    assert!(!xml.contains("<r>"), "{xml}");
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    let s = back.sheet(0).unwrap();
+    assert_eq!(s.value(at("A1")), Value::text("hello world"));
+    assert!(s.cell_runs.is_empty());
 }

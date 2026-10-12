@@ -5,8 +5,8 @@ use std::fmt::Write as _;
 
 use gridcraft_core::{CellError, CellRef, RangeRef, Value};
 use gridcraft_model::{
-    Cell, CfOperator, CfRule, CfValueKind, Color, CondFormat, ErrorStyle, FilterCriterion, LineInfo, Orientation, Sheet, SparklineKind, Style, Table,
-    TotalsFn, Validation, ValidationKind, Workbook, default_icon_thresholds, icon_count,
+    Cell, CellRuns, CfOperator, CfRule, CfValueKind, Color, CondFormat, ErrorStyle, FilterCriterion, LineInfo, Orientation, Sheet, SparklineKind,
+    Style, Table, TotalsFn, Validation, ValidationKind, Workbook, default_icon_thresholds, icon_count,
 };
 
 use crate::drawing::{Obj, image_content_type, image_ext};
@@ -303,7 +303,7 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
                 let f = cell?.formula.as_ref()?;
                 (f.array.is_none() && crate::array_formula::needs_array(wb, si, *c, f)).then_some(RangeRef::cell(*c))
             });
-            write_cell(&mut s, *c, cell, sheet.cell_pictures.get(c), ov, ex, array.as_ref(), &sid, out);
+            write_cell(&mut s, *c, cell, sheet.cell_pictures.get(c), sheet.cell_runs.get(c), ov, ex, array.as_ref(), &sid, out);
         }
         s.push_str("</row>");
     }
@@ -604,6 +604,7 @@ fn write_cell(
     c: CellRef,
     cell: Option<&Cell>,
     picture: Option<&std::sync::Arc<gridcraft_model::CellPicture>>,
+    runs: Option<&CellRuns>,
     ov: Option<&String>,
     extra: Option<&Value>,
     dynamic: Option<&RangeRef>,
@@ -687,7 +688,13 @@ fn write_cell(
             let _ = write!(s, "><v>{}</v></c>", num(*n));
         }
         Value::Text(t) => {
-            let i = out.sst.index(t);
+            // Rich runs join the shared string as formatting on the text; a runs entry that
+            // does not line up with this cell's text (wrong length, override in play) is
+            // ignored and the plain text is shared.
+            let i = match runs {
+                Some(r) if r.valid_for(t) => out.sst.index_rich(t, r),
+                _ => out.sst.index(t),
+            };
             let _ = write!(s, " t=\"s\"><v>{i}</v></c>");
         }
         Value::Bool(b) => {
