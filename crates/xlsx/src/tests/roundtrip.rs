@@ -847,6 +847,110 @@ fn icon_sets_always_write_one_cfvo_per_icon() {
     assert_eq!(rules, [3, 4, 5]);
 }
 
+/// #703: x14 conditional-format extensions write in Excel's shape and survive a round trip —
+/// solid bars with border/negative colours/axis/length limits, custom icon sets, x14-only sets
+/// (`5Boxes`) — sharing the worksheet `extLst` with sparklines, conditional formats first.
+/// A plain gradient bar carries nothing x14 and must not grow an extension.
+#[test]
+fn x14_extensions_round_trip() {
+    let mut wb = Workbook::new();
+    let s = wb.sheet_mut(0).unwrap();
+    for (i, v) in [-40.0, -12.0, 0.0, 5.0, 9.0, 33.0, 50.0, 67.0, 100.0].into_iter().enumerate() {
+        s.set_value(CellRef::new(i as u32 + 1, 1), Value::Number(v));
+    }
+    // (a) Solid bar with every extension field set.
+    s.cond_formats.push(CondFormat {
+        ranges: vec![rr("B2:B10")],
+        rule: CfRule::DataBar {
+            min: CfValueKind::Number(0.0),
+            max: CfValueKind::Number(100.0),
+            color: Color::Rgb(0x638EC6),
+            gradient: false,
+            show_value: true,
+            border: Some(Color::Rgb(0xFF0000)),
+            negative_fill: Some(Color::Rgb(0xFF00FF)),
+            negative_border: Some(Color::Rgb(0x0000FF)),
+            axis: Some(Color::Rgb(0x00FF00)),
+            limits: Some((10, 90)),
+        },
+        priority: 1,
+        stop_if_true: false,
+    });
+    // (b) Plain gradient bar: must NOT grow an ext.
+    s.cond_formats.push(CondFormat {
+        ranges: vec![rr("C2:C10")],
+        rule: CfRule::DataBar {
+            min: CfValueKind::Min,
+            max: CfValueKind::Max,
+            color: Color::Rgb(0x638EC6),
+            gradient: true,
+            show_value: true,
+            border: None,
+            negative_fill: None,
+            negative_border: None,
+            axis: None,
+            limits: None,
+        },
+        priority: 2,
+        stop_if_true: false,
+    });
+    // (c) Custom icon set: classic set with per-position icons from another set.
+    s.cond_formats.push(CondFormat {
+        ranges: vec![rr("D2:D10")],
+        rule: CfRule::IconSet {
+            set: "3Arrows".into(),
+            thresholds: default_icon_thresholds("3Arrows"),
+            reverse: false,
+            show_value: true,
+            icons: Some((0..3).map(|id| IconChoice { set: "3Triangles".into(), id }).collect()),
+        },
+        priority: 3,
+        stop_if_true: false,
+    });
+    // (d) `5Boxes` exists only in x14: an x14-only rule with no classic counterpart.
+    s.cond_formats.push(CondFormat {
+        ranges: vec![rr("E2:E10")],
+        rule: CfRule::IconSet { set: "5Boxes".into(), thresholds: default_icon_thresholds("5Boxes"), reverse: false, show_value: true, icons: None },
+        priority: 4,
+        stop_if_true: false,
+    });
+    // (e) A sparkline sharing the worksheet extLst.
+    s.sparklines.push(Sparkline {
+        cell: at("F2"),
+        source: "Sheet1!B2:B10".into(),
+        kind: SparklineKind::Line,
+        color: Color::Rgb(0x376092),
+        markers: false,
+    });
+
+    let bytes = write_xlsx(&wb).unwrap();
+    let (xml, _) = sheet1_xml(&bytes);
+    // The id ext sits inside the rule element (Excel's shape, PR #610), not after it.
+    assert!(xml.contains("<x14:id>{00000000-0000-0000-0000-000000000001}</x14:id></ext></extLst></dataBar>"), "{xml}");
+    assert!(xml.contains("<x14:id>{00000000-0000-0000-0000-000000000003}</x14:id></ext></extLst></iconSet>"), "{xml}");
+    // x14 cfvo values are xm:f children, never val attributes.
+    assert!(xml.contains("<x14:cfvo type=\"num\"><xm:f>0</xm:f></x14:cfvo><x14:cfvo type=\"num\"><xm:f>100</xm:f></x14:cfvo>"), "{xml}");
+    for rest in xml.split("<x14:cfvo ").skip(1) {
+        let head = rest.split('>').next().unwrap();
+        assert!(!head.contains("val="), "an x14 cfvo carries a val attribute: {head}");
+    }
+    // The conditional-format ext precedes the sparkline ext; one worksheet extLst holds both.
+    let (cf_at, spark_at) = (xml.find("{78C0D931").unwrap(), xml.find("{05C60535").unwrap());
+    assert!(cf_at < spark_at, "{xml}");
+    assert_eq!(xml.matches("<extLst>").count(), 3, "one inside each extended rule element plus the worksheet's: {xml}");
+    // The plain gradient bar's rule stays classic-only.
+    let plain = xml.split("<conditionalFormatting sqref=\"C2:C10\">").nth(1).unwrap().split("</conditionalFormatting>").next().unwrap();
+    assert!(!plain.contains("extLst") && !plain.contains("x14:"), "a plain gradient bar grows an ext: {plain}");
+    // The x14-only set lives in the extension alone.
+    assert!(xml.contains("<x14:iconSet iconSet=\"5Boxes\">"), "{xml}");
+    assert!(!xml.contains("<iconSet iconSet=\"5Boxes\">"), "{xml}");
+
+    let (back, rep) = read_xlsx(&bytes).unwrap();
+    assert!(rep.warnings.is_empty(), "{:?}", rep.warnings);
+    assert_eq!(back.sheet(0).unwrap().cond_formats, wb.sheet(0).unwrap().cond_formats);
+    assert_eq!(back.sheet(0).unwrap().sparklines, wb.sheet(0).unwrap().sparklines);
+}
+
 /// Files have no `@` operator: Excel writes `@x` as `_xlfn.SINGLE(x)` in a dynamic-array
 /// formula, and reads it back as `@x`.
 #[test]

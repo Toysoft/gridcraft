@@ -5,8 +5,8 @@ use std::fmt::Write as _;
 
 use gridcraft_core::{CellError, CellRef, RangeRef, Value};
 use gridcraft_model::{
-    Cell, CfOperator, CfRule, CfValueKind, Color, CondFormat, ErrorStyle, FilterCriterion, LineInfo, Orientation, Sheet, SparklineKind, Style, Table,
-    TotalsFn, Validation, ValidationKind, Workbook, default_icon_thresholds, icon_count,
+    Cell, CfOperator, CfRule, CfValueKind, Color, CondFormat, ErrorStyle, FilterCriterion, IconChoice, LineInfo, Orientation, Sheet, SparklineKind,
+    Style, Table, TotalsFn, Validation, ValidationKind, Workbook, default_icon_thresholds,
 };
 
 use crate::drawing::{Obj, image_content_type, image_ext};
@@ -33,6 +33,94 @@ fn cf_op_name(op: CfOperator) -> &'static str {
         CfOperator::GreaterOrEqual => "greaterThanOrEqual",
         CfOperator::LessOrEqual => "lessThanOrEqual",
     }
+}
+
+/// The x14 (Excel 2010) extension namespace, and the one its formula/sqref values live in.
+const NS_X14: &str = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main";
+const NS_XM: &str = "http://schemas.microsoft.com/office/excel/2006/main";
+/// Worksheet `ext` uri of the conditional-format extensions. Its block is written before the
+/// sparkline ext that shares the worksheet's `extLst`.
+const URI_X14_CF: &str = "{78C0D931-6437-407d-A8EE-F0AAD7539E65}";
+/// `ext` uri linking a classic `dataBar`/`iconSet` rule to its x14 refinement (the `x14:id`).
+const URI_X14_ID: &str = "{B025F937-C7B1-47D3-B67F-A62EFF666E3E}";
+/// Worksheet `ext` uri of sparklines.
+const URI_SPARKLINES: &str = "{05C60535-1F16-4fd2-B633-F4F36F0B64E0}";
+
+/// Per-rule x14 GUID, derived from the rule's priority — unique per sheet because priorities
+/// are renumbered 1..n — as `{00000000-0000-0000-0000-PPPPPPPPPPPP}` (PR #610's scheme, credit
+/// @MarekSpodBiedry).
+fn x14_guid(priority: u32) -> String {
+    format!("{{00000000-0000-0000-0000-{priority:012}}}")
+}
+
+/// The id ext linking a classic rule element to its x14 refinement, placed inside the rule
+/// element (`<dataBar>`/`<iconSet>`) — Excel's shape, which Excel 2007 quietly ignores.
+fn id_ext(priority: u32) -> String {
+    format!("<extLst><ext xmlns:x14=\"{NS_X14}\" uri=\"{URI_X14_ID}\"><x14:id>{}</x14:id></ext></extLst>", x14_guid(priority))
+}
+
+/// One x14 `cfvo`: the value is an `xm:f` child, never a `val` attribute; `Min`/`Max` are
+/// Excel's `autoMin`/`autoMax`, which carry no value.
+fn x14_cfvo_xml(v: &CfValueKind) -> String {
+    match v {
+        CfValueKind::Min => "<x14:cfvo type=\"autoMin\"/>".into(),
+        CfValueKind::Max => "<x14:cfvo type=\"autoMax\"/>".into(),
+        CfValueKind::Number(n) => format!("<x14:cfvo type=\"num\"><xm:f>{}</xm:f></x14:cfvo>", num(*n)),
+        CfValueKind::Percent(n) => format!("<x14:cfvo type=\"percent\"><xm:f>{}</xm:f></x14:cfvo>", num(*n)),
+        CfValueKind::Percentile(n) => format!("<x14:cfvo type=\"percentile\"><xm:f>{}</xm:f></x14:cfvo>", num(*n)),
+        CfValueKind::Formula(f) => format!("<x14:cfvo type=\"formula\"><xm:f>{}</xm:f></x14:cfvo>", esc(&text_to_file(f))),
+    }
+}
+
+/// An `x14:` element wrapping a colour: `border`, `negativeFill`, `negativeBorderColor` and
+/// `axis` all use this element form (not an `x14:axisColor`-style attribute).
+fn x14_color_el(name: &str, c: &Color) -> String {
+    format!("<x14:{name}><x14:color {}/></x14:{name}>", color_attrs(c))
+}
+
+/// The icon sets Excel 2010 added in x14 only (`3Stars`, `3Triangles`, `5Boxes`): a rule using
+/// one is written as an x14-only rule with no classic counterpart, because the classic
+/// `iconSet` attribute has no value for them.
+fn x14_only_icon_set(set: &str) -> bool {
+    matches!(set, "3Stars" | "3Triangles" | "5Boxes")
+}
+
+/// The cfvos of an icon-set rule: one per icon (`CT_IconSet` wants at least two), the first
+/// being the lower bound — the stored thresholds when complete, the lower bound prepended when
+/// one short, Excel's defaults otherwise.
+fn icon_cfvos(set: &str, thresholds: &[CfValueKind]) -> Vec<CfValueKind> {
+    let defaults = default_icon_thresholds(set);
+    match thresholds.len() {
+        n if n == defaults.len() => thresholds.to_vec(),
+        n if n + 1 == defaults.len() => defaults.iter().take(1).cloned().chain(thresholds.iter().cloned()).collect(),
+        _ => defaults,
+    }
+}
+
+/// The `x14:cfRule` body of an icon-set extension: the set restated with its thresholds as
+/// `xm:f` cfvos plus the custom per-position icon choices. Identical whether the rule refines
+/// a classic rule or stands alone; only the classic counterpart differs.
+fn x14_icon_set_xml(set: &str, thresholds: &[CfValueKind], reverse: bool, show_value: bool, icons: &[IconChoice], priority: u32) -> String {
+    let mut b =
+        format!("<x14:cfRule type=\"iconSet\" id=\"{}\" priority=\"{priority}\"><x14:iconSet iconSet=\"{}\"", x14_guid(priority), esc_attr(set));
+    if !icons.is_empty() {
+        b.push_str(" custom=\"1\"");
+    }
+    if reverse {
+        b.push_str(" reverse=\"1\"");
+    }
+    if !show_value {
+        b.push_str(" showValue=\"0\"");
+    }
+    b.push('>');
+    for t in &icon_cfvos(set, thresholds) {
+        b.push_str(&x14_cfvo_xml(t));
+    }
+    for ic in icons {
+        let _ = write!(b, "<x14:cfIcon iconSet=\"{}\" iconId=\"{}\"/>", esc_attr(&ic.set), ic.id);
+    }
+    b.push_str("</x14:iconSet></x14:cfRule>");
+    b
 }
 
 /// Valid table name: letters, digits, `_` and `.`, starting with a letter, `_` or `\`
@@ -353,7 +441,9 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
         }
         s.push_str("</mergeCells>");
     }
-    // Conditional formats, priorities renumbered 1..n in priority order.
+    // Conditional formats, priorities renumbered 1..n in priority order. Rules carrying x14
+    // extensions also feed the sheet-level CF ext; x14-only rules (sets without a classic
+    // value) appear there alone, with no classic counterpart.
     let mut order: Vec<usize> = (0..sheet.cond_formats.len()).collect();
     order.sort_by_key(|&i| sheet.cond_formats.get(i).map(|c| c.priority).unwrap_or(0));
     let mut prio = vec![0u32; sheet.cond_formats.len()];
@@ -362,16 +452,21 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
             *p = rank as u32 + 1;
         }
     }
+    let mut x14_cfs: Vec<String> = Vec::new();
     for (i, cf) in sheet.cond_formats.iter().enumerate() {
         if cf.ranges.is_empty() {
             continue;
         }
-        let _ = write!(
-            s,
-            "<conditionalFormatting sqref=\"{}\">{}</conditionalFormatting>",
-            sqref(&cf.ranges),
-            cf_rule_xml(cf, prio.get(i).copied().unwrap_or(1), out)
-        );
+        let rule = cf_rule_xml(cf, prio.get(i).copied().unwrap_or(1), out);
+        if let Some(classic) = &rule.classic {
+            let _ = write!(s, "<conditionalFormatting sqref=\"{}\">{classic}</conditionalFormatting>", sqref(&cf.ranges));
+        }
+        if let Some(body) = rule.x14 {
+            x14_cfs.push(format!(
+                "<x14:conditionalFormatting xmlns:xm=\"{NS_XM}\">{body}<xm:sqref>{}</xm:sqref></x14:conditionalFormatting>",
+                sqref(&cf.ranges)
+            ));
+        }
     }
     let vals: Vec<&Validation> = sheet.validations.iter().filter(|v| !v.ranges.is_empty()).collect();
     if !vals.is_empty() {
@@ -573,27 +668,44 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
         }
         let _ = write!(s, "<tableParts count=\"{}\">{parts}</tableParts>", tables.len());
     }
-    // Sparklines (Excel 2010 extension).
-    if !sheet.sparklines.is_empty() {
-        s.push_str("<extLst><ext uri=\"{05C60535-1F16-4fd2-B633-F4F36F0B64E0}\" xmlns:x14=\"http://schemas.microsoft.com/office/spreadsheetml/2009/9/main\"><x14:sparklineGroups xmlns:xm=\"http://schemas.microsoft.com/office/excel/2006/main\">");
-        for sp in &sheet.sparklines {
-            let ty = match sp.kind {
-                SparklineKind::Line => "",
-                SparklineKind::Column => " type=\"column\"",
-                SparklineKind::WinLoss => " type=\"stacked\"",
-            };
-            let src =
-                if sp.source.contains('!') { sp.source.clone() } else { format!("{}!{}", gridcraft_formula::quote_sheet(&sheet.name), sp.source) };
-            let color = if sp.color == Color::Auto { "rgb=\"FF376092\"".to_string() } else { color_attrs(&sp.color) };
-            let _ = write!(
-                s,
-                "<x14:sparklineGroup displayEmptyCellsAs=\"gap\"{ty}{}><x14:colorSeries {color}/><x14:sparklines><x14:sparkline><xm:f>{}</xm:f><xm:sqref>{}</xm:sqref></x14:sparkline></x14:sparklines></x14:sparklineGroup>",
-                if sp.markers { " markers=\"1\"" } else { "" },
-                esc(&src),
-                sp.cell.a1()
-            );
+    // Excel 2010 extensions share one worksheet extLst: conditional formats first, then
+    // sparklines.
+    let cf_ext = if x14_cfs.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<ext uri=\"{URI_X14_CF}\" xmlns:x14=\"{NS_X14}\"><x14:conditionalFormattings>{}</x14:conditionalFormattings></ext>",
+            x14_cfs.join("")
+        )
+    };
+    if !cf_ext.is_empty() || !sheet.sparklines.is_empty() {
+        s.push_str("<extLst>");
+        s.push_str(&cf_ext);
+        if !sheet.sparklines.is_empty() {
+            s.push_str(&format!("<ext uri=\"{URI_SPARKLINES}\" xmlns:x14=\"{NS_X14}\"><x14:sparklineGroups xmlns:xm=\"{NS_XM}\">"));
+            for sp in &sheet.sparklines {
+                let ty = match sp.kind {
+                    SparklineKind::Line => "",
+                    SparklineKind::Column => " type=\"column\"",
+                    SparklineKind::WinLoss => " type=\"stacked\"",
+                };
+                let src = if sp.source.contains('!') {
+                    sp.source.clone()
+                } else {
+                    format!("{}!{}", gridcraft_formula::quote_sheet(&sheet.name), sp.source)
+                };
+                let color = if sp.color == Color::Auto { "rgb=\"FF376092\"".to_string() } else { color_attrs(&sp.color) };
+                let _ = write!(
+                    s,
+                    "<x14:sparklineGroup displayEmptyCellsAs=\"gap\"{ty}{}><x14:colorSeries {color}/><x14:sparklines><x14:sparkline><xm:f>{}</xm:f><xm:sqref>{}</xm:sqref></x14:sparkline></x14:sparklines></x14:sparklineGroup>",
+                    if sp.markers { " markers=\"1\"" } else { "" },
+                    esc(&src),
+                    sp.cell.a1()
+                );
+            }
+            s.push_str("</x14:sparklineGroups></ext>");
         }
-        s.push_str("</x14:sparklineGroups></ext></extLst>");
+        s.push_str("</extLst>");
     }
     s.push_str("</worksheet>");
     (s, rels)
@@ -714,13 +826,22 @@ fn quote(t: &str) -> String {
     format!("\"{}\"", t.replace('"', "\"\""))
 }
 
-fn cf_rule_xml(cf: &CondFormat, priority: u32, out: &mut Out) -> String {
+/// A conditional format's markup split by destination: the classic rule (`None` when the rule
+/// is x14-only — its icon set has no classic value), and the body of its `x14:cfRule` (`None`
+/// when nothing the model carries needs an extension; a plain gradient bar must not grow one).
+struct CfXml {
+    classic: Option<String>,
+    x14: Option<String>,
+}
+
+fn cf_rule_xml(cf: &CondFormat, priority: u32, out: &mut Out) -> CfXml {
     let tl = cf.ranges.first().map(|r| r.start.a1()).unwrap_or_else(|| "A1".into());
     let stop = if cf.stop_if_true { " stopIfTrue=\"1\"" } else { "" };
     let mut dxf = |st: &Style| dxf_id(&mut out.dxfs, st);
     let f = |x: &str| format!("<formula>{}</formula>", esc(&text_to_file(x)));
-    let simple = |ty: &str, st: &Style, extra: &str, body: String, dxf: &mut dyn FnMut(&Style) -> u32| {
-        format!("<cfRule type=\"{ty}\" dxfId=\"{}\" priority=\"{priority}\"{stop}{extra}>{body}</cfRule>", dxf(st))
+    let simple = |ty: &str, st: &Style, extra: &str, body: String, dxf: &mut dyn FnMut(&Style) -> u32| CfXml {
+        classic: Some(format!("<cfRule type=\"{ty}\" dxfId=\"{}\" priority=\"{priority}\"{stop}{extra}>{body}</cfRule>", dxf(st))),
+        x14: None,
     };
     match &cf.rule {
         CfRule::CellIs { op, a, b, style } => {
@@ -807,16 +928,57 @@ fn cf_rule_xml(cf: &CondFormat, priority: u32, out: &mut Out) -> String {
                 let _ = write!(b, "<color {}/>", color_attrs(c));
             }
             b.push_str("</colorScale>");
-            format!("<cfRule type=\"colorScale\" priority=\"{priority}\"{stop}>{b}</cfRule>")
+            CfXml { classic: Some(format!("<cfRule type=\"colorScale\" priority=\"{priority}\"{stop}>{b}</cfRule>")), x14: None }
         }
-        CfRule::DataBar { min, max, color, show_value, .. } => format!(
-            "<cfRule type=\"dataBar\" priority=\"{priority}\"{stop}><dataBar{}>{}{}<color {}/></dataBar></cfRule>",
-            if *show_value { "" } else { " showValue=\"0\"" },
-            cfvo_xml(min),
-            cfvo_xml(max),
-            if *color == Color::Auto { "rgb=\"FF638EC6\"".to_string() } else { color_attrs(color) }
-        ),
-        CfRule::IconSet { set, thresholds, reverse, show_value, .. } => {
+        CfRule::DataBar { min, max, color, gradient, show_value, border, negative_fill, negative_border, axis, limits } => {
+            // Solid fill, border, negative colours, axis and length limits exist only in x14;
+            // a plain gradient bar is fully classic and must not grow an extension.
+            let extended =
+                !*gradient || border.is_some() || negative_fill.is_some() || negative_border.is_some() || axis.is_some() || limits.is_some();
+            let x14 = extended.then(|| {
+                let mut a = String::new();
+                if let Some((lo, hi)) = limits {
+                    let _ = write!(a, " minLength=\"{lo}\" maxLength=\"{hi}\"");
+                }
+                if !*gradient {
+                    a.push_str(" gradient=\"0\"");
+                }
+                if border.is_some() {
+                    a.push_str(" border=\"1\"");
+                }
+                if let Some(c) = negative_fill {
+                    let _ = write!(a, " negativeBarColorAsSame=\"{}\"", u8::from(c == color));
+                }
+                if let Some(c) = negative_border {
+                    let _ = write!(a, " negativeBarBorderColorAsSame=\"{}\"", u8::from(c == color));
+                }
+                let mut b = format!("<x14:cfRule type=\"dataBar\" id=\"{}\" priority=\"{priority}\"><x14:dataBar{a}>", x14_guid(priority));
+                b.push_str(&x14_cfvo_xml(min));
+                b.push_str(&x14_cfvo_xml(max));
+                for (name, c) in [("border", border), ("negativeFill", negative_fill), ("negativeBorderColor", negative_border), ("axis", axis)] {
+                    if let Some(c) = c {
+                        b.push_str(&x14_color_el(name, c));
+                    }
+                }
+                b.push_str("</x14:dataBar></x14:cfRule>");
+                b
+            });
+            let id = extended.then(|| id_ext(priority));
+            let col = if *color == Color::Auto { "rgb=\"FF638EC6\"".to_string() } else { color_attrs(color) };
+            CfXml {
+                classic: Some(format!(
+                    "<cfRule type=\"dataBar\" priority=\"{priority}\"{stop}><dataBar{}>{}{}<color {col}/>{}</dataBar></cfRule>",
+                    if *show_value { "" } else { " showValue=\"0\"" },
+                    cfvo_xml(min),
+                    cfvo_xml(max),
+                    id.as_deref().unwrap_or("")
+                )),
+                x14,
+            }
+        }
+        CfRule::IconSet { set, thresholds, reverse, show_value, icons } => {
+            let custom = icons.as_deref().is_some_and(|v| !v.is_empty());
+            let x14_only = x14_only_icon_set(set);
             let mut b = format!("<iconSet iconSet=\"{}\"", esc_attr(set));
             if *reverse {
                 b.push_str(" reverse=\"1\"");
@@ -825,19 +987,18 @@ fn cf_rule_xml(cf: &CondFormat, priority: u32, out: &mut Out) -> String {
                 b.push_str(" showValue=\"0\"");
             }
             b.push('>');
-            // CT_IconSet needs one cfvo per icon (minOccurs 2); the first is the lower bound.
-            let k = icon_count(set);
-            let defaults = default_icon_thresholds(set);
-            let cfvos: Vec<&CfValueKind> = match thresholds.len() {
-                n if n == k => thresholds.iter().collect(),
-                n if n + 1 == k => defaults.iter().take(1).chain(thresholds).collect(),
-                _ => defaults.iter().collect(),
-            };
-            for t in cfvos {
+            for t in &icon_cfvos(set, thresholds) {
                 b.push_str(&cfvo_xml(t));
             }
+            if custom {
+                b.push_str(&id_ext(priority));
+            }
             b.push_str("</iconSet>");
-            format!("<cfRule type=\"iconSet\" priority=\"{priority}\"{stop}>{b}</cfRule>")
+            CfXml {
+                classic: (!x14_only).then(|| format!("<cfRule type=\"iconSet\" priority=\"{priority}\"{stop}>{b}</cfRule>")),
+                x14: (custom || x14_only)
+                    .then(|| x14_icon_set_xml(set, thresholds, *reverse, *show_value, icons.as_deref().unwrap_or_default(), priority)),
+            }
         }
     }
 }
