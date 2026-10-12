@@ -37,7 +37,7 @@ A3/A4 entirely black in GridCraft, black/red/black and black/red/green in ONLYOF
 
 | Decision | Choice | Rejected alternatives |
 |---|---|---|
-| Where runs live | **Side-table** `Sheet.cell_runs: BTreeMap<CellRef, Arc<CellRuns>>`, like `comments` (`sheet.rs:86`) and `cell_pictures` (`sheet.rs:56`) | `Value::RichText` variant (~110 match sites / 37 files, forces formula flattening semantics); runs inside `Style` (styles are content-agnostic and whole-interned; runs are content-scoped) |
+| Where runs live | **Side-table** `Sheet.cell_runs: BTreeMap<CellRef, CellRuns>`, like `comments` (`sheet.rs:86`) and `cell_pictures` (`sheet.rs:56`) | `Value::RichText` variant (~110 match sites / 37 files, forces formula flattening semantics); runs inside `Style` (styles are content-agnostic and whole-interned; runs are content-scoped) |
 | Run font shape | **Delta** (`Option` fields); unspecified properties follow the cell font at render/write time | Resolved-absolute fonts stored at import (simpler, but changes to the cell font would not propagate, and round-trip would balloon partial `rPr` to full) |
 | numfmt color vs run color | numfmt section colors apply **only when the cell has no valid runs** | numfmt always wins (would repaint imported runs) |
 | Edit behavior | `Sheet::set_cell` drops the entry | Splitting/merging runs around typed text (that is #776) |
@@ -66,7 +66,7 @@ pub struct RunFont {        // mirrors Font (style.rs:154) with Options; Eq + Ha
 }
 ```
 
-- `Sheet.cell_runs: BTreeMap<CellRef, Arc<CellRuns>>`, serialized with the existing A1-key serde
+- `Sheet.cell_runs: BTreeMap<CellRef, CellRuns>` (plain values, like `comments`), serialized with the existing A1-key serde
   helper (`crate::cellmap`, as `comments`). If `Arc` needs serde `rc` support not enabled for
   `comments`-style plain structs, mirror the `picture_map` approach (`sheet.rs:446`).
 - `CellRuns` participates in `Cell`/sheet equality only through the sheet's diff path the way
@@ -96,7 +96,7 @@ pub struct RunFont {        // mirrors Font (style.rs:154) with Options; Eq + Ha
 
 ### 3. Export (`crates/xlsx`)
 
-- `write.rs` `Sst` (87-105): entries become `SstEntry { text: String, runs: Option<Arc<CellRuns>> }`,
+- `write.rs` `Sst` (87-105): entries become `SstEntry { text: String, runs: Option<CellRuns> }`,
   dedup key = (text, runs hash). Rich entries emit
   `<si><r><rPr>…</rPr><t xml:space="preserve">…</t></r>…</si>`; only fields set in the delta are
   emitted. `font_xml` (styles.rs:399) gains a mode to emit `<rFont val>` instead of `<name val>`;
@@ -125,9 +125,10 @@ pub struct RunFont {        // mirrors Font (style.rs:154) with Options; Eq + Ha
 - `Sheet::set_cell` (sheet.rs:194-197) removes the `cell_runs` entry at the address, mirroring
   the cell-picture invalidation. All edit paths (`cell.set`, paste, fill, `range.setValues`,
   clear) funnel through `set_cell`.
-- Structural edits (insert/delete rows/cols, cut, sort, sheet ops): runs follow the same
-  `CellRef` translation comments get today — match comments exactly, whatever that behavior is,
-  and record it in the PR. Stale entries are always harmless: the validity guard checks the text.
+- Structural edits (insert/delete rows/cols, cut, sort, sheet ops): runs follow the `cell_pictures`
+  translation pattern wherever it is applied (e.g. `insert.rs:270-276`); comments are not translated
+  on row insert today, and runs share the pictures' keyed-at-address problem, so pictures are the
+  correct precedent. Stale entries are always harmless: the validity guard checks the text.
 
 ### 6. Bounds and never-crash
 
