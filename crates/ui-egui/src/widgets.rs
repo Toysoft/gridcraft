@@ -58,6 +58,16 @@ pub fn big_button(ui: &mut Ui, icon: Icon, label: &str, tip: &str, dropdown: boo
     resp.on_hover_text(tr(ui, tip))
 }
 
+/// The width a [`big_button`] needs for `label` (translated, no dropdown arrow), measured like
+/// [`big_label`] does but without drawing it: used to size ribbon group launchers.
+pub fn big_button_width(ui: &Ui, label: &str) -> f32 {
+    let label = tr(ui, label);
+    let font = theme::ui_font(11.5);
+    let text_w =
+        label.split('\n').map(|line| ui.painter().layout_no_wrap(line.to_owned(), font.clone(), Color32::WHITE).size().x).fold(0.0, f32::max);
+    (text_w + 12.0).max(44.0)
+}
+
 /// Large split button (Formulas › AutoSum): the icon runs the default action, the label and its
 /// arrow open the menu. Returns the (main, arrow) responses; their accessible names are the label
 /// and "<label> options".

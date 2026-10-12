@@ -38,6 +38,17 @@ fn every_tab_fits_the_card_height() {
 }
 
 #[test]
+fn home_groups_are_measured_in_order() {
+    let h = app_at(1440.0, "Home");
+    let groups = RibbonOverflow::get(&h.ctx).groups.clone();
+    assert!(!groups.is_empty(), "Home's groups are recorded");
+    assert!(groups.iter().any(|(n, w)| n == "Clipboard" && *w > 50.0));
+    // Recording follows render order: Clipboard renders before Font.
+    let pos = |name: &str| groups.iter().position(|(n, _)| n == name);
+    assert!(pos("Clipboard").is_some_and(|c| pos("Font").is_some_and(|f| c < f)));
+}
+
+#[test]
 fn an_overflowing_tab_shows_scroll_arrows_that_scroll() {
     let mut h = app_at(700.0, "Home");
     let o = RibbonOverflow::get(&h.ctx);
