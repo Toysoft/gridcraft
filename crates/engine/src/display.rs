@@ -93,7 +93,16 @@ pub fn cell_text(wb: &Workbook, sheet: &Sheet, c: CellRef) -> String {
 /// and no General narrowing (Save As CSV/Text writes this). Formulas give their result.
 pub fn value_text(wb: &Workbook, sheet: &Sheet, c: CellRef) -> String {
     let style = wb.styles.get(sheet.style_id(c));
-    let f = format(&sheet.value(c), style.num_fmt.as_str(), wb);
+    let code = style.num_fmt.as_str();
+    // A General number keeps full precision here: Excel's Save As CSV/Text (and the clipboard)
+    // writes the value — up to 15 significant digits (`number_to_text`) — never the narrowing a
+    // column-width display shows. The grid narrows General itself with the real column width.
+    if parsed(code).is_general()
+        && let Value::Number(n) = &sheet.value(c)
+    {
+        return gridcraft_core::number_to_text(*n);
+    }
+    let f = format(&sheet.value(c), code, wb);
     match f.fill {
         Some((_, pos)) => {
             let mut t = f.text;
