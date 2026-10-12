@@ -84,8 +84,6 @@ pub fn rich_text(e: &El) -> String {
 
 /// One rich-text run of a string item: its byte range in the concatenated text and its `<rPr>`
 /// properties element when present.
-// Consumed by the shared-strings reader in the next task (issue #774); tests use it now.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SiRun<'a> {
     pub start: u32,
@@ -97,8 +95,6 @@ pub struct SiRun<'a> {
 /// (`<t>` and `<r><t>` concatenated, phonetic runs skipped, `_xHHHH_` escapes decoded) and each
 /// `<r>` records the byte range its text occupies. When an escape changes the text's length the
 /// offsets no longer line up; callers guard with `CellRuns::valid_for`.
-// Consumed by the shared-strings reader in the next task (issue #774); tests use it now.
-#[allow(dead_code)]
 pub fn si_parts(e: &El) -> (String, Vec<SiRun<'_>>) {
     let mut s = String::new();
     let mut runs = Vec::new();

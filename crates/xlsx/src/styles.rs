@@ -97,8 +97,6 @@ pub fn read_font(e: &El, palette: &[u32]) -> Font {
 /// style's font, an absent one inherits it (`None`). Like [`read_font`], text 1 (`theme="1"`
 /// with no tint) is read as the automatic colour; a missing `<color>` inherits rather than
 /// forcing automatic.
-// Consumed by the shared-strings reader in the next task (issue #774); tests use it now.
-#[allow(dead_code)]
 pub fn read_run_font(rpr: &El, palette: &[u32]) -> RunFont {
     RunFont {
         name: rpr.child("name").or_else(|| rpr.child("rFont")).and_then(|n| n.attr("val")).map(str::to_string),

@@ -1,10 +1,6 @@
 //! Shared-string rich-text runs: assembling a parsed `<si>` (text + run parts) into the model's
 //! [`CellRuns`] side-table payload, under the per-cell and per-workbook caps (issue #774).
 
-// Nothing in the crate proper consumes this module yet — the shared-strings reader is wired to
-// it by the next task; tests exercise it in the meantime.
-#![allow(dead_code)]
-
 use std::sync::Arc;
 
 use gridcraft_model::{CellRuns, MAX_RUNS_PER_CELL, Run, RunFont};
@@ -29,12 +25,6 @@ impl Si {
         let runs = cell_runs(&text, &parts, palette, budget);
         Si { text: Arc::from(text), runs }
     }
-}
-
-/// [`Si::parse`] as a tuple.
-pub fn si_cell_runs(si: &El, palette: &[u32], budget: &mut u64) -> (Arc<str>, Option<CellRuns>) {
-    let Si { text, runs } = Si::parse(si, palette, budget);
-    (text, runs)
 }
 
 /// Assembles the parsed run parts, enforcing the caps. Never an error: hostile input loses its

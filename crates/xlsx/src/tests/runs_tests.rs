@@ -1,15 +1,28 @@
 //! Shared-string rich-text runs: splitting an `<si>` into text + run parts, reading `<rPr>`
 //! deltas and assembling `CellRuns` under the caps (issue #774).
 
+use gridcraft_core::{CellRef, Value};
 use gridcraft_model::{Color, MAX_RUNS_PER_CELL, RunFont};
 
-use crate::runs::{Si, si_cell_runs};
+use super::minimal;
+use crate::read_xlsx;
+use crate::runs::Si;
 use crate::styles::read_run_font;
 use crate::tables::INDEXED;
 use crate::xml::{El, parse, si_parts};
 
 fn si(xml: &str) -> El {
     parse(xml.as_bytes()).unwrap()
+}
+
+fn at(a: &str) -> CellRef {
+    CellRef::parse(a).unwrap()
+}
+
+/// A minimal one-sheet package with a sharedStrings part and the given sheet body.
+fn sst_package(sst: &str, body: &str) -> Vec<u8> {
+    let rels = r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>"#;
+    minimal(body, &[("xl/sharedStrings.xml", sst)], rels, "")
 }
 
 fn none_font() -> RunFont {
@@ -24,7 +37,7 @@ fn si_parts_plain() {
     assert!(parts.is_empty());
 
     let mut budget = 1 << 20;
-    let (t, runs) = si_cell_runs(&el, &INDEXED, &mut budget);
+    let Si { text: t, runs } = Si::parse(&el, &INDEXED, &mut budget);
     assert_eq!(&*t, "plain text");
     assert!(runs.is_none());
     assert_eq!(budget, 1 << 20);
@@ -75,7 +88,7 @@ fn preserves_leading_space_offsets() {
     assert_eq!(total, text.len());
 
     let mut budget = 1 << 20;
-    let (_, runs) = si_cell_runs(&el, &INDEXED, &mut budget);
+    let Si { runs, .. } = Si::parse(&el, &INDEXED, &mut budget);
     assert!(runs.expect("valid").valid_for(text.as_str()));
 }
 
@@ -103,7 +116,7 @@ fn over_cell_cap_drops_runs() {
     assert_eq!(si_parts(&el).1.len(), MAX_RUNS_PER_CELL + 1);
 
     let mut budget = 1 << 20;
-    let (text, runs) = si_cell_runs(&el, &INDEXED, &mut budget);
+    let Si { text, runs } = Si::parse(&el, &INDEXED, &mut budget);
     assert_eq!(text.len(), MAX_RUNS_PER_CELL + 1);
     assert!(runs.is_none());
     assert_eq!(budget, 1 << 20);
@@ -113,13 +126,13 @@ fn over_cell_cap_drops_runs() {
 fn over_workbook_budget_drops() {
     let el = si(r#"<si><r><rPr><b/></rPr><t>ab</t></r><r><rPr><i/></rPr><t>cd</t></r></si>"#);
     let mut budget = 0u64;
-    let (text, runs) = si_cell_runs(&el, &INDEXED, &mut budget);
+    let Si { text, runs } = Si::parse(&el, &INDEXED, &mut budget);
     assert_eq!(&*text, "abcd");
     assert!(runs.is_none());
     assert_eq!(budget, 0);
     // Too small by one: still dropped, budget untouched.
     let mut budget = 1u64;
-    let (_, runs) = si_cell_runs(&el, &INDEXED, &mut budget);
+    let Si { runs, .. } = Si::parse(&el, &INDEXED, &mut budget);
     assert!(runs.is_none());
     assert_eq!(budget, 1);
 }
@@ -129,7 +142,7 @@ fn runs_without_rpr_dropped() {
     // Runs that carry no formatting delta hold no information: text only.
     let el = si(r#"<si><r><t>ab</t></r><r><t>cd</t></r></si>"#);
     let mut budget = 1 << 20;
-    let (text, runs) = si_cell_runs(&el, &INDEXED, &mut budget);
+    let Si { text, runs } = Si::parse(&el, &INDEXED, &mut budget);
     assert_eq!(&*text, "abcd");
     assert!(runs.is_none());
     assert_eq!(budget, 1 << 20);
@@ -166,8 +179,136 @@ fn run_font_delta_fields() {
 
     // A run without <rPr> inherits everything.
     let mut budget = 1 << 20;
-    let (_, runs) = si_cell_runs(&si(r#"<si><r><rPr><b/></rPr><t>a</t></r><r><t>bc</t></r></si>"#), &INDEXED, &mut budget);
+    let Si { runs, .. } = Si::parse(&si(r#"<si><r><rPr><b/></rPr><t>a</t></r><r><t>bc</t></r></si>"#), &INDEXED, &mut budget);
     let cr = runs.expect("runs parse");
     assert_eq!(cr.runs[1].font, none_font());
     assert_eq!(cr.runs[0].font.bold, Some(true));
+}
+
+// Reading packages: runs attach to shared and inline string cells (issue #774).
+
+/// The #774 shape: four shared strings, A1-A4 referencing them; only the third and fourth carry
+/// runs worth keeping. A3 holds the three colour forms with their exact offsets.
+#[test]
+fn read_attaches_shared_runs() {
+    let sst = concat!(
+        r#"<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="4" uniqueCount="4">"#,
+        r#"<si><t>plain shared string</t></si>"#,
+        r#"<si><r><t>runs without </t></r><r><t>any formatting</t></r></si>"#,
+        r#"<si><r><rPr><color theme="1"/></rPr><t>this is black,</t></r>"#,
+        r#"<r><rPr><color indexed="2"/></rPr><t xml:space="preserve"> this is red,</t></r>"#,
+        r#"<r><rPr><color rgb="FF00B050"/></rPr><t xml:space="preserve"> this is black</t></r></si>"#,
+        r#"<si><r><rPr><b/><sz val="14"/></rPr><t>bold fourteen </t></r>"#,
+        r#"<r><rPr><color rgb="FFFF0000"/></rPr><t xml:space="preserve">red tail</t></r></si>"#,
+        r#"</sst>"#,
+    );
+    let body = concat!(
+        r#"<sheetData>"#,
+        r#"<row r="1"><c r="A1" t="s"><v>0</v></c></row>"#,
+        r#"<row r="2"><c r="A2" t="s"><v>1</v></c></row>"#,
+        r#"<row r="3"><c r="A3" t="s"><v>2</v></c></row>"#,
+        r#"<row r="4"><c r="A4" t="s"><v>3</v></c></row>"#,
+        r#"</sheetData>"#,
+    );
+    let (wb, rep) = read_xlsx(&sst_package(sst, body)).unwrap();
+    let s = wb.sheet(0).unwrap();
+    // Every cell keeps the plain text; the runs live only in the side-table.
+    assert_eq!(s.value(at("A1")), Value::text("plain shared string"));
+    assert_eq!(s.value(at("A2")), Value::text("runs without any formatting"));
+    assert_eq!(s.value(at("A3")), Value::text("this is black, this is red, this is black"));
+    assert_eq!(s.value(at("A4")), Value::text("bold fourteen red tail"));
+    assert_eq!(s.cell_runs.len(), 2);
+    assert!(!s.cell_runs.contains_key(&at("A1")));
+    assert!(!s.cell_runs.contains_key(&at("A2")));
+
+    let a3 = s.cell_runs.get(&at("A3")).unwrap();
+    assert!(a3.valid_for("this is black, this is red, this is black"));
+    assert_eq!(a3.runs.len(), 3);
+    assert_eq!((a3.runs[0].start, a3.runs[0].len), (0, 14));
+    assert_eq!((a3.runs[1].start, a3.runs[1].len), (14, 13));
+    assert_eq!((a3.runs[2].start, a3.runs[2].len), (27, 14));
+    assert_eq!(a3.runs[0].font.color, Some(Color::Auto));
+    assert_eq!(a3.runs[1].font.color, Some(Color::Rgb(0xFF0000)));
+    assert_eq!(a3.runs[2].font.color, Some(Color::Rgb(0x00B050)));
+
+    let a4 = s.cell_runs.get(&at("A4")).unwrap();
+    assert!(a4.valid_for("bold fourteen red tail"));
+    assert_eq!((a4.runs[0].start, a4.runs[0].len), (0, 14));
+    assert_eq!((a4.runs[1].start, a4.runs[1].len), (14, 8));
+    assert_eq!(a4.runs[0].font.bold, Some(true));
+    assert_eq!(a4.runs[0].font.size, Some(14.0));
+    assert_eq!(a4.runs[1].font.color, Some(Color::Rgb(0xFF0000)));
+    assert!(!rep.warnings.iter().any(|w| w.contains("shared strings")), "{:?}", rep.warnings);
+}
+
+/// An inline string with rich runs gets an entry; the plain `<is><t>` form does not.
+#[test]
+fn read_attaches_inline_runs() {
+    let body = concat!(
+        r#"<sheetData><row r="1">"#,
+        r#"<c r="A1" t="inlineStr"><is><r><t>rich </t></r><r><rPr><b/></rPr><t>text</t></r><rPh><t>ignored</t></rPh></is></c>"#,
+        r#"<c r="B1" t="inlineStr"><is><t>plain inline</t></is></c>"#,
+        r#"</row></sheetData>"#,
+    );
+    let (wb, _) = read_xlsx(&minimal(body, &[], "", "")).unwrap();
+    let s = wb.sheet(0).unwrap();
+    assert_eq!(s.value(at("A1")), Value::text("rich text"));
+    assert_eq!(s.value(at("B1")), Value::text("plain inline"));
+    let cr = s.cell_runs.get(&at("A1")).unwrap();
+    assert!(cr.valid_for("rich text"));
+    assert_eq!(cr.runs.len(), 2);
+    assert_eq!((cr.runs[0].start, cr.runs[0].len), (0, 5));
+    assert_eq!((cr.runs[1].start, cr.runs[1].len), (5, 4));
+    assert_eq!(cr.runs[0].font, none_font());
+    assert_eq!(cr.runs[1].font.bold, Some(true));
+    assert!(!s.cell_runs.contains_key(&at("B1")));
+}
+
+/// Cells whose text carries no formatting deltas get no side-table entry at all.
+#[test]
+fn plain_cells_have_no_entry() {
+    let sst = concat!(
+        r#"<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="2" uniqueCount="2">"#,
+        r#"<si><t>shared plain</t></si>"#,
+        r#"<si><r><t>runs but no rPr</t></r></si>"#,
+        r#"</sst>"#,
+    );
+    let body = concat!(
+        r#"<sheetData><row r="1">"#,
+        r#"<c r="A1" t="s"><v>0</v></c>"#,
+        r#"<c r="B1" t="s"><v>1</v></c>"#,
+        r#"<c r="C1" t="inlineStr"><is><t>inline plain</t></is></c>"#,
+        r#"<c r="D1"><v>7</v></c>"#,
+        r#"<c r="E1" t="str"><f>1+1</f><v>computed</v></c>"#,
+        r#"</row></sheetData>"#,
+    );
+    let (wb, _) = read_xlsx(&sst_package(sst, body)).unwrap();
+    let s = wb.sheet(0).unwrap();
+    assert_eq!(s.value(at("A1")), Value::text("shared plain"));
+    assert_eq!(s.value(at("B1")), Value::text("runs but no rPr"));
+    assert!(s.cell_runs.is_empty());
+}
+
+/// A rich string cached inside a dynamic array's spill range is emptied so the formula can
+/// spill again; no runs entry may survive for text that is no longer there. The anchor keeps
+/// both its cached value and its runs.
+#[test]
+fn spill_override_leaves_no_stale_entry() {
+    let sst = concat!(
+        r#"<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="1" uniqueCount="1">"#,
+        r#"<si><r><rPr><color rgb="FFFF0000"/></rPr><t>spilled </t></r><r><rPr><b/></rPr><t>rich</t></r></si>"#,
+        r#"</sst>"#,
+    );
+    let body = concat!(
+        r#"<sheetData>"#,
+        r#"<row r="1"><c r="A1" cm="1" t="s"><f t="array" ref="A1:A2">_xlfn.SEQUENCE(2)</f><v>0</v></c></row>"#,
+        r#"<row r="2"><c r="A2" t="s"><v>0</v></c></row>"#,
+        r#"</sheetData>"#,
+    );
+    let (wb, _) = read_xlsx(&sst_package(sst, body)).unwrap();
+    let s = wb.sheet(0).unwrap();
+    assert_eq!(s.value(at("A1")), Value::text("spilled rich"));
+    assert!(s.cell_runs.get(&at("A1")).is_some_and(|cr| cr.valid_for("spilled rich")));
+    assert_eq!(s.value(at("A2")), Value::Empty, "the spilled cell's cached value is dropped");
+    assert!(!s.cell_runs.contains_key(&at("A2")));
 }
