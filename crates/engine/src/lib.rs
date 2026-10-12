@@ -17,6 +17,7 @@ pub mod outline;
 pub mod paper;
 pub mod pivot;
 pub mod pivot_calc;
+pub mod python;
 pub mod record;
 pub mod sample;
 pub mod selection;
@@ -168,6 +169,10 @@ pub struct DocState {
     pub unlocked_ranges: Vec<(String, String)>,
     /// Whether the workbook's active content may run without asking.
     pub trust: Trust,
+    /// The last Python runs (`python.diagnostics`), oldest first.
+    pub py_log: std::collections::VecDeque<python::PyRunLog>,
+    /// Python runs so far (numbers the log entries).
+    pub py_log_seq: u64,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -193,6 +198,8 @@ impl DocState {
             sheet_selections: vec![],
             unlocked_ranges: vec![],
             trust: Trust::Local,
+            py_log: Default::default(),
+            py_log_seq: 0,
         }
     }
     pub fn is_dirty(&self) -> bool {
@@ -255,6 +262,8 @@ pub struct Prefs {
     pub user_dictionary: Vec<String>,
     /// View › Show › Formula Bar (an application option in Excel, not saved in the file).
     pub formula_bar: bool,
+    /// Seconds one Python cell may run.
+    pub python_timeout_seconds: f64,
 }
 
 impl Default for Prefs {
@@ -269,6 +278,7 @@ impl Default for Prefs {
             r1c1: false,
             user_dictionary: vec![],
             formula_bar: true,
+            python_timeout_seconds: 5.0,
         }
     }
 }
@@ -322,6 +332,8 @@ pub struct Session {
     next_group: u64,
     /// Counts group begins and ends, so `execute` can tell that a command opened or closed one.
     group_epoch: u64,
+    /// Python workers and the cells queued for them (see [`python`]).
+    pub(crate) python: python::PyRuntime,
 }
 
 impl Session {
@@ -360,6 +372,7 @@ impl Session {
         if i < self.docs.len() {
             let d = self.docs.remove(i);
             self.groups.retain(|g| g.doc != d.uid);
+            self.python_forget(d.uid);
             if self.active >= self.docs.len() {
                 self.active = self.docs.len().saturating_sub(1);
             }
@@ -396,6 +409,8 @@ impl Session {
             Some(d) => (d.uid, d.wb.active_sheet, d.wb.active().map(|sh| sh.name.clone()).unwrap_or_default(), d.selection.clone()),
             None => (0, 0, String::new(), Selection::default()),
         });
+        // What Python cells see as the edit: the workbook before a top-level command.
+        let python_before = if self.depth == 0 { before.as_ref().map(|(uid, wb, _)| (*uid, wb.clone())) } else { None };
         self.depth = self.depth.saturating_add(1);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (spec.run)(self, &params)));
         self.depth = self.depth.saturating_sub(1);
@@ -412,6 +427,9 @@ impl Session {
                     d.wb = wb.clone();
                     d.selection = sel.clone();
                     d.calc.rebuild(&d.wb);
+                }
+                if let Some((uid, ..)) = &before {
+                    self.python_mark_dirty(*uid);
                 }
                 return Err(EngineError::Internal(id.to_string(), msg));
             }
@@ -444,6 +462,9 @@ impl Session {
             }
             d.redo.clear();
             d.revision += 1;
+        }
+        if result.is_ok() {
+            self.python_after_command(id, python_before);
         }
         result
     }
