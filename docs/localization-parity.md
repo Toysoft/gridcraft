@@ -1,6 +1,6 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (German ribbon catalog added) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (French catalog repaired) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Per-language status against Excel, which ships its UI in dozens of languages (Windows language
 packs cover 100+), with localized function names, argument separators, number and date formats,
@@ -47,7 +47,7 @@ separators, number/date formats, machine translation with agent review, and scri
 | Spanish | es | 0 (0%) | no | Latin: yes | no | none | 6–10 h |
 | Hindi | hi | 0 (0%) | no | Devanagari: **no shaping** | no | none | 12–18 h |
 | Arabic | ar | 0 (0%) | no | **no shaping, no RTL UI**; Sheet Right-to-Left mirrors the grid (#146) | no | none | 25–35 h |
-| French | fr | 0 (0%) | no | Latin: yes | no | none | 6–10 h |
+| French | fr | 377 (~17%) | no | Latin: yes | no | menus only | 4–8 h |
 | Portuguese | pt-BR | 266 (~12%) | no | Latin: yes | no | menus only | 4–8 h |
 | Indonesian | id | 0 (0%) | no | Latin: yes | no | none | 5–8 h |
 | Japanese | ja | 268 (~12%) | no | CJK system-font fallback; IME unverified; no furigana display | no | menus only | 8–12 h |
@@ -77,6 +77,7 @@ language (none so far) and of localized function names.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | French (`i18n/fr.rs`, 377 labels): the backstage, print, header/footer and options block (84 labels) had its translations paired with the wrong keys; retranslated, two missing header/footer labels added, spot-check tests |
 | 2026-10-11 | minor | German ribbon catalog (`i18n/de.rs`, 266 labels, ~12%); `de` locale tags (de-DE, de-AT, de-CH…) resolve to German. PR #163 (localized German formulas/numbers) still open |
 | 2026-10-11 | minor | Sheet Right-to-Left mirrors the grid (#146) |
 | 2026-10-11 | minor | Czech (cs) ribbon table: 266 labels (~12%), menus only |
