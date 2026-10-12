@@ -99,7 +99,7 @@ fn workbook() -> Workbook {
                 ..PivotValue::default()
             },
         ],
-        filters: vec![PivotFilter { source_col: "Channel".into(), selected: Some(vec!["Online".into()]) }],
+        filters: vec![PivotFilter { source_col: "Channel".into(), selected: Some(vec!["Online".into()]), rule: None }],
         layout: PivotLayout::Tabular,
         grand_totals_rows: false,
         grand_totals_cols: true,
@@ -118,8 +118,14 @@ fn workbook() -> Workbook {
         source: "SalesTbl".into(),
         anchor: at("K4"),
         rows: vec![
-            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Years, sort: PivotSort::None, collapsed_items: vec!["2024".into()] },
-            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Months, sort: PivotSort::Asc, collapsed_items: vec![] },
+            PivotField {
+                source_col: "Date".into(),
+                date_group: PivotDateGroup::Years,
+                sort: PivotSort::None,
+                collapsed_items: vec!["2024".into()],
+                ..PivotField::default()
+            },
+            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Months, sort: PivotSort::Asc, ..PivotField::default() },
         ],
         columns: vec![PivotField { sort: PivotSort::Desc, ..field("Product") }],
         values: vec![
@@ -128,34 +134,42 @@ fn workbook() -> Workbook {
                 func: PivotFunc::Sum,
                 name: "Share".into(),
                 show_as: PivotShowAs::PercentOfGrandTotal,
-                number_format: None,
+                ..PivotValue::default()
             },
-            PivotValue { source_col: "Sales".into(), func: PivotFunc::Max, name: "Rank".into(), show_as: PivotShowAs::Rank, number_format: None },
+            PivotValue {
+                source_col: "Sales".into(),
+                func: PivotFunc::Max,
+                name: "Rank".into(),
+                show_as: PivotShowAs::Rank,
+                base_field: Some("Date".into()),
+                ..PivotValue::default()
+            },
             PivotValue {
                 source_col: "Sales".into(),
                 func: PivotFunc::Average,
                 name: "Running".into(),
                 show_as: PivotShowAs::RunningTotal,
-                number_format: None,
+                base_field: Some("Date".into()),
+                ..PivotValue::default()
             },
             PivotValue {
                 source_col: "Units".into(),
                 func: PivotFunc::StdDevP,
                 name: "Spread".into(),
                 show_as: PivotShowAs::PercentOfColumnTotal,
-                number_format: None,
+                ..PivotValue::default()
             },
             PivotValue {
                 source_col: "Units".into(),
                 func: PivotFunc::VarP,
                 name: "RowPct".into(),
                 show_as: PivotShowAs::PercentOfRowTotal,
-                number_format: None,
+                ..PivotValue::default()
             },
         ],
         filters: vec![
-            PivotFilter { source_col: "Region".into(), selected: Some(vec!["East".into(), "North".into()]) },
-            PivotFilter { source_col: "Product".into(), selected: Some(vec!["A".into(), "B".into()]) },
+            PivotFilter { source_col: "Region".into(), selected: Some(vec!["East".into(), "North".into()]), rule: None },
+            PivotFilter { source_col: "Product".into(), selected: Some(vec!["A".into(), "B".into()]), rule: None },
         ],
         layout: PivotLayout::Outline,
         grand_totals_rows: true,
@@ -175,7 +189,7 @@ fn workbook() -> Workbook {
         anchor: at("AB1"),
         rows: vec![field("Product")],
         values: vec![PivotValue { source_col: "Units".into(), func: PivotFunc::Product, name: "Product of Units".into(), ..PivotValue::default() }],
-        filters: vec![PivotFilter { source_col: "Channel".into(), selected: None }],
+        filters: vec![PivotFilter { source_col: "Channel".into(), selected: None, rule: None }],
         last_range: Some(rr("AB1:AC6")),
         ..PivotTable::default()
     };
@@ -408,7 +422,7 @@ fn with_pivot(table: &str, cache: Option<&str>) -> Vec<u8> {
     minimal("<sheetData/>", &extra, "", "")
 }
 
-const GOOD_CACHE: &str = r#"<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cacheSource type="worksheet"><worksheetSource ref="A1:B3"/></cacheSource><cacheFields count="2"><cacheField name="K"><sharedItems><s v="x"/><n v="2"/><m/><b v="1"/><d v="2024-01-01T00:00:00"/></sharedItems></cacheField><cacheField name="V"><sharedItems/><fieldGroup base="0"><rangePr startNum="0" endNum="10" groupInterval="5"/><groupItems><s v="0-4"/></groupItems></fieldGroup></cacheField></cacheFields></pivotCacheDefinition>"#;
+const GOOD_CACHE: &str = r#"<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cacheSource type="worksheet"><worksheetSource ref="A1:B3"/></cacheSource><cacheFields count="2"><cacheField name="K"><sharedItems><s v="x"/><n v="2"/><m/><b v="1"/><d v="2024-01-01T00:00:00"/></sharedItems></cacheField><cacheField name="V"><sharedItems/><fieldGroup base="0"><rangePr startNum="0" endNum="10" groupInterval="0"/><groupItems><s v="0-4"/></groupItems></fieldGroup></cacheField></cacheFields></pivotCacheDefinition>"#;
 
 #[test]
 fn hostile_pivot_parts_warn_not_panic() {
@@ -447,8 +461,12 @@ fn hostile_pivot_parts_warn_not_panic() {
     assert_eq!(pt.rows[0].sort, PivotSort::Desc);
     assert!(pt.values.iter().any(|v| v.func == PivotFunc::Sum && v.source_col == "V"));
     assert!(report.warnings.iter().any(|w| w.contains("bogus")), "{:?}", report.warnings);
+    // A number range with no width is not a grouping the model can hold.
     assert!(report.warnings.iter().any(|w| w.contains("grouping")), "{:?}", report.warnings);
-    assert!(report.warnings.iter().any(|w| w.contains("index")), "{:?}", report.warnings);
+    assert!(pt.columns.iter().all(|f| f.number_group.is_none()), "{:?}", pt.columns);
+    // Index and % of Parent Total are read now.
+    assert!(pt.values.iter().any(|v| v.show_as == PivotShowAs::Index), "{:?}", pt.values);
+    assert!(pt.values.iter().any(|v| v.show_as == PivotShowAs::PercentOfParentTotal), "{:?}", pt.values);
 }
 
 #[test]
@@ -507,4 +525,101 @@ fn calculated_fields_round_trip() {
     for (a, b) in orig.iter().zip(read.iter()) {
         assert_eq!(a, b, "pivot {} differs", a.name);
     }
+}
+
+#[test]
+fn number_range_grouping_round_trips() {
+    let mut wb = workbook();
+    let ng = PivotNumberGroup { start: 0.0, end: 80.0, by: 25.0 };
+    {
+        let p = wb.sheet_mut(1).unwrap().pivots.get_mut(0).unwrap();
+        p.rows.push(PivotField { number_group: Some(ng), ..field("Sales") });
+    }
+    let bytes = write_xlsx(&wb).unwrap();
+    let parts = unzip(&bytes);
+    let c1 = String::from_utf8(parts.get("xl/pivotCache/pivotCacheDefinition1.xml").unwrap().clone()).unwrap();
+    assert!(c1.contains("<rangePr autoStart=\"0\" autoEnd=\"0\" startNum=\"0\" endNum=\"80\" groupInterval=\"25\"/>"), "{c1}");
+    assert!(
+        c1.contains(
+            "<groupItems count=\"6\"><s v=\"&lt;0\"/><s v=\"0-24\"/><s v=\"25-49\"/><s v=\"50-74\"/><s v=\"75-99\"/><s v=\"&gt;80\"/></groupItems>"
+        ),
+        "{c1}"
+    );
+    // The grouped field's records stay numbers, not dates.
+    assert!(c1.contains("<cacheField name=\"Sales\" numFmtId=\"0\">"), "{c1}");
+    let (back, report) = read_xlsx(&bytes).unwrap();
+    assert!(report.warnings.iter().all(|w| !w.to_lowercase().contains("pivot")), "{:?}", report.warnings);
+    let orig = &wb.sheet(1).unwrap().pivots;
+    let read = &back.sheet(1).unwrap().pivots;
+    for (a, b) in orig.iter().zip(read.iter()) {
+        assert_eq!(a, b, "pivot {} differs", a.name);
+    }
+}
+
+#[test]
+fn label_value_and_top10_filters_round_trip() {
+    let mut wb = workbook();
+    {
+        let sh = wb.sheet_mut(1).unwrap();
+        // Pivot 1: a label filter on Region (rows) and a value filter on Product (columns).
+        let p1 = sh.pivots.get_mut(0).unwrap();
+        p1.filters.push(PivotFilter {
+            source_col: "Region".into(),
+            selected: None,
+            rule: Some(PivotRule::Label { op: PivotCompare::NotBetween, value: "A & B".into(), value2: "F".into() }),
+        });
+        p1.filters.push(PivotFilter {
+            source_col: "Product".into(),
+            selected: None,
+            rule: Some(PivotRule::Value { op: PivotCompare::Between, field: "Count of Units".into(), value: 1.5, value2: 30.0 }),
+        });
+        // Pivot 3: the bottom 2 items by percent of Product of Units.
+        let p3 = sh.pivots.get_mut(2).unwrap();
+        p3.filters.push(PivotFilter {
+            source_col: "Product".into(),
+            selected: None,
+            rule: Some(PivotRule::Top { top: false, count: 2.0, by: PivotTopBy::Percent, field: "Product of Units".into() }),
+        });
+    }
+    let bytes = write_xlsx(&wb).unwrap();
+    let parts = unzip(&bytes);
+    let t1 = String::from_utf8(parts.get("xl/pivotTables/pivotTable1.xml").unwrap().clone()).unwrap();
+    assert!(
+        t1.contains(
+            "<filters count=\"2\"><filter fld=\"0\" type=\"captionNotBetween\" evalOrder=\"-1\" id=\"1\" stringValue1=\"A &amp; B\" stringValue2=\"F\"><autoFilter ref=\"A1\"><filterColumn colId=\"0\"><customFilters><customFilter operator=\"lessThan\" val=\"A &amp; B\"/><customFilter operator=\"greaterThan\" val=\"F\"/></customFilters></filterColumn></autoFilter></filter>"
+        ),
+        "{t1}"
+    );
+    assert!(t1.contains("type=\"valueBetween\" evalOrder=\"-1\" id=\"2\" iMeasureFld=\"1\""), "{t1}");
+    assert!(t1.contains("<customFilters and=\"1\"><customFilter operator=\"greaterThanOrEqual\" val=\"1.5\"/>"), "{t1}");
+    // `<filters>` follows the style info, as the schema orders them.
+    assert!(t1.find("<pivotTableStyleInfo").unwrap() < t1.find("<filters").unwrap(), "{t1}");
+    let t3 = String::from_utf8(parts.get("xl/pivotTables/pivotTable3.xml").unwrap().clone()).unwrap();
+    assert!(t3.contains("type=\"percent\" evalOrder=\"-1\" id=\"1\" iMeasureFld=\"0\"><autoFilter ref=\"A1\"><filterColumn colId=\"0\"><top10 top=\"0\" percent=\"1\" val=\"2\"/>"), "{t3}");
+    let (back, report) = read_xlsx(&bytes).unwrap();
+    assert!(report.warnings.iter().all(|w| !w.to_lowercase().contains("pivot")), "{:?}", report.warnings);
+    let orig = &wb.sheet(1).unwrap().pivots;
+    let read = &back.sheet(1).unwrap().pivots;
+    for (a, b) in orig.iter().zip(read.iter()) {
+        assert_eq!(a, b, "pivot {} differs", a.name);
+    }
+}
+
+#[test]
+fn unsupported_and_hostile_pivot_filters() {
+    // A date filter (not modelled), a filter on a field that isn't an axis field, a value filter
+    // naming a missing value field and one with no number: each is skipped; a Top 10 without
+    // its `top10` element takes Excel's defaults.
+    let table = r#"<pivotTableDefinition name="F" cacheId="1"><location ref="A3:B6"/><pivotFields count="2"><pivotField axis="axisRow"><items><item x="0"/><item t="default"/></items></pivotField><pivotField dataField="1"/></pivotFields><rowFields><field x="0"/></rowFields><dataFields><dataField name="Total" fld="1"/></dataFields><filters><filter fld="0" type="thisMonth" id="1"/><filter fld="1" type="captionEqual" id="2" stringValue1="x"/><filter fld="0" type="valueEqual" iMeasureFld="7" id="3"/><filter fld="0" type="valueEqual" iMeasureFld="0" id="4"/><filter fld="99" type="count" id="5"/><filter fld="0" type="count" iMeasureFld="0" id="6"/></filters></pivotTableDefinition>"#;
+    let (wb, report) = read_xlsx(&with_pivot(table, Some(GOOD_CACHE))).unwrap();
+    let pt = &wb.sheet(0).unwrap().pivots[0];
+    assert!(report.warnings.iter().any(|w| w.contains("thisMonth")), "{:?}", report.warnings);
+    assert_eq!(
+        pt.filters,
+        vec![PivotFilter {
+            source_col: "K".into(),
+            selected: None,
+            rule: Some(PivotRule::Top { top: true, count: 10.0, by: PivotTopBy::Items, field: "Total".into() }),
+        }]
+    );
 }

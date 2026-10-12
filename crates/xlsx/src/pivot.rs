@@ -3,13 +3,13 @@
 //!
 //! Writing: one cache per PivotTable, with a records snapshot of the source list (omitted, with
 //! `saveData="0"`, for very large sources) and `refreshOnLoad="1"` so a reader recomputes the
-//! report from the source on open. Fields used on an axis get shared items (or, for date
-//! grouping, `fieldGroup` group items) so the table's `<items>` can refer to them. The report
+//! report from the source on open. Fields used on an axis get shared items (or, for date and
+//! number range grouping, `fieldGroup` group items) so the table's `<items>` can refer to them. The report
 //! cells the engine wrote stay on the sheet as plain cells.
 //!
 //! Reading: the cache's source and field names plus the table's areas, functions, show-values-as,
 //! layout flags, grand totals and style become a model [`PivotTable`]. Anything we don't model
-//! (OLAP sources, calculated fields, numeric grouping…) becomes a warning.
+//! (OLAP sources, manual groups, time grouping…) becomes a warning.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -18,7 +18,8 @@ use gridcraft_core::date::datetime_from_serial;
 use gridcraft_core::{CellRef, DateSystem, RangeRef, Value, number_to_text};
 use gridcraft_formula::quote_sheet;
 use gridcraft_model::{
-    PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLayout, PivotShowAs, PivotSort, PivotTable, PivotValue, Workbook,
+    BASE_NEXT, BASE_PREVIOUS, PivotCalcField, PivotCompare, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLayout, PivotNumberGroup,
+    PivotRule, PivotShowAs, PivotSort, PivotTable, PivotTopBy, PivotValue, Workbook,
 };
 
 use crate::IoError;
@@ -213,9 +214,12 @@ impl Stats {
     }
 }
 
-/// Date grouping of a cache field.
+/// Date or number range grouping of a cache field.
 struct Group {
+    /// The date part; `None` for a number range grouping.
     by: PivotDateGroup,
+    /// Number range grouping (`groupBy="range"` with `startNum`, `endNum`, `groupInterval`).
+    number: Option<PivotNumberGroup>,
     /// The database field the grouping applies to.
     base: usize,
     /// The next (coarser) grouping field of the same base.
@@ -241,6 +245,10 @@ struct CField {
 }
 
 impl CField {
+    /// Grouped by a date part (its values are written as dates).
+    fn date_grouped(&self) -> bool {
+        self.group.as_ref().is_some_and(|g| g.number.is_none())
+    }
     /// Item captions the PivotTable's `<item x>` indices refer to.
     fn item_labels(&self) -> Vec<String> {
         match &self.group {
@@ -505,7 +513,8 @@ fn build_cache(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Option<Cac
         list.sort_by_key(fineness);
         let (min, max) = fields.get(*b).map(|f| (f.stats.min, f.stats.max)).unwrap_or((0.0, 0.0));
         let (start, end) = (min.floor(), max.floor() + 1.0);
-        let make = |by: PivotDateGroup| Group { by, base: *b, par: None, start, end, items: group_items(wb.date_system, by, start, end) };
+        let make =
+            |by: PivotDateGroup| Group { by, number: None, base: *b, par: None, start, end, items: group_items(wb.date_system, by, start, end) };
         let mut prev = *b;
         for (k, by) in list.iter().enumerate() {
             if k == 0 {
@@ -536,6 +545,20 @@ fn build_cache(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Option<Cac
                 formula: None,
             });
             prev = new;
+        }
+    }
+    // Number ranges group the base field in place (a field has one grouping; dates come first).
+    for pf in &axis {
+        let (Some(ng), Some(b)) = (pf.number_group, find(&fields, &pf.source_col)) else { continue };
+        if let Some(f) = fields.get_mut(b)
+            && f.group.is_none()
+            && f.stats.number
+            && !f.stats.text
+            && !f.stats.boolean
+            && !f.stats.error
+        {
+            f.group =
+                Some(Group { by: PivotDateGroup::None, number: Some(ng), base: b, par: None, start: ng.start, end: ng.end, items: ng.captions() });
         }
     }
     let mut axis_map: Vec<Option<usize>> = Vec::with_capacity(axis.len());
@@ -603,7 +626,7 @@ fn build_cache(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Option<Cac
                         None => s.push_str(&item_xml(&v, wb.date_system, false)),
                     }
                 } else {
-                    s.push_str(&item_xml(&v, wb.date_system, f.group.is_some()));
+                    s.push_str(&item_xml(&v, wb.date_system, f.date_grouped()));
                 }
             }
             s.push_str("</r>");
@@ -687,7 +710,7 @@ fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem) -> String {
     let _ = write!(s, "<cacheSource type=\"worksheet\">{}</cacheSource>", c.source_xml);
     let _ = write!(s, "<cacheFields count=\"{}\">", c.fields.len());
     for f in &c.fields {
-        let fmt = if f.group.is_some() { 14 } else { 0 };
+        let fmt = if f.date_grouped() { 14 } else { 0 };
         let _ = write!(s, "<cacheField name=\"{}\" numFmtId=\"{fmt}\"", esc_attr(&f.name));
         if let Some(formula) = &f.formula {
             let _ = write!(s, " formula=\"{}\"", esc_attr(formula));
@@ -699,7 +722,7 @@ fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem) -> String {
         let st = &f.stats;
         if f.col.is_some() {
             s.push_str("<sharedItems");
-            if let Some(g) = &f.group {
+            if f.date_grouped() {
                 s.push_str(" containsSemiMixedTypes=\"0\" containsNonDate=\"0\" containsDate=\"1\" containsString=\"0\"");
                 if st.blank {
                     s.push_str(" containsBlank=\"1\"");
@@ -707,7 +730,6 @@ fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem) -> String {
                 if let (Some(a), Some(b)) = (iso(sys, st.min), iso(sys, st.max)) {
                     let _ = write!(s, " minDate=\"{a}\" maxDate=\"{b}\"");
                 }
-                let _ = g;
             } else {
                 let semi = st.text || st.blank || st.boolean || st.error;
                 if !semi {
@@ -749,9 +771,22 @@ fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem) -> String {
                 let _ = write!(s, " par=\"{p}\"");
             }
             let _ = write!(s, " base=\"{}\">", g.base);
-            let _ = write!(s, "<rangePr groupBy=\"{}\"", group_by_name(g.by));
-            if let (Some(a), Some(b)) = (iso(sys, g.start), iso(sys, g.end)) {
-                let _ = write!(s, " startDate=\"{a}\" endDate=\"{b}\"");
+            match g.number {
+                Some(ng) => {
+                    let _ = write!(
+                        s,
+                        "<rangePr autoStart=\"0\" autoEnd=\"0\" startNum=\"{}\" endNum=\"{}\" groupInterval=\"{}\"",
+                        crate::xml::num(ng.start),
+                        crate::xml::num(ng.end),
+                        crate::xml::num(ng.by)
+                    );
+                }
+                None => {
+                    let _ = write!(s, "<rangePr groupBy=\"{}\"", group_by_name(g.by));
+                    if let (Some(a), Some(b)) = (iso(sys, g.start), iso(sys, g.end)) {
+                        let _ = write!(s, " startDate=\"{a}\" endDate=\"{b}\"");
+                    }
+                }
             }
             let _ = write!(s, "/><groupItems count=\"{}\">", g.items.len());
             for it in &g.items {
@@ -867,7 +902,7 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
             PivotLayout::Outline => s.push_str(" compact=\"0\""),
             PivotLayout::Tabular => s.push_str(" compact=\"0\" outline=\"0\""),
         }
-        if f.group.is_some() {
+        if f.date_grouped() {
             s.push_str(" numFmtId=\"14\"");
         }
         let filter = hidden.get(&i).copied();
@@ -975,29 +1010,50 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
             if v.func != PivotFunc::Sum {
                 let _ = write!(s, " subtotal=\"{}\"", func_name(v.func));
             }
-            let base_field = row_idx.first().or(col_idx.first()).copied().unwrap_or(0);
-            match v.show_as {
-                PivotShowAs::Normal => s.push_str(" baseField=\"0\" baseItem=\"0\""),
-                PivotShowAs::PercentOfGrandTotal => s.push_str(" showDataAs=\"percentOfTotal\" baseField=\"0\" baseItem=\"0\""),
-                PivotShowAs::PercentOfColumnTotal => s.push_str(" showDataAs=\"percentOfCol\" baseField=\"0\" baseItem=\"0\""),
-                PivotShowAs::PercentOfRowTotal => s.push_str(" showDataAs=\"percentOfRow\" baseField=\"0\" baseItem=\"0\""),
-                PivotShowAs::RunningTotal => {
-                    let _ = write!(s, " showDataAs=\"runTotal\" baseField=\"{base_field}\" baseItem=\"0\"");
-                }
-                PivotShowAs::Rank => {
-                    let _ = write!(s, " baseField=\"{base_field}\" baseItem=\"0\"");
-                }
+            // The base field: the named axis field, else the first row (or column) field.
+            let named = v.base_field.as_deref().and_then(|b| {
+                let p = pt.rows.iter().chain(pt.columns.iter()).position(|a| same(&a.source_col, b))?;
+                c.axis_map.get(p).copied().flatten()
+            });
+            let base_field = named.or(row_idx.first().or(col_idx.first()).copied()).unwrap_or(0);
+            let base_item = match v.base_item.as_deref() {
+                Some(BASE_PREVIOUS) => 1_048_828,
+                Some(BASE_NEXT) => 1_048_829,
+                Some(label) => c.fields.get(base_field).and_then(|f| f.item_labels().iter().position(|l| same(l, label))).unwrap_or(0),
+                None => 0,
+            };
+            let (data_as, x14): (Option<&str>, Option<&str>) = match v.show_as {
+                PivotShowAs::Normal => (None, None),
+                PivotShowAs::PercentOfGrandTotal => (Some("percentOfTotal"), None),
+                PivotShowAs::PercentOfColumnTotal => (Some("percentOfCol"), None),
+                PivotShowAs::PercentOfRowTotal => (Some("percentOfRow"), None),
+                PivotShowAs::PercentOf => (Some("percent"), None),
+                PivotShowAs::DifferenceFrom => (Some("difference"), None),
+                PivotShowAs::PercentDifferenceFrom => (Some("percentDiff"), None),
+                PivotShowAs::RunningTotal => (Some("runTotal"), None),
+                PivotShowAs::Index => (Some("index"), None),
+                PivotShowAs::PercentOfParentRowTotal => (None, Some("percentOfParentRow")),
+                PivotShowAs::PercentOfParentColumnTotal => (None, Some("percentOfParentCol")),
+                PivotShowAs::PercentOfParentTotal => (None, Some("percentOfParent")),
+                PivotShowAs::PercentRunningTotal => (None, Some("percentOfRunningTotal")),
+                PivotShowAs::RankAscending => (None, Some("rankAscending")),
+                PivotShowAs::Rank => (None, Some("rankDescending")),
+            };
+            if let Some(a) = data_as {
+                let _ = write!(s, " showDataAs=\"{a}\"");
             }
+            let _ = write!(s, " baseField=\"{base_field}\" baseItem=\"{base_item}\"");
             if let Some(id) = v.number_format.as_deref().and_then(fmt_id) {
                 let _ = write!(s, " numFmtId=\"{id}\"");
             }
-            if v.show_as == PivotShowAs::Rank {
-                let _ = write!(
-                    s,
-                    "><extLst><ext uri=\"{EXT_X14_DATA_FIELD}\" xmlns:x14=\"{NS_X14}\"><x14:dataField pivotShowAs=\"rankDescending\"/></ext></extLst></dataField>"
-                );
-            } else {
-                s.push_str("/>");
+            match x14 {
+                Some(x) => {
+                    let _ = write!(
+                        s,
+                        "><extLst><ext uri=\"{EXT_X14_DATA_FIELD}\" xmlns:x14=\"{NS_X14}\"><x14:dataField pivotShowAs=\"{x}\"/></ext></extLst></dataField>"
+                    );
+                }
+                None => s.push_str("/>"),
             }
         }
         s.push_str("</dataFields>");
@@ -1007,8 +1063,137 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
         let _ = write!(s, " name=\"{}\"", esc_attr(&pt.style));
     }
     s.push_str(" showRowHeaders=\"1\" showColHeaders=\"1\" showRowStripes=\"0\" showColStripes=\"0\" showLastColumn=\"1\"/>");
+    filters_xml(&mut s, pt, &c.axis_map, &vals);
     s.push_str("</pivotTableDefinition>");
     s
+}
+
+// ---------------------------------------------------------------- label, value and Top 10 filters
+
+/// The `ST_PivotFilterType` suffix of a comparison (`captionBeginsWith`, `valueBetween`).
+fn compare_suffix(op: PivotCompare) -> &'static str {
+    match op {
+        PivotCompare::Equals => "Equal",
+        PivotCompare::NotEquals => "NotEqual",
+        PivotCompare::BeginsWith => "BeginsWith",
+        PivotCompare::NotBeginsWith => "NotBeginsWith",
+        PivotCompare::EndsWith => "EndsWith",
+        PivotCompare::NotEndsWith => "NotEndsWith",
+        PivotCompare::Contains => "Contains",
+        PivotCompare::NotContains => "NotContains",
+        PivotCompare::Greater => "GreaterThan",
+        PivotCompare::GreaterOrEqual => "GreaterThanOrEqual",
+        PivotCompare::Less => "LessThan",
+        PivotCompare::LessOrEqual => "LessThanOrEqual",
+        PivotCompare::Between => "Between",
+        PivotCompare::NotBetween => "NotBetween",
+    }
+}
+
+/// The AutoFilter `customFilters` that express a comparison.
+fn custom_filters(op: PivotCompare, a: &str, b: &str) -> String {
+    let one = |oper: Option<&str>, v: &str| match oper {
+        Some(o) => format!("<customFilter operator=\"{o}\" val=\"{}\"/>", esc_attr(v)),
+        None => format!("<customFilter val=\"{}\"/>", esc_attr(v)),
+    };
+    let (and, parts) = match op {
+        PivotCompare::Equals => (false, vec![one(None, a)]),
+        PivotCompare::NotEquals => (false, vec![one(Some("notEqual"), a)]),
+        PivotCompare::BeginsWith => (false, vec![one(None, &format!("{a}*"))]),
+        PivotCompare::NotBeginsWith => (false, vec![one(Some("notEqual"), &format!("{a}*"))]),
+        PivotCompare::EndsWith => (false, vec![one(None, &format!("*{a}"))]),
+        PivotCompare::NotEndsWith => (false, vec![one(Some("notEqual"), &format!("*{a}"))]),
+        PivotCompare::Contains => (false, vec![one(None, &format!("*{a}*"))]),
+        PivotCompare::NotContains => (false, vec![one(Some("notEqual"), &format!("*{a}*"))]),
+        PivotCompare::Greater => (false, vec![one(Some("greaterThan"), a)]),
+        PivotCompare::GreaterOrEqual => (false, vec![one(Some("greaterThanOrEqual"), a)]),
+        PivotCompare::Less => (false, vec![one(Some("lessThan"), a)]),
+        PivotCompare::LessOrEqual => (false, vec![one(Some("lessThanOrEqual"), a)]),
+        PivotCompare::Between => (true, vec![one(Some("greaterThanOrEqual"), a), one(Some("lessThanOrEqual"), b)]),
+        PivotCompare::NotBetween => (false, vec![one(Some("lessThan"), a), one(Some("greaterThan"), b)]),
+    };
+    format!("<customFilters{}>{}</customFilters>", if and { " and=\"1\"" } else { "" }, parts.concat())
+}
+
+/// `<filters>`: the label, value and Top 10 filters of the row and column fields. `fld` is the
+/// cache field and `iMeasureFld` the position of the value field in `<dataFields>`.
+fn filters_xml(s: &mut String, pt: &PivotTable, axis_map: &[Option<usize>], vals: &[(usize, &PivotValue)]) {
+    let measure = |name: &str| vals.iter().position(|(_, v)| same(&v.name, name));
+    let mut out = String::new();
+    let mut n = 0;
+    for f in &pt.filters {
+        let Some(rule) = &f.rule else { continue };
+        let Some(pos) = pt.rows.iter().chain(pt.columns.iter()).position(|a| same(&a.source_col, &f.source_col)) else { continue };
+        let Some(Some(fld)) = axis_map.get(pos) else { continue };
+        let (ty, attrs, inner) = match rule {
+            PivotRule::Label { op, value, value2 } => {
+                let mut attrs = format!(" stringValue1=\"{}\"", esc_attr(value));
+                if op.is_range() {
+                    let _ = write!(attrs, " stringValue2=\"{}\"", esc_attr(value2));
+                }
+                (format!("caption{}", compare_suffix(*op)), attrs, custom_filters(*op, value, value2))
+            }
+            PivotRule::Value { op, field, value, value2 } => {
+                let Some(m) = measure(field) else { continue };
+                let (a, b) = (crate::xml::num(*value), crate::xml::num(*value2));
+                (format!("value{}", compare_suffix(*op)), format!(" iMeasureFld=\"{m}\""), custom_filters(*op, &a, &b))
+            }
+            PivotRule::Top { top, count, by, field } => {
+                let Some(m) = measure(field) else { continue };
+                let ty = match by {
+                    PivotTopBy::Items => "count",
+                    PivotTopBy::Percent => "percent",
+                    PivotTopBy::Sum => "sum",
+                };
+                let inner = format!(
+                    "<top10 top=\"{}\" percent=\"{}\" val=\"{}\"/>",
+                    u8::from(*top),
+                    u8::from(*by == PivotTopBy::Percent),
+                    crate::xml::num(*count)
+                );
+                (ty.to_string(), format!(" iMeasureFld=\"{m}\""), inner)
+            }
+        };
+        n += 1;
+        let _ = write!(
+            out,
+            "<filter fld=\"{fld}\" type=\"{ty}\" evalOrder=\"-1\" id=\"{n}\"{attrs}><autoFilter ref=\"A1\"><filterColumn colId=\"0\">{inner}</filterColumn></autoFilter></filter>"
+        );
+    }
+    if n > 0 {
+        let _ = write!(s, "<filters count=\"{n}\">{out}</filters>");
+    }
+}
+
+/// Reads a `<filter>` into a rule; `measure` gives a value field's caption by its position in
+/// `<dataFields>`. `None` for the filter types the model does not have (date filters).
+fn read_filter(e: &El, measure: &dyn Fn(u32) -> Option<String>) -> Option<PivotRule> {
+    let ty = e.attr("type")?;
+    let col = e.child("autoFilter").and_then(|a| a.child("filterColumn"));
+    let compare = |suffix: &str| PivotCompare::ALL.into_iter().find(|c| compare_suffix(*c) == suffix);
+    if let Some(op) = ty.strip_prefix("caption").and_then(compare) {
+        let text = |k: &str| e.attr(k).unwrap_or("").to_string();
+        return Some(PivotRule::Label { op, value: text("stringValue1"), value2: text("stringValue2") });
+    }
+    let field = e.attr_u32("iMeasureFld").and_then(measure)?;
+    if let Some(op) = ty.strip_prefix("value").and_then(compare) {
+        let nums: Vec<f64> = col
+            .and_then(|c| c.child("customFilters"))
+            .map(|c| c.kids("customFilter").filter_map(|x| x.attr("val").and_then(|v| v.parse::<f64>().ok())).take(2).collect())
+            .unwrap_or_default();
+        let n = |i: usize, k: &str| nums.get(i).copied().or_else(|| e.attr(k).and_then(|v| v.parse::<f64>().ok())).filter(|x| x.is_finite());
+        return Some(PivotRule::Value { op, field, value: n(0, "stringValue1")?, value2: n(1, "stringValue2").unwrap_or(0.0) });
+    }
+    let by = match ty {
+        "count" => PivotTopBy::Items,
+        "percent" => PivotTopBy::Percent,
+        "sum" => PivotTopBy::Sum,
+        _ => return None,
+    };
+    let t = col.and_then(|c| c.child("top10"));
+    let count = t.and_then(|t| t.attr("val")).and_then(|v| v.parse::<f64>().ok()).filter(|x| x.is_finite()).unwrap_or(10.0);
+    let top = t.is_none_or(|t| t.flag("top", true));
+    Some(PivotRule::Top { top, count, by, field })
 }
 
 // ================================================================ reading
@@ -1020,10 +1205,19 @@ struct FieldIn {
     database: bool,
     /// Shared item captions.
     items: Vec<String>,
-    /// (base field, grouping, group item captions); grouping `None` = unsupported grouping.
-    group: Option<(Option<usize>, Option<PivotDateGroup>, Vec<String>)>,
+    /// (base field, grouping, group item captions).
+    group: Option<(Option<usize>, GroupBy, Vec<String>)>,
     /// A calculated field's formula.
     formula: Option<String>,
+}
+
+/// What a cache field's `fieldGroup` groups by.
+#[derive(Clone, Copy, Debug)]
+enum GroupBy {
+    Date(PivotDateGroup),
+    Range(PivotNumberGroup),
+    /// A grouping the model doesn't have (manual groups, hours, an unusable range).
+    Unsupported,
 }
 
 impl FieldIn {
@@ -1115,12 +1309,20 @@ fn read_cache(cx: &mut Ctx<'_>, part: &str, sheet_name: &str) -> Option<CacheIn>
             let items = f.child("sharedItems").map(|si| si.children.iter().map(|e| item_label_el(e, sys)).collect()).unwrap_or_default();
             let group = f.child("fieldGroup").map(|g| {
                 let base = g.attr_u32("base").map(|b| b as usize);
-                let by = match g.child("rangePr").map(|r| r.attr("groupBy").unwrap_or("range")) {
-                    Some("years") => Some(PivotDateGroup::Years),
-                    Some("quarters") => Some(PivotDateGroup::Quarters),
-                    Some("months") => Some(PivotDateGroup::Months),
-                    Some("days") => Some(PivotDateGroup::Days),
-                    _ => None,
+                let rp = g.child("rangePr");
+                let num = |k: &str| rp.and_then(|r| r.attr(k)).and_then(|v| v.trim().parse::<f64>().ok());
+                let by = match rp.map(|r| r.attr("groupBy").unwrap_or("range")) {
+                    Some("years") => GroupBy::Date(PivotDateGroup::Years),
+                    Some("quarters") => GroupBy::Date(PivotDateGroup::Quarters),
+                    Some("months") => GroupBy::Date(PivotDateGroup::Months),
+                    Some("days") => GroupBy::Date(PivotDateGroup::Days),
+                    Some("range") => match (num("startNum"), num("endNum")) {
+                        (Some(a), Some(b)) => {
+                            PivotNumberGroup::checked(a, b, num("groupInterval").unwrap_or(1.0)).map_or(GroupBy::Unsupported, GroupBy::Range)
+                        }
+                        _ => GroupBy::Unsupported,
+                    },
+                    _ => GroupBy::Unsupported,
                 };
                 let gi = g.child("groupItems").map(|gi| gi.children.iter().map(|e| item_label_el(e, sys)).collect()).unwrap_or_default();
                 (base, by, gi)
@@ -1184,8 +1386,8 @@ fn items_of(e: &El) -> Vec<&El> {
     e.child("items").map(|it| it.kids("item").filter(|i| i.attr("t").is_none_or(|t| t == "data")).collect()).unwrap_or_default()
 }
 
-/// (source column name, date grouping) of a cache field used on an axis.
-fn field_ref(cx: &mut Ctx<'_>, cache: &CacheIn, i: usize) -> Option<(String, PivotDateGroup)> {
+/// (source column name, date grouping, number range grouping) of a cache field used on an axis.
+fn field_ref(cx: &mut Ctx<'_>, cache: &CacheIn, i: usize) -> Option<(String, PivotDateGroup, Option<PivotNumberGroup>)> {
     let f = cache.fields.get(i)?;
     if f.formula.is_some() {
         cx.warn("calculated PivotTable fields are not supported");
@@ -1193,21 +1395,22 @@ fn field_ref(cx: &mut Ctx<'_>, cache: &CacheIn, i: usize) -> Option<(String, Piv
     }
     match &f.group {
         Some((base, by, _)) => {
-            let by = match by {
-                Some(b) => *b,
-                None => {
+            let (date, number) = match by {
+                GroupBy::Date(d) => (*d, None),
+                GroupBy::Range(g) => (PivotDateGroup::None, Some(*g)),
+                GroupBy::Unsupported => {
                     cx.warn(format!("PivotTable grouping of \"{}\" is not supported; the field is ungrouped", f.name));
-                    PivotDateGroup::None
+                    (PivotDateGroup::None, None)
                 }
             };
             let base_name = if f.database { f.name.clone() } else { base.and_then(|b| cache.fields.get(b))?.name.clone() };
-            Some((base_name, by))
+            Some((base_name, date, number))
         }
         None if !f.database => {
             cx.warn(format!("PivotTable field \"{}\" (grouped items) is not supported", f.name));
             None
         }
-        None => Some((f.name.clone(), PivotDateGroup::None)),
+        None => Some((f.name.clone(), PivotDateGroup::None, None)),
     }
 }
 
@@ -1256,8 +1459,8 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
     if x.flag("dataOnRows", false) {
         cx.warn(format!("PivotTable \"{}\": values on rows are shown on columns", pt.name));
     }
-    if x.child("calculatedItems").is_some() || x.path(&["filters", "filter"]).is_some() {
-        cx.warn(format!("PivotTable \"{}\": calculated items and label/value filters are not supported", pt.name));
+    if x.child("calculatedItems").is_some() {
+        cx.warn(format!("PivotTable \"{}\": calculated items are not supported", pt.name));
     }
 
     let mut filters: Vec<PivotFilter> = Vec::new();
@@ -1269,9 +1472,9 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 continue;
             }
             let i = i as usize;
-            let Some((name, group)) = field_ref(cx, cache, i) else { continue };
+            let Some((name, group, number_group)) = field_ref(cx, cache, i) else { continue };
             let labels = cache.fields.get(i).map(|f| f.labels().to_vec()).unwrap_or_default();
-            let mut f = PivotField { source_col: name.clone(), date_group: group, sort: PivotSort::None, collapsed_items: vec![] };
+            let mut f = PivotField { source_col: name.clone(), date_group: group, number_group, sort: PivotSort::None, collapsed_items: vec![] };
             if let Some(e) = pf(i) {
                 f.sort = match e.attr("sortType") {
                     Some("ascending") => PivotSort::Asc,
@@ -1284,7 +1487,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 if items.iter().any(|it| it.flag("h", false)) {
                     let shown: Vec<String> = items.iter().filter(|it| !it.flag("h", false)).filter_map(|it| lab(it)).collect();
                     if !filters.iter().any(|ff| same(&ff.source_col, &name)) {
-                        filters.push(PivotFilter { source_col: name.clone(), selected: Some(shown) });
+                        filters.push(PivotFilter { source_col: name.clone(), selected: Some(shown), rule: None });
                     }
                 }
             }
@@ -1295,7 +1498,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
     let mut page_filters = Vec::new();
     for p in &pages {
         let Some(i) = p.attr_i64("fld").filter(|i| *i >= 0).map(|i| i as usize) else { continue };
-        let Some((name, _)) = field_ref(cx, cache, i) else { continue };
+        let Some((name, ..)) = field_ref(cx, cache, i) else { continue };
         let labels = cache.fields.get(i).map(|f| f.labels().to_vec()).unwrap_or_default();
         let selected = if let Some(k) = p.attr_u32("item") {
             labels.get(k as usize).map(|l| vec![l.clone()])
@@ -1311,7 +1514,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 })
             })
         };
-        page_filters.push(PivotFilter { source_col: name, selected });
+        page_filters.push(PivotFilter { source_col: name, selected, rule: None });
     }
     let mut axis_filters = Vec::new();
     pt.rows = axis(cx, &row_x, &mut axis_filters);
@@ -1340,6 +1543,11 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 .find_map(|e| e.attr("pivotShowAs").map(str::to_string));
             let show_as = match (ext.as_deref(), d.attr("showDataAs")) {
                 (Some("rankDescending"), _) => PivotShowAs::Rank,
+                (Some("rankAscending"), _) => PivotShowAs::RankAscending,
+                (Some("percentOfParentRow"), _) => PivotShowAs::PercentOfParentRowTotal,
+                (Some("percentOfParentCol"), _) => PivotShowAs::PercentOfParentColumnTotal,
+                (Some("percentOfParent"), _) => PivotShowAs::PercentOfParentTotal,
+                (Some("percentOfRunningTotal"), _) => PivotShowAs::PercentRunningTotal,
                 (Some(other), _) => {
                     cx.warn(format!("PivotTable show-values-as {other} is not supported"));
                     PivotShowAs::Normal
@@ -1348,18 +1556,38 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 (None, Some("percentOfTotal")) => PivotShowAs::PercentOfGrandTotal,
                 (None, Some("percentOfCol")) => PivotShowAs::PercentOfColumnTotal,
                 (None, Some("percentOfRow")) => PivotShowAs::PercentOfRowTotal,
+                (None, Some("percent")) => PivotShowAs::PercentOf,
+                (None, Some("difference")) => PivotShowAs::DifferenceFrom,
+                (None, Some("percentDiff")) => PivotShowAs::PercentDifferenceFrom,
                 (None, Some("runTotal")) => PivotShowAs::RunningTotal,
+                (None, Some("index")) => PivotShowAs::Index,
                 (None, Some(other)) => {
                     cx.warn(format!("PivotTable show-values-as {other} is not supported"));
                     PivotShowAs::Normal
                 }
             };
+            // Base field and item, where the transform uses them.
+            let (mut base_field, mut base_item) = (None, None);
+            if show_as.needs_base_field()
+                && let Some(bf) = d.attr_u32("baseField").map(|b| b as usize)
+                && let Some((name, ..)) = field_ref(cx, cache, bf)
+            {
+                base_field = Some(name);
+                if show_as.needs_base_item() {
+                    base_item = match d.attr_u32("baseItem") {
+                        Some(1_048_828) => Some(BASE_PREVIOUS.to_string()),
+                        Some(1_048_829) => Some(BASE_NEXT.to_string()),
+                        Some(k) => cache.fields.get(bf).and_then(|f| f.labels().get(k as usize).cloned()),
+                        None => None,
+                    };
+                }
+            }
             let number_format = d
                 .attr_u32("numFmtId")
                 .filter(|id| *id != 0)
                 .and_then(|id| crate::tables::builtin_format(id).map(str::to_string).or_else(|| cx.num_fmts.get(&id).cloned()));
             let name = d.attr("name").map(str::to_string).unwrap_or_else(|| format!("{} of {}", func_caption(func), f.name));
-            pt.values.push(PivotValue { source_col: f.name.clone(), func, name, show_as, number_format });
+            pt.values.push(PivotValue { source_col: f.name.clone(), func, name, show_as, number_format, base_field, base_item });
         }
     }
 
@@ -1372,6 +1600,25 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
             let formula = formula.trim();
             let formula = if formula.starts_with('=') { formula.to_string() } else { format!("={formula}") };
             pt.calculated_fields.push(PivotCalcField { name: f.name.clone(), formula });
+        }
+    }
+
+    // Label, value and Top 10 filters of the row and column fields.
+    if let Some(fs) = x.child("filters") {
+        let names: Vec<String> = pt.values.iter().map(|v| v.name.clone()).collect();
+        let measure = |i: u32| names.get(i as usize).cloned();
+        for e in fs.kids("filter").take(MAX_FIELDS) {
+            let Some(name) = e.attr_u32("fld").and_then(|i| field_ref(cx, cache, i as usize)).map(|r| r.0) else { continue };
+            if !pt.rows.iter().chain(pt.columns.iter()).any(|f| same(&f.source_col, &name)) {
+                continue;
+            }
+            let Some(rule) = read_filter(e, &measure) else {
+                cx.warn(format!("PivotTable \"{}\": filter type {} is not supported", pt.name, e.attr("type").unwrap_or("")));
+                continue;
+            };
+            // One filter per field: the rule replaces any hidden items.
+            pt.filters.retain(|f| !same(&f.source_col, &name));
+            pt.filters.push(PivotFilter { source_col: name, selected: None, rule: Some(rule) });
         }
     }
 

@@ -59,6 +59,8 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 .or(info[key].as_array())
                 .map(|a| {
                     a.iter()
+                        // A row or column field's own filter is not a report filter.
+                        .filter(|x| x["report"].as_bool() != Some(false))
                         .filter_map(|x| x["name"].as_str().or(x["field"].as_str()).or(x["sourceCol"].as_str()).or(x.as_str()).map(str::to_string))
                         .collect()
                 })
@@ -97,8 +99,15 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                                 for (sa, l) in [
                                     ("normal", "No Calculation"),
                                     ("percentOfGrandTotal", "% of Grand Total"),
-                                    ("runningTotal", "Running Total"),
-                                    ("rank", "Rank"),
+                                    ("percentOfColumnTotal", "% of Column Total"),
+                                    ("percentOfRowTotal", "% of Row Total"),
+                                    ("percentOfParentRowTotal", "% of Parent Row Total"),
+                                    ("percentOfParentColumnTotal", "% of Parent Column Total"),
+                                    ("runningTotal", "Running Total In"),
+                                    ("percentRunningTotal", "% Running Total In"),
+                                    ("rankAscending", "Rank Smallest to Largest"),
+                                    ("rankDescending", "Rank Largest to Smallest"),
+                                    ("index", "Index"),
                                 ] {
                                     if ui.button(format!("Show as {l}")).clicked() {
                                         app.run_or_alert("pivot.valueSettings", json!({"pivot": name, "field": f, "showAs": sa}));
@@ -115,11 +124,23 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                                     ("years", "Group by Years"),
                                     ("quarters", "Group by Quarters"),
                                     ("months", "Group by Months"),
+                                    ("range", "Group by Ranges of 10"),
                                     ("none", "Ungroup"),
                                 ] {
                                     if ui.button(l).clicked() {
                                         app.run_or_alert("pivot.group", json!({"pivot": name, "field": f, "by": g}));
                                     }
+                                }
+                                if *key != "filters" {
+                                    ui.separator();
+                                    for (top, l) in [(true, "Top 10 Items"), (false, "Bottom 10 Items")] {
+                                        if ui.button(l).clicked() {
+                                            app.run_or_alert("pivot.top10", json!({"pivot": name, "field": f, "top": top}));
+                                        }
+                                    }
+                                }
+                                if ui.button(format!("Clear Filter From \"{f}\"")).clicked() {
+                                    app.run_or_alert("pivot.clearFilter", json!({"pivot": name, "field": f}));
                                 }
                             }
                             ui.separator();
