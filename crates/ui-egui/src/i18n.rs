@@ -619,6 +619,38 @@ mod tests {
         assert_eq!(Language::parse("xx"), None);
     }
 
+    /// A catalog whose translations slip onto their neighbours' keys still covers every key, so
+    /// check the shape of each translation against its English: placeholders survive, and a
+    /// one-line label (a menu item, a tooltip) doesn't turn into a two-line ribbon label. French
+    /// once shipped with over a hundred translations shifted this way ("Close" read "Société").
+    #[test]
+    fn translations_keep_the_shape_of_their_english() {
+        let placeholders =
+            |s: &str| s.split('{').skip(1).filter_map(|rest| rest.split_once('}').map(|(name, _)| name.to_string())).collect::<Vec<_>>();
+        for language in Language::ALL {
+            for (english, _) in JAPANESE {
+                let label = english.rsplit_once('|').map_or(*english, |(_, label)| label);
+                let text = language.tr(english);
+                assert_eq!(placeholders(text), placeholders(label), "{language:?}: {english:?} => {text:?}");
+                // Big ribbon buttons whose English fits on one line may still need two.
+                if !label.contains('\n') && !["AutoSum", "PivotTable"].contains(english) {
+                    assert!(!text.contains('\n'), "{language:?}: one-line {english:?} => {text:?}");
+                }
+            }
+        }
+        for (english, french) in [
+            ("Close", "Fermer"),
+            ("File", "Fichier"),
+            ("Save", "Enregistrer"),
+            ("Animations", "Animations"),
+            ("Company", "Société"),
+            ("Show Detail", "Afficher le détail"),
+            ("Solver", "Solveur"),
+        ] {
+            assert_eq!(Language::Fr.tr(english), french);
+        }
+    }
+
     #[test]
     fn unknown_saved_language_keeps_the_other_preferences() {
         let ui: crate::UiState = serde_json::from_str(r#"{"dark": true, "language": "xx"}"#).unwrap();
