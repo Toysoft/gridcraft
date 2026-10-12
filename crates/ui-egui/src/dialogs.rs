@@ -12,9 +12,12 @@ use serde_json::{Map, Value as Json, json};
 use crate::SheetApp;
 use crate::theme;
 
+/// A form field. `Ref` is a range reference that can also be picked by selecting on the grid
+/// (a RefEdit box).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Field {
     Text { key: &'static str, label: &'static str },
+    Ref { key: &'static str, label: &'static str },
     Password { key: &'static str, label: &'static str },
     Number { key: &'static str, label: &'static str },
     Choice { key: &'static str, label: &'static str, options: Vec<(&'static str, &'static str)> },
@@ -1049,7 +1052,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "commandSearch" => command_search(app, ui, &mut d, &mut confirm),
                 "goalSeek" => goal_seek(app, ui, &mut d, &mut confirm),
                 "analysisToolPak" => analysis_toolpak(app, ui, &mut d, &mut confirm, &mut open),
-                "solver" => solver(ui, &mut d, &mut confirm, &mut open),
+                "solver" => solver(app, ui, &mut d, &mut confirm, &mut open),
                 "solverResults" => solver_results(app, ui, &mut d, &mut open),
                 "spelling" => spelling(app, ui, &mut d, &mut open),
                 "agents" => {
@@ -1218,7 +1221,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                         open = false;
                     }
                 }
-                _ => form(ui, &mut d, &mut confirm, &mut open),
+                _ => form(app, ui, &mut d, &mut confirm, &mut open),
             }
         });
     if collapsed.is_none() {
@@ -1382,13 +1385,13 @@ fn ok_cancel(ui: &mut egui::Ui, confirm: &mut bool, open: &mut bool) {
     });
 }
 
-fn form(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
-    form_fields(ui, d);
+fn form(app: &SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+    form_fields(app, ui, d);
     ok_cancel(ui, confirm, open);
 }
 
 /// Draws a dialog's `fields`, editing its values.
-fn form_fields(ui: &mut egui::Ui, d: &mut Dialog) {
+fn form_fields(app: &SheetApp, ui: &mut egui::Ui, d: &mut Dialog) {
     egui::Grid::new("form").num_columns(1).spacing(vec2(8.0, 6.0)).show(ui, |ui| {
         for f in d.fields.clone() {
             match f {
@@ -1409,6 +1412,12 @@ fn form_fields(ui: &mut egui::Ui, d: &mut Dialog) {
                         if r.changed() {
                             d.values.insert(key.into(), json!(s));
                         }
+                    });
+                }
+                Field::Ref { key, label } => {
+                    ui.vertical(|ui| {
+                        let l = ui.label(label);
+                        ref_edit(app, ui, d, key, l.id, 320.0);
                     });
                 }
                 Field::Password { key, label } => {
@@ -2287,8 +2296,8 @@ fn toolpak_fields(tool: &str) -> Vec<Field> {
     use Field::*;
     let grouped = || Choice { key: "groupedBy", label: "Grouped By:", options: vec![("columns", "Columns"), ("rows", "Rows")] };
     let labels = || Check { key: "labels", label: "Labels in first row" };
-    let range = || Text { key: "range", label: "Input Range:" };
-    let two = || vec![Text { key: "range1", label: "Variable 1 Range:" }, Text { key: "range2", label: "Variable 2 Range:" }];
+    let range = || Ref { key: "range", label: "Input Range:" };
+    let two = || vec![Ref { key: "range1", label: "Variable 1 Range:" }, Ref { key: "range2", label: "Variable 2 Range:" }];
     match tool {
         "descriptive" => vec![
             range(),
@@ -2301,7 +2310,7 @@ fn toolpak_fields(tool: &str) -> Vec<Field> {
         ],
         "histogram" => vec![
             range(),
-            Text { key: "bins", label: "Bin Range (blank for automatic bins):" },
+            Ref { key: "bins", label: "Bin Range (blank for automatic bins):" },
             labels(),
             Check { key: "pareto", label: "Pareto (sorted histogram)" },
             Check { key: "cumulative", label: "Cumulative Percentage" },
@@ -2309,8 +2318,8 @@ fn toolpak_fields(tool: &str) -> Vec<Field> {
         "correlation" | "covariance" | "rankPercentile" => vec![range(), grouped(), labels()],
         "anovaSingle" => vec![range(), grouped(), labels(), Text { key: "alpha", label: "Alpha:" }],
         "regression" => vec![
-            Text { key: "inputY", label: "Input Y Range:" },
-            Text { key: "inputX", label: "Input X Range:" },
+            Ref { key: "inputY", label: "Input Y Range:" },
+            Ref { key: "inputX", label: "Input X Range:" },
             labels(),
             Check { key: "constantZero", label: "Constant is Zero" },
             Text { key: "confidence", label: "Confidence Level (%):" },
@@ -2401,19 +2410,28 @@ fn analysis_toolpak(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confi
     };
     d.title = label.to_string();
     d.fields = toolpak_fields(&tool);
-    form_fields(ui, d);
+    form_fields(app, ui, d);
     ui.separator();
     ui.label(egui::RichText::new("Output options").strong());
     let to = d.values.get("outputTo").and_then(Json::as_str).unwrap_or("newSheet").to_string();
     for (key, choice, text_label) in [("output", "range", "Output Range:"), ("newSheet", "newSheet", "New Worksheet Ply:")] {
         ui.horizontal(|ui| {
-            if ui.radio(to == choice, text_label).clicked() {
+            let r = ui.radio(to == choice, text_label);
+            if r.clicked() {
                 d.values.insert("outputTo".into(), json!(choice));
             }
-            let mut t = d.values.get(key).and_then(Json::as_str).unwrap_or("").to_string();
-            if ui.add(egui::TextEdit::singleline(&mut t).desired_width(160.0)).changed() {
-                d.values.insert(key.into(), json!(t));
-                d.values.insert("outputTo".into(), json!(choice));
+            if key == "output" {
+                ref_edit(app, ui, d, key, r.id, 190.0);
+                // Typing or picking an output range chooses it.
+                if d.refs.target.as_deref() == Some(key) {
+                    d.values.insert("outputTo".into(), json!(choice));
+                }
+            } else {
+                let mut t = d.values.get(key).and_then(Json::as_str).unwrap_or("").to_string();
+                if ui.add(egui::TextEdit::singleline(&mut t).desired_width(160.0)).changed() {
+                    d.values.insert(key.into(), json!(t));
+                    d.values.insert("outputTo".into(), json!(choice));
+                }
             }
         });
     }
@@ -2422,7 +2440,7 @@ fn analysis_toolpak(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confi
 
 /// Data › Solver: the Solver Parameters form. Solve runs `data.solver` through the dialog's
 /// command; the result opens Solver Results.
-fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+fn solver(app: &SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
     let text = |d: &Dialog, k: &str| d.values.get(k).map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())).unwrap_or_default();
     let edit = |ui: &mut egui::Ui, d: &mut Dialog, k: &str, width: f32| {
         let mut t = text(d, k);
@@ -2431,8 +2449,8 @@ fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool
         }
     };
     ui.horizontal(|ui| {
-        ui.label("Set Objective:");
-        edit(ui, d, "objective", 200.0);
+        let l = ui.label("Set Objective:");
+        ref_edit(app, ui, d, "objective", l.id, 230.0);
     });
     let goal = text(d, "goal");
     ui.horizontal(|ui| {
@@ -2444,9 +2462,9 @@ fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool
         }
         edit(ui, d, "value", 80.0);
     });
-    ui.label("By Changing Variable Cells:");
-    edit(ui, d, "variables", 420.0);
-    ui.label("Subject to the Constraints:");
+    let l = ui.label("By Changing Variable Cells:");
+    ref_edit(app, ui, d, "variables", l.id, 420.0);
+    let constraints = ui.label("Subject to the Constraints:");
     let list: Vec<String> = d
         .values
         .get("constraints")
@@ -2464,7 +2482,7 @@ fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool
         });
     });
     ui.horizontal(|ui| {
-        edit(ui, d, "newLhs", 110.0);
+        ref_edit(app, ui, d, "newLhs", constraints.id, 130.0);
         let op = text(d, "newOp");
         egui::ComboBox::from_id_salt("solverOp").selected_text(op.clone()).width(60.0).show_ui(ui, |ui| {
             for o in ["<=", "=", ">=", "int", "bin"] {
@@ -2474,7 +2492,7 @@ fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool
             }
         });
         if !matches!(op.as_str(), "int" | "bin") {
-            edit(ui, d, "newRhs", 110.0);
+            ref_edit(app, ui, d, "newRhs", constraints.id, 130.0);
         }
         if ui.button("Add").clicked() {
             let lhs = text(d, "newLhs");
