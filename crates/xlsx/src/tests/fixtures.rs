@@ -1,7 +1,7 @@
 //! Hand-written packages exercising specific reader paths.
 
 use gridcraft_core::{CellError, CellRef, DateSystem, RangeRef, Value};
-use gridcraft_model::{CalcMode, CfRule, Color, HAlign, PatternType, StyleId, Underline, Visibility};
+use gridcraft_model::{CalcMode, CfRule, CfValueKind, Color, HAlign, IconChoice, PatternType, StyleId, Underline, Visibility};
 
 use super::minimal;
 use crate::read_xlsx;
@@ -349,6 +349,135 @@ fn unmodelled_and_hostile_x14() {
     let (wb, rep) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
     let CfRule::DataBar { gradient, .. } = &wb.sheet(0).unwrap().cond_formats[0].rule else { panic!("not a data bar") };
     assert!(*gradient, "the extension was not merged");
+    assert!(rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
+}
+
+/// An Excel-shaped x14 custom icon set: the classic rule carries a GUID ext, the x14 block
+/// restates the thresholds and swaps each position's icon for one from another set.
+const X14_ICONSET_SHEET: &str = r#"<sheetData>
+<row r="1"><c r="A1"><v>1</v></c><c r="B1"><v>9</v></c></row>
+</sheetData>
+<conditionalFormatting sqref="A1:B1"><cfRule type="iconSet" priority="3">
+<iconSet iconSet="3TrafficLights1">
+<cfvo type="percent" val="0"/><cfvo type="percent" val="33"/><cfvo type="percent" val="67"/>
+<extLst><ext xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" uri="{B025F937-C7B1-47D3-B67F-A62EFF666E3E}"><x14:id>{E7F8A9B0-1C2D-3E4F-5A6B-7C8D9E0F1A2B}</x14:id></ext></extLst>
+</iconSet></cfRule></conditionalFormatting>
+<extLst><ext xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}">
+<x14:conditionalFormattings><x14:conditionalFormatting xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">
+<x14:cfRule type="iconSet" id="{E7F8A9B0-1C2D-3E4F-5A6B-7C8D9E0F1A2B}" priority="3">
+<x14:iconSet custom="1">
+<x14:cfvo type="percent"><xm:f>0</xm:f></x14:cfvo>
+<x14:cfvo type="percentile"><xm:f>50</xm:f></x14:cfvo>
+<x14:cfvo type="formula"><xm:f>A1*2</xm:f></x14:cfvo>
+<x14:cfIcon iconSet="3Triangles" iconId="0"/><x14:cfIcon iconSet="3Triangles" iconId="1"/><x14:cfIcon iconSet="3Triangles" iconId="2"/>
+</x14:iconSet></x14:cfRule>
+<xm:sqref>A1:B1</xm:sqref>
+</x14:conditionalFormatting></x14:conditionalFormattings>
+</ext></extLst>"#;
+
+/// An x14-only icon set (`5Boxes` doesn't exist in the classic namespace): no classic rule, the
+/// x14 cfRule stands on its own over its `xm:sqref`.
+const X14_ONLY_ICONSET_SHEET: &str = r#"<sheetData>
+<row r="1"><c r="A1"><v>1</v></c><c r="A5"><v>5</v></c></row>
+</sheetData>
+<extLst><ext xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}">
+<x14:conditionalFormattings><x14:conditionalFormatting xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">
+<x14:cfRule type="iconSet" priority="6" id="{C380A90B-1F64-482D-A170-25C1B0C3B8B1}">
+<x14:iconSet iconSet="5Boxes">
+<x14:cfvo type="percent"><xm:f>0</xm:f></x14:cfvo>
+<x14:cfvo type="percent"><xm:f>20</xm:f></x14:cfvo>
+<x14:cfvo type="percent"><xm:f>40</xm:f></x14:cfvo>
+<x14:cfvo type="percent"><xm:f>60</xm:f></x14:cfvo>
+<x14:cfvo type="percent"><xm:f>80</xm:f></x14:cfvo>
+</x14:iconSet></x14:cfRule>
+<xm:sqref>A1:A5</xm:sqref>
+</x14:conditionalFormatting></x14:conditionalFormattings>
+</ext></extLst>"#;
+
+#[test]
+fn custom_icon_set_imports() {
+    let (wb, rep) = read_xlsx(&minimal(X14_ICONSET_SHEET, &[], "", "")).unwrap();
+    let s = wb.sheet(0).unwrap();
+    assert_eq!(s.cond_formats.len(), 1);
+    let CfRule::IconSet { set, thresholds, icons, .. } = &s.cond_formats[0].rule else { panic!("not an icon set: {:?}", s.cond_formats[0].rule) };
+    assert_eq!(set, "3TrafficLights1");
+    // The x14 cfvos restated with their own kinds override the classic percent thresholds.
+    assert_eq!(thresholds, &[CfValueKind::Percent(0.0), CfValueKind::Percentile(50.0), CfValueKind::Formula("A1*2".into())]);
+    assert_eq!(
+        icons.as_deref(),
+        Some(
+            &[
+                IconChoice { set: "3Triangles".into(), id: 0 },
+                IconChoice { set: "3Triangles".into(), id: 1 },
+                IconChoice { set: "3Triangles".into(), id: 2 },
+            ][..]
+        )
+    );
+    assert!(!rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
+}
+
+#[test]
+fn x14_only_icon_set_imports() {
+    let (wb, rep) = read_xlsx(&minimal(X14_ONLY_ICONSET_SHEET, &[], "", "")).unwrap();
+    let s = wb.sheet(0).unwrap();
+    assert_eq!(s.cond_formats.len(), 1);
+    let f = &s.cond_formats[0];
+    assert_eq!(f.ranges, vec![RangeRef::parse("A1:A5").unwrap()]);
+    assert_eq!(f.priority, 6);
+    assert!(!f.stop_if_true);
+    let CfRule::IconSet { set, thresholds, icons, .. } = &f.rule else { panic!("not an icon set: {:?}", f.rule) };
+    assert_eq!(set, "5Boxes");
+    assert_eq!(
+        thresholds,
+        &[CfValueKind::Percent(0.0), CfValueKind::Percent(20.0), CfValueKind::Percent(40.0), CfValueKind::Percent(60.0), CfValueKind::Percent(80.0),]
+    );
+    assert!(icons.is_none());
+    assert!(!rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
+}
+
+#[test]
+fn garbage_sqref_and_dangling_id_warn() {
+    // An x14-only rule whose sqref token won't parse: the rule is dropped, not partly imported.
+    let body = X14_ONLY_ICONSET_SHEET.replace("<xm:sqref>A1:A5</xm:sqref>", "<xm:sqref>ZZZZZ1</xm:sqref>");
+    let (wb, rep) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
+    assert!(wb.sheet(0).unwrap().cond_formats.is_empty(), "the rule was imported anyway");
+    assert!(rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
+
+    // An x14 rule whose id no classic rule carries: nothing to refine, so nothing imports.
+    let body = X14_DATABAR_SHEET.replace(r#"id="{D4A5D3C2-6B7E-4E8F-9A01-2C3B4D5E6F70}""#, r#"id="{FFFFFFFF-1111-2222-3333-444444444444}""#);
+    let (wb, rep) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
+    let s = wb.sheet(0).unwrap();
+    assert_eq!(s.cond_formats.len(), 1);
+    let CfRule::DataBar { gradient, .. } = &s.cond_formats[0].rule else { panic!("not a data bar") };
+    assert!(*gradient, "the extension was merged anyway");
+    assert!(rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
+}
+
+#[test]
+fn hostile_cficons_are_bounded() {
+    let mut icons = String::new();
+    for i in 0..10_000 {
+        icons.push_str(&format!(r#"<x14:cfIcon iconSet="3Triangles" iconId="{}"/>"#, i % 256));
+    }
+    let three =
+        r#"<x14:cfIcon iconSet="3Triangles" iconId="0"/><x14:cfIcon iconSet="3Triangles" iconId="1"/><x14:cfIcon iconSet="3Triangles" iconId="2"/>"#;
+    let body = X14_ICONSET_SHEET.replace(three, &icons);
+    let (wb, rep) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
+    let s = wb.sheet(0).unwrap();
+    assert_eq!(s.cond_formats.len(), 1);
+    let CfRule::IconSet { icons, .. } = &s.cond_formats[0].rule else { panic!("not an icon set: {:?}", s.cond_formats[0].rule) };
+    assert_eq!(
+        icons.as_deref(),
+        Some(
+            &[
+                IconChoice { set: "3Triangles".into(), id: 0 },
+                IconChoice { set: "3Triangles".into(), id: 1 },
+                IconChoice { set: "3Triangles".into(), id: 2 },
+                IconChoice { set: "3Triangles".into(), id: 3 },
+                IconChoice { set: "3Triangles".into(), id: 4 },
+            ][..]
+        )
+    );
     assert!(rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
 }
 

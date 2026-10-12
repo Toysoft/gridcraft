@@ -7,8 +7,8 @@ use gridcraft_core::date::{serial_from_ymd, time_fraction};
 use gridcraft_core::{CellError, CellRef, DateSystem, MAX_COLS, MAX_ROWS, RangeRef, Value};
 use gridcraft_formula::Expr;
 use gridcraft_model::{
-    AutoFilter, Cell, CfOperator, CfRule, CfValueKind, Comment, CondFormat, EditRange, ErrorStyle, FilterCriterion, Formula, Hyperlink, LineInfo,
-    Orientation, PasswordHash, Sheet, SheetProtection, Sparkline, SparklineKind, Table, TableColumn, TotalsFn, Validation, ValidationKind,
+    AutoFilter, Cell, CfOperator, CfRule, CfValueKind, Comment, CondFormat, EditRange, ErrorStyle, FilterCriterion, Formula, Hyperlink, IconChoice,
+    LineInfo, Orientation, PasswordHash, Sheet, SheetProtection, Sparkline, SparklineKind, Table, TableColumn, TotalsFn, Validation, ValidationKind,
 };
 
 use crate::IoError;
@@ -1000,27 +1000,31 @@ fn read_ext(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
     }
 }
 
-/// x14 conditional-format extensions (Excel 2010): each `x14:cfRule` is linked to its classic
-/// rule by GUID and refines it. Data bars are merged; anything unmatched or unmodelled warns
-/// once, honestly.
+/// x14 conditional-format extensions (Excel 2010): each `x14:cfRule` either refines the classic
+/// rule linked by its GUID (data bars, icon sets) or — with no classic counterpart — stands on
+/// its own (x14-only icon sets like `5Boxes`). Anything unmatched or unmodelled warns once,
+/// honestly.
 fn read_x14_conditional_formats(cx: &mut Ctx<'_>, c: &El, sheet: &mut Sheet) {
     let mut skipped = false;
     for cf in c.kids("conditionalFormatting") {
         for r in cf.kids("cfRule") {
             let id = r.attr("id").unwrap_or("");
             let Some(index) = cx.cf_ext_ids.iter().find(|(sid, _)| sid == id).map(|(_, i)| *i) else {
-                skipped = true;
+                // No classic rule carries this id: an x14-only rule over its `xm:sqref`.
+                skipped |= read_x14_only_rule(cf, r, sheet);
                 continue;
             };
             let Some(rule) = sheet.cond_formats.get_mut(index).map(|f| &mut f.rule) else {
                 skipped = true;
                 continue;
             };
-            let Some(db) = r.child("dataBar") else {
+            if let Some(db) = r.child("dataBar") {
+                skipped |= merge_x14_data_bar(cx, db, rule);
+            } else if let Some(is) = r.child("iconSet") {
+                skipped |= merge_x14_icon_set(is, rule);
+            } else {
                 skipped = true;
-                continue;
-            };
-            skipped |= merge_x14_data_bar(cx, db, rule);
+            }
         }
     }
     if skipped {
@@ -1028,9 +1032,100 @@ fn read_x14_conditional_formats(cx: &mut Ctx<'_>, c: &El, sheet: &mut Sheet) {
     }
 }
 
+/// An x14 rule with no classic counterpart (an x14-only icon set like `5Boxes`, or a custom mix):
+/// a complete conditional format over the `xm:sqref` of its `x14:conditionalFormatting` parent,
+/// carrying the x14 rule's priority. Returns whether it had to be skipped.
+fn read_x14_only_rule(cf: &El, r: &El, sheet: &mut Sheet) -> bool {
+    let Some(is) = r.child("iconSet") else {
+        return true;
+    };
+    let skipped = unmodelled_icon_set(is);
+    // The rule is dropped when any sqref token won't parse: importing the rest would quietly
+    // change what the format covers.
+    let sq = cf.child("sqref").map(|s| s.text.as_str()).unwrap_or("");
+    let ranges = parse_sqref(Some(sq));
+    if ranges.is_empty() || ranges.len() != sq.split_whitespace().count() {
+        return true;
+    }
+    let mut thresholds = Vec::new();
+    for v in is.kids("cfvo") {
+        // A threshold we can't model would leave a hole the icons shift into.
+        let Some(kind) = x14_cfvo(v) else { return true };
+        thresholds.push(kind);
+    }
+    let (icons, truncated) = x14_icons(is);
+    sheet.cond_formats.push(CondFormat {
+        ranges,
+        rule: CfRule::IconSet {
+            set: is.attr("iconSet").unwrap_or("3TrafficLights1").to_string(),
+            thresholds,
+            reverse: is.flag("reverse", false),
+            show_value: is.flag("showValue", true),
+            icons,
+        },
+        priority: r.attr_u32("priority").unwrap_or(0),
+        stop_if_true: false,
+    });
+    skipped || truncated
+}
+
+/// Merges an x14 icon set into the classic rule it refines: restated cfvo thresholds and custom
+/// per-position icons (`x14:cfIcon`). Returns whether any part of the extension had to be
+/// skipped; a rule that isn't an icon set is skipped wholesale.
+fn merge_x14_icon_set(is: &El, rule: &mut CfRule) -> bool {
+    let CfRule::IconSet { set, thresholds, reverse, show_value, icons, .. } = rule else {
+        return true;
+    };
+    let mut skipped = unmodelled_icon_set(is);
+    if let Some(name) = is.attr("iconSet") {
+        *set = name.to_string();
+    }
+    *reverse = is.flag("reverse", *reverse);
+    *show_value = is.flag("showValue", *show_value);
+    let cfvos: Vec<&El> = is.kids("cfvo").collect();
+    if cfvos.len() > thresholds.len() {
+        skipped = true;
+    }
+    for (slot, v) in thresholds.iter_mut().zip(cfvos) {
+        if let Some(kind) = x14_cfvo(v) {
+            *slot = kind;
+        } else {
+            // Unusable bound: keep the classic one and say so.
+            skipped = true;
+        }
+    }
+    let (list, truncated) = x14_icons(is);
+    *icons = list;
+    skipped || truncated
+}
+
+/// Whether an `x14:iconSet` element carries anything outside the modelled attributes/children.
+fn unmodelled_icon_set(is: &El) -> bool {
+    is.attrs.iter().any(|(n, _)| !matches!(n.as_str(), "iconSet" | "custom" | "reverse" | "showValue"))
+        || is.children.iter().any(|c| !matches!(c.name.as_str(), "cfvo" | "cfIcon"))
+}
+
+/// The custom per-position icon choices (`x14:cfIcon`) of an x14 icon set: `None` when it has
+/// none. The list is capped at 5 (no icon set has more) so a hostile file can't balloon it;
+/// truncation and unusable entries are reported so the reader can warn.
+fn x14_icons(is: &El) -> (Option<Vec<IconChoice>>, bool) {
+    let mut skipped = false;
+    let mut icons: Vec<IconChoice> = Vec::new();
+    for e in is.kids("cfIcon") {
+        if icons.len() == 5 {
+            skipped = true;
+            break;
+        }
+        match (e.attr("iconSet"), e.attr_u32("iconId").and_then(|i| u8::try_from(i).ok())) {
+            (Some(set), Some(id)) => icons.push(IconChoice { set: set.to_string(), id }),
+            _ => skipped = true,
+        }
+    }
+    (if icons.is_empty() { None } else { Some(icons) }, skipped)
+}
+
 /// Merges an x14 data bar into the classic rule it refines. Returns whether any part of the
-/// extension had to be skipped; a rule that isn't a data bar is skipped wholesale (icon sets
-/// are a later task).
+/// extension had to be skipped; a rule that isn't a data bar is skipped wholesale.
 fn merge_x14_data_bar(cx: &Ctx<'_>, db: &El, rule: &mut CfRule) -> bool {
     let CfRule::DataBar { min, max, color, gradient, border, negative_fill, negative_border, axis, limits, .. } = rule else {
         return true;
