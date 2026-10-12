@@ -60,10 +60,19 @@ fn every_tab_records_its_groups() {
 
 #[test]
 fn an_overflowing_tab_shows_scroll_arrows_that_scroll() {
-    // 500 px: even fully collapsed, Home cannot fit, so the tab genuinely overflows and scrolls.
-    let mut h = app_at(500.0, "Home");
+    // 540 px is the collapse floor: fully collapsed, Home's row (measured ≈ 485 px) is still
+    // wider than the card (width − 56), so arrows are the last resort — every group whose
+    // launcher saves width is already collapsed (probed 480–550: overflow ⟺ width < 540.5).
+    let mut h = app_at(540.0, "Home");
     let o = RibbonOverflow::get(&h.ctx);
-    assert!(o.overflows(), "Home is wider than a 500 px window even collapsed");
+    assert!(o.overflows(), "Home is wider than a 540 px window even collapsed");
+    let plan = gridcraft_ui_egui::ribbon::collapsed_names(&h.ctx, "Home");
+    let saving: Vec<_> =
+        gridcraft_ui_egui::ribbon::group_measures(&h.ctx).iter().filter(|m| (m.width - m.launcher) > 0.5).map(|m| m.name.clone()).collect();
+    assert!(
+        !saving.is_empty() && saving.iter().all(|s| plan.contains(s)),
+        "collapse exhausted: every saving>0 group {saving:?} is a launcher in {plan:?}"
+    );
     assert_eq!(o.offset, 0.0);
     assert!(h.query_by_label("Scroll ribbon left").is_none(), "nothing to the left yet");
     h.get_by_label("Scroll ribbon right").click();
@@ -194,6 +203,27 @@ fn full_width_keeps_every_group_expanded() {
     let h = app_at(1440.0, "Home");
     assert!(!RibbonOverflow::get(&h.ctx).groups.is_empty());
     assert!(gridcraft_ui_egui::ribbon::collapsed_names(&h.ctx, "Home").is_empty(), "nothing collapsed at full width");
+}
+
+#[test]
+fn plan_does_not_flip_flop_at_the_boundary() {
+    // Stability: two harnesses at the same width reach the same plan, and a
+    // second run of steps does not change it (harness cannot resize in place;
+    // rebuild via app_at, which settles the one-frame measurement lag).
+    let a = app_at(900.0, "Home");
+    let plan_a = gridcraft_ui_egui::ribbon::collapsed_names(&a.ctx, "Home");
+    let mut b = app_at(900.0, "Home");
+    b.run_steps(2);
+    assert_eq!(gridcraft_ui_egui::ribbon::collapsed_names(&b.ctx, "Home"), plan_a, "plan is stable across frames");
+    // Strengthened (the brief's form passed trivially): a flip-flop alternates frame by frame,
+    // so the plan must match after every further single-frame step, not just once settled.
+    for _ in 0..2 {
+        b.run_steps(1);
+        assert_eq!(gridcraft_ui_egui::ribbon::collapsed_names(&b.ctx, "Home"), plan_a, "plan is stable in every frame");
+    }
+    // Monotonicity: 920 px collapses no more groups than 900 px.
+    let c = app_at(920.0, "Home");
+    assert!(gridcraft_ui_egui::ribbon::collapsed_names(&c.ctx, "Home").len() <= plan_a.len());
 }
 
 #[test]
