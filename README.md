@@ -110,6 +110,7 @@ cargo xtask ci                                                 # fmt, clippy, te
 ```
 
 Choose Español under View → Interface language for [Spanish formula names, decimal commas, and semicolon arguments](docs/formula-input.md).
+Choose עברית under View → Interface language (or File → Options) for the [Hebrew interface](docs/hebrew.md).
 Workbooks, clipboard exchange, and programmatic APIs retain canonical English syntax.
 
 ### Web

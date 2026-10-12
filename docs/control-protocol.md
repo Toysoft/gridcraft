@@ -56,6 +56,11 @@ the View ▸ Animations checkbox, saved with the other UI preferences and on by 
 document text. The choice is saved in `ui.json`; with nothing saved the desktop app follows the
 system language.
 
+Use `{command: "app.language.set", params: {language: "he"}}` for the Hebrew interface.
+`he-IL` and legacy `iw` locale tags are also accepted. Hebrew uses English formula syntax;
+the preference does not alter workbook text or sheet direction. See [Hebrew interface](hebrew.md)
+for font requirements and current bidirectional-layout limitations.
+
 `{command: "file.open", params: {path: "Secret.xlsx", password: "…"}}` opens a password-protected
 workbook (Agile or Standard encryption). Without `password` it returns an error containing
 "is password-protected. Enter its password to open it." and never opens a dialog; a wrong

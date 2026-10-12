@@ -6,6 +6,23 @@ use gridcraft_engine::{
 use gridcraft_ui_egui::{SheetApp, UiState, i18n::Language};
 use serde_json::json;
 
+#[test]
+fn hebrew_interface_preserves_canonical_formulas_and_document_text() {
+    let mut app = app();
+    app.run("cell.set", json!({"cell": "A1", "input": "שלום עולם"})).unwrap();
+    app.run("cell.set", json!({"cell": "A2", "input": "=SUM(1,2.5)"})).unwrap();
+    let before = serde_json::to_value(&app.session.active().unwrap().wb).unwrap();
+    app.run("app.language.set", json!({"code": "he-IL"})).unwrap();
+    assert_eq!(app.ui.language, Language::He);
+    assert_eq!(app.ui.language.formula_locale(), gridcraft_engine::formula::FormulaLocale::En);
+    assert_eq!(serde_json::to_value(&app.session.active().unwrap().wb).unwrap(), before);
+    app.begin_edit(Some("=SUM(3,4.5)".into()), false);
+    assert!(app.commit_edit(0, 0, false, false));
+    assert_eq!(formula(&app), "SUM(3,4.5)");
+    let restored: UiState = serde_json::from_str(&serde_json::to_string(&app.ui).unwrap()).unwrap();
+    assert_eq!(restored.language, Language::He);
+}
+
 fn app() -> SheetApp {
     let mut session = Session::new();
     session.new_workbook();

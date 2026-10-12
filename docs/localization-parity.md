@@ -1,6 +1,6 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (German ribbon catalog added) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Hebrew interface catalog added) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Per-language status against Excel, which ships its UI in dozens of languages (Windows language
 packs cover 100+), with localized function names, argument separators, number and date formats,
@@ -17,6 +17,10 @@ right-to-left sheets and full complex-script support. Part of
   the ribbon, sheet tabs and widgets (`ribbon.rs`, `tabs.rs`, `widgets.rs`); dialogs, menus,
   context menus, task panes, status messages, command labels and function descriptions are still
   English literals. Untranslated labels fall back to English.
+- **Hebrew interface:** all 381 keys in the current catalog, including the File view, settings,
+  ribbon and translated status labels. `he`/`he-IL` and legacy `iw` tags select it; the preference
+  persists without changing workbook text, formula syntax or sheet direction. See
+  [Hebrew interface](hebrew.md) for usage and script/font limitations.
 - **About 2,200 user-visible strings** in all (heuristic source scan: ~1,700 UI and command
   strings plus ~500 function descriptions), so each shipped language covers **~12%** (measured
   count / estimated total).
@@ -54,6 +58,7 @@ separators, number/date formats, machine translation with agent review, and scri
 | German | de | 266 (~12%) | no | Latin: yes | no | menus only | 4–8 h |
 | Korean | ko | 266 (~12%) | no | Hangul via the CJK fallback; IME unverified | no | menus only | 6–10 h |
 | Vietnamese | vi | 0 (0%) | no | Latin with stacked diacritics: unverified | no | none | 6–10 h |
+| Hebrew | he | 381 (~17%) | catalog tooltips and File view; other dialogs/help fall back to English | Native system-font fallback; Hebrew runs shaped by egui, full bidi/RTL UI absent; PDF can't export | no | partial interface | not estimated |
 
 Other shipped languages: Russian (ru) and German (de), 266 labels each (~12%), menus only.
 
@@ -77,6 +82,7 @@ language (none so far) and of localized function names.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Hebrew (`he`, legacy `iw`) catalog: all 381 existing keys; persisted preference and canonical-formula regression coverage; full bidi layout, non-Latin PDF and native-speaker review remain open |
 | 2026-10-11 | minor | German ribbon catalog (`i18n/de.rs`, 266 labels, ~12%); `de` locale tags (de-DE, de-AT, de-CH…) resolve to German. PR #163 (localized German formulas/numbers) still open |
 | 2026-10-11 | minor | Sheet Right-to-Left mirrors the grid (#146) |
 | 2026-10-11 | minor | Czech (cs) ribbon table: 266 labels (~12%), menus only |

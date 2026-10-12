@@ -260,6 +260,7 @@ fn language_switch_translates_the_ribbon_and_persists() {
         (Language::Ru, "Данные"),
         (Language::PtBr, "Dados"),
         (Language::De, "Daten"),
+        (Language::He, "נתונים"),
     ] {
         h.state_mut().run("app.language.set", json!({"language": language.code()})).unwrap();
         h.run_steps(2); // every locale renders the ribbon without panicking
