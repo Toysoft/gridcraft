@@ -49,6 +49,16 @@ fn home_groups_are_measured_in_order() {
 }
 
 #[test]
+fn every_tab_records_its_groups() {
+    for tab in TABS {
+        let h = app_at(1440.0, tab);
+        let groups = RibbonOverflow::get(&h.ctx).groups.clone();
+        assert!(!groups.is_empty(), "{tab}: groups recorded");
+        assert!(groups.iter().all(|(_, w)| *w > 1.0), "{tab}: widths positive");
+    }
+}
+
+#[test]
 fn an_overflowing_tab_shows_scroll_arrows_that_scroll() {
     let mut h = app_at(700.0, "Home");
     let o = RibbonOverflow::get(&h.ctx);

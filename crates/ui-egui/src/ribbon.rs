@@ -1506,896 +1506,976 @@ fn cell_style_gallery(app: &mut SheetApp, ui: &mut Ui) {
 }
 
 fn insert(app: &mut SheetApp, ui: &mut Ui) {
-    let __k = big_button(ui, Icon::PivotTable, "PivotTable", "PivotTable", false);
-    control_keytip(app, ui, &__k, "insert.pivotTable");
-    if __k.clicked() {
-        act(app, "insert.pivotTable", json!({}));
-    }
-    let __k = big_button(ui, Icon::Table, "Table", "Table (⌘T)", false);
-    control_keytip(app, ui, &__k, "insert.table");
-    if __k.clicked() {
-        act(app, "insert.table", json!({}));
-    }
-    sep(ui);
-    let pic = big_button(ui, Icon::Picture, "Pictures", "Insert a picture", true);
-    anchor_keytip(app, ui, &pic, &["insert.picture"]);
-    pic.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Pictures"));
-    egui::Popup::menu(&pic).show(|ui| {
-        for (label, placement) in [("Place in Cell", "cell"), ("Place over Cells", "overCells")] {
-            if ui.button(label).clicked() {
-                app.open_dialog("insertPicture", json!({"placement": placement}));
-                ui.close();
-            }
+    // Tables
+    group(ui, "Tables", |ui| {
+        let __k = big_button(ui, Icon::PivotTable, "PivotTable", "PivotTable", false);
+        control_keytip(app, ui, &__k, "insert.pivotTable");
+        if __k.clicked() {
+            act(app, "insert.pivotTable", json!({}));
+        }
+        let __k = big_button(ui, Icon::Table, "Table", "Table (⌘T)", false);
+        control_keytip(app, ui, &__k, "insert.table");
+        if __k.clicked() {
+            act(app, "insert.table", json!({}));
         }
     });
-    let shapes = big_button(ui, Icon::Shapes, "Shapes", "Shapes", true);
-    anchor_keytip(app, ui, &shapes, &["insert.shape"]);
-    egui::Popup::menu(&shapes).show(|ui| {
-        for (label, kind) in [
-            ("Rectangle", "rectangle"),
-            ("Rounded Rectangle", "roundedRectangle"),
-            ("Oval", "ellipse"),
-            ("Triangle", "triangle"),
-            ("Line", "line"),
-            ("Arrow", "arrow"),
-            ("Text Box", "textBox"),
-        ] {
-            if ui.button(label).clicked() {
-                act(app, "insert.shape", json!({"kind": kind}));
-            }
-        }
-    });
-    let icn = big_button(ui, Icon::Theme, "Icons", "Insert an icon", true);
-    anchor_keytip(app, ui, &icn, &["insert.icons"]);
-    egui::Popup::menu(&icn).show(|ui| {
-        ui.set_width(260.0);
-        egui::Grid::new("icon_lib").show(ui, |ui| {
-            for (i, (name, icon)) in icons::LIBRARY.iter().enumerate() {
-                let (r, resp) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::click());
-                if resp.hovered() {
-                    ui.painter().rect_filled(r, 4.0, Tokens::get(ui.ctx()).hover);
-                }
-                icons::paint(ui.painter(), r.shrink(6.0), *icon, Tokens::get(ui.ctx()).text);
-                if resp.on_hover_text(*name).clicked() {
-                    act(app, "insert.icons", json!({"name": name}));
+    // Illustrations
+    group(ui, "Illustrations", |ui| {
+        let pic = big_button(ui, Icon::Picture, "Pictures", "Insert a picture", true);
+        anchor_keytip(app, ui, &pic, &["insert.picture"]);
+        pic.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Pictures"));
+        egui::Popup::menu(&pic).show(|ui| {
+            for (label, placement) in [("Place in Cell", "cell"), ("Place over Cells", "overCells")] {
+                if ui.button(label).clicked() {
+                    app.open_dialog("insertPicture", json!({"placement": placement}));
                     ui.close();
                 }
-                if (i + 1) % 6 == 0 {
-                    ui.end_row();
+            }
+        });
+        let shapes = big_button(ui, Icon::Shapes, "Shapes", "Shapes", true);
+        anchor_keytip(app, ui, &shapes, &["insert.shape"]);
+        egui::Popup::menu(&shapes).show(|ui| {
+            for (label, kind) in [
+                ("Rectangle", "rectangle"),
+                ("Rounded Rectangle", "roundedRectangle"),
+                ("Oval", "ellipse"),
+                ("Triangle", "triangle"),
+                ("Line", "line"),
+                ("Arrow", "arrow"),
+                ("Text Box", "textBox"),
+            ] {
+                if ui.button(label).clicked() {
+                    act(app, "insert.shape", json!({"kind": kind}));
                 }
             }
         });
-    });
-    sep(ui);
-    let __k = big_button(ui, Icon::Chart, "Recommended\nCharts", "Recommended Charts", false);
-    control_keytip(app, ui, &__k, "insert.recommendedCharts");
-    if __k.clicked() {
-        act(app, "insert.recommendedCharts", json!({}));
-    }
-    ui.vertical(|ui| {
-        ui.horizontal(|ui| {
-            for (icon, tip, cid, subs) in [
-                (
-                    Icon::ChartBar,
-                    "Column or Bar",
-                    "insert.chart.column",
-                    vec![
-                        ("Clustered Column", "column", ""),
-                        ("Stacked Column", "column", "stacked"),
-                        ("100% Stacked Column", "column", "stacked100"),
-                        ("Clustered Bar", "bar", ""),
-                        ("Stacked Bar", "bar", "stacked"),
-                    ],
-                ),
-                (
-                    Icon::ChartLine,
-                    "Line or Area",
-                    "insert.chart.line",
-                    vec![
-                        ("Line", "line", ""),
-                        ("Line with Markers", "line", "markers"),
-                        ("Stacked Line", "line", "stacked"),
-                        ("Area", "area", ""),
-                        ("Stacked Area", "area", "stacked"),
-                    ],
-                ),
-                (Icon::ChartPie, "Pie or Doughnut", "insert.chart.pie", vec![("Pie", "pie", ""), ("Doughnut", "doughnut", "")]),
-            ] {
-                let r = small_button(ui, icon, "", tip, true);
-                control_keytip(app, ui, &r, cid);
-                let forced_c = invoke(app, cid);
-                egui::Popup::menu(&r).open_memory(popup_command(forced_c, r.clicked())).show(|ui| {
-                    for (label, k, s) in &subs {
-                        if ui.button(*label).clicked() {
-                            act(app, "insert.chart", json!({"type": k, "subtype": s}));
-                        }
+        let icn = big_button(ui, Icon::Theme, "Icons", "Insert an icon", true);
+        anchor_keytip(app, ui, &icn, &["insert.icons"]);
+        egui::Popup::menu(&icn).show(|ui| {
+            ui.set_width(260.0);
+            egui::Grid::new("icon_lib").show(ui, |ui| {
+                for (i, (name, icon)) in icons::LIBRARY.iter().enumerate() {
+                    let (r, resp) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::click());
+                    if resp.hovered() {
+                        ui.painter().rect_filled(r, 4.0, Tokens::get(ui.ctx()).hover);
                     }
-                });
-            }
-        });
-        ui.horizontal(|ui| {
-            for (icon, tip, cid, subs) in [
-                (
-                    Icon::ChartScatter,
-                    "Scatter or Bubble",
-                    "insert.chart.scatter",
-                    vec![("Scatter", "scatter", ""), ("Scatter with Lines", "scatter", "lines"), ("Bubble", "bubble", "")],
-                ),
-                (Icon::Chart, "Statistic", "insert.chart.statistic", vec![("Histogram", "histogram", ""), ("Box & Whisker", "boxWhisker", "")]),
-                (
-                    Icon::Theme,
-                    "Hierarchy & more",
-                    "insert.chart.hierarchy",
-                    vec![
-                        ("Treemap", "treemap", ""),
-                        ("Sunburst", "sunburst", ""),
-                        ("Waterfall", "waterfall", ""),
-                        ("Funnel", "funnel", ""),
-                        ("Radar", "radar", ""),
-                        ("Stock", "stock", ""),
-                        ("Combo", "combo", ""),
-                    ],
-                ),
-            ] {
-                let r = small_button(ui, icon, "", tip, true);
-                control_keytip(app, ui, &r, cid);
-                let forced_c = invoke(app, cid);
-                egui::Popup::menu(&r).open_memory(popup_command(forced_c, r.clicked())).show(|ui| {
-                    for (label, k, s) in &subs {
-                        if ui.button(*label).clicked() {
-                            act(app, "insert.chart", json!({"type": k, "subtype": s}));
-                        }
+                    icons::paint(ui.painter(), r.shrink(6.0), *icon, Tokens::get(ui.ctx()).text);
+                    if resp.on_hover_text(*name).clicked() {
+                        act(app, "insert.icons", json!({"name": name}));
+                        ui.close();
                     }
-                });
-            }
+                    if (i + 1) % 6 == 0 {
+                        ui.end_row();
+                    }
+                }
+            });
         });
     });
-    sep(ui);
-    if big_button(ui, Icon::Filter, "Slicer", "Insert a slicer to filter a table", false).clicked() {
-        act(app, "insert.slicer", json!({}));
-    }
-    sep(ui);
-    let sp = big_button(ui, Icon::Sparkline, "Sparklines", "Sparklines", true);
-    anchor_keytip(app, ui, &sp, &["dialog:sparkline"]);
-    egui::Popup::menu(&sp).show(|ui| {
-        for (label, kind) in [("Line", "line"), ("Column", "column"), ("Win/Loss", "winLoss")] {
-            if ui.button(label).clicked() {
-                app.open_dialog("sparkline", json!({"type": kind}));
-            }
+    // Charts
+    group(ui, "Charts", |ui| {
+        let __k = big_button(ui, Icon::Chart, "Recommended\nCharts", "Recommended Charts", false);
+        control_keytip(app, ui, &__k, "insert.recommendedCharts");
+        if __k.clicked() {
+            act(app, "insert.recommendedCharts", json!({}));
+        }
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+                for (icon, tip, cid, subs) in [
+                    (
+                        Icon::ChartBar,
+                        "Column or Bar",
+                        "insert.chart.column",
+                        vec![
+                            ("Clustered Column", "column", ""),
+                            ("Stacked Column", "column", "stacked"),
+                            ("100% Stacked Column", "column", "stacked100"),
+                            ("Clustered Bar", "bar", ""),
+                            ("Stacked Bar", "bar", "stacked"),
+                        ],
+                    ),
+                    (
+                        Icon::ChartLine,
+                        "Line or Area",
+                        "insert.chart.line",
+                        vec![
+                            ("Line", "line", ""),
+                            ("Line with Markers", "line", "markers"),
+                            ("Stacked Line", "line", "stacked"),
+                            ("Area", "area", ""),
+                            ("Stacked Area", "area", "stacked"),
+                        ],
+                    ),
+                    (Icon::ChartPie, "Pie or Doughnut", "insert.chart.pie", vec![("Pie", "pie", ""), ("Doughnut", "doughnut", "")]),
+                ] {
+                    let r = small_button(ui, icon, "", tip, true);
+                    control_keytip(app, ui, &r, cid);
+                    let forced_c = invoke(app, cid);
+                    egui::Popup::menu(&r).open_memory(popup_command(forced_c, r.clicked())).show(|ui| {
+                        for (label, k, s) in &subs {
+                            if ui.button(*label).clicked() {
+                                act(app, "insert.chart", json!({"type": k, "subtype": s}));
+                            }
+                        }
+                    });
+                }
+            });
+            ui.horizontal(|ui| {
+                for (icon, tip, cid, subs) in [
+                    (
+                        Icon::ChartScatter,
+                        "Scatter or Bubble",
+                        "insert.chart.scatter",
+                        vec![("Scatter", "scatter", ""), ("Scatter with Lines", "scatter", "lines"), ("Bubble", "bubble", "")],
+                    ),
+                    (Icon::Chart, "Statistic", "insert.chart.statistic", vec![("Histogram", "histogram", ""), ("Box & Whisker", "boxWhisker", "")]),
+                    (
+                        Icon::Theme,
+                        "Hierarchy & more",
+                        "insert.chart.hierarchy",
+                        vec![
+                            ("Treemap", "treemap", ""),
+                            ("Sunburst", "sunburst", ""),
+                            ("Waterfall", "waterfall", ""),
+                            ("Funnel", "funnel", ""),
+                            ("Radar", "radar", ""),
+                            ("Stock", "stock", ""),
+                            ("Combo", "combo", ""),
+                        ],
+                    ),
+                ] {
+                    let r = small_button(ui, icon, "", tip, true);
+                    control_keytip(app, ui, &r, cid);
+                    let forced_c = invoke(app, cid);
+                    egui::Popup::menu(&r).open_memory(popup_command(forced_c, r.clicked())).show(|ui| {
+                        for (label, k, s) in &subs {
+                            if ui.button(*label).clicked() {
+                                act(app, "insert.chart", json!({"type": k, "subtype": s}));
+                            }
+                        }
+                    });
+                }
+            });
+        });
+    });
+    // Filter
+    group(ui, "Filter", |ui| {
+        if big_button(ui, Icon::Filter, "Slicer", "Insert a slicer to filter a table", false).clicked() {
+            act(app, "insert.slicer", json!({}));
         }
     });
-    sep(ui);
-    // Cell Controls.
-    if big_button(ui, Icon::Checkbox, "Checkbox", "Insert checkboxes in the selected cells", false).clicked() {
-        act(app, "insert.checkbox", json!({}));
-    }
-    sep(ui);
-    let __k = big_button(ui, Icon::Link, "Link", "Insert Link (⌘K)", false);
-    control_keytip(app, ui, &__k, "dialog:insertLink");
-    if __k.clicked() {
-        app.open_dialog("insertLink", json!({}));
-    }
-    let __k = big_button(ui, Icon::Comment, "Comment", "New Comment", false);
-    control_keytip(app, ui, &__k, "dialog:comment");
-    if __k.clicked() {
-        app.open_dialog("comment", json!({"threaded": true}));
-    }
-    sep(ui);
-    let __k = big_button(ui, Icon::TextBox, "Text\nBox", "Text Box", false);
-    control_keytip(app, ui, &__k, "insert.textBox");
-    if __k.clicked() {
-        act(app, "insert.textBox", json!({}));
-    }
-    let __k = big_button(ui, Icon::PageLayout, "Header &\nFooter", "Header & Footer", false);
-    control_keytip(app, ui, &__k, "dialog:headerFooter");
-    if __k.clicked() {
-        // As in Excel: Page Layout view, editing the header in place (the dialog is under Page Setup).
-        crate::paper_view::start_editing(app);
-    }
-    let sym = big_button(ui, Icon::Symbol, "Symbol", "Symbol", true);
-    control_keytip(app, ui, &sym, "insert.symbol");
-    egui::Popup::menu(&sym).show(|ui| {
-        ui.set_width(260.0);
-        ui.horizontal_wrapped(|ui| {
-            for ch in [
-                "€", "£", "¥", "©", "®", "™", "±", "≠", "≤", "≥", "÷", "×", "∞", "µ", "α", "β", "π", "Σ", "Ω", "°", "•", "…", "→", "←", "↑", "↓",
-                "✓", "★", "½", "¼",
-            ] {
-                if ui.button(ch).clicked() {
-                    act(app, "insert.symbol", json!({"char": ch}));
+    // Sparklines
+    group(ui, "Sparklines", |ui| {
+        let sp = big_button(ui, Icon::Sparkline, "Sparklines", "Sparklines", true);
+        anchor_keytip(app, ui, &sp, &["dialog:sparkline"]);
+        egui::Popup::menu(&sp).show(|ui| {
+            for (label, kind) in [("Line", "line"), ("Column", "column"), ("Win/Loss", "winLoss")] {
+                if ui.button(label).clicked() {
+                    app.open_dialog("sparkline", json!({"type": kind}));
                 }
             }
+        });
+    });
+    // Cell Controls
+    group(ui, "Cell Controls", |ui| {
+        // Cell Controls.
+        if big_button(ui, Icon::Checkbox, "Checkbox", "Insert checkboxes in the selected cells", false).clicked() {
+            act(app, "insert.checkbox", json!({}));
+        }
+    });
+    // Links
+    group(ui, "Links", |ui| {
+        let __k = big_button(ui, Icon::Link, "Link", "Insert Link (⌘K)", false);
+        control_keytip(app, ui, &__k, "dialog:insertLink");
+        if __k.clicked() {
+            app.open_dialog("insertLink", json!({}));
+        }
+        let __k = big_button(ui, Icon::Comment, "Comment", "New Comment", false);
+        control_keytip(app, ui, &__k, "dialog:comment");
+        if __k.clicked() {
+            app.open_dialog("comment", json!({"threaded": true}));
+        }
+    });
+    // Text
+    group(ui, "Text", |ui| {
+        let __k = big_button(ui, Icon::TextBox, "Text\nBox", "Text Box", false);
+        control_keytip(app, ui, &__k, "insert.textBox");
+        if __k.clicked() {
+            act(app, "insert.textBox", json!({}));
+        }
+        let __k = big_button(ui, Icon::PageLayout, "Header &\nFooter", "Header & Footer", false);
+        control_keytip(app, ui, &__k, "dialog:headerFooter");
+        if __k.clicked() {
+            // As in Excel: Page Layout view, editing the header in place (the dialog is under Page Setup).
+            crate::paper_view::start_editing(app);
+        }
+        let sym = big_button(ui, Icon::Symbol, "Symbol", "Symbol", true);
+        control_keytip(app, ui, &sym, "insert.symbol");
+        egui::Popup::menu(&sym).show(|ui| {
+            ui.set_width(260.0);
+            ui.horizontal_wrapped(|ui| {
+                for ch in [
+                    "€", "£", "¥", "©", "®", "™", "±", "≠", "≤", "≥", "÷", "×", "∞", "µ", "α", "β", "π", "Σ", "Ω", "°", "•", "…", "→", "←", "↑", "↓",
+                    "✓", "★", "½", "¼",
+                ] {
+                    if ui.button(ch).clicked() {
+                        act(app, "insert.symbol", json!({"char": ch}));
+                    }
+                }
+            });
         });
     });
 }
 
 fn draw(app: &mut SheetApp, ui: &mut Ui) {
     let tool = app.session.draw_tool.clone();
-    let __k = big_button(ui, Icon::Shapes, "Select\nObjects", "Select and move ink and shapes", false);
-    control_keytip(app, ui, &__k, "draw.lasso");
-    if __k.clicked() {
-        act(app, "draw.lasso", json!({}));
-    }
-    sep(ui);
-    for (label, color) in [("Pen\nBlue", "#1F5FC9"), ("Pen\nBlack", "#000000"), ("Pen\nRed", "#D13B2F"), ("Highlighter", "#F2E33A")] {
-        let on = tool == "pen" && app.session.draw_color.eq_ignore_ascii_case(color);
-        let r = big_button(ui, Icon::Pen, label, "Draw with ink", false);
-        if on {
-            ui.painter().rect_stroke(r.rect, 5.0, Stroke::new(2.0, Tokens::get(ui.ctx()).accent), StrokeKind::Inside);
+    // Tools
+    group(ui, "Tools", |ui| {
+        let __k = big_button(ui, Icon::Shapes, "Select\nObjects", "Select and move ink and shapes", false);
+        control_keytip(app, ui, &__k, "draw.lasso");
+        if __k.clicked() {
+            act(app, "draw.lasso", json!({}));
         }
-        if r.clicked() {
-            let width = if label == "Highlighter" { 12.0 } else { 2.0 };
-            act(app, "draw.pen", json!({"on": !on, "color": color, "width": width}));
+    });
+    // Pens
+    group(ui, "Pens", |ui| {
+        for (label, color) in [("Pen\nBlue", "#1F5FC9"), ("Pen\nBlack", "#000000"), ("Pen\nRed", "#D13B2F"), ("Highlighter", "#F2E33A")] {
+            let on = tool == "pen" && app.session.draw_color.eq_ignore_ascii_case(color);
+            let r = big_button(ui, Icon::Pen, label, "Draw with ink", false);
+            if on {
+                ui.painter().rect_stroke(r.rect, 5.0, Stroke::new(2.0, Tokens::get(ui.ctx()).accent), StrokeKind::Inside);
+            }
+            if r.clicked() {
+                let width = if label == "Highlighter" { 12.0 } else { 2.0 };
+                act(app, "draw.pen", json!({"on": !on, "color": color, "width": width}));
+            }
         }
-    }
-    let er = big_button(ui, Icon::Eraser, "Eraser", "Erase ink strokes", false);
-    if tool == "eraser" {
-        ui.painter().rect_stroke(er.rect, 5.0, Stroke::new(2.0, Tokens::get(ui.ctx()).accent), StrokeKind::Inside);
-    }
-    if er.clicked() {
-        act(app, "draw.eraser", json!({}));
-    }
-    sep(ui);
-    let __k = big_button(ui, Icon::Shapes, "Ink to\nShape", "Convert the last ink stroke to a shape", false);
-    control_keytip(app, ui, &__k, "draw.inkToShape");
-    if __k.clicked() {
-        act(app, "draw.inkToShape", json!({}));
-    }
+        let er = big_button(ui, Icon::Eraser, "Eraser", "Erase ink strokes", false);
+        if tool == "eraser" {
+            ui.painter().rect_stroke(er.rect, 5.0, Stroke::new(2.0, Tokens::get(ui.ctx()).accent), StrokeKind::Inside);
+        }
+        if er.clicked() {
+            act(app, "draw.eraser", json!({}));
+        }
+    });
+    // Convert
+    group(ui, "Convert", |ui| {
+        let __k = big_button(ui, Icon::Shapes, "Ink to\nShape", "Convert the last ink stroke to a shape", false);
+        control_keytip(app, ui, &__k, "draw.inkToShape");
+        if __k.clicked() {
+            act(app, "draw.inkToShape", json!({}));
+        }
+    });
 }
 
 fn page_layout(app: &mut SheetApp, ui: &mut Ui) {
-    let th = big_button(ui, Icon::Theme, "Themes", "Themes", true);
-    anchor_keytip(app, ui, &th, &["pageLayout.theme"]);
-    egui::Popup::menu(&th).show(|ui| {
-        for (name, colors) in gridcraft_engine::cmd::view::themes() {
-            ui.horizontal(|ui| {
-                for c in colors.iter().skip(4).take(6) {
-                    let (r, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
-                    ui.painter().rect_filled(r, 1.0, Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, *c as u8));
-                }
-                if ui.button(name).clicked() {
-                    act(app, "pageLayout.theme", json!({"name": name}));
-                }
-            });
-        }
-    });
-    sep(ui);
-    let m = big_button(ui, Icon::Margins, "Margins", "Margins", true);
-    for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["pageLayout.margins", "dialog:pageSetup"]) {
-        keytip(app, ui, sequence, m.rect.center_bottom());
-    }
-    egui::Popup::menu(&m).show(|ui| {
-        menu_items(
-            app,
-            ui,
-            &[
-                ("Normal", "pageLayout.margins", json!({"preset": "normal"})),
-                ("Wide", "pageLayout.margins", json!({"preset": "wide"})),
-                ("Narrow", "pageLayout.margins", json!({"preset": "narrow"})),
-                ("Custom Margins…", "dialog:pageSetup", json!({})),
-            ],
-        );
-    });
-    let o = big_button(ui, Icon::Orient, "Page Layout|Orientation", "Page Layout|Orientation", true);
-    control_keytip(app, ui, &o, "pageLayout.orientation");
-    egui::Popup::menu(&o).show(|ui| {
-        menu_items(
-            app,
-            ui,
-            &[
-                ("Portrait", "pageLayout.orientation", json!({"orientation": "portrait"})),
-                ("Landscape", "pageLayout.orientation", json!({"orientation": "landscape"})),
-            ],
-        );
-    });
-    let s = big_button(ui, Icon::Paper, "Size", "Paper Size", true);
-    control_keytip(app, ui, &s, "pageLayout.size");
-    egui::Popup::menu(&s).show(|ui| {
-        for p in ["Letter", "Legal", "Tabloid", "Executive", "A3", "A4", "A5"] {
-            if ui.button(p).clicked() {
-                act(app, "pageLayout.size", json!({"paper": p}));
+    // Themes
+    group(ui, "Themes", |ui| {
+        let th = big_button(ui, Icon::Theme, "Themes", "Themes", true);
+        anchor_keytip(app, ui, &th, &["pageLayout.theme"]);
+        egui::Popup::menu(&th).show(|ui| {
+            for (name, colors) in gridcraft_engine::cmd::view::themes() {
+                ui.horizontal(|ui| {
+                    for c in colors.iter().skip(4).take(6) {
+                        let (r, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
+                        ui.painter().rect_filled(r, 1.0, Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, *c as u8));
+                    }
+                    if ui.button(name).clicked() {
+                        act(app, "pageLayout.theme", json!({"name": name}));
+                    }
+                });
             }
+        });
+    });
+    // Page Setup
+    group(ui, "Page Setup", |ui| {
+        let m = big_button(ui, Icon::Margins, "Margins", "Margins", true);
+        for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["pageLayout.margins", "dialog:pageSetup"]) {
+            keytip(app, ui, sequence, m.rect.center_bottom());
+        }
+        egui::Popup::menu(&m).show(|ui| {
+            menu_items(
+                app,
+                ui,
+                &[
+                    ("Normal", "pageLayout.margins", json!({"preset": "normal"})),
+                    ("Wide", "pageLayout.margins", json!({"preset": "wide"})),
+                    ("Narrow", "pageLayout.margins", json!({"preset": "narrow"})),
+                    ("Custom Margins…", "dialog:pageSetup", json!({})),
+                ],
+            );
+        });
+        let o = big_button(ui, Icon::Orient, "Page Layout|Orientation", "Page Layout|Orientation", true);
+        control_keytip(app, ui, &o, "pageLayout.orientation");
+        egui::Popup::menu(&o).show(|ui| {
+            menu_items(
+                app,
+                ui,
+                &[
+                    ("Portrait", "pageLayout.orientation", json!({"orientation": "portrait"})),
+                    ("Landscape", "pageLayout.orientation", json!({"orientation": "landscape"})),
+                ],
+            );
+        });
+        let s = big_button(ui, Icon::Paper, "Size", "Paper Size", true);
+        control_keytip(app, ui, &s, "pageLayout.size");
+        egui::Popup::menu(&s).show(|ui| {
+            for p in ["Letter", "Legal", "Tabloid", "Executive", "A3", "A4", "A5"] {
+                if ui.button(p).clicked() {
+                    act(app, "pageLayout.size", json!({"paper": p}));
+                }
+            }
+        });
+        let pa = big_button(ui, Icon::PrintArea, "Print\nArea", "Print Area", true);
+        anchor_keytip(app, ui, &pa, &["pageLayout.printArea"]);
+        egui::Popup::menu(&pa).show(|ui| {
+            menu_items(
+                app,
+                ui,
+                &[("Set Print Area", "pageLayout.printArea", json!({})), ("Clear Print Area", "pageLayout.printArea", json!({"clear": true}))],
+            );
+        });
+        let br = big_button(ui, Icon::PageBreak, "Breaks", "Page Breaks", true);
+        for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["pageLayout.breaks"]) {
+            keytip(app, ui, sequence, br.rect.center_bottom());
+        }
+        egui::Popup::menu(&br).show(|ui| {
+            menu_items(
+                app,
+                ui,
+                &[
+                    ("Insert Page Break", "pageLayout.breaks", json!({"insert": true})),
+                    ("Remove Page Break", "pageLayout.breaks", json!({"remove": true})),
+                    ("Reset All Page Breaks", "pageLayout.breaks", json!({"reset": true})),
+                ],
+            );
+        });
+        let __k = big_button(ui, Icon::Sheet, "Print\nTitles", "Print Titles", false);
+        control_keytip(app, ui, &__k, "pageLayout.printTitles");
+        if __k.clicked() {
+            app.open_dialog("pageSetup", json!({"tab": "Sheet"}));
         }
     });
-    let pa = big_button(ui, Icon::PrintArea, "Print\nArea", "Print Area", true);
-    anchor_keytip(app, ui, &pa, &["pageLayout.printArea"]);
-    egui::Popup::menu(&pa).show(|ui| {
-        menu_items(
-            app,
-            ui,
-            &[("Set Print Area", "pageLayout.printArea", json!({})), ("Clear Print Area", "pageLayout.printArea", json!({"clear": true}))],
-        );
-    });
-    let br = big_button(ui, Icon::PageBreak, "Breaks", "Page Breaks", true);
-    for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["pageLayout.breaks"]) {
-        keytip(app, ui, sequence, br.rect.center_bottom());
-    }
-    egui::Popup::menu(&br).show(|ui| {
-        menu_items(
-            app,
-            ui,
-            &[
-                ("Insert Page Break", "pageLayout.breaks", json!({"insert": true})),
-                ("Remove Page Break", "pageLayout.breaks", json!({"remove": true})),
-                ("Reset All Page Breaks", "pageLayout.breaks", json!({"reset": true})),
-            ],
-        );
-    });
-    let __k = big_button(ui, Icon::Sheet, "Print\nTitles", "Print Titles", false);
-    control_keytip(app, ui, &__k, "pageLayout.printTitles");
-    if __k.clicked() {
-        app.open_dialog("pageSetup", json!({"tab": "Sheet"}));
-    }
-    sep(ui);
-    let sh = app
-        .session
-        .active()
-        .and_then(|d| d.wb.active().map(|s| (s.show_gridlines, s.show_headings, s.print.gridlines, s.print.headings)))
-        .unwrap_or((true, true, false, false));
-    // These two checkboxes mean the screen view vs. the printed page. English shows "View" (as in
-    // Excel), but the key is distinct from the "View" tab so languages can word them apart.
-    let screen = app.ui.language.tr("Sheet Options|View");
-    let print = app.ui.language.tr("Print");
-    ui.vertical(|ui| {
-        ui.label(egui::RichText::new(app.ui.language.tr("Gridlines")).strong().small());
-        let mut v = sh.0;
-        let resp = ui.checkbox(&mut v, screen);
-        control_keytip(app, ui, &resp, "view.gridlines");
-        if resp.changed() || invoke(app, "view.gridlines") {
-            act(app, "view.gridlines", json!({"on": !v}));
+    // Sheet Options
+    group(ui, "Sheet Options", |ui| {
+        let sh = app
+            .session
+            .active()
+            .and_then(|d| d.wb.active().map(|s| (s.show_gridlines, s.show_headings, s.print.gridlines, s.print.headings)))
+            .unwrap_or((true, true, false, false));
+        // These two checkboxes mean the screen view vs. the printed page. English shows "View" (as in
+        // Excel), but the key is distinct from the "View" tab so languages can word them apart.
+        let screen = app.ui.language.tr("Sheet Options|View");
+        let print = app.ui.language.tr("Print");
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new(app.ui.language.tr("Gridlines")).strong().small());
+            let mut v = sh.0;
+            let resp = ui.checkbox(&mut v, screen);
+            control_keytip(app, ui, &resp, "view.gridlines");
+            if resp.changed() || invoke(app, "view.gridlines") {
+                act(app, "view.gridlines", json!({"on": !v}));
+            }
+            let mut p = sh.2;
+            let resp = ui.checkbox(&mut p, print);
+            control_keytip(app, ui, &resp, "pageLayout.printGridlines");
+            if resp.changed() || invoke(app, "pageLayout.printGridlines") {
+                act(app, "pageLayout.printGridlines", json!({"on": !p}));
+            }
+        });
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new(app.ui.language.tr("Headings")).strong().small());
+            let mut v = sh.1;
+            let resp = ui.checkbox(&mut v, screen);
+            control_keytip(app, ui, &resp, "view.headings");
+            if resp.changed() || invoke(app, "view.headings") {
+                act(app, "view.headings", json!({"on": !v}));
+            }
+            let mut p = sh.3;
+            let resp = ui.checkbox(&mut p, print);
+            control_keytip(app, ui, &resp, "pageLayout.printHeadings");
+            if resp.changed() || invoke(app, "pageLayout.printHeadings") {
+                act(app, "pageLayout.printHeadings", json!({"on": !p}));
+            }
+        });
+        let rtl = app.session.active().and_then(|d| d.wb.active()).is_some_and(|s| s.right_to_left);
+        let r = big_button(ui, Icon::SheetRtl, "Sheet\nRight-to-Left", "Sheet Right-to-Left", false);
+        if rtl {
+            let t = Tokens::get(ui.ctx());
+            ui.painter().rect_stroke(r.rect, 5.0, egui::Stroke::new(1.0, t.separator), egui::StrokeKind::Inside);
         }
-        let mut p = sh.2;
-        let resp = ui.checkbox(&mut p, print);
-        control_keytip(app, ui, &resp, "pageLayout.printGridlines");
-        if resp.changed() || invoke(app, "pageLayout.printGridlines") {
-            act(app, "pageLayout.printGridlines", json!({"on": !p}));
+        if r.clicked() {
+            act(app, "view.rightToLeft", json!({"on": !rtl}));
         }
     });
-    ui.vertical(|ui| {
-        ui.label(egui::RichText::new(app.ui.language.tr("Headings")).strong().small());
-        let mut v = sh.1;
-        let resp = ui.checkbox(&mut v, screen);
-        control_keytip(app, ui, &resp, "view.headings");
-        if resp.changed() || invoke(app, "view.headings") {
-            act(app, "view.headings", json!({"on": !v}));
-        }
-        let mut p = sh.3;
-        let resp = ui.checkbox(&mut p, print);
-        control_keytip(app, ui, &resp, "pageLayout.printHeadings");
-        if resp.changed() || invoke(app, "pageLayout.printHeadings") {
-            act(app, "pageLayout.printHeadings", json!({"on": !p}));
-        }
-    });
-    let rtl = app.session.active().and_then(|d| d.wb.active()).is_some_and(|s| s.right_to_left);
-    let r = big_button(ui, Icon::SheetRtl, "Sheet\nRight-to-Left", "Sheet Right-to-Left", false);
-    if rtl {
-        let t = Tokens::get(ui.ctx());
-        ui.painter().rect_stroke(r.rect, 5.0, egui::Stroke::new(1.0, t.separator), egui::StrokeKind::Inside);
-    }
-    if r.clicked() {
-        act(app, "view.rightToLeft", json!({"on": !rtl}));
-    }
 }
 
 fn formulas(app: &mut SheetApp, ui: &mut Ui) {
-    let __k = big_button(ui, Icon::Function, "Insert\nFunction", "Insert Function (⇧F3)", false);
-    control_keytip(app, ui, &__k, "dialog:insertFunction");
-    if __k.clicked() {
-        app.open_dialog("insertFunction", json!({}));
-    }
-    let (s, sa) = big_split_button(ui, Icon::Sum, "AutoSum", "AutoSum");
-    control_keytip(app, ui, &sa, "formulas.autoSum");
-    if s.clicked() {
-        act(app, "formulas.autoSum", json!({}));
-    }
-    egui::Popup::menu(&sa).show(|ui| autosum_menu(app, ui));
-    for (label, cat, cid) in [
-        ("Financial", "Financial", "formulas.financial"),
-        ("Logical", "Logical", "formulas.logical"),
-        ("Text", "Text", "formulas.text"),
-        ("Date &\nTime", "DateTime", "formulas.dateTime"),
-        ("Lookup &\nReference", "Lookup", "formulas.lookup"),
-        ("Math &\nTrig", "MathTrig", "formulas.mathTrig"),
-        ("More\nFunctions", "Statistical", "formulas.moreFunctions"),
-    ] {
-        let r = big_button(ui, Icon::Book, label, label, true);
-        control_keytip(app, ui, &r, cid);
-        let forced_c = invoke(app, cid);
-        egui::Popup::menu(&r).open_memory(popup_command(forced_c, r.clicked())).show(|ui| {
-            ui.set_max_height(420.0);
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for f in gridcraft_engine::cmd::formulas::function_list() {
-                    if f["category"].as_str() == Some(cat)
-                        && let Some(n) = f["name"].as_str()
-                    {
-                        let locale = app.ui.language.formula_locale();
-                        let name =
-                            app.session.active().map(|d| crate::formula_locale::completion_name(n, locale, &d.wb, d.wb.active_sheet)).unwrap_or(n);
-                        let desc = crate::formula_locale::description(n, locale).unwrap_or_default();
-                        if ui.button(name).on_hover_text(desc).clicked() {
-                            app.run_or_alert("formulas.insertFunction", json!({"name": n}));
-                            ui.close();
+    // Function Library
+    group(ui, "Function Library", |ui| {
+        let __k = big_button(ui, Icon::Function, "Insert\nFunction", "Insert Function (⇧F3)", false);
+        control_keytip(app, ui, &__k, "dialog:insertFunction");
+        if __k.clicked() {
+            app.open_dialog("insertFunction", json!({}));
+        }
+        let (s, sa) = big_split_button(ui, Icon::Sum, "AutoSum", "AutoSum");
+        control_keytip(app, ui, &sa, "formulas.autoSum");
+        if s.clicked() {
+            act(app, "formulas.autoSum", json!({}));
+        }
+        egui::Popup::menu(&sa).show(|ui| autosum_menu(app, ui));
+        for (label, cat, cid) in [
+            ("Financial", "Financial", "formulas.financial"),
+            ("Logical", "Logical", "formulas.logical"),
+            ("Text", "Text", "formulas.text"),
+            ("Date &\nTime", "DateTime", "formulas.dateTime"),
+            ("Lookup &\nReference", "Lookup", "formulas.lookup"),
+            ("Math &\nTrig", "MathTrig", "formulas.mathTrig"),
+            ("More\nFunctions", "Statistical", "formulas.moreFunctions"),
+        ] {
+            let r = big_button(ui, Icon::Book, label, label, true);
+            control_keytip(app, ui, &r, cid);
+            let forced_c = invoke(app, cid);
+            egui::Popup::menu(&r).open_memory(popup_command(forced_c, r.clicked())).show(|ui| {
+                ui.set_max_height(420.0);
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for f in gridcraft_engine::cmd::formulas::function_list() {
+                        if f["category"].as_str() == Some(cat)
+                            && let Some(n) = f["name"].as_str()
+                        {
+                            let locale = app.ui.language.formula_locale();
+                            let name = app
+                                .session
+                                .active()
+                                .map(|d| crate::formula_locale::completion_name(n, locale, &d.wb, d.wb.active_sheet))
+                                .unwrap_or(n);
+                            let desc = crate::formula_locale::description(n, locale).unwrap_or_default();
+                            if ui.button(name).on_hover_text(desc).clicked() {
+                                app.run_or_alert("formulas.insertFunction", json!({"name": n}));
+                                ui.close();
+                            }
                         }
+                    }
+                });
+            });
+        }
+    });
+    // Defined Names
+    group(ui, "Defined Names", |ui| {
+        let __k = big_button(ui, Icon::Name, "Name\nManager", "Name Manager", false);
+        control_keytip(app, ui, &__k, "dialog:nameManager");
+        if __k.clicked() {
+            app.open_dialog("nameManager", json!({}));
+        }
+        ui.vertical(|ui| {
+            let __k = small_button(ui, Icon::Name, "Define Name", "Define Name", false);
+            control_keytip(app, ui, &__k, "dialog:defineName");
+            if __k.clicked() {
+                app.open_dialog("defineName", json!({}));
+            }
+            let use_in = small_button(ui, Icon::Function, "Use in Formula", "Use in Formula", true);
+            anchor_keytip(app, ui, &use_in, &["formulas.pasteName"]);
+            egui::Popup::menu(&use_in).show(|ui| {
+                let names: Vec<String> = app.session.active().map(|d| d.wb.names.iter().map(|n| n.name.clone()).collect()).unwrap_or_default();
+                for n in names {
+                    if ui.button(&n).clicked() {
+                        let cur = app.editor.as_ref().map(|e| e.text.clone()).unwrap_or_else(|| "=".into());
+                        app.begin_edit(Some(format!("{cur}{n}")), false);
                     }
                 }
             });
-        });
-    }
-    sep(ui);
-    let __k = big_button(ui, Icon::Name, "Name\nManager", "Name Manager", false);
-    control_keytip(app, ui, &__k, "dialog:nameManager");
-    if __k.clicked() {
-        app.open_dialog("nameManager", json!({}));
-    }
-    ui.vertical(|ui| {
-        let __k = small_button(ui, Icon::Name, "Define Name", "Define Name", false);
-        control_keytip(app, ui, &__k, "dialog:defineName");
-        if __k.clicked() {
-            app.open_dialog("defineName", json!({}));
-        }
-        let use_in = small_button(ui, Icon::Function, "Use in Formula", "Use in Formula", true);
-        anchor_keytip(app, ui, &use_in, &["formulas.pasteName"]);
-        egui::Popup::menu(&use_in).show(|ui| {
-            let names: Vec<String> = app.session.active().map(|d| d.wb.names.iter().map(|n| n.name.clone()).collect()).unwrap_or_default();
-            for n in names {
-                if ui.button(&n).clicked() {
-                    let cur = app.editor.as_ref().map(|e| e.text.clone()).unwrap_or_else(|| "=".into());
-                    app.begin_edit(Some(format!("{cur}{n}")), false);
-                }
+            let __k = small_button(ui, Icon::Table, "Create from Selection", "Create from Selection", false);
+            control_keytip(app, ui, &__k, "formulas.createFromSelection");
+            if __k.clicked() {
+                act(app, "formulas.createFromSelection", json!({}));
             }
         });
-        let __k = small_button(ui, Icon::Table, "Create from Selection", "Create from Selection", false);
-        control_keytip(app, ui, &__k, "formulas.createFromSelection");
-        if __k.clicked() {
-            act(app, "formulas.createFromSelection", json!({}));
+    });
+    // Formula Auditing
+    group(ui, "Formula Auditing", |ui| {
+        ui.vertical(|ui| {
+            if small_button(ui, Icon::Trace, "Trace Precedents", "Trace Precedents", false).clicked()
+                && let Ok(r) = app.run("formulas.tracePrecedents", json!({}))
+            {
+                app.grid.trace = Some(r);
+            }
+            if small_button(ui, Icon::Trace, "Trace Dependents", "Trace Dependents", false).clicked()
+                && let Ok(r) = app.run("formulas.traceDependents", json!({}))
+            {
+                app.grid.trace = Some(r);
+            }
+            if small_button(ui, Icon::Close, "Remove Arrows", "Remove Arrows", false).clicked() {
+                app.grid.trace = None;
+            }
+        });
+        ui.vertical(|ui| {
+            let __k = small_button(ui, Icon::Fx, "Show Formulas", "Show Formulas (⌃`)", false);
+            control_keytip(app, ui, &__k, "formulas.showFormulas");
+            if __k.clicked() {
+                act(app, "formulas.showFormulas", json!({}));
+            }
+            let __k = small_button(ui, Icon::Validation, "Error Checking", "Error Checking", false);
+            control_keytip(app, ui, &__k, "dialog:errorChecking");
+            if __k.clicked() {
+                app.open_dialog("errorChecking", json!({}));
+            }
+            let __k = small_button(ui, Icon::Calc, "Evaluate Formula", "Evaluate Formula", false);
+            control_keytip(app, ui, &__k, "dialog:evaluateFormula");
+            if __k.clicked() {
+                app.open_dialog("evaluateFormula", json!({}));
+            }
+        });
+        if big_button(ui, Icon::Search, "Watch\nWindow", "Watch Window", false).clicked() {
+            app.grid.pane = Some("watch".into());
         }
     });
-    sep(ui);
-    ui.vertical(|ui| {
-        if small_button(ui, Icon::Trace, "Trace Precedents", "Trace Precedents", false).clicked()
-            && let Ok(r) = app.run("formulas.tracePrecedents", json!({}))
-        {
-            app.grid.trace = Some(r);
+    // Calculation
+    group(ui, "Calculation", |ui| {
+        let co = big_button(ui, Icon::Calc, "Calculation\nOptions", "Calculation Options", true);
+        for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["formulas.calculationOptions"]) {
+            keytip(app, ui, sequence, co.rect.center_bottom());
         }
-        if small_button(ui, Icon::Trace, "Trace Dependents", "Trace Dependents", false).clicked()
-            && let Ok(r) = app.run("formulas.traceDependents", json!({}))
-        {
-            app.grid.trace = Some(r);
-        }
-        if small_button(ui, Icon::Close, "Remove Arrows", "Remove Arrows", false).clicked() {
-            app.grid.trace = None;
-        }
-    });
-    ui.vertical(|ui| {
-        let __k = small_button(ui, Icon::Fx, "Show Formulas", "Show Formulas (⌃`)", false);
-        control_keytip(app, ui, &__k, "formulas.showFormulas");
-        if __k.clicked() {
-            act(app, "formulas.showFormulas", json!({}));
-        }
-        let __k = small_button(ui, Icon::Validation, "Error Checking", "Error Checking", false);
-        control_keytip(app, ui, &__k, "dialog:errorChecking");
-        if __k.clicked() {
-            app.open_dialog("errorChecking", json!({}));
-        }
-        let __k = small_button(ui, Icon::Calc, "Evaluate Formula", "Evaluate Formula", false);
-        control_keytip(app, ui, &__k, "dialog:evaluateFormula");
-        if __k.clicked() {
-            app.open_dialog("evaluateFormula", json!({}));
-        }
-    });
-    if big_button(ui, Icon::Search, "Watch\nWindow", "Watch Window", false).clicked() {
-        app.grid.pane = Some("watch".into());
-    }
-    sep(ui);
-    let co = big_button(ui, Icon::Calc, "Calculation\nOptions", "Calculation Options", true);
-    for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["formulas.calculationOptions"]) {
-        keytip(app, ui, sequence, co.rect.center_bottom());
-    }
-    egui::Popup::menu(&co).show(|ui| {
-        menu_items(
-            app,
-            ui,
-            &[
-                ("Automatic", "formulas.calculationOptions", json!({"mode": "automatic"})),
-                ("Automatic Except for Data Tables", "formulas.calculationOptions", json!({"mode": "automaticExceptTables"})),
-                ("Manual", "formulas.calculationOptions", json!({"mode": "manual"})),
-            ],
-        );
-    });
-    ui.vertical(|ui| {
-        let __k = small_button(ui, Icon::Calc, "Calculate Now", "Calculate Now (F9)", false);
-        control_keytip(app, ui, &__k, "formulas.calculateNow");
-        if __k.clicked() {
-            act(app, "formulas.calculateNow", json!({}));
-        }
-        let __k = small_button(ui, Icon::Sheet, "Calculate Sheet", "Calculate Sheet (⇧F9)", false);
-        control_keytip(app, ui, &__k, "formulas.calculateSheet");
-        if __k.clicked() {
-            act(app, "formulas.calculateSheet", json!({}));
-        }
+        egui::Popup::menu(&co).show(|ui| {
+            menu_items(
+                app,
+                ui,
+                &[
+                    ("Automatic", "formulas.calculationOptions", json!({"mode": "automatic"})),
+                    ("Automatic Except for Data Tables", "formulas.calculationOptions", json!({"mode": "automaticExceptTables"})),
+                    ("Manual", "formulas.calculationOptions", json!({"mode": "manual"})),
+                ],
+            );
+        });
+        ui.vertical(|ui| {
+            let __k = small_button(ui, Icon::Calc, "Calculate Now", "Calculate Now (F9)", false);
+            control_keytip(app, ui, &__k, "formulas.calculateNow");
+            if __k.clicked() {
+                act(app, "formulas.calculateNow", json!({}));
+            }
+            let __k = small_button(ui, Icon::Sheet, "Calculate Sheet", "Calculate Sheet (⇧F9)", false);
+            control_keytip(app, ui, &__k, "formulas.calculateSheet");
+            if __k.clicked() {
+                act(app, "formulas.calculateSheet", json!({}));
+            }
+        });
     });
 }
 
 fn data(app: &mut SheetApp, ui: &mut Ui) {
-    let gd = big_button(ui, Icon::Folder, "Get Data\n(Text/CSV)", "Import a text or CSV file", false);
-    control_keytip(app, ui, &gd, "data.getData");
-    if gd.clicked() {
-        app.open_dialog("open", json!({}));
-    }
-    sep(ui);
-    ui.vertical(|ui| {
-        let __k = small_button(ui, Icon::SortAsc, "", "Sort A to Z", false);
-        control_keytip(app, ui, &__k, "data.sortAscending");
-        if __k.clicked() {
-            act(app, "data.sortAscending", json!({}));
-        }
-        let __k = small_button(ui, Icon::SortDesc, "", "Sort Z to A", false);
-        control_keytip(app, ui, &__k, "data.sortDescending");
-        if __k.clicked() {
-            act(app, "data.sortDescending", json!({}));
+    // Get & Transform Data
+    group(ui, "Get & Transform Data", |ui| {
+        let gd = big_button(ui, Icon::Folder, "Get Data\n(Text/CSV)", "Import a text or CSV file", false);
+        control_keytip(app, ui, &gd, "data.getData");
+        if gd.clicked() {
+            app.open_dialog("open", json!({}));
         }
     });
-    let __k = big_button(ui, Icon::SortFilter, "Sort", "Custom Sort", false);
-    control_keytip(app, ui, &__k, "dialog:sort");
-    if __k.clicked() {
-        app.open_dialog("sort", json!({}));
-    }
-    let __k = big_button(ui, Icon::Filter, "Filter", "Filter (⌘⇧F)", false);
-    control_keytip(app, ui, &__k, "data.filter");
-    if __k.clicked() {
-        act(app, "data.filter", json!({}));
-    }
-    ui.vertical(|ui| {
-        let __k = small_button(ui, Icon::Eraser, "Clear", "Clear Filter", false);
-        control_keytip(app, ui, &__k, "data.clearFilter");
+    // Sort & Filter
+    group(ui, "Sort & Filter", |ui| {
+        ui.vertical(|ui| {
+            let __k = small_button(ui, Icon::SortAsc, "", "Sort A to Z", false);
+            control_keytip(app, ui, &__k, "data.sortAscending");
+            if __k.clicked() {
+                act(app, "data.sortAscending", json!({}));
+            }
+            let __k = small_button(ui, Icon::SortDesc, "", "Sort Z to A", false);
+            control_keytip(app, ui, &__k, "data.sortDescending");
+            if __k.clicked() {
+                act(app, "data.sortDescending", json!({}));
+            }
+        });
+        let __k = big_button(ui, Icon::SortFilter, "Sort", "Custom Sort", false);
+        control_keytip(app, ui, &__k, "dialog:sort");
         if __k.clicked() {
-            act(app, "data.clearFilter", json!({}));
+            app.open_dialog("sort", json!({}));
         }
-        let __k = small_button(ui, Icon::Redo, "Reapply", "Reapply", false);
-        control_keytip(app, ui, &__k, "data.reapply");
+        let __k = big_button(ui, Icon::Filter, "Filter", "Filter (⌘⇧F)", false);
+        control_keytip(app, ui, &__k, "data.filter");
         if __k.clicked() {
-            act(app, "data.reapply", json!({}));
+            act(app, "data.filter", json!({}));
+        }
+        ui.vertical(|ui| {
+            let __k = small_button(ui, Icon::Eraser, "Clear", "Clear Filter", false);
+            control_keytip(app, ui, &__k, "data.clearFilter");
+            if __k.clicked() {
+                act(app, "data.clearFilter", json!({}));
+            }
+            let __k = small_button(ui, Icon::Redo, "Reapply", "Reapply", false);
+            control_keytip(app, ui, &__k, "data.reapply");
+            if __k.clicked() {
+                act(app, "data.reapply", json!({}));
+            }
+        });
+    });
+    // Data Tools
+    group(ui, "Data Tools", |ui| {
+        let __k = big_button(ui, Icon::TextColumns, "Text to\nColumns", "Text to Columns", false);
+        control_keytip(app, ui, &__k, "dialog:textToColumns");
+        if __k.clicked() {
+            app.open_dialog("textToColumns", json!({}));
+        }
+        let __k = big_button(ui, Icon::FillDown, "Flash\nFill", "Flash Fill (⌘E)", false);
+        control_keytip(app, ui, &__k, "edit.flashFill");
+        if __k.clicked() {
+            act(app, "edit.flashFill", json!({}));
+        }
+        let __k = big_button(ui, Icon::Duplicates, "Remove\nDuplicates", "Remove Duplicates", false);
+        control_keytip(app, ui, &__k, "dialog:removeDuplicates");
+        if __k.clicked() {
+            app.open_dialog("removeDuplicates", json!({}));
+        }
+        let dv = big_button(ui, Icon::Validation, "Data\nValidation", "Data Validation", true);
+        for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["data.validation", "data.circleInvalid"]) {
+            keytip(app, ui, sequence, dv.rect.center_bottom());
+        }
+        egui::Popup::menu(&dv).show(|ui| {
+            menu_items(
+                app,
+                ui,
+                &[
+                    ("Data Validation…", "dialog:dataValidation", json!({})),
+                    ("Circle Invalid Data", "data.circleInvalid", json!({})),
+                    ("Clear Validation", "data.validation", json!({"clear": true})),
+                ],
+            );
+        });
+    });
+    // Forecast
+    group(ui, "Forecast", |ui| {
+        let wi = big_button(ui, Icon::Calc, "What-If\nAnalysis", "What-If Analysis", true);
+        for sequence in
+            keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["dialog:goalSeek", "data.scenarioManager", "data.dataTable"])
+        {
+            keytip(app, ui, sequence, wi.rect.center_bottom());
+        }
+        egui::Popup::menu(&wi).show(|ui| {
+            menu_items(
+                app,
+                ui,
+                &[
+                    ("Goal Seek…", "dialog:goalSeek", json!({})),
+                    ("Scenario Manager…", "data.scenarioManager", json!({})),
+                    ("Data Table…", "data.dataTable", json!({})),
+                ],
+            );
+        });
+        if big_button(ui, Icon::ChartLine, "Forecast\nSheet", "Forecast Sheet", false).clicked() {
+            app.open_dialog("forecastSheet", json!({}));
         }
     });
-    sep(ui);
-    let __k = big_button(ui, Icon::TextColumns, "Text to\nColumns", "Text to Columns", false);
-    control_keytip(app, ui, &__k, "dialog:textToColumns");
-    if __k.clicked() {
-        app.open_dialog("textToColumns", json!({}));
-    }
-    let __k = big_button(ui, Icon::FillDown, "Flash\nFill", "Flash Fill (⌘E)", false);
-    control_keytip(app, ui, &__k, "edit.flashFill");
-    if __k.clicked() {
-        act(app, "edit.flashFill", json!({}));
-    }
-    let __k = big_button(ui, Icon::Duplicates, "Remove\nDuplicates", "Remove Duplicates", false);
-    control_keytip(app, ui, &__k, "dialog:removeDuplicates");
-    if __k.clicked() {
-        app.open_dialog("removeDuplicates", json!({}));
-    }
-    let dv = big_button(ui, Icon::Validation, "Data\nValidation", "Data Validation", true);
-    for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["data.validation", "data.circleInvalid"]) {
-        keytip(app, ui, sequence, dv.rect.center_bottom());
-    }
-    egui::Popup::menu(&dv).show(|ui| {
-        menu_items(
-            app,
-            ui,
-            &[
-                ("Data Validation…", "dialog:dataValidation", json!({})),
-                ("Circle Invalid Data", "data.circleInvalid", json!({})),
-                ("Clear Validation", "data.validation", json!({"clear": true})),
-            ],
-        );
+    // Outline
+    group(ui, "Outline", |ui| {
+        ui.vertical(|ui| {
+            let __k = small_button(ui, Icon::Group, "Group", "Group", false);
+            control_keytip(app, ui, &__k, "data.group");
+            if __k.clicked() {
+                act(app, "data.group", json!({}));
+            }
+            let __k = small_button(ui, Icon::Ungroup, "Ungroup", "Ungroup", false);
+            control_keytip(app, ui, &__k, "data.ungroup");
+            if __k.clicked() {
+                act(app, "data.ungroup", json!({}));
+            }
+            let __k = small_button(ui, Icon::Subtotal, "Subtotal", "Subtotal", false);
+            control_keytip(app, ui, &__k, "dialog:subtotal");
+            if __k.clicked() {
+                app.open_dialog("subtotal", json!({}));
+            }
+        });
+        ui.vertical(|ui| {
+            if small_button(ui, Icon::Plus, "Show Detail", "Show Detail", false).clicked() {
+                act(app, "data.showDetail", json!({}));
+            }
+            if small_button(ui, Icon::Minus, "Hide Detail", "Hide Detail", false).clicked() {
+                act(app, "data.hideDetail", json!({}));
+            }
+        });
     });
-    sep(ui);
-    let wi = big_button(ui, Icon::Calc, "What-If\nAnalysis", "What-If Analysis", true);
-    for sequence in
-        keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["dialog:goalSeek", "data.scenarioManager", "data.dataTable"])
-    {
-        keytip(app, ui, sequence, wi.rect.center_bottom());
-    }
-    egui::Popup::menu(&wi).show(|ui| {
-        menu_items(
-            app,
-            ui,
-            &[
-                ("Goal Seek…", "dialog:goalSeek", json!({})),
-                ("Scenario Manager…", "data.scenarioManager", json!({})),
-                ("Data Table…", "data.dataTable", json!({})),
-            ],
-        );
-    });
-    if big_button(ui, Icon::ChartLine, "Forecast\nSheet", "Forecast Sheet", false).clicked() {
-        app.open_dialog("forecastSheet", json!({}));
-    }
-    sep(ui);
-    ui.vertical(|ui| {
-        let __k = small_button(ui, Icon::Group, "Group", "Group", false);
-        control_keytip(app, ui, &__k, "data.group");
-        if __k.clicked() {
-            act(app, "data.group", json!({}));
-        }
-        let __k = small_button(ui, Icon::Ungroup, "Ungroup", "Ungroup", false);
-        control_keytip(app, ui, &__k, "data.ungroup");
-        if __k.clicked() {
-            act(app, "data.ungroup", json!({}));
-        }
-        let __k = small_button(ui, Icon::Subtotal, "Subtotal", "Subtotal", false);
-        control_keytip(app, ui, &__k, "dialog:subtotal");
-        if __k.clicked() {
-            app.open_dialog("subtotal", json!({}));
+    // Analysis
+    group(ui, "Analysis", |ui| {
+        if big_button(ui, Icon::ChartBar, "Data\nAnalysis", "Data Analysis", false).clicked() {
+            app.open_dialog("analysisToolPak", json!({}));
         }
     });
-    ui.vertical(|ui| {
-        if small_button(ui, Icon::Plus, "Show Detail", "Show Detail", false).clicked() {
-            act(app, "data.showDetail", json!({}));
-        }
-        if small_button(ui, Icon::Minus, "Hide Detail", "Hide Detail", false).clicked() {
-            act(app, "data.hideDetail", json!({}));
+    // Solver
+    group(ui, "Solver", |ui| {
+        if big_button(ui, Icon::Function, "Solver", "Solver", false).clicked() {
+            app.open_dialog("solver", json!({}));
         }
     });
-    sep(ui);
-    if big_button(ui, Icon::ChartBar, "Data\nAnalysis", "Data Analysis", false).clicked() {
-        app.open_dialog("analysisToolPak", json!({}));
-    }
-    sep(ui);
-    if big_button(ui, Icon::Function, "Solver", "Solver", false).clicked() {
-        app.open_dialog("solver", json!({}));
-    }
 }
 
 fn review(app: &mut SheetApp, ui: &mut Ui) {
-    let __k = big_button(ui, Icon::Spell, "Spelling", "Spelling (F7)", false);
-    control_keytip(app, ui, &__k, "dialog:spelling");
-    if __k.clicked() {
-        app.open_dialog("spelling", json!({}));
-    }
-    let __k = big_button(ui, Icon::Calc, "Workbook\nStatistics", "Workbook Statistics", false);
-    control_keytip(app, ui, &__k, "statistics");
-    if __k.clicked() {
-        app.open_dialog("statistics", json!({}));
-    }
-    let __k = big_button(ui, Icon::Validation, "Check\nAccessibility", "Check Accessibility", false);
-    control_keytip(app, ui, &__k, "dialog:accessibility");
-    if __k.clicked() {
-        app.open_dialog("accessibility", json!({}));
-    }
-    sep(ui);
-    let __k = big_button(ui, Icon::Comment, "New\nComment", "New Comment", false);
-    control_keytip(app, ui, &__k, "dialog:comment");
-    if __k.clicked() {
-        app.open_dialog("comment", json!({"threaded": true}));
-    }
-    if big_button(ui, Icon::Comment, "Show\nComments", "Comments pane", false).clicked() {
-        app.grid.pane = Some("comments".into());
-    }
-    let __k = big_button(ui, Icon::Delete, "Delete", "Delete Comment", false);
-    control_keytip(app, ui, &__k, "review.deleteComment");
-    if __k.clicked() {
-        act(app, "review.deleteComment", json!({}));
-    }
-    ui.vertical(|ui| {
-        for (icon, label, tip, id) in
-            [(Icon::Left, "Previous", "Previous Comment", "review.previousComment"), (Icon::Right, "Next", "Next Comment", "review.nextComment")]
-        {
-            if small_button(ui, icon, label, tip, false).clicked() {
-                act(app, id, json!({}));
-                app.grid.ensure_visible = true;
+    // Proofing
+    group(ui, "Proofing", |ui| {
+        let __k = big_button(ui, Icon::Spell, "Spelling", "Spelling (F7)", false);
+        control_keytip(app, ui, &__k, "dialog:spelling");
+        if __k.clicked() {
+            app.open_dialog("spelling", json!({}));
+        }
+        let __k = big_button(ui, Icon::Calc, "Workbook\nStatistics", "Workbook Statistics", false);
+        control_keytip(app, ui, &__k, "statistics");
+        if __k.clicked() {
+            app.open_dialog("statistics", json!({}));
+        }
+        let __k = big_button(ui, Icon::Validation, "Check\nAccessibility", "Check Accessibility", false);
+        control_keytip(app, ui, &__k, "dialog:accessibility");
+        if __k.clicked() {
+            app.open_dialog("accessibility", json!({}));
+        }
+    });
+    // Comments
+    group(ui, "Comments", |ui| {
+        let __k = big_button(ui, Icon::Comment, "New\nComment", "New Comment", false);
+        control_keytip(app, ui, &__k, "dialog:comment");
+        if __k.clicked() {
+            app.open_dialog("comment", json!({"threaded": true}));
+        }
+        if big_button(ui, Icon::Comment, "Show\nComments", "Comments pane", false).clicked() {
+            app.grid.pane = Some("comments".into());
+        }
+        let __k = big_button(ui, Icon::Delete, "Delete", "Delete Comment", false);
+        control_keytip(app, ui, &__k, "review.deleteComment");
+        if __k.clicked() {
+            act(app, "review.deleteComment", json!({}));
+        }
+        ui.vertical(|ui| {
+            for (icon, label, tip, id) in
+                [(Icon::Left, "Previous", "Previous Comment", "review.previousComment"), (Icon::Right, "Next", "Next Comment", "review.nextComment")]
+            {
+                if small_button(ui, icon, label, tip, false).clicked() {
+                    act(app, id, json!({}));
+                    app.grid.ensure_visible = true;
+                }
+            }
+        });
+        let shown = app.session.comments_pane;
+        let r = big_button(ui, Icon::Comment, "Show\nComments", "Comments pane", false);
+        if shown {
+            ui.painter().rect_stroke(r.rect, 5.0, Stroke::new(2.0, Tokens::get(ui.ctx()).accent), StrokeKind::Inside);
+        }
+        if r.clicked() {
+            act(app, "review.showComments", json!({"on": !shown}));
+            if app.session.comments_pane {
+                app.grid.pane = None;
             }
         }
+        let notes = big_button(ui, Icon::Note, "Notes", "Notes", true);
+        anchor_keytip(app, ui, &notes, &["review.nextComment"]);
+        egui::Popup::menu(&notes).show(|ui| {
+            menu_items(
+                app,
+                ui,
+                &[
+                    ("New Note", "dialog:comment", json!({"threaded": false})),
+                    ("Show/Hide Note", "review.showNote", json!({})),
+                    ("Show All Notes", "review.showAllNotes", json!({})),
+                    ("-", "", json!({})),
+                    ("Convert to Comments", "review.convertToComments", json!({})),
+                ],
+            );
+        });
     });
-    let shown = app.session.comments_pane;
-    let r = big_button(ui, Icon::Comment, "Show\nComments", "Comments pane", false);
-    if shown {
-        ui.painter().rect_stroke(r.rect, 5.0, Stroke::new(2.0, Tokens::get(ui.ctx()).accent), StrokeKind::Inside);
-    }
-    if r.clicked() {
-        act(app, "review.showComments", json!({"on": !shown}));
-        if app.session.comments_pane {
-            app.grid.pane = None;
+    // Protect
+    group(ui, "Protect", |ui| {
+        let protected = app.session.active().and_then(|d| d.wb.active().map(|s| s.is_protected())).unwrap_or(false);
+        let __k = big_button(ui, Icon::Lock, if protected { "Unprotect\nSheet" } else { "Protect\nSheet" }, "Protect Sheet", false);
+        control_keytip(app, ui, &__k, "dialog:protectSheet");
+        if __k.clicked() {
+            if protected {
+                app.open_dialog("unprotectSheet", json!({}));
+            } else {
+                app.open_dialog("protectSheet", json!({}));
+            }
         }
-    }
-    let notes = big_button(ui, Icon::Note, "Notes", "Notes", true);
-    anchor_keytip(app, ui, &notes, &["review.nextComment"]);
-    egui::Popup::menu(&notes).show(|ui| {
-        menu_items(
-            app,
-            ui,
-            &[
-                ("New Note", "dialog:comment", json!({"threaded": false})),
-                ("Show/Hide Note", "review.showNote", json!({})),
-                ("Show All Notes", "review.showAllNotes", json!({})),
-                ("-", "", json!({})),
-                ("Convert to Comments", "review.convertToComments", json!({})),
-            ],
-        );
+        let __k = big_button(ui, Icon::Book, "Protect\nWorkbook", "Protect Workbook structure", false);
+        control_keytip(app, ui, &__k, "review.protectWorkbook");
+        if __k.clicked() {
+            crate::backstage::protect_workbook(app);
+        }
+        if big_button(ui, Icon::Validation, "Allow Edit\nRanges", "Allow Edit Ranges", false).clicked() {
+            app.open_dialog("allowEditRanges", json!({}));
+        }
     });
-    sep(ui);
-    let protected = app.session.active().and_then(|d| d.wb.active().map(|s| s.is_protected())).unwrap_or(false);
-    let __k = big_button(ui, Icon::Lock, if protected { "Unprotect\nSheet" } else { "Protect\nSheet" }, "Protect Sheet", false);
-    control_keytip(app, ui, &__k, "dialog:protectSheet");
-    if __k.clicked() {
-        if protected {
-            app.open_dialog("unprotectSheet", json!({}));
-        } else {
-            app.open_dialog("protectSheet", json!({}));
-        }
-    }
-    let __k = big_button(ui, Icon::Book, "Protect\nWorkbook", "Protect Workbook structure", false);
-    control_keytip(app, ui, &__k, "review.protectWorkbook");
-    if __k.clicked() {
-        crate::backstage::protect_workbook(app);
-    }
-    if big_button(ui, Icon::Validation, "Allow Edit\nRanges", "Allow Edit Ranges", false).clicked() {
-        app.open_dialog("allowEditRanges", json!({}));
-    }
 }
 
 fn view(app: &mut SheetApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let _ = t;
-    for (icon, label, cmd) in [
-        (Icon::Normal, "Normal", "view.normal"),
-        (Icon::PageBreak, "Page Break\nPreview", "view.pageBreakPreview"),
-        (Icon::PageLayout, "Page\nLayout", "view.pageLayout"),
-    ] {
-        let __k = big_button(ui, icon, label, label, false);
-        control_keytip(app, ui, &__k, cmd);
-        if __k.clicked() {
-            act(app, cmd, json!({}));
-        }
-    }
-    sep(ui);
     let s = app.session.active().and_then(|d| d.wb.active().map(|s| (s.show_gridlines, s.show_headings))).unwrap_or((true, true));
     let lang = app.ui.language;
     let page_layout =
         app.session.active().and_then(|d| d.wb.active().map(|s| s.view == gridcraft_engine::model::SheetViewMode::PageLayout)).unwrap_or(false);
-    // Show: two columns of two, as the card holds three rows.
-    ui.vertical(|ui| {
-        // Rulers exist only in Page Layout view.
-        let mut ruler = !app.session.hide_ruler;
-        let ruler_resp = ui.add_enabled(page_layout, egui::Checkbox::new(&mut ruler, lang.tr("Ruler")));
-        control_keytip(app, ui, &ruler_resp, "view.ruler");
-        if ruler_resp.changed() {
-            act(app, "view.ruler", json!({"on": ruler}));
-        }
-        let mut g = s.0;
-        let resp = ui.checkbox(&mut g, lang.tr("Gridlines"));
-        control_keytip(app, ui, &resp, "view.gridlines");
-        if resp.changed() {
-            act(app, "view.gridlines", json!({"on": g}));
+    // Workbook Views
+    group(ui, "Workbook Views", |ui| {
+        for (icon, label, cmd) in [
+            (Icon::Normal, "Normal", "view.normal"),
+            (Icon::PageBreak, "Page Break\nPreview", "view.pageBreakPreview"),
+            (Icon::PageLayout, "Page\nLayout", "view.pageLayout"),
+        ] {
+            let __k = big_button(ui, icon, label, label, false);
+            control_keytip(app, ui, &__k, cmd);
+            if __k.clicked() {
+                act(app, cmd, json!({}));
+            }
         }
     });
-    ui.vertical(|ui| {
-        let mut fb = app.session.prefs.formula_bar;
-        let resp = ui.checkbox(&mut fb, lang.tr("Formula Bar"));
-        control_keytip(app, ui, &resp, "view.formulaBar");
-        if resp.changed() || invoke(app, "view.formulaBar") {
-            act(app, "view.formulaBar", json!({"on": !fb}));
-        }
-        let mut h = s.1;
-        let resp = ui.checkbox(&mut h, lang.tr("Headings"));
-        control_keytip(app, ui, &resp, "view.headings");
-        if resp.changed() {
-            act(app, "view.headings", json!({"on": h}));
-        }
-    });
-    sep(ui);
-    let __k = big_button(ui, Icon::Zoom, "Zoom", "Zoom…", false);
-    control_keytip(app, ui, &__k, "dialog:zoom");
-    if __k.clicked() {
-        app.open_dialog("zoom", json!({}));
-    }
-    let __k = big_button(ui, Icon::Search, "100%", "Zoom to 100%", false);
-    control_keytip(app, ui, &__k, "view.zoom");
-    if __k.clicked() || invoke(app, "view.zoom") {
-        act(app, "view.zoom", json!({"percent": 100}));
-    }
-    let __k = big_button(ui, Icon::Zoom, "Zoom to\nSelection", "Zoom to Selection", false);
-    control_keytip(app, ui, &__k, "view.zoomToSelection");
-    if __k.clicked() {
-        let r = app.grid.cells_rect.unwrap_or(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 700.0)));
-        act(app, "view.zoomToSelection", json!({"viewWidth": r.width(), "viewHeight": r.height()}));
-    }
-    sep(ui);
-    let fp = big_button(ui, Icon::Freeze, "Freeze\nPanes", "Freeze Panes", true);
-    for sequence in
-        keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["view.freezePanes", "view.freezeTopRow", "view.freezeFirstColumn"])
-    {
-        keytip(app, ui, sequence, fp.rect.center_bottom());
-    }
-    egui::Popup::menu(&fp).show(|ui| {
-        menu_items(
-            app,
-            ui,
-            &[
-                ("Freeze Panes", "view.freezePanes", json!({})),
-                ("Freeze Top Row", "view.freezeTopRow", json!({})),
-                ("Freeze First Column", "view.freezeFirstColumn", json!({})),
-                ("Unfreeze Panes", "view.unfreezePanes", json!({})),
-            ],
-        );
-    });
-    ui.vertical(|ui| {
-        ui.label(lang.tr("Display theme"));
-        let mode = app.ui.theme_mode();
-        let label = match mode {
-            "system" => "System",
-            "dark" => "Dark",
-            _ => "Light",
-        };
-        egui::ComboBox::from_id_salt("display_theme").selected_text(lang.tr(label)).width(88.0).show_ui(ui, |ui| {
-            for (value, label) in [("system", "System"), ("light", "Light"), ("dark", "Dark")] {
-                if ui.selectable_label(mode == value, lang.tr(label)).clicked() {
-                    act(app, "view.theme", json!({"mode": value}));
-                }
+    // Show
+    group(ui, "Show", |ui| {
+        // Show: two columns of two, as the card holds three rows.
+        ui.vertical(|ui| {
+            // Rulers exist only in Page Layout view.
+            let mut ruler = !app.session.hide_ruler;
+            let ruler_resp = ui.add_enabled(page_layout, egui::Checkbox::new(&mut ruler, lang.tr("Ruler")));
+            control_keytip(app, ui, &ruler_resp, "view.ruler");
+            if ruler_resp.changed() {
+                act(app, "view.ruler", json!({"on": ruler}));
+            }
+            let mut g = s.0;
+            let resp = ui.checkbox(&mut g, lang.tr("Gridlines"));
+            control_keytip(app, ui, &resp, "view.gridlines");
+            if resp.changed() {
+                act(app, "view.gridlines", json!({"on": g}));
             }
         });
-        let mut animations = app.ui.animations;
-        let hint = lang.tr("Glide the selection outline to the cell you move to instead of jumping there");
-        if ui.checkbox(&mut animations, lang.tr("Animations")).on_hover_text(hint).changed() {
-            act(app, "view.animations", json!({"on": animations}));
+        ui.vertical(|ui| {
+            let mut fb = app.session.prefs.formula_bar;
+            let resp = ui.checkbox(&mut fb, lang.tr("Formula Bar"));
+            control_keytip(app, ui, &resp, "view.formulaBar");
+            if resp.changed() || invoke(app, "view.formulaBar") {
+                act(app, "view.formulaBar", json!({"on": !fb}));
+            }
+            let mut h = s.1;
+            let resp = ui.checkbox(&mut h, lang.tr("Headings"));
+            control_keytip(app, ui, &resp, "view.headings");
+            if resp.changed() {
+                act(app, "view.headings", json!({"on": h}));
+            }
+        });
+    });
+    // Zoom
+    group(ui, "Zoom", |ui| {
+        let __k = big_button(ui, Icon::Zoom, "Zoom", "Zoom…", false);
+        control_keytip(app, ui, &__k, "dialog:zoom");
+        if __k.clicked() {
+            app.open_dialog("zoom", json!({}));
+        }
+        let __k = big_button(ui, Icon::Search, "100%", "Zoom to 100%", false);
+        control_keytip(app, ui, &__k, "view.zoom");
+        if __k.clicked() || invoke(app, "view.zoom") {
+            act(app, "view.zoom", json!({"percent": 100}));
+        }
+        let __k = big_button(ui, Icon::Zoom, "Zoom to\nSelection", "Zoom to Selection", false);
+        control_keytip(app, ui, &__k, "view.zoomToSelection");
+        if __k.clicked() {
+            let r = app.grid.cells_rect.unwrap_or(Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 700.0)));
+            act(app, "view.zoomToSelection", json!({"viewWidth": r.width(), "viewHeight": r.height()}));
         }
     });
-    sep(ui);
-    // Interface size (issue #230): scales the whole window on top of the desktop's scale.
-    ui.vertical(|ui| {
-        ui.label(egui::RichText::new(lang.tr("Interface size")).font(theme::ui_font(11.5)).color(t.text_dim));
-        let current = app.ui.interface_scale;
-        let text = |v: u16| if v == 100 { lang.tr("Auto").to_string() } else { format!("{v}%") };
-        egui::ComboBox::from_id_salt("ui_interface_size")
-            .width(120.0)
-            .selected_text(egui::RichText::new(text(current)).font(theme::ui_font(12.5)))
-            .show_ui(ui, |ui| {
-                for v in [100, 75, 90, 110, 125, 150, 175, 200] {
-                    if ui.selectable_label(v == current, text(v)).clicked() {
-                        act(app, "view.interfaceScale", json!({"percent": v}));
+    // Window
+    group(ui, "Window", |ui| {
+        let fp = big_button(ui, Icon::Freeze, "Freeze\nPanes", "Freeze Panes", true);
+        for sequence in keytip_table::group_extension(
+            app.keytips.prefix().unwrap_or_default(),
+            &["view.freezePanes", "view.freezeTopRow", "view.freezeFirstColumn"],
+        ) {
+            keytip(app, ui, sequence, fp.rect.center_bottom());
+        }
+        egui::Popup::menu(&fp).show(|ui| {
+            menu_items(
+                app,
+                ui,
+                &[
+                    ("Freeze Panes", "view.freezePanes", json!({})),
+                    ("Freeze Top Row", "view.freezeTopRow", json!({})),
+                    ("Freeze First Column", "view.freezeFirstColumn", json!({})),
+                    ("Unfreeze Panes", "view.unfreezePanes", json!({})),
+                ],
+            );
+        });
+        ui.vertical(|ui| {
+            ui.label(lang.tr("Display theme"));
+            let mode = app.ui.theme_mode();
+            let label = match mode {
+                "system" => "System",
+                "dark" => "Dark",
+                _ => "Light",
+            };
+            egui::ComboBox::from_id_salt("display_theme").selected_text(lang.tr(label)).width(88.0).show_ui(ui, |ui| {
+                for (value, label) in [("system", "System"), ("light", "Light"), ("dark", "Dark")] {
+                    if ui.selectable_label(mode == value, lang.tr(label)).clicked() {
+                        act(app, "view.theme", json!({"mode": value}));
                     }
                 }
             });
+            let mut animations = app.ui.animations;
+            let hint = lang.tr("Glide the selection outline to the cell you move to instead of jumping there");
+            if ui.checkbox(&mut animations, lang.tr("Animations")).on_hover_text(hint).changed() {
+                act(app, "view.animations", json!({"on": animations}));
+            }
+        });
     });
-    // Interface language: settings live in the View tab, like Excel's Options. The label follows
-    // the current language so it stays readable; the choices are always shown in their own script.
-    ui.vertical(|ui| {
-        ui.label(egui::RichText::new(lang.tr("Interface language")).font(theme::ui_font(11.5)).color(t.text_dim));
-        egui::ComboBox::from_id_salt("ui_language").width(120.0).selected_text(egui::RichText::new(lang.name()).font(theme::ui_font(12.5))).show_ui(
-            ui,
-            |ui| {
-                for l in crate::i18n::Language::ALL {
-                    if ui.selectable_label(l == lang, l.name()).clicked() {
-                        act(app, "app.language.set", json!({"language": l.code()}));
+    // Interface
+    group(ui, "Interface", |ui| {
+        // Interface size (issue #230): scales the whole window on top of the desktop's scale.
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new(lang.tr("Interface size")).font(theme::ui_font(11.5)).color(t.text_dim));
+            let current = app.ui.interface_scale;
+            let text = |v: u16| if v == 100 { lang.tr("Auto").to_string() } else { format!("{v}%") };
+            egui::ComboBox::from_id_salt("ui_interface_size")
+                .width(120.0)
+                .selected_text(egui::RichText::new(text(current)).font(theme::ui_font(12.5)))
+                .show_ui(ui, |ui| {
+                    for v in [100, 75, 90, 110, 125, 150, 175, 200] {
+                        if ui.selectable_label(v == current, text(v)).clicked() {
+                            act(app, "view.interfaceScale", json!({"percent": v}));
+                        }
                     }
-                }
-            },
-        );
+                });
+        });
+        // Interface language: settings live in the View tab, like Excel's Options. The label follows
+        // the current language so it stays readable; the choices are always shown in their own script.
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new(lang.tr("Interface language")).font(theme::ui_font(11.5)).color(t.text_dim));
+            egui::ComboBox::from_id_salt("ui_language")
+                .width(120.0)
+                .selected_text(egui::RichText::new(lang.name()).font(theme::ui_font(12.5)))
+                .show_ui(ui, |ui| {
+                    for l in crate::i18n::Language::ALL {
+                        if ui.selectable_label(l == lang, l.name()).clicked() {
+                            act(app, "app.language.set", json!({"language": l.code()}));
+                        }
+                    }
+                });
+        });
     });
 }
 
 fn automate(app: &mut SheetApp, ui: &mut Ui) {
-    if big_button(ui, Icon::Script, "Macros", "Macros and scripts in this workbook (Alt+F8)", false).clicked() {
-        app.open_dialog("macros", json!({}));
-    }
-    let __k = big_button(ui, Icon::Script, "Command\nPalette", "Search and run any command", false);
-    control_keytip(app, ui, &__k, "commandSearch");
-    if __k.clicked() {
-        app.open_dialog("commandSearch", json!({}));
-    }
-    let __k = big_button(ui, Icon::Script, "Agent\nControl", "How agents drive GridCraft (MCP / control channel)", false);
-    control_keytip(app, ui, &__k, "agents");
-    if __k.clicked() {
-        app.open_dialog("agents", json!({}));
-    }
-    let __k = big_button(ui, Icon::Script, "Action\nJournal", "Every command run in this session (replayable)", false);
-    control_keytip(app, ui, &__k, "journal");
-    if __k.clicked() {
-        app.open_dialog("journal", json!({}));
-    }
-    let __k = big_button(ui, Icon::Script, "About\nGridCraft", "Version, contributors and the AI models that helped", false);
-    control_keytip(app, ui, &__k, "about");
-    if __k.clicked() {
-        app.open_dialog("about", json!({}));
-    }
+    // Automate
+    group(ui, "Automate", |ui| {
+        if big_button(ui, Icon::Script, "Macros", "Macros and scripts in this workbook (Alt+F8)", false).clicked() {
+            app.open_dialog("macros", json!({}));
+        }
+        let __k = big_button(ui, Icon::Script, "Command\nPalette", "Search and run any command", false);
+        control_keytip(app, ui, &__k, "commandSearch");
+        if __k.clicked() {
+            app.open_dialog("commandSearch", json!({}));
+        }
+        let __k = big_button(ui, Icon::Script, "Agent\nControl", "How agents drive GridCraft (MCP / control channel)", false);
+        control_keytip(app, ui, &__k, "agents");
+        if __k.clicked() {
+            app.open_dialog("agents", json!({}));
+        }
+        let __k = big_button(ui, Icon::Script, "Action\nJournal", "Every command run in this session (replayable)", false);
+        control_keytip(app, ui, &__k, "journal");
+        if __k.clicked() {
+            app.open_dialog("journal", json!({}));
+        }
+        let __k = big_button(ui, Icon::Script, "About\nGridCraft", "Version, contributors and the AI models that helped", false);
+        control_keytip(app, ui, &__k, "about");
+        if __k.clicked() {
+            app.open_dialog("about", json!({}));
+        }
+    });
 }
 
 fn table_design(app: &mut SheetApp, ui: &mut Ui) {
@@ -2406,133 +2486,147 @@ fn table_design(app: &mut SheetApp, ui: &mut Ui) {
     }) else {
         return;
     };
-    ui.vertical(|ui| {
-        ui.label(egui::RichText::new("Table Name:").small());
-        let field = egui::Id::new(("gridcraft.table_name", &tname));
-        if let Some(name) = crate::widgets::committed_text(ui, field, &tname, Some(120.0))
-            && name != tname
-        {
-            act(app, "table.rename", json!({"table": tname, "name": name}));
-        }
-    });
-    sep(ui);
-    let __k = big_button(ui, Icon::Duplicates, "Remove\nDuplicates", "Remove Duplicates", false);
-    control_keytip(app, ui, &__k, "data.removeDuplicates");
-    if __k.clicked() {
-        act(app, "data.removeDuplicates", json!({}));
-    }
-    let __k = big_button(ui, Icon::Table, "Convert\nto Range", "Convert to Range", false);
-    control_keytip(app, ui, &__k, "table.convertToRange");
-    if __k.clicked() {
-        act(app, "table.convertToRange", json!({"table": tname}));
-    }
-    sep(ui);
-    if big_button(ui, Icon::Filter, "Insert\nSlicer", "Insert Slicer", false).clicked() {
-        act(app, "table.insertSlicer", json!({"table": tname}));
-    }
-    sep(ui);
-    ui.vertical(|ui| {
-        for (label, cmd, v) in [
-            ("Header Row", "table.headerRow", header && filter),
-            ("Total Row", "table.totalRow", totals),
-            ("Banded Rows", "table.bandedRows", banded),
-        ] {
-            let mut on = v;
-            if ui.checkbox(&mut on, label).changed() {
-                act(app, cmd, json!({"table": tname, "on": on}));
+    // Properties
+    group(ui, "Properties", |ui| {
+        ui.vertical(|ui| {
+            ui.label(egui::RichText::new("Table Name:").small());
+            let field = egui::Id::new(("gridcraft.table_name", &tname));
+            if let Some(name) = crate::widgets::committed_text(ui, field, &tname, Some(120.0))
+                && name != tname
+            {
+                act(app, "table.rename", json!({"table": tname, "name": name}));
             }
+        });
+    });
+    // Tools
+    group(ui, "Tools", |ui| {
+        let __k = big_button(ui, Icon::Duplicates, "Remove\nDuplicates", "Remove Duplicates", false);
+        control_keytip(app, ui, &__k, "data.removeDuplicates");
+        if __k.clicked() {
+            act(app, "data.removeDuplicates", json!({}));
+        }
+        let __k = big_button(ui, Icon::Table, "Convert\nto Range", "Convert to Range", false);
+        control_keytip(app, ui, &__k, "table.convertToRange");
+        if __k.clicked() {
+            act(app, "table.convertToRange", json!({"table": tname}));
         }
     });
-    ui.vertical(|ui| {
-        for (label, cmd, v) in [
-            ("First Column", "table.firstColumn", first),
-            ("Last Column", "table.lastColumn", last),
-            ("Banded Columns", "table.bandedColumns", banded_c),
-        ] {
-            let mut on = v;
-            if ui.checkbox(&mut on, label).changed() {
-                act(app, cmd, json!({"table": tname, "on": on}));
+    // External Table Data
+    group(ui, "External Table Data", |ui| {
+        if big_button(ui, Icon::Filter, "Insert\nSlicer", "Insert Slicer", false).clicked() {
+            act(app, "table.insertSlicer", json!({"table": tname}));
+        }
+    });
+    // Table Style Options
+    group(ui, "Table Style Options", |ui| {
+        ui.vertical(|ui| {
+            for (label, cmd, v) in [
+                ("Header Row", "table.headerRow", header && filter),
+                ("Total Row", "table.totalRow", totals),
+                ("Banded Rows", "table.bandedRows", banded),
+            ] {
+                let mut on = v;
+                if ui.checkbox(&mut on, label).changed() {
+                    act(app, cmd, json!({"table": tname, "on": on}));
+                }
             }
-        }
+        });
+        ui.vertical(|ui| {
+            for (label, cmd, v) in [
+                ("First Column", "table.firstColumn", first),
+                ("Last Column", "table.lastColumn", last),
+                ("Banded Columns", "table.bandedColumns", banded_c),
+            ] {
+                let mut on = v;
+                if ui.checkbox(&mut on, label).changed() {
+                    act(app, cmd, json!({"table": tname, "on": on}));
+                }
+            }
+        });
     });
-    sep(ui);
-    let st = big_button(ui, Icon::FormatTable, "Table\nStyles", "Table Styles", true);
-    anchor_keytip(app, ui, &st, &["table.style"]);
-    egui::Popup::menu(&st).show(|ui| table_gallery(app, ui, "table.style"));
+    // Table Styles
+    group(ui, "Table Styles", |ui| {
+        let st = big_button(ui, Icon::FormatTable, "Table\nStyles", "Table Styles", true);
+        anchor_keytip(app, ui, &st, &["table.style"]);
+        egui::Popup::menu(&st).show(|ui| table_gallery(app, ui, "table.style"));
+    });
 }
 
 fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
     let Some(id) = app.selected_chart else { return };
-    let ae = big_button(ui, Icon::Chart, "Add Chart\nElement", "Add Chart Element", true);
-    for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["chart.set"]) {
-        keytip(app, ui, sequence, ae.rect.center_bottom());
-    }
-    egui::Popup::menu(&ae).show(|ui| {
-        menu_items(
-            app,
-            ui,
-            &[
-                ("Legend: Bottom", "chart.set", json!({"chart": id, "legend": "bottom"})),
-                ("Legend: Right", "chart.set", json!({"chart": id, "legend": "right"})),
-                ("Legend: Top", "chart.set", json!({"chart": id, "legend": "top"})),
-                ("Legend: None", "chart.set", json!({"chart": id, "legend": "none"})),
-                ("-", "", json!(null)),
-                ("Data Labels: Show", "chart.set", json!({"chart": id, "dataLabels": true})),
-                ("Data Labels: None", "chart.set", json!({"chart": id, "dataLabels": false})),
-                ("Gridlines: Show", "chart.set", json!({"chart": id, "gridlines": true})),
-                ("Gridlines: None", "chart.set", json!({"chart": id, "gridlines": false})),
-            ],
-        );
-    });
-    let __k = big_button(ui, Icon::Redo, "Switch\nRow/Column", "Switch Row/Column", false);
-    control_keytip(app, ui, &__k, "chart.switchRowColumn");
-    if __k.clicked() {
-        act(app, "chart.switchRowColumn", json!({"chart": id}));
-    }
-    if big_button(ui, Icon::Table, "Select\nData", "Select Data", false).clicked() {
-        app.open_dialog("selectData", json!({"chart": id}));
-    }
-    let ct = big_button(ui, Icon::ChartBar, "Change\nChart Type", "Change Chart Type", true);
-    for sequence in keytip_table::group_extension(
-        app.keytips.prefix().unwrap_or_default(),
-        &["column", "bar", "line", "area", "pie", "doughnut", "scatter", "radar", "waterfall", "funnel", "treemap"],
-    ) {
-        keytip(app, ui, sequence, ct.rect.center_bottom());
-    }
-    egui::Popup::menu(&ct).show(|ui| {
-        for (label, k, s) in [
-            ("Clustered Column", "column", ""),
-            ("Stacked Column", "column", "stacked"),
-            ("Bar", "bar", ""),
-            ("Line", "line", "markers"),
-            ("Area", "area", ""),
-            ("Pie", "pie", ""),
-            ("Doughnut", "doughnut", ""),
-            ("Scatter", "scatter", ""),
-            ("Radar", "radar", ""),
-            ("Waterfall", "waterfall", ""),
-            ("Funnel", "funnel", ""),
-            ("Treemap", "treemap", ""),
-        ] {
-            if ui.button(label).clicked() {
-                act(app, "chart.set", json!({"chart": id, "type": k, "subtype": s}));
+    // Chart Design
+    group(ui, "Chart Design", |ui| {
+        let ae = big_button(ui, Icon::Chart, "Add Chart\nElement", "Add Chart Element", true);
+        for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["chart.set"]) {
+            keytip(app, ui, sequence, ae.rect.center_bottom());
+        }
+        egui::Popup::menu(&ae).show(|ui| {
+            menu_items(
+                app,
+                ui,
+                &[
+                    ("Legend: Bottom", "chart.set", json!({"chart": id, "legend": "bottom"})),
+                    ("Legend: Right", "chart.set", json!({"chart": id, "legend": "right"})),
+                    ("Legend: Top", "chart.set", json!({"chart": id, "legend": "top"})),
+                    ("Legend: None", "chart.set", json!({"chart": id, "legend": "none"})),
+                    ("-", "", json!(null)),
+                    ("Data Labels: Show", "chart.set", json!({"chart": id, "dataLabels": true})),
+                    ("Data Labels: None", "chart.set", json!({"chart": id, "dataLabels": false})),
+                    ("Gridlines: Show", "chart.set", json!({"chart": id, "gridlines": true})),
+                    ("Gridlines: None", "chart.set", json!({"chart": id, "gridlines": false})),
+                ],
+            );
+        });
+        let __k = big_button(ui, Icon::Redo, "Switch\nRow/Column", "Switch Row/Column", false);
+        control_keytip(app, ui, &__k, "chart.switchRowColumn");
+        if __k.clicked() {
+            act(app, "chart.switchRowColumn", json!({"chart": id}));
+        }
+        if big_button(ui, Icon::Table, "Select\nData", "Select Data", false).clicked() {
+            app.open_dialog("selectData", json!({"chart": id}));
+        }
+        let ct = big_button(ui, Icon::ChartBar, "Change\nChart Type", "Change Chart Type", true);
+        for sequence in keytip_table::group_extension(
+            app.keytips.prefix().unwrap_or_default(),
+            &["column", "bar", "line", "area", "pie", "doughnut", "scatter", "radar", "waterfall", "funnel", "treemap"],
+        ) {
+            keytip(app, ui, sequence, ct.rect.center_bottom());
+        }
+        egui::Popup::menu(&ct).show(|ui| {
+            for (label, k, s) in [
+                ("Clustered Column", "column", ""),
+                ("Stacked Column", "column", "stacked"),
+                ("Bar", "bar", ""),
+                ("Line", "line", "markers"),
+                ("Area", "area", ""),
+                ("Pie", "pie", ""),
+                ("Doughnut", "doughnut", ""),
+                ("Scatter", "scatter", ""),
+                ("Radar", "radar", ""),
+                ("Waterfall", "waterfall", ""),
+                ("Funnel", "funnel", ""),
+                ("Treemap", "treemap", ""),
+            ] {
+                if ui.button(label).clicked() {
+                    act(app, "chart.set", json!({"chart": id, "type": k, "subtype": s}));
+                }
             }
+        });
+        if big_button(ui, Icon::Settings, "Format\nPane", "Format Chart pane", false).clicked() {
+            app.grid.pane = Some("formatChart".into());
+        }
+        let __k = big_button(ui, Icon::TextBox, "Chart\nTitle", "Edit chart title", false);
+        control_keytip(app, ui, &__k, "chartTitle");
+        if __k.clicked() {
+            app.open_dialog("chartTitle", json!({"chart": id}));
+        }
+        let __k = big_button(ui, Icon::Delete, "Delete\nChart", "Delete chart", false);
+        control_keytip(app, ui, &__k, "chart.delete");
+        if __k.clicked() {
+            act(app, "chart.delete", json!({"chart": id}));
+            app.selected_chart = None;
         }
     });
-    if big_button(ui, Icon::Settings, "Format\nPane", "Format Chart pane", false).clicked() {
-        app.grid.pane = Some("formatChart".into());
-    }
-    let __k = big_button(ui, Icon::TextBox, "Chart\nTitle", "Edit chart title", false);
-    control_keytip(app, ui, &__k, "chartTitle");
-    if __k.clicked() {
-        app.open_dialog("chartTitle", json!({"chart": id}));
-    }
-    let __k = big_button(ui, Icon::Delete, "Delete\nChart", "Delete chart", false);
-    control_keytip(app, ui, &__k, "chart.delete");
-    if __k.clicked() {
-        act(app, "chart.delete", json!({"chart": id}));
-        app.selected_chart = None;
-    }
 }
 
 /// Command-key shortcuts when the grid has focus.
