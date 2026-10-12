@@ -393,6 +393,14 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Dark" => "Oscuro",
         "Sheet Options|View" => "Ver",
         "Print" => "Imprimir",
+        "Running Python…" => "Ejecutando Python…",
+        "Stop" => "Detener",
+        "Stop the Python cells that are running (Esc)" => "Detener las celdas de Python en ejecución (Esc)",
+        "Output as Python Object" => "Salida como objeto de Python",
+        "Output as Cell Values" => "Salida como valores de celda",
+        "Show Preview Card" => "Mostrar tarjeta de vista previa",
+        "Convert to Normal Cell" => "Convertir en celda normal",
+        "No result yet" => "Aún no hay resultado",
         _ => return None,
     })
 }

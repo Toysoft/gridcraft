@@ -394,6 +394,14 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Dark" => "Dunkel",
         "Sheet Options|View" => "Anzeige",
         "Print" => "Drucken",
+        "Running Python…" => "Python wird ausgeführt…",
+        "Stop" => "Beenden",
+        "Stop the Python cells that are running (Esc)" => "Laufende Python-Zellen beenden (Esc)",
+        "Output as Python Object" => "Ausgabe als Python-Objekt",
+        "Output as Cell Values" => "Ausgabe als Zellwerte",
+        "Show Preview Card" => "Vorschaukarte anzeigen",
+        "Convert to Normal Cell" => "In normale Zelle umwandeln",
+        "No result yet" => "Noch kein Ergebnis",
         _ => return None,
     })
 }

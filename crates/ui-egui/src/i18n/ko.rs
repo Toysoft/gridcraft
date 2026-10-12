@@ -393,6 +393,14 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Workbook calculation" => "통합 문서 계산",
         "Enable iterative calculation" => "반복 계산 사용",
         "Calculation settings are saved with the workbook." => "계산 설정은 통합 문서와 함께 저장됩니다.",
+        "Running Python…" => "Python 실행 중…",
+        "Stop" => "중지",
+        "Stop the Python cells that are running (Esc)" => "실행 중인 Python 셀을 중지합니다(Esc)",
+        "Output as Python Object" => "Python 개체로 출력",
+        "Output as Cell Values" => "셀 값으로 출력",
+        "Show Preview Card" => "미리 보기 카드 표시",
+        "Convert to Normal Cell" => "일반 셀로 변환",
+        "No result yet" => "아직 결과가 없습니다",
         _ => return None,
     })
 }

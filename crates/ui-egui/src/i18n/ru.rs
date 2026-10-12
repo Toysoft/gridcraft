@@ -393,6 +393,14 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Workbook calculation" => "Вычисления в книге",
         "Enable iterative calculation" => "Включить итеративные вычисления",
         "Calculation settings are saved with the workbook." => "Параметры вычислений сохраняются вместе с книгой.",
+        "Running Python…" => "Выполняется Python…",
+        "Stop" => "Остановить",
+        "Stop the Python cells that are running (Esc)" => "Остановить выполняемые ячейки Python (Esc)",
+        "Output as Python Object" => "Вывод как объект Python",
+        "Output as Cell Values" => "Вывод как значения ячеек",
+        "Show Preview Card" => "Показать карточку предпросмотра",
+        "Convert to Normal Cell" => "Преобразовать в обычную ячейку",
+        "No result yet" => "Результата пока нет",
         _ => return None,
     })
 }

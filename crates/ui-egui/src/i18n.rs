@@ -565,6 +565,14 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Workbook calculation", "ブックの計算"),
     ("Enable iterative calculation", "反復計算を行う"),
     ("Calculation settings are saved with the workbook.", "計算の設定はブックと共に保存されます。"),
+    ("Running Python…", "Python を実行しています…"),
+    ("Stop", "停止"),
+    ("Stop the Python cells that are running (Esc)", "実行中の Python セルを停止します (Esc)"),
+    ("Output as Python Object", "Python オブジェクトとして出力"),
+    ("Output as Cell Values", "セルの値として出力"),
+    ("Show Preview Card", "プレビュー カードを表示"),
+    ("Convert to Normal Cell", "通常のセルに変換"),
+    ("No result yet", "まだ結果がありません"),
 ];
 
 #[cfg(test)]

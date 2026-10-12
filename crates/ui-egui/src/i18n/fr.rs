@@ -381,6 +381,14 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Workbook calculation" => "Calcul du classeur",
         "Enable iterative calculation" => "Classeur Excel (*.xlsx)",
         "Calculation settings are saved with the workbook." => "Modifier le type de fichier",
+        "Running Python…" => "Exécution de Python…",
+        "Stop" => "Arrêter",
+        "Stop the Python cells that are running (Esc)" => "Arrêter les cellules Python en cours d’exécution (Échap)",
+        "Output as Python Object" => "Sortie en tant qu’objet Python",
+        "Output as Cell Values" => "Sortie en tant que valeurs de cellule",
+        "Show Preview Card" => "Afficher la carte d’aperçu",
+        "Convert to Normal Cell" => "Convertir en cellule normale",
+        "No result yet" => "Aucun résultat pour l’instant",
         _ => return None,
     })
 }

@@ -385,6 +385,14 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Workbook calculation" => "工作簿计算",
         "Enable iterative calculation" => "启用迭代计算",
         "Calculation settings are saved with the workbook." => "计算设置随工作簿一起保存。",
+        "Running Python…" => "正在运行 Python…",
+        "Stop" => "停止",
+        "Stop the Python cells that are running (Esc)" => "停止正在运行的 Python 单元格 (Esc)",
+        "Output as Python Object" => "输出为 Python 对象",
+        "Output as Cell Values" => "输出为单元格值",
+        "Show Preview Card" => "显示预览卡",
+        "Convert to Normal Cell" => "转换为普通单元格",
+        "No result yet" => "尚无结果",
         _ => return None,
     })
 }

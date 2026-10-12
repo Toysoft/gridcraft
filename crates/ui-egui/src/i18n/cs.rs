@@ -391,6 +391,14 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "More\nFunctions" => "Další\nfunkce",
         "Sheet Options|View" => "Zobrazit",
         "Print" => "Tisknout",
+        "Running Python…" => "Probíhá Python…",
+        "Stop" => "Zastavit",
+        "Stop the Python cells that are running (Esc)" => "Zastavit spuštěné buňky Pythonu (Esc)",
+        "Output as Python Object" => "Výstup jako objekt Pythonu",
+        "Output as Cell Values" => "Výstup jako hodnoty buněk",
+        "Show Preview Card" => "Zobrazit kartu náhledu",
+        "Convert to Normal Cell" => "Převést na normální buňku",
+        "No result yet" => "Zatím žádný výsledek",
         _ => return None,
     })
 }

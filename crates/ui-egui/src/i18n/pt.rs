@@ -394,6 +394,14 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Workbook calculation" => "Cálculo da pasta de trabalho",
         "Enable iterative calculation" => "Habilitar cálculo iterativo",
         "Calculation settings are saved with the workbook." => "As configurações de cálculo são salvas com a pasta de trabalho.",
+        "Running Python…" => "Executando Python…",
+        "Stop" => "Parar",
+        "Stop the Python cells that are running (Esc)" => "Parar as células Python em execução (Esc)",
+        "Output as Python Object" => "Saída como Objeto Python",
+        "Output as Cell Values" => "Saída como Valores de Célula",
+        "Show Preview Card" => "Mostrar Cartão de Visualização",
+        "Convert to Normal Cell" => "Converter em Célula Normal",
+        "No result yet" => "Ainda não há resultado",
         _ => return None,
     })
 }
