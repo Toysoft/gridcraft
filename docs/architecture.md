@@ -98,8 +98,10 @@ it like any other cell. Code is written with `python.set`, never by typing `=PY(
   those in row-major order, sheet by sheet, since all of them share one namespace. Results are
   written into the workbook without an undo step of their own, then calc recalculates their
   dependents. Headless callers run to the end inside the command; a host with a frame loop calls
-  `set_python_background(true)` and `step_python()`, and waiting cells show `#BUSY!`. A cell that
-  took its worker down is not run again until its code or input changes (crash-loop guard).
+  `set_python_background(true)` and `step_python()`, and waiting cells show `#BUSY!`;
+  `python.stop` kills the workbook's worker and leaves every unfinished cell as `#PYTHON!`
+  ("Stopped") until the next edit. A cell that took its worker down is not run again until its
+  code or input changes (crash-loop guard).
 - **Trust gate.** A `FromFile` workbook runs no Python: opening shows the cached values, and new
   code there shows `#BLOCKED!` until `python.enable` makes the workbook `Trusted`.
 - **Files.** xlsx stores a Python cell as `PY("…"&"…",0|1)` with its cached value (a spill as a
