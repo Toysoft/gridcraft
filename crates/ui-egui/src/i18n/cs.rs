@@ -455,6 +455,15 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         }
         "Py: built-in" => "Py: vestavěný",
         "Py: off" => "Py: vypnuto",
+        "Run Python cell" => "Spustit buňku Pythonu",
+        "Stop Python" => "Zastavit Python",
+        "Re-run Python cell" => "Znovu spustit buňku Pythonu",
+        "Run Python cell: Python is turned off for this workbook. Choose Enable Python in the message bar to run it" => {
+            "Spustit buňku Pythonu: Python je v tomto sešitu vypnutý. Chcete-li ji spustit, zvolte na panelu zpráv Povolit Python"
+        }
+        "Python cell. Click to turn Python off for this cell (Enter then makes it a normal cell; undo brings the code back)" => {
+            "Buňka Pythonu. Kliknutím vypnete Python pro tuto buňku (Enter z ní pak udělá normální buňku; zpět vrátí kód)"
+        }
         _ => return None,
     })
 }

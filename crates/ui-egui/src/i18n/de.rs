@@ -460,6 +460,15 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         }
         "Py: built-in" => "Py: integriert",
         "Py: off" => "Py: aus",
+        "Run Python cell" => "Python-Zelle ausführen",
+        "Stop Python" => "Python beenden",
+        "Re-run Python cell" => "Python-Zelle erneut ausführen",
+        "Run Python cell: Python is turned off for this workbook. Choose Enable Python in the message bar to run it" => {
+            "Python-Zelle ausführen: Python ist für diese Arbeitsmappe ausgeschaltet. Wählen Sie in der Meldungsleiste „Python aktivieren“, um sie auszuführen"
+        }
+        "Python cell. Click to turn Python off for this cell (Enter then makes it a normal cell; undo brings the code back)" => {
+            "Python-Zelle. Klicken Sie, um Python für diese Zelle auszuschalten (die Eingabetaste macht sie dann zu einer normalen Zelle; Rückgängig stellt den Code wieder her)"
+        }
         _ => return None,
     })
 }

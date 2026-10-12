@@ -458,6 +458,15 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         }
         "Py: built-in" => "Py: integrado",
         "Py: off" => "Py: desativado",
+        "Run Python cell" => "Executar célula Python",
+        "Stop Python" => "Parar Python",
+        "Re-run Python cell" => "Executar novamente a célula Python",
+        "Run Python cell: Python is turned off for this workbook. Choose Enable Python in the message bar to run it" => {
+            "Executar célula Python: o Python está desativado nesta pasta de trabalho. Escolha Habilitar Python na barra de mensagens para executá-la"
+        }
+        "Python cell. Click to turn Python off for this cell (Enter then makes it a normal cell; undo brings the code back)" => {
+            "Célula Python. Clique para desativar o Python nesta célula (Enter a torna uma célula normal; desfazer restaura o código)"
+        }
         _ => return None,
     })
 }

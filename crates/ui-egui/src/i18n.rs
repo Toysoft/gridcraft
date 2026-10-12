@@ -632,6 +632,17 @@ const JAPANESE: &[(&str, &str)] = &[
     ),
     ("Py: built-in", "Py: 組み込み"),
     ("Py: off", "Py: オフ"),
+    ("Run Python cell", "Python セルを実行"),
+    ("Stop Python", "Python を停止"),
+    ("Re-run Python cell", "Python セルを再実行"),
+    (
+        "Run Python cell: Python is turned off for this workbook. Choose Enable Python in the message bar to run it",
+        "Python セルを実行: このブックでは Python がオフになっています。実行するには、メッセージ バーの [Python を有効にする] を選択してください",
+    ),
+    (
+        "Python cell. Click to turn Python off for this cell (Enter then makes it a normal cell; undo brings the code back)",
+        "Python セル。クリックすると、このセルの Python をオフにします (Enter で通常のセルになり、元に戻すとコードが戻ります)",
+    ),
 ];
 
 #[cfg(test)]

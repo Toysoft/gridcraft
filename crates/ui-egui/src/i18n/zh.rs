@@ -447,6 +447,15 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         }
         "Py: built-in" => "Py: 内置",
         "Py: off" => "Py: 关闭",
+        "Run Python cell" => "运行 Python 单元格",
+        "Stop Python" => "停止 Python",
+        "Re-run Python cell" => "重新运行 Python 单元格",
+        "Run Python cell: Python is turned off for this workbook. Choose Enable Python in the message bar to run it" => {
+            "运行 Python 单元格: 此工作簿的 Python 已关闭。若要运行，请在消息栏中选择“启用 Python”"
+        }
+        "Python cell. Click to turn Python off for this cell (Enter then makes it a normal cell; undo brings the code back)" => {
+            "Python 单元格。单击可关闭此单元格的 Python (然后按 Enter 使其成为普通单元格；撤消可恢复代码)"
+        }
         _ => return None,
     })
 }

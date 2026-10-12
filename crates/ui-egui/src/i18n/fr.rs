@@ -447,6 +447,15 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         }
         "Py: built-in" => "Py : intégré",
         "Py: off" => "Py : désactivé",
+        "Run Python cell" => "Exécuter la cellule Python",
+        "Stop Python" => "Arrêter Python",
+        "Re-run Python cell" => "Réexécuter la cellule Python",
+        "Run Python cell: Python is turned off for this workbook. Choose Enable Python in the message bar to run it" => {
+            "Exécuter la cellule Python : Python est désactivé pour ce classeur. Choisissez Activer Python dans la barre de messages pour l’exécuter"
+        }
+        "Python cell. Click to turn Python off for this cell (Enter then makes it a normal cell; undo brings the code back)" => {
+            "Cellule Python. Cliquez pour désactiver Python pour cette cellule (Entrée en fait ensuite une cellule normale ; annuler restaure le code)"
+        }
         _ => return None,
     })
 }

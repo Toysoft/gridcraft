@@ -457,6 +457,15 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         }
         "Py: built-in" => "Py: встроенный",
         "Py: off" => "Py: выкл.",
+        "Run Python cell" => "Выполнить ячейку Python",
+        "Stop Python" => "Остановить Python",
+        "Re-run Python cell" => "Повторно выполнить ячейку Python",
+        "Run Python cell: Python is turned off for this workbook. Choose Enable Python in the message bar to run it" => {
+            "Выполнить ячейку Python: Python в этой книге отключен. Чтобы выполнить ячейку, выберите «Включить Python» на панели сообщений"
+        }
+        "Python cell. Click to turn Python off for this cell (Enter then makes it a normal cell; undo brings the code back)" => {
+            "Ячейка Python. Щелкните, чтобы отключить Python для этой ячейки (затем Enter делает ее обычной ячейкой; отмена возвращает код)"
+        }
         _ => return None,
     })
 }

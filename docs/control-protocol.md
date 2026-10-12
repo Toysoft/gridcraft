@@ -46,11 +46,14 @@ starts show `#BUSY!` until they finish. `ui.inspect` reports `pythonBusy: true` 
 running or waiting; poll it (or `cell.get`) for the results, or pass `wait: true` to
 `engine.execute`: the reply then waits, without holding up the window, until Python is idle or
 `waitSeconds` pass (default: the Python time limit, plus the time allowed for imports, plus one
-second). A result with a `cell` and
-its `value` (such as `python.set`'s) then carries the cell's final value, and the reply has
-`pythonBusy: false` (true when the wait ran out). `python.stop` (or `ui.key {key:
-"Escape"}` with no editor open) stops them. `editor.python` is true while the formula bar edits a
-Python cell's code; Ctrl+Enter (Cmd+Enter on macOS) commits it.
+second). A result with a `cell` and its `value` (such as `python.set`'s) then carries the cell's
+final value, and the reply has `pythonBusy: false` (true when the wait ran out). `python.stop`
+(or `ui.key {key: "Escape"}` with no editor open) stops them. `python.run {cell?}` runs a Python
+cell again (the active cell by default) and the Python cells after it, which share its
+namespace; it goes through the same background run, so `wait: true` works with it too.
+`editor.python` is true while the formula bar edits a Python cell's code; Ctrl+Enter (Cmd+Enter
+on macOS) commits it, as does the formula bar's Run button (Stop while the cell runs or waits,
+Re-run once it has a result).
 
 Use `engine.execute` with `{command: "view.theme", params: {mode: "system"}}`
 to choose the display theme; `mode` accepts `"system"`, `"light"`, or `"dark"`.

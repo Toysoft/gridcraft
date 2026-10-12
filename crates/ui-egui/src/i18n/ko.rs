@@ -457,6 +457,15 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         }
         "Py: built-in" => "Py: 기본 제공",
         "Py: off" => "Py: 꺼짐",
+        "Run Python cell" => "Python 셀 실행",
+        "Stop Python" => "Python 중지",
+        "Re-run Python cell" => "Python 셀 다시 실행",
+        "Run Python cell: Python is turned off for this workbook. Choose Enable Python in the message bar to run it" => {
+            "Python 셀 실행: 이 통합 문서에서 Python이 꺼져 있습니다. 실행하려면 메시지 표시줄에서 Python 사용을 선택하세요"
+        }
+        "Python cell. Click to turn Python off for this cell (Enter then makes it a normal cell; undo brings the code back)" => {
+            "Python 셀입니다. 클릭하면 이 셀의 Python이 꺼집니다(Enter를 누르면 일반 셀이 되고, 실행 취소하면 코드가 돌아옵니다)"
+        }
         _ => return None,
     })
 }
