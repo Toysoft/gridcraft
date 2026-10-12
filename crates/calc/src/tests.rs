@@ -116,7 +116,7 @@ fn references_into_linked_workbooks_read_the_saved_values() {
         ExternalName { name: "Span".into(), sheet: None, refers_to: "Rates:Failed!$A$1".into() },
         ExternalName { name: "Loose".into(), sheet: None, refers_to: "$E$9".into() },
     ];
-    t.wb.external_books = vec![ExternalBook::default(), ExternalBook { sheets: vec![prices, rates, failed], names }];
+    t.wb.external_books = vec![ExternalBook::default(), ExternalBook { sheets: vec![prices, rates, failed], names, ..Default::default() }];
     t.wb.names.push(gridcraft_model::DefinedName {
         name: "Price".into(),
         scope: None,
@@ -181,7 +181,8 @@ fn references_into_linked_workbooks_keep_their_position_and_size() {
         cells.push((CellRef::new(i as u32 + 1, 1), Value::Number(10.0 + i as f64)));
     }
     cells.sort_by_key(|(p, _)| *p);
-    t.wb.external_books = vec![ExternalBook { sheets: vec![ExternalSheet { name: "Data".into(), cells, refresh_error: false }], names: vec![] }];
+    t.wb.external_books =
+        vec![ExternalBook { sheets: vec![ExternalSheet { name: "Data".into(), cells, refresh_error: false }], names: vec![], ..Default::default() }];
     // `@` takes the cell on the formula's row (or column), as for this workbook's references.
     for at in ["D2", "D3", "D4", "D5", "D6"] {
         t.set(at, "=@[1]Data!B:B");

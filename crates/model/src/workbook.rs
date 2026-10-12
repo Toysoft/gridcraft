@@ -91,6 +91,14 @@ pub struct DocProps {
 /// while the source is closed.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ExternalBook {
+    /// The linked file as the link stores it: absolute (`C:\links\Source.xlsx`) or relative to
+    /// this workbook's folder (`Source.xlsx`). Empty when the link names no file.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub path: String,
+    /// Added in GridCraft (by a typed reference) rather than read from the file: saving writes
+    /// its link part from this model, where links read from the file are kept as they were.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub added: bool,
     pub sheets: Vec<ExternalSheet>,
     /// The linked workbook's defined names (`[1]!Rates`, `[1]Sheet1!Rates`).
     pub names: Vec<ExternalName>,
@@ -116,6 +124,15 @@ pub struct ExternalName {
 }
 
 impl ExternalBook {
+    /// The linked file's name, without its folder.
+    pub fn file_name(&self) -> &str {
+        self.path.rsplit(['\\', '/']).next().unwrap_or(&self.path)
+    }
+    /// The linked file's folder with its trailing separator (`C:\links\`); empty for a bare
+    /// file name.
+    pub fn folder(&self) -> &str {
+        self.path.get(..self.path.len() - self.file_name().len()).unwrap_or("")
+    }
     pub fn sheet(&self, name: &str) -> Option<&ExternalSheet> {
         self.sheets.get(self.sheet_index(name)?)
     }

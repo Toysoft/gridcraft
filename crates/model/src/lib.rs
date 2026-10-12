@@ -8,6 +8,7 @@ mod b64;
 pub mod cell;
 mod cellmap;
 pub mod features;
+mod links;
 pub mod password;
 pub mod preserved;
 pub mod sheet;
