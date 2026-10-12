@@ -1833,6 +1833,89 @@ fn edit_clears_runs_and_undo_restores() {
 }
 
 #[test]
+fn set_with_runs_commits_and_reopens() {
+    let mut s = s();
+    s.execute(
+        "cell.set",
+        json!({
+            "cell": "A1",
+            "input": "black red",
+            "runs": {
+                "runs": [
+                    {"start": 0, "len": 5, "font": {}},
+                    {"start": 5, "len": 4, "font": {"color": Color::Rgb(0xFF0000)}}
+                ]
+            }
+        }),
+    )
+    .unwrap();
+    let expected = CellRuns {
+        runs: vec![
+            Run { start: 0, len: 5, font: runs_none_font() },
+            Run { start: 5, len: 4, font: RunFont { color: Some(Color::Rgb(0xFF0000)), ..runs_none_font() } },
+        ],
+    };
+    assert_eq!(v(&s, "A1"), Value::text("black red"), "the render text is unchanged by runs");
+    assert_eq!(runs_of(&s, "A1"), Some(expected.clone()));
+    reopen(&mut s);
+    assert_eq!(v(&s, "A1"), Value::text("black red"));
+    assert_eq!(runs_of(&s, "A1"), Some(expected), "runs survive the XLSX round trip");
+}
+
+#[test]
+fn set_with_mismatched_runs_fails_atomically() {
+    let mut s = s();
+    let runs = repro_runs();
+    let text = add_runs_cell(&mut s, "A1", runs.clone());
+    // The runs leave a gap at byte 5 and stop at byte 8: they don't cover "different" (9 bytes).
+    let e = s
+        .execute(
+            "cell.set",
+            json!({
+                "cell": "A1",
+                "input": "different",
+                "runs": {"runs": [{"start": 0, "len": 5, "font": {}}, {"start": 6, "len": 3, "font": {}}]}
+            }),
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("cell.set"), "{e}");
+    assert_eq!(v(&s, "A1"), Value::text(text.as_str()), "the prior value survives the failed edit");
+    assert_eq!(runs_of(&s, "A1"), Some(runs), "the prior runs survive the failed edit");
+}
+
+#[test]
+fn set_without_runs_still_drops_entry() {
+    let mut s = s();
+    add_runs_cell(&mut s, "A3", repro_runs());
+    s.execute("cell.set", json!({"cell": "A3", "input": "plain now"})).unwrap();
+    assert_eq!(v(&s, "A3"), Value::text("plain now"));
+    assert!(runs_of(&s, "A3").is_none(), "editing without `runs` drops the entry");
+    // An explicit `runs`: null is the same as no `runs` (as with the other optional params).
+    s.execute("cell.set", json!({"cell": "B2", "input": "x", "runs": null})).unwrap();
+    assert_eq!(v(&s, "B2"), Value::text("x"));
+}
+
+#[test]
+fn set_with_runs_undo_reverts_text_and_runs() {
+    let mut s = s();
+    let runs = repro_runs();
+    let text = add_runs_cell(&mut s, "A3", runs.clone());
+    let new_runs = CellRuns {
+        runs: vec![
+            Run { start: 0, len: 5, font: runs_none_font() },
+            Run { start: 5, len: 4, font: RunFont { color: Some(Color::Rgb(0xFF0000)), ..runs_none_font() } },
+        ],
+    };
+    s.execute("cell.set", json!({"cell": "A3", "input": "black red", "runs": serde_json::to_value(&new_runs).unwrap()})).unwrap();
+    assert_eq!(v(&s, "A3"), Value::text("black red"));
+    assert_eq!(runs_of(&s, "A3"), Some(new_runs));
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(v(&s, "A3"), Value::text(text.as_str()), "one undo restores the previous text");
+    assert_eq!(runs_of(&s, "A3"), Some(runs), "and the previous runs with it");
+}
+
+#[test]
 fn row_insert_translates_runs() {
     let mut s = s();
     let runs = repro_runs();

@@ -1,7 +1,7 @@
 //! Cell entry, selection, undo/redo, clipboard, clear, fill, find & replace.
 
 use gridcraft_core::{CellRef, MAX_ROWS, RangeRef, Value};
-use gridcraft_model::{Cell, Formula, StyleId};
+use gridcraft_model::{Cell, CellRuns, Formula, MAX_RUNS_PER_CELL, StyleId};
 use serde_json::{Value as Json, json};
 
 use super::*;
@@ -10,7 +10,7 @@ use crate::{Clipboard, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("cell.set", "Enter Cell", [], None, "{cell?: \"B2\", input: \"text, number or =formula\", sheet?, array?: bool}", has_doc, cell_set),
+        cmd!("cell.set", "Enter Cell", [], None, "{cell?: \"B2\", input: \"text, number or =formula\", sheet?, array?, runs?}", has_doc, cell_set),
         cmd!(
             "range.setValues",
             "Set Values",
@@ -225,6 +225,10 @@ fn cell_set(s: &mut Session, p: &Json) -> Result<Json> {
         .or_else(|| p.get("value").map(json_to_input))
         .ok_or_else(|| bad("cell.set", "missing `input` (or `value`)"))?;
     let array = bool_param(p, "array").unwrap_or(false);
+    let runs = match p.get("runs").cloned() {
+        None | Some(Json::Null) => None,
+        Some(v) => Some(serde_json::from_value::<CellRuns>(v).map_err(|_| bad("cell.set", "invalid `runs`"))?),
+    };
     let d = s.doc()?;
     if let Some(sh) = d.wb.sheet(sheet)
         && sh.is_protected()
@@ -235,6 +239,7 @@ fn cell_set(s: &mut Session, p: &Json) -> Result<Json> {
     }
     let active_sheet = s.doc()?.wb.active_sheet;
     edit(s, |cx| {
+        let mut target = at;
         if array {
             // Legacy Ctrl+Shift+Enter array formula over the selection, when the selection holds
             // the cell; a cell elsewhere (or on another sheet) gets a one-cell array.
@@ -258,17 +263,31 @@ fn cell_set(s: &mut Session, p: &Json) -> Result<Json> {
             }
             sh.set_cell(range.start, cell);
             cx.touch(sheet, range.start);
-            return Ok(Json::Null);
-        }
-        let cell = input_to_cell(&input, sheet, at, &mut cx.wb)?;
-        let sh = cx.sheet_mut(sheet)?;
-        match cell {
-            Some(c) => sh.set_cell(at, c),
-            None => {
-                sh.remove_cell(at);
+            target = range.start;
+        } else {
+            let cell = input_to_cell(&input, sheet, at, &mut cx.wb)?;
+            let sh = cx.sheet_mut(sheet)?;
+            match cell {
+                Some(c) => sh.set_cell(at, c),
+                None => {
+                    sh.remove_cell(at);
+                }
             }
+            cx.touch(sheet, at);
         }
-        cx.touch(sheet, at);
+        // `runs` commits with the text, in the same undo entry: it must describe exactly the
+        // final text of the cell, or the whole edit is refused.
+        if let Some(runs) = runs {
+            let sh = cx.sheet_mut(sheet)?;
+            let matched = match sh.value(target) {
+                Value::Text(t) => runs.valid_for(&t) && runs.runs.len() <= MAX_RUNS_PER_CELL,
+                _ => false,
+            };
+            if !matched {
+                return Err(bad("cell.set", "runs do not match the text"));
+            }
+            sh.cell_runs.insert(target, runs);
+        }
         Ok(Json::Null)
     })?;
     let v = s.doc()?.wb.sheet(sheet).map(|sh| sh.value(at)).unwrap_or_default();
