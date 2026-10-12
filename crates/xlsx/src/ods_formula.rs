@@ -11,9 +11,10 @@
 //! keeps the cell's cached constant rather than a mistranslation. A final
 //! `gridcraft_formula::parse` gate makes every `Some` result a valid model formula.
 
+use gridcraft_core::{MAX_COLS, MAX_ROWS};
+
 /// Translates an ODS `table:formula` attribute value into Excel/model formula body text (no
 /// leading `=`), or `None` when any construct has no exact Excel equivalent.
-#[allow(dead_code)] // wired into the ODS reader by the formula-import task
 pub(crate) fn translate(text: &str) -> Option<String> {
     let (namespace, body) = split_prefix(text)?;
     if namespace == Some("msoxl") {
@@ -130,8 +131,9 @@ fn string_at(body: &str, start: usize, out: &mut String) -> Option<usize> {
 /// Translates one `[…]` reference into `Sheet!A1:B2` form: an optional leading `$`
 /// (sheet-absolute; Excel has no such marker, so it is dropped), an optional sheet part (a
 /// `'…'`-quoted name with `''` escapes, or a bare `[A-Za-z0-9_]+` word) followed by `.`, or a
-/// lone `.` for the same sheet; then `$?COL$?ROW` (1–3 letters, 1–7 digits), optionally `:` and
-/// a second address (a leading `.` is allowed after the colon). Anything else — a `#`
+/// lone `.` for the same sheet; then `$?COL$?ROW` (1–3 letters, 1–7 digits, bounded to the
+/// worksheet), optionally `:` and a second address (a leading `.` is allowed after the
+/// colon). Anything else — a `#`
 /// external-document part, column- or row-only addresses, a sheet on the second address —
 /// bails.
 fn reference_at(body: &str, start: usize, out: &mut String) -> Option<usize> {
@@ -217,7 +219,9 @@ fn quoted_sheet_at(body: &str, start: usize) -> Option<(String, usize)> {
 }
 
 /// Parses `$?COL$?ROW` (1–3 letters, 1–7 digits) at `p`; returns the Excel spelling and the
-/// position after it.
+/// position after it. The address must lie inside the worksheet (`MAX_COLS` columns by
+/// `MAX_ROWS` rows): beyond it the model parser reads the word as a defined name, so the
+/// translator bails and the caller keeps the cell's cached constant.
 fn cell_at(body: &str, p: usize) -> Option<(String, usize)> {
     let bytes = body.as_bytes();
     let mut s = String::new();
@@ -230,6 +234,14 @@ fn cell_at(body: &str, p: usize) -> Option<(String, usize)> {
     if !(1..=3).contains(&(col_end - q)) {
         return None;
     }
+    // Letters are alphabetic, so each folds into 1..=26 and cannot overflow.
+    let col = (q..col_end).try_fold(0u32, |n, i| {
+        let letter = u32::from(bytes.get(i).copied()?.to_ascii_uppercase() - b'A' + 1);
+        n.checked_mul(26)?.checked_add(letter)
+    })?;
+    if col > MAX_COLS {
+        return None;
+    }
     s.push_str(body.get(q..col_end)?);
     q = col_end;
     if bytes.get(q) == Some(&b'$') {
@@ -238,6 +250,13 @@ fn cell_at(body: &str, p: usize) -> Option<(String, usize)> {
     }
     let row_end = run_end(bytes, q, |b| b.is_ascii_digit());
     if !(1..=7).contains(&(row_end - q)) {
+        return None;
+    }
+    let row = (q..row_end).try_fold(0u32, |n, i| {
+        let digit = u32::from(bytes.get(i).copied()? - b'0');
+        n.checked_mul(10)?.checked_add(digit)
+    })?;
+    if row > MAX_ROWS {
         return None;
     }
     s.push_str(body.get(q..row_end)?);
@@ -280,6 +299,7 @@ mod tests {
     fn argument_separator_respects_strings() {
         assert_eq!(translate("of:=IF(A1>1;2;3)"), Some("IF(A1>1,2,3)".to_string()));
         assert_eq!(translate("of:=CONCAT(\"a;b\";\"c\")"), Some("CONCAT(\"a;b\",\"c\")".to_string()));
+        assert_eq!(translate("of:=SUM(1.5;2)"), Some("SUM(1.5,2)".to_string()));
     }
 
     #[test]
@@ -289,6 +309,8 @@ mod tests {
         assert_eq!(translate("of:=['Sheet 2'.A1]"), Some("'Sheet 2'!A1".to_string()));
         assert_eq!(translate("of:=[$S.$A1]"), Some("S!$A1".to_string()));
         assert_eq!(translate("of:=['O''Brien.s'.A1]"), Some("'O''Brien.s'!A1".to_string()));
+        assert_eq!(translate("of:=['a#b'.A1]"), Some("'a#b'!A1".to_string()));
+        assert_eq!(translate("of:=[$.A1]"), Some("A1".to_string()));
     }
 
     #[test]
@@ -309,6 +331,31 @@ mod tests {
         assert_eq!(translate("of:=\"unterminated"), None); // unterminated string
         assert_eq!(translate("rq:=A1"), None); // no known prefix
         assert_eq!(translate("of:=TRUE()"), Some("TRUE()".to_string())); // must NOT bail
+    }
+
+    /// 1-based column number → letters (`1 → A`, `MAX_COLS → XFD`), so boundary cases are
+    /// built from the worksheet constants instead of magic numbers.
+    fn col_letters(mut n: u32) -> String {
+        let mut s = String::new();
+        while n > 0 {
+            n -= 1;
+            s.insert(0, char::from(b'A' + (n % 26) as u8));
+            n /= 26;
+        }
+        s
+    }
+
+    /// An address beyond the worksheet must bail, not leak through the parse gate as a defined
+    /// name (`#NAME?` after recalc); the caller keeps the cached constant instead.
+    #[test]
+    fn worksheet_bounds_bail_instead_of_becoming_names() {
+        assert_eq!(translate("of:=[.ZZZ1]"), None); // past the last column
+        assert_eq!(translate(&format!("of:=[.{}1]", col_letters(MAX_COLS + 1))), None);
+        assert_eq!(translate(&format!("of:=[.A{}]", MAX_ROWS + 1)), None);
+        assert_eq!(translate(&format!("of:=[.A1:.{}1]", col_letters(MAX_COLS + 1))), None); // range second endpoint
+        // The last real cell stays translatable.
+        let corner = format!("{}{}", col_letters(MAX_COLS), MAX_ROWS);
+        assert_eq!(translate(&format!("of:=[.{corner}]")), Some(corner));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Original ODS packages assembled in Rust, not files from another spreadsheet application.
 
-use gridcraft_core::{CellError, CellRef, RangeRef, Value};
+use gridcraft_core::{CellError, CellRef, MAX_ROWS, RangeRef, Value};
 
 use super::make_zip;
 use crate::{Format, IoError, read_ods, read_xlsx, sniff, write_xlsx};
@@ -332,6 +332,11 @@ fn ods_matrix_formula_marks_legacy_array() {
     assert_eq!(cell.formula.as_ref().unwrap().text, "TRANSPOSE(A1:B2)");
     assert_eq!(cell.formula.as_ref().unwrap().array, Some(RangeRef::new(CellRef::new(0, 0), CellRef::new(1, 1))));
     assert_eq!(cell.value, Value::Number(5.0));
+    // The legacy array survives an XLSX round trip: both the text and the array range.
+    let (reopened, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
+    let cell = reopened.sheets[0].cell(CellRef::new(0, 0)).unwrap();
+    assert_eq!(cell.formula.as_ref().unwrap().text, "TRANSPOSE(A1:B2)");
+    assert_eq!(cell.formula.as_ref().unwrap().array, Some(RangeRef::new(CellRef::new(0, 0), CellRef::new(1, 1))));
     // A repeated matrix cell would cover overlapping ranges: it imports as a plain formula.
     let bytes = row(
         r#"<table:table-cell table:number-columns-repeated="3" table:formula="of:=TRANSPOSE([.A1:.B2])" table:number-matrix-columns-spanned="2" table:number-matrix-rows-spanned="2" office:value-type="float" office:value="5"/>"#,
@@ -342,6 +347,16 @@ fn ods_matrix_formula_marks_legacy_array() {
         assert_eq!(cell.formula.as_ref().unwrap().text, "TRANSPOSE(A1:B2)");
         assert_eq!(cell.formula.as_ref().unwrap().array, None, "col {c}");
     }
+}
+
+/// A matrix span that would run past the last row is refused rather than clipped: the legacy
+/// array would cover cells that do not exist.
+#[test]
+fn ods_matrix_formula_spanning_past_the_last_row_is_refused() {
+    let bytes = ods(&format!(
+        r#"<table:table table:name="Data"><table:table-row/><table:table-row><table:table-cell table:formula="of:=TRANSPOSE([.A1:.B2])" table:number-matrix-rows-spanned="{MAX_ROWS}" office:value-type="float" office:value="5"/></table:table-row></table:table>"#
+    ));
+    assert_eq!(read_ods(&bytes).unwrap_err().to_string(), "the file is too large: ODS matrix formula exceeds worksheet bounds");
 }
 
 #[test]
