@@ -197,4 +197,7 @@ fn names() {
     assert_eq!(hash(&a), hash(&b));
     b.steps[0].note = "changed".into();
     assert_ne!(hash(&a), hash(&b));
+    assert_eq!(next_name(&wb), "Macro2");
+    let paths: Vec<(String, &str)> = command_steps(&a.steps).into_iter().map(|(p, id, _)| (p, id)).collect();
+    assert_eq!(paths, [("1".into(), "cell.set"), ("2.1.then.1".into(), "home.bold"), ("3".into(), "home.italic")]);
 }
