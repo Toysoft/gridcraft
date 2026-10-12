@@ -1,5 +1,7 @@
-//! Data-only OpenDocument Spreadsheet import. Formula caches become constants; styles and
-//! other ODF features are deliberately not translated. All fixtures are authored in Rust.
+//! OpenDocument Spreadsheet import with live formulas: `table:formula` text that maps exactly
+//! to Excel syntax is translated and recalculates, keeping its cached result as the initial
+//! value; anything else keeps today's constant behaviour. Styles and other ODF features are
+//! deliberately not translated. All fixtures are authored in Rust.
 //! Format reference: ODF 1.3, part 3, sections 6.1 and 9.1:
 //! <https://docs.oasis-open.org/office/OpenDocument/v1.3/os/part3-schema/OpenDocument-v1.3-os-part3-schema.html>.
 
@@ -7,8 +9,8 @@ use std::io::{Cursor, Read};
 use std::sync::Arc;
 
 use gridcraft_core::date::{days_in_month, serial_from_ymd};
-use gridcraft_core::{CellRef, DateSystem, MAX_COLS, MAX_ROWS, RangeRef, Value};
-use gridcraft_model::{Cell, NumFmt, Sheet, StyleId, Workbook};
+use gridcraft_core::{CellError, CellRef, DateSystem, MAX_COLS, MAX_ROWS, RangeRef, Value};
+use gridcraft_model::{Cell, Formula, NumFmt, Sheet, StyleId, Workbook};
 use quick_xml::NsReader;
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
@@ -44,9 +46,10 @@ pub(crate) fn has_mimetype(bytes: &[u8]) -> bool {
     (&mut file).take(MIME.len() as u64 + 1).read_to_end(&mut value).is_ok() && value == MIME
 }
 
-/// Imports ODS sheets, typed values, displayed text and merges. Cached formula results are
-/// imported as constants, so editing their inputs does not recalculate the original formula.
-/// Always inspect the returned warnings. Saving to ODS is not supported.
+/// Imports ODS sheets, typed values, displayed text, merges and formulas. A formula cell keeps
+/// its cached result as the initial value and recalculates; a formula that cannot be translated
+/// exactly stays a constant. Always inspect the returned warnings. Saving to ODS is not
+/// supported.
 pub fn read_ods(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
     let mut package = Package::open(bytes)?;
     if !has_mimetype(bytes) {
@@ -204,6 +207,8 @@ struct RepeatedCell {
     repeat: u32,
     width: u32,
     height: u32,
+    matrix_cols: u32,
+    matrix_rows: u32,
     cell: Cell,
 }
 struct CellDraft {
@@ -211,10 +216,12 @@ struct CellDraft {
     repeat: u32,
     width: u32,
     height: u32,
+    matrix_cols: u32,
+    matrix_rows: u32,
     covered: bool,
     kind: Option<String>,
     raw: Option<String>,
-    formula: bool,
+    formula: Option<String>,
     text: String,
     paragraph: Option<usize>,
     paragraphs: usize,
@@ -240,7 +247,7 @@ impl Import {
         let mut wb = Workbook::new();
         wb.sheets.clear();
         let mut report = ReadReport::default();
-        report.warn("ODS data-only import: formulas become their saved results and will not recalculate. Source formatting, charts, images and other features are not imported. Save a new .xlsx file; ODS saving is not supported.");
+        report.warn("ODS import: formulas are imported and recalculate; ones that cannot be translated keep their saved result as a constant. Source formatting, charts, images and other features are not imported. Save a new .xlsx file; ODS saving is not supported.");
         Self { wb, report, stack: vec![], sheet: None, row: None, cell: None, cells: 0, merges: 0, text: 0, formats: vec![], spreadsheet_seen: false }
     }
 
@@ -348,10 +355,12 @@ impl Import {
                     repeat: positive(attr(reader, e, TABLE, b"number-columns-repeated")?, 1, u32::MAX)?,
                     width: positive(attr(reader, e, TABLE, b"number-columns-spanned")?, 1, MAX_COLS)?,
                     height: positive(attr(reader, e, TABLE, b"number-rows-spanned")?, 1, MAX_ROWS)?,
+                    matrix_cols: positive(attr(reader, e, TABLE, b"number-matrix-columns-spanned")?, 1, MAX_COLS)?,
+                    matrix_rows: positive(attr(reader, e, TABLE, b"number-matrix-rows-spanned")?, 1, MAX_ROWS)?,
                     covered: t == Tag::Covered,
                     kind,
                     raw: attr(reader, e, OFFICE, key)?,
-                    formula: attr(reader, e, TABLE, b"formula")?.is_some(),
+                    formula: attr(reader, e, TABLE, b"formula")?,
                     text: String::new(),
                     paragraph: None,
                     paragraphs: 0,
@@ -470,7 +479,15 @@ impl Import {
             None => return Err(IoError::TooLarge("ODS row exceeds worksheet width".into())),
         };
         if kept {
-            row.cells.push(RepeatedCell { col: row.col, repeat: draft.repeat, width, height, cell });
+            row.cells.push(RepeatedCell {
+                col: row.col,
+                repeat: draft.repeat,
+                width,
+                height,
+                matrix_cols: draft.matrix_cols,
+                matrix_rows: draft.matrix_rows,
+                cell,
+            });
         }
         row.col = end;
         Ok(())
@@ -478,6 +495,7 @@ impl Import {
 
     fn convert(&mut self, draft: &CellDraft) -> Cell {
         let raw = draft.raw.as_deref();
+        let formula = draft.formula.as_deref().and_then(crate::ods_formula::translate).map(|text| Formula::new(&text));
         let mut format = None;
         let value = match draft.kind.as_deref() {
             Some("float" | "percentage" | "currency") => raw.and_then(|s| s.parse::<f64>().ok()).filter(|n| n.is_finite()).map(|n| {
@@ -491,8 +509,17 @@ impl Import {
                 Some("false" | "0") => Some(Value::Bool(false)),
                 _ => None,
             },
-            Some("string") if raw.is_some() || draft.paragraphs > 0 || !draft.formula => Some(Value::Text(Arc::from(raw.unwrap_or(&draft.text)))),
-            Some("void") if !draft.formula => Some(Value::Empty),
+            // A calcext error cache maps to the error itself; its placeholder raw value
+            // (often 0) never parses, so the cell falls through and recalculates instead.
+            Some("error") => CellError::parse(raw.unwrap_or(&draft.text)).map(Value::Error),
+            Some("string") if raw.is_some() || draft.paragraphs > 0 || draft.formula.is_none() => {
+                let text = raw.unwrap_or(&draft.text);
+                // Writers without the calcext extension cache a formula error as a string
+                // cell holding the error's spelling.
+                let error = if formula.is_some() { CellError::parse(text) } else { None };
+                Some(error.map_or_else(|| Value::Text(Arc::from(text)), Value::Error))
+            }
+            Some("void") if draft.formula.is_none() => Some(Value::Empty),
             Some("date") => raw.and_then(parse_date).map(|(n, f)| {
                 format = Some(f);
                 Value::Number(n)
@@ -501,12 +528,15 @@ impl Import {
                 format = Some("[h]:mm:ss.000");
                 Value::Number(n)
             }),
-            None if !draft.formula => Some(if draft.text.is_empty() { Value::Empty } else { Value::Text(Arc::from(draft.text.as_str())) }),
+            None if draft.formula.is_none() => Some(if draft.text.is_empty() { Value::Empty } else { Value::Text(Arc::from(draft.text.as_str())) }),
             _ => None,
         };
         let value = value.unwrap_or_else(|| {
-            self.report.warn("Some ODS values or formula caches were unsupported or missing; their displayed text (or raw value) was kept as text. A formula without either is marked [Unavailable ODS formula result].");
-            let text = if !draft.text.is_empty() { draft.text.as_str() } else if let Some(raw) = raw { raw } else if draft.formula { "[Unavailable ODS formula result]" } else { "[Unsupported ODS value]" };
+            if formula.is_some() {
+                return Value::Empty; // no usable cache: recalculation fills the cell
+            }
+            self.report.warn("Some ODS values or formulas that cannot be translated were unsupported or missing; their displayed text (or raw value) was kept as text. A formula without either is marked [Unavailable ODS formula result].");
+            let text = if !draft.text.is_empty() { draft.text.as_str() } else if let Some(raw) = raw { raw } else if draft.formula.is_some() { "[Unavailable ODS formula result]" } else { "[Unsupported ODS value]" };
             Value::Text(Arc::from(text))
         });
         let style = match format {
@@ -520,7 +550,7 @@ impl Import {
             },
             None => StyleId::DEFAULT,
         };
-        Cell { style, ..Cell::value(value) }
+        Cell { value, formula: formula.map(Arc::new), style }
     }
 
     fn finish_row(&mut self) -> Result<(), IoError> {
@@ -555,11 +585,32 @@ impl Import {
             if merged && ((entry.repeat > 1 && entry.width > 1) || (row.repeat > 1 && entry.height > 1)) {
                 return Err(IoError::Format("repeated ODS cells have overlapping merges".into()));
             }
+            // A matrix span is not a merge: the checks above do not cover it, so bound it
+            // independently. A repeated matrix cell would tile overlapping arrays, so only a
+            // single cell carries the legacy array; repeats import as plain formulas.
+            let matrix = entry.cell.formula.is_some() && entry.repeat == 1 && row.repeat == 1 && (entry.matrix_cols > 1 || entry.matrix_rows > 1);
+            let matrix_last = if matrix {
+                match sheet
+                    .row
+                    .checked_add(entry.matrix_rows - 1)
+                    .filter(|r| *r < MAX_ROWS)
+                    .zip(entry.col.checked_add(entry.matrix_cols - 1).filter(|c| *c < MAX_COLS))
+                {
+                    Some((r, c)) => Some(CellRef::new(r, c)),
+                    None => return Err(IoError::TooLarge("ODS matrix formula exceeds worksheet bounds".into())),
+                }
+            } else {
+                None
+            };
             for r in sheet.row..end {
                 for c in entry.col..entry.col + entry.repeat {
                     let pos = CellRef::new(r, c);
                     if !entry.cell.is_blank() {
-                        sheet.sheet.cells.set(pos, entry.cell.clone());
+                        let mut cell = entry.cell.clone();
+                        if let (Some(last), Some(f)) = (matrix_last, cell.formula.as_mut()) {
+                            Arc::make_mut(f).array = Some(RangeRef::new(pos, last));
+                        }
+                        sheet.sheet.cells.set(pos, cell);
                     }
                     if merged {
                         sheet.sheet.merges.push(RangeRef::new(pos, CellRef::new(r + entry.height - 1, c + entry.width - 1)));
