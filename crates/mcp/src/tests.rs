@@ -517,3 +517,122 @@ fn text_to_columns_destination_follows_its_sheet() {
     cmd_fails(&mut s, "data.textToColumns", json!({"range": "Other!A1", "delimiters": [","], "destination": "D0"}));
     cmd_fails(&mut s, "data.textToColumns", json!({"range": "Other!A1", "delimiters": [","], "destination": "Sheet1!D1"}));
 }
+
+// ---------- automation roots (#445) ----------
+
+use std::path::{Path, PathBuf};
+
+use gridcraft_engine::file_access::AutomationRoots;
+
+/// A fresh folder with `work/` (the roots), `work/in.csv` and `elsewhere/secret.csv`.
+fn confinement_dirs(name: &str) -> PathBuf {
+    let base = std::env::temp_dir().join(format!("gridcraft-roots-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("work")).unwrap();
+    std::fs::create_dir_all(base.join("elsewhere")).unwrap();
+    std::fs::write(base.join("work/in.csv"), "Item,Cost\nRent,1200\n").unwrap();
+    std::fs::write(base.join("elsewhere/secret.csv"), "token,hunter2\n").unwrap();
+    base
+}
+
+fn confined_server(read: Option<&Path>, write: Option<&Path>) -> Server {
+    let roots = AutomationRoots::new(read, write).unwrap();
+    Server::new(Box::new(Headless::new().with_automation_roots(roots)))
+}
+
+fn text(p: &Path) -> String {
+    p.to_string_lossy().into_owned()
+}
+
+#[test]
+fn a_read_outside_the_root_is_refused_and_one_inside_succeeds() {
+    let base = confinement_dirs("read");
+    let mut s = confined_server(Some(&base.join("work")), Some(&base.join("work")));
+    // Inside: imported and readable back.
+    ok(&mut s, "execute_command", json!({"command": "data.fromTextCsv", "params": {"path": text(&base.join("work/in.csv"))}}));
+    let v = ok(&mut s, "read_range", json!({"range": "A1:B2"}));
+    assert_eq!(v["values"], json!([["Item", "Cost"], ["Rent", 1200.0]]));
+    // Outside: the prompt-injection case from the issue. Refused, with a message the agent can act on.
+    let secret = text(&base.join("elsewhere/secret.csv"));
+    let e = fails(&mut s, "execute_command", json!({"command": "data.fromTextCsv", "params": {"path": secret}}));
+    assert!(e.contains("automation path rejected: outside the read root"), "{e}");
+    assert!(e.contains("secret.csv"), "{e}");
+    let e = fails(&mut s, "open_workbook", json!({"path": secret}));
+    assert!(e.contains("outside the read root"), "{e}");
+    let e = fails(&mut s, "execute_command", json!({"command": "insert.picture", "params": {"path": secret}}));
+    assert!(e.contains("outside the read root"), "{e}");
+    // `..` out of the root is outside too.
+    let sneaky = format!("{}/../elsewhere/secret.csv", text(&base.join("work")));
+    let e = fails(&mut s, "open_workbook", json!({"path": sneaky}));
+    assert!(e.contains("outside the read root"), "{e}");
+    // Nothing of the secret reached the sheet.
+    let v = ok(&mut s, "read_range", json!({"range": "A1:B4"}));
+    assert!(!v.to_string().contains("hunter2"), "{v}");
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn writes_outside_the_root_are_refused_for_every_saving_command() {
+    let base = confinement_dirs("write");
+    let mut s = confined_server(Some(&base.join("work")), Some(&base.join("work")));
+    ok(&mut s, "set_cell", json!({"cell": "A1", "input": "1"}));
+    let out = |n: &str| text(&base.join("elsewhere").join(n));
+    let e = fails(&mut s, "save_workbook", json!({"path": out("a.xlsx")}));
+    assert!(e.contains("automation path rejected: outside the write root"), "{e}");
+    for (cmd, file) in [("file.saveAs", "b.xlsx"), ("file.save", "c.xlsx"), ("file.exportPdf", "d.pdf"), ("file.exportCsv", "e.csv")] {
+        let e = fails(&mut s, "execute_command", json!({"command": cmd, "params": {"path": out(file)}}));
+        assert!(e.contains("outside the write root"), "{cmd}: {e}");
+    }
+    let leftovers: Vec<_> = std::fs::read_dir(base.join("elsewhere")).unwrap().flatten().map(|e| e.file_name()).collect();
+    assert_eq!(leftovers.len(), 1, "only secret.csv: {leftovers:?}");
+    // Inside the write root it works, including a nested folder that doesn't exist yet being refused only by the OS.
+    ok(&mut s, "save_workbook", json!({"path": text(&base.join("work/ok.xlsx"))}));
+    assert!(base.join("work/ok.xlsx").exists());
+    ok(&mut s, "execute_command", json!({"command": "file.exportPdf", "params": {"path": text(&base.join("work/ok.pdf"))}}));
+    assert!(base.join("work/ok.pdf").exists());
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn a_root_left_out_grants_none_of_its_access() {
+    let base = confinement_dirs("one-root");
+    let work = base.join("work");
+    // Read root only: files can be read, nothing can be written.
+    let mut s = confined_server(Some(&work), None);
+    ok(&mut s, "open_workbook", json!({"path": text(&work.join("in.csv"))}));
+    let e = fails(&mut s, "save_workbook", json!({"path": text(&work.join("x.xlsx"))}));
+    assert!(e.contains("write authority is absent"), "{e}");
+    assert!(!work.join("x.xlsx").exists());
+    // Returning the bytes needs no file access.
+    ok(&mut s, "execute_command", json!({"command": "file.saveBytes", "params": {}}));
+    // Write root only: nothing can be read.
+    let mut s = confined_server(None, Some(&work));
+    let e = fails(&mut s, "open_workbook", json!({"path": text(&work.join("in.csv"))}));
+    assert!(e.contains("read authority is absent"), "{e}");
+    ok(&mut s, "save_workbook", json!({"path": text(&work.join("y.xlsx"))}));
+    assert!(work.join("y.xlsx").exists());
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_out_of_the_root_is_refused_through_mcp() {
+    let base = confinement_dirs("link");
+    std::os::unix::fs::symlink(base.join("elsewhere/secret.csv"), base.join("work/innocent.csv")).unwrap();
+    std::os::unix::fs::symlink(base.join("elsewhere"), base.join("work/dir")).unwrap();
+    let mut s = confined_server(Some(&base.join("work")), Some(&base.join("work")));
+    let e = fails(&mut s, "open_workbook", json!({"path": text(&base.join("work/innocent.csv"))}));
+    assert!(e.contains("outside the read root"), "{e}");
+    let e = fails(&mut s, "save_workbook", json!({"path": text(&base.join("work/dir/new.xlsx"))}));
+    assert!(e.contains("outside the write root"), "{e}");
+    assert!(!base.join("elsewhere/new.xlsx").exists());
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn without_roots_nothing_is_confined() {
+    let base = confinement_dirs("none");
+    let mut s = server();
+    ok(&mut s, "open_workbook", json!({"path": text(&base.join("elsewhere/secret.csv"))}));
+    let _ = std::fs::remove_dir_all(base);
+}
