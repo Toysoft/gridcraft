@@ -589,6 +589,10 @@ const JAPANESE: &[(&str, &str)] = &[
     ("By Row", "行ごと"),
     ("Column", "縦棒"),
     ("Win/Loss", "勝敗"),
+    ("Green Data Bars", "緑のデータ バー"),
+    ("Blue-White-Red Scale", "青-白-赤のスケール"),
+    ("White-Green Scale", "白-緑のスケール"),
+    ("Duplicate Values", "重複する値"),
 ];
 
 #[cfg(test)]

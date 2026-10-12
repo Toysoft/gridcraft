@@ -409,6 +409,10 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "By Row" => "按行",
         "Column" => "柱形",
         "Win/Loss" => "盈亏",
+        "Green Data Bars" => "绿色数据条",
+        "Blue-White-Red Scale" => "蓝-白-红色阶",
+        "White-Green Scale" => "白-绿色阶",
+        "Duplicate Values" => "重复值",
         _ => return None,
     })
 }

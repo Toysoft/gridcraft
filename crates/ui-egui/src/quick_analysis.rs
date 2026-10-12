@@ -4,7 +4,7 @@
 //! pivot tables, `analysis.addSparklines`), so nothing here is UI-only logic worth testing apart
 //! from which command a tile maps to ([`tiles`]).
 
-use egui::{Align2, Id, Order, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Align2, Color32, Id, Order, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use gridcraft_engine::core::RangeRef;
 use gridcraft_engine::model::Sheet;
 use serde_json::{Value as Json, json};
@@ -64,6 +64,9 @@ enum Glyph {
     Text(&'static str),
     Bars,
     Scale,
+    GreenBars,
+    BlueScale,
+    GreenScale,
     Dots,
     Steps,
     MiniColumns,
@@ -96,6 +99,12 @@ pub fn tiles(tab: Tab, range: &str, sheet_name: &str, by_rows: bool) -> Vec<Tile
             tile("Greater Than…", Glyph::Text(">"), Dialog("cfQuick", json!({"type": "cellIs", "operator": "greater", "title": "Greater Than…"}))),
             tile("Top 10 Items", Glyph::Text("10"), cf(json!({"type": "top10", "rank": 10}))),
             tile("Clear Rules", Glyph::Icon(Icon::Eraser), Run("home.clearRules", json!({"range": range}))),
+            tile("Green Data Bars", Glyph::GreenBars, cf(json!({"type": "dataBar", "color": "#63BE7B"}))),
+            tile("Blue-White-Red Scale", Glyph::BlueScale, cf(json!({"type": "colorScale", "colors": ["#5A8AC6", "#FCFCFF", "#F8696B"]}))),
+            tile("White-Green Scale", Glyph::GreenScale, cf(json!({"type": "colorScale", "colors": ["#FCFCFF", "#63BE7B"]}))),
+            tile("Top 10%", Glyph::Text("10%"), cf(json!({"type": "top10", "rank": 10, "percent": true}))),
+            tile("Below Average", Glyph::Text("<avg"), cf(json!({"type": "aboveAverage", "below": true}))),
+            tile("Duplicate Values", Glyph::Text("=="), cf(json!({"type": "duplicate"}))),
         ],
         Tab::Charts => vec![
             tile("Clustered Column", Glyph::Icon(Icon::ChartBar), chart("column")),
@@ -131,7 +140,11 @@ pub fn tiles(tab: Tab, range: &str, sheet_name: &str, by_rows: bool) -> Vec<Tile
 /// Ctrl+Q and the `ui.quickAnalysis` command: opens the popup for the selection (or closes it).
 /// Errors for a single cell, where there is nothing to analyse.
 pub fn toggle(app: &mut SheetApp, on: Option<bool>) -> Result<Json, String> {
-    let sel = app.session.active().map(|d| d.selection.current()).ok_or("no workbook open")?;
+    let d = app.session.active().ok_or("no workbook open")?;
+    if d.selection.ranges.len() > 1 {
+        return Err("Quick Analysis works on one block of cells; select a single contiguous range.".into());
+    }
+    let sel = d.selection.current();
     let want = on.unwrap_or(app.grid.quick_analysis.open.is_none());
     if !want {
         app.grid.quick_analysis.open = None;
@@ -143,16 +156,38 @@ pub fn toggle(app: &mut SheetApp, on: Option<bool>) -> Result<Json, String> {
     Ok(json!({"open": app.grid.quick_analysis.open.is_some()}))
 }
 
-/// Paints the corner button and, when open, the popup. Called once per grid frame.
-pub fn show(app: &mut SheetApp, ui: &mut Ui, geo: &Geo, sh: &Sheet) {
-    let Some(d) = app.session.active() else { return };
-    let sel = d.selection.current();
-    let hidden = sel.is_single()
+/// Whether the button (and popup) stay out of the way: a single cell or several areas, editing,
+/// an open dialog or menu, and the paged views have no corner to hang them on.
+pub fn is_hidden(app: &SheetApp, geo: &Geo, sh: &Sheet) -> bool {
+    let Some(d) = app.session.active() else { return true };
+    d.selection.ranges.len() > 1
+        || d.selection.current().is_single()
         || app.editor.is_some()
         || app.dialog.is_some()
         || app.text_box_editor.is_some()
         || app.grid.context_menu.is_some()
-        || geo.paper.is_some();
+        || geo.paper.is_some()
+        || sh.view == gridcraft_engine::model::SheetViewMode::PageLayout
+}
+
+/// Where the corner button sits for `sel` (on screen), and whether the selection's corner is in
+/// view. Below and right of the corner, clear of the fill handle; flipped inside at the grid edge.
+pub fn button_rect(geo: &Geo, sh: &Sheet, sel: RangeRef) -> (Rect, bool) {
+    let corner = geo.range_rect(sh, sel).right_bottom();
+    let panes = geo.range_panes(RangeRef::cell(sel.end));
+    let visible = panes.iter().any(|p| p.contains(pos2(corner.x - 1.0, corner.y - 1.0)));
+    let area = geo.cells.shrink(2.0);
+    let x = if corner.x + GAP + BUTTON > area.right() { corner.x - GAP - BUTTON } else { corner.x + GAP };
+    let y = if corner.y + GAP + BUTTON > area.bottom() { corner.y - GAP - BUTTON } else { corner.y + GAP };
+    let at = pos2(x.clamp(area.left(), (area.right() - BUTTON).max(area.left())), y.clamp(area.top(), (area.bottom() - BUTTON).max(area.top())));
+    (geo.mirror_rect(Rect::from_min_size(at, vec2(BUTTON, BUTTON))), visible)
+}
+
+/// Paints the corner button and, when open, the popup. Called once per grid frame.
+pub fn show(app: &mut SheetApp, ui: &mut Ui, geo: &Geo, sh: &Sheet) {
+    let Some(d) = app.session.active() else { return };
+    let sel = d.selection.current();
+    let hidden = is_hidden(app, geo, sh);
     // The popup belongs to one selection; a new one (or editing) closes it.
     if hidden || app.grid.quick_analysis.open.is_some_and(|r| r != sel) {
         app.grid.quick_analysis.open = None;
@@ -163,18 +198,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui, geo: &Geo, sh: &Sheet) {
     let sheet_name = sh.name.clone();
     let ctx = ui.ctx().clone();
     let t = Tokens::get(&ctx);
-    let rect = geo.range_rect(sh, sel);
-    let corner = rect.right_bottom();
-    let panes = geo.range_panes(RangeRef::cell(sel.end));
-    let corner_visible = panes.iter().any(|p| p.contains(pos2(corner.x - 1.0, corner.y - 1.0)));
-    // Below and right of the corner (clear of the fill handle); flipped inside when at an edge.
-    let area = geo.cells.shrink(2.0);
-    let x = if corner.x + GAP + BUTTON > area.right() { corner.x - GAP - BUTTON } else { corner.x + GAP };
-    let y = if corner.y + GAP + BUTTON > area.bottom() { corner.y - GAP - BUTTON } else { corner.y + GAP };
-    let button = geo.mirror_rect(Rect::from_min_size(
-        pos2(x.clamp(area.left(), (area.right() - BUTTON).max(area.left())), y.clamp(area.top(), (area.bottom() - BUTTON).max(area.top()))),
-        vec2(BUTTON, BUTTON),
-    ));
+    let (button, corner_visible) = button_rect(geo, sh, sel);
     let open = app.grid.quick_analysis.open.is_some();
     // While the mouse is down (selecting, filling) the button stays out of the way.
     let busy = app.grid.drag != Drag::None || ctx.input(|i| i.pointer.any_down());
@@ -219,14 +243,17 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui, geo: &Geo, sh: &Sheet) {
                     ui.selectable_value(&mut state.by_rows, true, lang.tr("By Row"));
                 });
             }
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                for item in tiles(state.tab, &opened_for.a1(), &sheet_name, state.by_rows) {
-                    if paint_tile(ui, &t, &item, lang.tr(item.label)) {
-                        picked = Some(item.action.clone());
+            let items = tiles(state.tab, &opened_for.a1(), &sheet_name, state.by_rows);
+            for row in items.chunks(6) {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    for item in row {
+                        if paint_tile(ui, &t, item, lang.tr(item.label)) {
+                            picked = Some(item.action.clone());
+                        }
                     }
-                }
-            });
+                });
+            }
         });
     });
     let outside_click = ctx.input(|i| i.pointer.any_pressed())
@@ -277,6 +304,24 @@ fn paint_glyph(ui: &Ui, t: &Tokens, glyph: Glyph, r: Rect) {
             for (i, c) in [red, yellow, green].into_iter().enumerate() {
                 p.rect_filled(cell(i as f32, 1.0).shrink(0.5), 1.0, c);
             }
+        }
+        Glyph::GreenBars => {
+            for (j, w) in [0.9, 0.55, 0.3].into_iter().enumerate() {
+                let row = cell(0.0, j as f32).shrink2(vec2(0.0, 1.0));
+                p.rect_filled(Rect::from_min_size(row.min, vec2(r.width() * w, row.height())), 1.0, green);
+            }
+        }
+        Glyph::BlueScale | Glyph::GreenScale => {
+            let cols = if glyph == Glyph::BlueScale { [blue, Color32::WHITE, red] } else { [Color32::WHITE, green.gamma_multiply(0.5), green] };
+            for (i, c) in cols.into_iter().enumerate() {
+                p.rect_filled(cell(i as f32, 1.0).shrink(0.5), 1.0, c);
+            }
+            p.rect_stroke(
+                Rect::from_min_size(cell(0.0, 1.0).min, vec2(r.width(), r.height() / 3.0)),
+                1.0,
+                Stroke::new(1.0, t.separator),
+                StrokeKind::Inside,
+            );
         }
         Glyph::Dots => {
             for (j, c) in [green, yellow, red].into_iter().enumerate() {

@@ -417,6 +417,10 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "By Row" => "По строкам",
         "Column" => "Столбец",
         "Win/Loss" => "Выигрыш/проигрыш",
+        "Green Data Bars" => "Зелёные гистограммы",
+        "Blue-White-Red Scale" => "Шкала сине-бело-красная",
+        "White-Green Scale" => "Шкала бело-зелёная",
+        "Duplicate Values" => "Повторяющиеся значения",
         _ => return None,
     })
 }

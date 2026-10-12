@@ -417,6 +417,10 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "By Row" => "행 기준",
         "Column" => "열",
         "Win/Loss" => "이익/손실",
+        "Green Data Bars" => "녹색 데이터 막대",
+        "Blue-White-Red Scale" => "파랑-흰색-빨강 눈금",
+        "White-Green Scale" => "흰색-녹색 눈금",
+        "Duplicate Values" => "중복 값",
         _ => return None,
     })
 }

@@ -415,6 +415,10 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "By Row" => "Podle řádků",
         "Column" => "Sloupec",
         "Win/Loss" => "Zisk/ztráta",
+        "Green Data Bars" => "Zelené datové čáry",
+        "Blue-White-Red Scale" => "Škála modrá-bílá-červená",
+        "White-Green Scale" => "Škála bílá-zelená",
+        "Duplicate Values" => "Duplicitní hodnoty",
         _ => return None,
     })
 }

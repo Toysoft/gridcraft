@@ -418,6 +418,10 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "By Row" => "Nach Zeile",
         "Column" => "Säule",
         "Win/Loss" => "Gewinn/Verlust",
+        "Green Data Bars" => "Grüne Datenbalken",
+        "Blue-White-Red Scale" => "Blau-Weiß-Rot-Skala",
+        "White-Green Scale" => "Weiß-Grün-Skala",
+        "Duplicate Values" => "Doppelte Werte",
         _ => return None,
     })
 }

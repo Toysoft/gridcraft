@@ -407,6 +407,10 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "By Row" => "Par ligne",
         "Column" => "Colonne",
         "Win/Loss" => "Gain/perte",
+        "Green Data Bars" => "Barres de données vertes",
+        "Blue-White-Red Scale" => "Échelle bleu-blanc-rouge",
+        "White-Green Scale" => "Échelle blanc-vert",
+        "Duplicate Values" => "Valeurs en double",
         _ => return None,
     })
 }

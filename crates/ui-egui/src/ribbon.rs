@@ -2430,8 +2430,13 @@ pub fn shortcut(app: &mut SheetApp, key: Key, m: Modifiers) {
         Key::T => Some(("insert.table", json!({}))),
         Key::E => Some(("edit.flashFill", json!({}))),
         Key::Q => {
-            // Quick Analysis; a single cell has nothing to analyse, which is not worth an alert.
-            let _ = crate::quick_analysis::toggle(app, None);
+            // Quick Analysis; a single cell has nothing to analyse, which is not worth an alert,
+            // but several areas deserve to be told why nothing opened.
+            if let Err(e) = crate::quick_analysis::toggle(app, None)
+                && app.session.active().is_some_and(|d| d.selection.ranges.len() > 1)
+            {
+                app.alert(e);
+            }
             None
         }
         Key::Num1 => {
