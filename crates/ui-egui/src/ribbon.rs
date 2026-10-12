@@ -3,6 +3,7 @@
 use egui::{Align2, Color32, Key, Modifiers, Order, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use gridcraft_engine::model::{HAlign, Style, VAlign};
 use serde_json::json;
+use std::collections::HashMap;
 
 use crate::SheetApp;
 use crate::icons::{self, Icon};
@@ -13,6 +14,14 @@ use crate::widgets::{
 };
 
 pub const TABS: &[&str] = &["Home", "Insert", "Draw", "Page Layout", "Formulas", "Data", "Review", "View", "Automate"];
+
+/// The separator drawn between ribbon groups.
+const GROUP_SEP_W: f32 = 13.0;
+/// The ribbon row's spacing between groups (and after the last one).
+const GROUP_ROW_SPACING: f32 = 2.0;
+/// What joins a group's row to the one before it: the separator plus its spacing on both sides.
+/// A group's measure starts at its lead, so plans sum to the row's real width.
+const GROUP_LEAD: f32 = GROUP_SEP_W + 2.0 * GROUP_ROW_SPACING;
 
 /// macOS draws the window into the title bar (`with_fullsize_content_view`) and AppKit paints the
 /// traffic lights itself, centred in its standard 28 pt title-bar band. Moving them would take
@@ -169,6 +178,10 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         .exact_size(h)
         .frame(egui::Frame::NONE.fill(t.window).inner_margin(egui::Margin { left: 10, right: 10, top: 0, bottom: 6 }))
         .show(ui, |ui| {
+            // The card's budget is the panel's own width, captured before the tab strip lays out:
+            // its content may overflow the panel (clipped, as at the 640 px minimum window), and
+            // that overflow must not widen the card.
+            let panel_width = ui.available_width();
             // Tabs row.
             let tabs_rect = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 32.0));
             ui.scope_builder(egui::UiBuilder::new().max_rect(tabs_rect), |ui| {
@@ -224,7 +237,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 return;
             }
             // Ribbon card.
-            let card = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 88.0));
+            let card = Rect::from_min_size(ui.cursor().min, vec2(panel_width, 88.0));
             ui.painter().rect_filled(card, 10.0, t.ribbon);
             ui.painter().rect_stroke(card, 10.0, Stroke::new(1.0, t.ribbon_border), StrokeKind::Inside);
             let inner = card.shrink2(vec2(10.0, 6.0));
@@ -239,7 +252,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
+                            ui.spacing_mut().item_spacing = vec2(GROUP_ROW_SPACING, GROUP_ROW_SPACING);
                             match app.ui.ribbon_tab.as_str() {
                                 "Home" => home(app, ui),
                                 "Insert" => insert(app, ui),
@@ -265,6 +278,13 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                     overflow.groups = groups;
                     d.insert_temp(RibbonOverflow::id(), overflow);
                 });
+                // The collapse engine: with this frame's measurements, keep what fits expanded
+                // and collapse the rest rightmost-first; the next frame renders from the plan.
+                let measures = group_measures(ui.ctx());
+                let budget = RibbonOverflow::get(ui.ctx()).visible;
+                let current: Vec<String> = ui.ctx().data(|d| d.get_temp(group_plan_id(&app.ui.ribbon_tab))).unwrap_or_default();
+                let plan = plan_for(&measures, budget, &current);
+                ui.ctx().data_mut(|d| d.insert_temp(group_plan_id(&app.ui.ribbon_tab), plan));
             });
         });
 }
@@ -390,7 +410,7 @@ fn contextual_tabs(app: &SheetApp) -> Vec<&'static str> {
 
 fn sep(ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    let (r, _) = ui.allocate_exact_size(vec2(13.0, 72.0), Sense::hover());
+    let (r, _) = ui.allocate_exact_size(vec2(GROUP_SEP_W, 72.0), Sense::hover());
     ui.painter().line_segment([pos2(r.center().x, r.top() + 6.0), pos2(r.center().x, r.bottom() - 6.0)], Stroke::new(1.0, t.separator));
 }
 
@@ -399,9 +419,12 @@ fn sep(ui: &mut Ui) {
 pub struct GroupMeasure {
     /// The group's name.
     pub name: String,
-    /// Width the group's expanded body took this frame.
+    /// Width of the group's row slot this frame, its lead separator included. While the group
+    /// renders collapsed (its body not laid out) this is its cached expanded width, so the plan
+    /// always computes with the width a collapse hands back.
     pub width: f32,
-    /// Width the group's collapsed launcher button would need.
+    /// Width of the group's collapsed row: the launcher button plus the lead separator, whether
+    /// the group renders collapsed (measured) or expanded (what its launcher would take).
     pub launcher: f32,
 }
 
@@ -424,6 +447,55 @@ pub fn group_plan_id(tab: &str) -> egui::Id {
     egui::Id::new(("ribbon_group_plan", tab))
 }
 
+/// The slack a collapse plan must leave before it hands a launcher its body back, so a group at
+/// the fitting boundary does not collapse and expand again every other frame.
+const COLLAPSE_HYSTERESIS: f32 = 24.0;
+
+/// The width the row of `measures` needs with `collapsed` rendered as launchers: each collapsed
+/// group contributes its launcher width, each expanded one its body.
+fn row_width(measures: &[GroupMeasure], collapsed: &[String]) -> f32 {
+    measures.iter().map(|m| if collapsed.iter().any(|n| n == &m.name) { m.launcher } else { m.width }).sum()
+}
+
+/// The collapse plan for a tab whose groups measured `measures` into a `budget`-wide card: the
+/// names to render as launchers so the row fits. Groups already collapsed in `current` (the
+/// tab's previous plan) stay collapsed unless there is room; the rest collapse rightmost-first,
+/// and a group whose launcher saves nothing (`saving <= 0.5`) is never collapsed. Expansion runs
+/// leftmost-first and only with [`COLLAPSE_HYSTERESIS`] to spare, so plans are stable at the
+/// fitting boundary. The returned names follow `measures` (render) order, and every loop walks
+/// the groups at most once.
+fn plan_for(measures: &[GroupMeasure], budget: f32, current: &[String]) -> Vec<String> {
+    let saving = |m: &GroupMeasure| (m.width - m.launcher).max(0.0);
+    // Groups already collapsed keep their launcher; a group whose measures show no saving is
+    // never worth a launcher.
+    let mut collapsed: Vec<String> =
+        measures.iter().filter(|m| saving(m) > 0.5 && current.iter().any(|n| n == &m.name)).map(|m| m.name.clone()).collect();
+    // Expand leftmost first, and only with the hysteresis margin.
+    while let Some(next) = measures.iter().find(|m| collapsed.iter().any(|n| n == &m.name)) {
+        let expanded = row_width(measures, &collapsed) - next.launcher + next.width;
+        if expanded <= budget - COLLAPSE_HYSTERESIS {
+            collapsed.retain(|n| n != &next.name);
+        } else {
+            break;
+        }
+    }
+    // Collapse rightmost first until the row fits.
+    while row_width(measures, &collapsed) > budget {
+        let Some(candidate) = measures.iter().rev().find(|m| !collapsed.iter().any(|n| n == &m.name) && saving(m) > 0.5) else {
+            break;
+        };
+        collapsed.push(candidate.name.clone());
+    }
+    // In render order, so plans read like the row they describe.
+    measures.iter().filter(|m| collapsed.iter().any(|n| n == &m.name)).map(|m| m.name.clone()).collect()
+}
+
+/// The tab's computed plan (the groups rendered as launchers), in render order; empty when no
+/// plan was computed yet. Test getter for what [`show`] writes to [`group_plan_id`].
+pub fn collapsed_names(ctx: &egui::Context, tab: &str) -> Vec<String> {
+    ctx.data(|d| d.get_temp::<Vec<String>>(group_plan_id(tab))).unwrap_or_default()
+}
+
 /// Where [`show`] files the active tab's [`group_plan_id`] plan for `group` to read (`group`
 /// renders without knowing which tab it is on).
 fn group_plan_active_id() -> egui::Id {
@@ -438,6 +510,18 @@ fn group_dropdown_open_id() -> egui::Id {
     egui::Id::new("ribbon_group_dropdown_open")
 }
 
+/// Where each group's last expanded row-slot width lives (filled whenever a group renders
+/// expanded, read while it renders collapsed — see [`GroupMeasure::width`]). Keyed by group name,
+/// so same-named groups on different tabs share an entry. Never cleared: stale entries for
+/// groups a tab no longer shows are simply never read.
+fn group_expanded_widths_id() -> egui::Id {
+    egui::Id::new("ribbon_group_expanded_widths")
+}
+
+fn expanded_widths(ctx: &egui::Context) -> HashMap<String, f32> {
+    ctx.data(|d| d.get_temp(group_expanded_widths_id())).unwrap_or_default()
+}
+
 /// Draws one ribbon group: a separator before it (none before the row's first group, as in Excel),
 /// then either its body, or — when the tab's plan at [`group_plan_id`] names it — a launcher
 /// button whose dropdown re-runs the body. Under an id salt derived from `name`, either way, so
@@ -445,11 +529,14 @@ fn group_dropdown_open_id() -> egui::Id {
 /// width it took and the launcher size for this frame.
 pub(crate) fn group(ui: &mut Ui, name: &str, hero: Icon, body: impl FnOnce(&mut Ui)) {
     let collapsed = ui.ctx().data(|d| d.get_temp::<Vec<String>>(group_plan_active_id())).is_some_and(|plan| plan.iter().any(|g| g == name));
-    if ui.cursor().min.x > ui.max_rect().left() + 0.5 {
+    // The measure starts before the separator: a group's row slot is the lead (separator and its
+    // spacing) plus the content plus the row's trailing spacing, so plans sum to the real row.
+    let start = ui.cursor().min.x;
+    let has_lead = ui.cursor().min.x > ui.max_rect().left() + 0.5;
+    if has_lead {
         sep(ui);
     }
-    let start = ui.cursor().min.x;
-    let launcher = if collapsed {
+    let (launcher, width) = if collapsed {
         let r = launcher_button(ui, hero, name);
         let dropdown_id = egui::Id::new(("ribbon_group_dropdown", name));
         let shared: Option<String> = ui.ctx().data(|d| d.get_temp(group_dropdown_open_id())).unwrap_or_default();
@@ -492,12 +579,30 @@ pub(crate) fn group(ui: &mut Ui, name: &str, hero: Icon, body: impl FnOnce(&mut 
                 },
             );
         }
-        r.rect.width()
+        // The rendered launcher row, and the width the body would take back: the plan computes
+        // with true sizes, so a collapsed group reports its cached expanded slot.
+        let row = (ui.cursor().min.x - start).max(0.0);
+        let expanded = expanded_widths(ui.ctx()).get(name).copied();
+        (row, expanded.unwrap_or(row))
     } else {
+        // The group is expanded while its dropdown temp names it: the plan changed under the open
+        // dropdown, so close it — it must not re-open without a click on the launcher.
+        ui.ctx().data_mut(|d| {
+            let open: Option<String> = d.get_temp(group_dropdown_open_id()).unwrap_or_default();
+            if open.as_deref() == Some(name) {
+                d.insert_temp::<Option<String>>(group_dropdown_open_id(), None);
+            }
+        });
         ui.push_id(("ribbon_group", name), |ui| body(ui));
-        big_button_width(ui, name)
+        let row = (ui.cursor().min.x - start).max(0.0);
+        ui.ctx().data_mut(|d| {
+            d.get_temp_mut_or::<HashMap<String, f32>>(group_expanded_widths_id(), HashMap::new()).insert(name.to_owned(), row);
+        });
+        // What this group's collapsed row would take: the launcher button, the lead separator if
+        // the row draws one for it (the first group has none), and the row's trailing spacing.
+        let launcher_row = big_button_width(ui, name) + if has_lead { GROUP_LEAD } else { GROUP_ROW_SPACING };
+        (launcher_row, row)
     };
-    let width = (ui.cursor().min.x - start).max(0.0);
     let measure = GroupMeasure { name: name.to_owned(), width, launcher };
     ui.ctx().data_mut(|d| {
         d.get_temp_mut_or::<Vec<GroupMeasure>>(group_measures_id(), Vec::new()).push(measure);
@@ -2793,5 +2898,56 @@ mod title_bar_tests {
         let margin = (MAC_TITLE_BAR - MAC_LIGHT) / 2.0;
         let lights_end = MAC_LIGHTS_LEFT + 2.0 * MAC_LIGHT_PITCH + MAC_LIGHT;
         assert_eq!(MAC_CONTENT_LEFT - lights_end, margin);
+    }
+}
+
+#[cfg(test)]
+mod collapse_plan_tests {
+    use super::*;
+
+    fn m(name: &str, width: f32, launcher: f32) -> GroupMeasure {
+        GroupMeasure { name: name.to_owned(), width, launcher }
+    }
+
+    #[test]
+    fn plan_for_is_empty_when_everything_fits() {
+        let measures = [m("a", 100.0, 40.0), m("b", 100.0, 40.0), m("c", 100.0, 40.0)];
+        assert!(plan_for(&measures, 400.0, &[]).is_empty(), "everything fits expanded");
+        // Any current: slack hands every launcher back its body.
+        let all = ["a".to_owned(), "b".to_owned(), "c".to_owned()];
+        assert!(plan_for(&measures, 400.0, &all).is_empty(), "everything fits expanded");
+    }
+
+    #[test]
+    fn plan_for_collapses_rightmost_first() {
+        // 10 px launchers so two collapsed groups fit into 120 px.
+        let measures = [m("a", 100.0, 10.0), m("b", 100.0, 10.0), m("c", 100.0, 10.0)];
+        assert_eq!(plan_for(&measures, 250.0, &[]), vec!["c".to_owned()]);
+        assert_eq!(plan_for(&measures, 120.0, &[]), vec!["b".to_owned(), "c".to_owned()]);
+    }
+
+    #[test]
+    fn plan_for_skips_groups_that_save_nothing() {
+        // Group b's launcher is as wide as its body: collapsing it saves nothing, ever.
+        let measures = [m("a", 100.0, 30.0), m("b", 100.0, 100.0), m("c", 100.0, 30.0)];
+        assert_eq!(plan_for(&measures, 250.0, &[]), vec!["c".to_owned()]);
+        assert_eq!(plan_for(&measures, 160.0, &[]), vec!["a".to_owned(), "c".to_owned()]);
+        for budget in [250.0, 160.0, 131.0, 30.0] {
+            let plan = plan_for(&measures, budget, &[]);
+            assert!(!plan.iter().any(|n| n == "b"), "{budget}: the no-saving group is never in the plan");
+        }
+    }
+
+    #[test]
+    fn plan_for_hysteresis_expands_only_with_margin() {
+        let measures = [m("a", 100.0, 40.0), m("b", 100.0, 40.0), m("c", 100.0, 40.0)];
+        let expanded_total: f32 = measures.iter().map(|g| g.width).sum();
+        let current = ["b".to_owned()];
+        // One pixel short of the margin: b stays a launcher.
+        let short = expanded_total + COLLAPSE_HYSTERESIS - 1.0;
+        assert_eq!(plan_for(&measures, short, &current), vec!["b".to_owned()]);
+        // Past the margin: b gets its body back.
+        let roomy = expanded_total + COLLAPSE_HYSTERESIS + 1.0;
+        assert!(plan_for(&measures, roomy, &current).is_empty(), "past the margin everything expands");
     }
 }

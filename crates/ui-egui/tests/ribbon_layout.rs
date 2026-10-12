@@ -60,9 +60,10 @@ fn every_tab_records_its_groups() {
 
 #[test]
 fn an_overflowing_tab_shows_scroll_arrows_that_scroll() {
-    let mut h = app_at(700.0, "Home");
+    // 500 px: even fully collapsed, Home cannot fit, so the tab genuinely overflows and scrolls.
+    let mut h = app_at(500.0, "Home");
     let o = RibbonOverflow::get(&h.ctx);
-    assert!(o.overflows(), "Home is wider than a 700 px window");
+    assert!(o.overflows(), "Home is wider than a 500 px window even collapsed");
     assert_eq!(o.offset, 0.0);
     assert!(h.query_by_label("Scroll ribbon left").is_none(), "nothing to the left yet");
     h.get_by_label("Scroll ribbon right").click();
@@ -120,8 +121,10 @@ fn big_split_button_separates_the_default_action_from_the_menu() {
 
 #[test]
 fn collapsed_group_opens_popup_and_runs_its_command() {
-    let mut h = app_at(1600.0, "Home");
-    h.ctx.data_mut(|d| d.insert_temp(gridcraft_ui_egui::ribbon::group_plan_id("Home"), vec!["Font".to_string()]));
+    // 640 px: the collapse engine itself turns Font into a launcher (the plan is computed per
+    // frame now, so a hand-written plan would be recomputed away).
+    let mut h = app_at(640.0, "Home");
+    assert!(gridcraft_ui_egui::ribbon::collapsed_names(&h.ctx, "Home").iter().any(|n| n == "Font"), "Font is collapsed at 640 px");
     h.run_steps(1);
     let launcher = h.get_by_label("Font"); // accessible name from launcher_button
     let hidden = h.query_by_label("Bold (⌘B)").is_none(); // toggle_button's accessible name
@@ -138,9 +141,9 @@ fn collapsed_group_opens_popup_and_runs_its_command() {
 
 #[test]
 fn collapsed_group_dropdown_survives_nested_control_popups() {
-    let mut h = app_at(1600.0, "Home");
-    h.ctx.data_mut(|d| d.insert_temp(gridcraft_ui_egui::ribbon::group_plan_id("Home"), vec!["Font".to_string()]));
-    h.run_steps(1);
+    // 640 px: the collapse engine itself turns Font into a launcher (the plan is computed per
+    // frame now, so a hand-written plan would be recomputed away).
+    let mut h = app_at(640.0, "Home");
     h.get_by_label("Font").click();
     h.run_steps(2);
     // The Font combo inside the dropdown opens a popup of its own.
@@ -184,4 +187,59 @@ fn formulas_autosum_runs_on_the_icon_and_opens_its_menu_on_the_label() {
     h.run_steps(2);
     let last = h.state().session.journal.iter().rev().find(|(id, _)| id == "formulas.autoSum").map(|(_, p)| p.clone());
     assert_eq!(last.and_then(|p| p.get("function").and_then(|f| f.as_str().map(str::to_string))).as_deref(), Some("AVERAGE"));
+}
+
+#[test]
+fn full_width_keeps_every_group_expanded() {
+    let h = app_at(1440.0, "Home");
+    assert!(!RibbonOverflow::get(&h.ctx).groups.is_empty());
+    assert!(gridcraft_ui_egui::ribbon::collapsed_names(&h.ctx, "Home").is_empty(), "nothing collapsed at full width");
+}
+
+#[test]
+fn narrow_home_collapses_rightmost_groups_first() {
+    let h = app_at(900.0, "Home");
+    let plan = gridcraft_ui_egui::ribbon::collapsed_names(&h.ctx, "Home");
+    assert!(!plan.is_empty(), "some groups collapsed at 900 px");
+    assert!(!RibbonOverflow::get(&h.ctx).overflows(), "the collapsed tab fits");
+    let names: Vec<_> = RibbonOverflow::get(&h.ctx).groups.iter().map(|(n, _)| n.clone()).collect();
+    assert!(plan.iter().all(|p| names.contains(p)), "plan names exist on this tab");
+    // Rightmost-first: the rightmost collapsed group renders right of the leftmost expanded one.
+    let pos = |n: &str| names.iter().position(|x| x == n);
+    if let (Some(max_collapsed), Some(min_expanded)) =
+        (plan.iter().filter_map(|p| pos(p)).max(), names.iter().enumerate().filter(|(_, n)| !plan.contains(*n)).map(|(i, _)| i).min())
+    {
+        assert!(max_collapsed > min_expanded, "rightmost groups collapse first");
+    }
+}
+
+#[test]
+fn very_narrow_home_collapses_all_groups() {
+    // 550 px: narrow enough that even the leftmost group must become a launcher for the row to
+    // fit (six collapsed still overflow), and wide enough that the fully collapsed row fits.
+    let h = app_at(550.0, "Home");
+    let plan = gridcraft_ui_egui::ribbon::collapsed_names(&h.ctx, "Home");
+    let saving = gridcraft_ui_egui::ribbon::group_measures(&h.ctx).iter().filter(|m| (m.width - m.launcher) > 0.5).count();
+    assert!(!RibbonOverflow::get(&h.ctx).overflows(), "fits fully collapsed");
+    assert_eq!(plan.len(), saving, "every collapsible group is collapsed");
+    // A collapsed group's measure records its launcher row (never a stale expanded slot), and
+    // keeps the expanded width the plan arithmetic needs.
+    assert!(
+        gridcraft_ui_egui::ribbon::group_measures(&h.ctx).iter().all(|m| m.launcher > 40.0 && m.width >= m.launcher),
+        "collapsed groups record launcher-row measures: {:?}",
+        gridcraft_ui_egui::ribbon::group_measures(&h.ctx)
+    );
+}
+
+#[test]
+fn switching_tabs_does_not_apply_the_previous_tabs_plan() {
+    let mut h = app_at(700.0, "Home");
+    let home_plan = gridcraft_ui_egui::ribbon::collapsed_names(&h.ctx, "Home");
+    assert!(!home_plan.is_empty(), "Home collapses at 700 px");
+    h.state_mut().ui.ribbon_tab = "Insert".into();
+    h.run_steps(1);
+    // Insert's plan key starts unset: its first frame treats all groups expanded,
+    // then recomputes only from Insert's own measurements.
+    let insert_plan = gridcraft_ui_egui::ribbon::collapsed_names(&h.ctx, "Insert");
+    assert!(insert_plan != home_plan);
 }
