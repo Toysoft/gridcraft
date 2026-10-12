@@ -274,6 +274,13 @@ fn insert_table(s: &mut Session, p: &Json) -> Result<Json> {
                     dest.map(|c| (c, v))
                 })
                 .collect();
+            sh.cell_runs = std::mem::take(&mut sh.cell_runs)
+                .into_iter()
+                .filter_map(|(c, v)| {
+                    let dest = if c.col >= r.start.col && c.col <= r.end.col && c.row >= r.start.row { c.offset(1, 0) } else { Some(c) };
+                    dest.map(|c| (c, v))
+                })
+                .collect();
             for (i, c) in (r.start.col..=r.end.col).enumerate() {
                 sh.set_value(CellRef::new(r.start.row, c), gridcraft_core::Value::text(format!("Column{}", i + 1)));
             }

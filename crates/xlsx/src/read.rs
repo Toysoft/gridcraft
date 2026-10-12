@@ -6,6 +6,7 @@ use gridcraft_core::{DateSystem, RangeRef};
 use gridcraft_model::{CalcMode, CellPicture, DefinedName, Sheet, Style, StyleId, StyleTable, Visibility, Workbook};
 
 use crate::package::{Package, Rel};
+use crate::runs;
 use crate::styles::{StylesIn, read_styles};
 use crate::xml::{self, El};
 use crate::{IoError, ReadReport};
@@ -14,7 +15,12 @@ use crate::{IoError, ReadReport};
 pub struct Ctx<'a> {
     pub pkg: Package<'a>,
     pub report: ReadReport,
-    pub sst: Vec<Arc<str>>,
+    /// Shared strings: the plain text every sharing cell stores, plus its rich-text runs when
+    /// the item has any worth keeping (issue #774).
+    pub sst: Vec<runs::Si>,
+    /// Rich-text runs still attachable this workbook: every kept run (shared or inline) spends
+    /// one unit; at zero, hostile input loses its runs and keeps its text.
+    pub run_budget: u64,
     /// Cell format index → model style.
     pub xf_map: Vec<StyleId>,
     pub dxfs: Vec<Style>,
@@ -70,6 +76,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         pkg,
         report: ReadReport::default(),
         sst: vec![],
+        run_budget: 1 << 20,
         xf_map: vec![],
         dxfs: vec![],
         palette: crate::tables::INDEXED.to_vec(),
@@ -139,7 +146,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
             Some(b) => {
                 let mut sst = Vec::new();
                 let res = xml::parse_streaming(&b, &["si"], &mut |si| {
-                    sst.push(Arc::from(xml::rich_text(&si)));
+                    sst.push(runs::Si::parse(&si, &cx.palette, &mut cx.run_budget));
                     Ok(())
                 });
                 if let Err(e) = res {

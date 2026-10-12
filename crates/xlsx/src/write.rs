@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 
 use gridcraft_core::RangeRef;
 use gridcraft_formula::quote_sheet;
-use gridcraft_model::{CalcMode, CalcSettings, Style, Visibility, Workbook};
+use gridcraft_model::{CalcMode, CalcSettings, CellRuns, Style, Visibility, Workbook};
 
 use crate::package::ZipOut;
 use crate::xml::{esc, esc_attr};
@@ -83,23 +83,42 @@ impl Rels {
     }
 }
 
+/// One shared string: its plain text and, when it has rich-text runs, its formatting (same
+/// text with different runs is a distinct string, as in Excel's shared-string table).
+pub struct SstEntry {
+    pub text: String,
+    pub runs: Option<CellRuns>,
+}
+
 /// Shared string table being built.
 #[derive(Default)]
 pub struct Sst {
-    list: Vec<String>,
-    map: HashMap<String, u32>,
+    list: Vec<SstEntry>,
+    map: HashMap<(String, Option<CellRuns>), u32>,
     pub count: u64,
 }
 
 impl Sst {
     pub fn index(&mut self, s: &str) -> u32 {
+        self.index_entry(s, None)
+    }
+
+    /// Indexes a string that carries rich-text runs. Deduplicates by text **and** runs: the
+    /// same text with different runs is its own entry.
+    pub fn index_rich(&mut self, s: &str, runs: &CellRuns) -> u32 {
+        self.index_entry(s, Some(runs.clone()))
+    }
+
+    fn index_entry(&mut self, s: &str, runs: Option<CellRuns>) -> u32 {
         self.count += 1;
-        if let Some(&i) = self.map.get(s) {
+        let key = (s.to_string(), runs);
+        if let Some(&i) = self.map.get(&key) {
             return i;
         }
         let i = self.list.len() as u32;
-        self.list.push(s.to_string());
-        self.map.insert(s.to_string(), i);
+        let entry = SstEntry { text: key.0.clone(), runs: key.1.clone() };
+        self.list.push(entry);
+        self.map.insert(key, i);
         i
     }
 }
@@ -325,8 +344,15 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
     );
     wb_rels.add("theme", "theme/theme1.xml");
     let mut sst = format!("{XML_DECL}<sst xmlns=\"{NS_MAIN}\" count=\"{}\" uniqueCount=\"{}\">", out.sst.count, out.sst.list.len());
-    for t in &out.sst.list {
-        let _ = write!(sst, "<si>{}</si>", crate::xml::t_el(t));
+    for entry in &out.sst.list {
+        // Rich runs go back as `<r><rPr>…</rPr><t>slice</t></r>`; a runs entry that does not
+        // line up with the text (written but never added through `index_rich`) falls back to
+        // the plain `<t>`.
+        let body = match &entry.runs {
+            Some(runs) => crate::styles::si_runs_xml(&entry.text, runs).unwrap_or_else(|| crate::xml::t_el(&entry.text)),
+            None => crate::xml::t_el(&entry.text),
+        };
+        let _ = write!(sst, "<si>{body}</si>");
     }
     sst.push_str("</sst>");
     out.part("xl/sharedStrings.xml", Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"), sst.into_bytes());

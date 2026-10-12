@@ -957,10 +957,13 @@ fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
         };
         let mut moved_formulas = Vec::new();
         let mut moved_pictures = std::collections::BTreeMap::new();
+        let mut moved_runs = std::collections::BTreeMap::new();
         if cut_move {
             // Remove the source first (contents and formats), and fix references to it.
             let source = cx.sheet_mut(clip.sheet)?;
             moved_pictures = source.cell_pictures.iter().filter(|(c, _)| src.contains(**c)).map(|(c, p)| (*c, p.clone())).collect();
+            // `take_cells` drops the runs side-table entries; keep them to move with their cells.
+            moved_runs = source.cell_runs.iter().filter(|(c, _)| src.contains(**c)).map(|(c, cr)| (*c, cr.clone())).collect();
             let taken = source.take_cells(src);
             for (c, _) in &taken {
                 cx.touch(clip.sheet, *c);
@@ -1132,6 +1135,13 @@ fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
                         }
                         if let Some(picture) = new_picture {
                             cx.sheet_mut(dest_sheet)?.cell_pictures.insert(dest, picture);
+                        }
+                        // A cut moves its cells' rich text with them (a copy pastes flat text).
+                        if cut_move
+                            && !link
+                            && let Some(cr) = moved_runs.get(&sc)
+                        {
+                            cx.sheet_mut(dest_sheet)?.cell_runs.insert(dest, cr.clone());
                         }
                         cx.touch(dest_sheet, dest);
                     }

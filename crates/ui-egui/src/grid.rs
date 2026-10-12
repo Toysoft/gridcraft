@@ -973,7 +973,6 @@ pub(crate) fn paint_quadrant(
         if text.is_empty() {
             continue;
         }
-        let color = ncolor.unwrap_or(lk.text_color);
         let halign = match st.align.h {
             HAlign::General => match v {
                 Value::Number(_) => HAlign::Right,
@@ -986,10 +985,20 @@ pub(crate) fn paint_quadrant(
         let indent = st.align.indent as f32 * 9.0 * z;
         let pad = 2.5 * z;
         let rotated = st.align.rotation != 0 && st.align.rotation != 255;
+        // Rich-text runs (#774): a runs side-table valid for the displayed text paints it one
+        // section per run, each in its own merged font and colour.
+        let wrap_w = (rect.width() - 2.0 * pad - indent).max(4.0);
+        let wrapped = !rotated && (st.align.wrap || st.align.h == HAlign::Justify);
+        let cell_runs = sh.cell_runs.get(&c);
+        let rjob = cell_runs.and_then(|r| crate::cell_runs::job(&text, r, &st.font, lk.text_color, &wb.theme, z, wrapped.then_some(wrap_w)));
+        // The job carries its own colours, so the number format's section colour only paints flat text.
+        let color = if rjob.is_some() { lk.text_color } else { ncolor.unwrap_or(lk.text_color) };
         // Rotated text wraps along its own direction (below), not across the column width.
-        if !rotated && (st.align.wrap || st.align.h == HAlign::Justify) {
-            let wrap_w = (rect.width() - 2.0 * pad - indent).max(4.0);
-            let mut job = egui::text::LayoutJob::simple(text.clone(), font.clone(), color, wrap_w);
+        if wrapped {
+            let mut job = match rjob {
+                Some(j) => j,
+                None => egui::text::LayoutJob::simple(text.clone(), font.clone(), color, wrap_w),
+            };
             job.halign = match halign {
                 HAlign::Center | HAlign::CenterAcross => egui::Align::Center,
                 HAlign::Right => egui::Align::RIGHT,
@@ -1013,13 +1022,22 @@ pub(crate) fn paint_quadrant(
             .flatten();
         let shrunk = small.is_some();
         let font = small.unwrap_or(font);
-        let mut galley = p.layout_no_wrap(first_line.clone(), font.clone(), color);
+        // The runs job stands in for the flat first-line galley, unless a flat-only
+        // transformation (shrink to fit above, `####` or fill characters below) repaints the
+        // text flat.
+        let fjob = if shrunk || fill_char.is_some() { None } else { rjob.as_ref().map(crate::cell_runs::first_line) };
+        let mut runs_painted = fjob.is_some();
+        let mut galley = match fjob {
+            Some(j) => p.layout_job(j),
+            None => p.layout_no_wrap(first_line.clone(), font.clone(), color),
+        };
         let mut w = galley.size().x;
         // Numbers and dates never overflow: they show #### when too narrow.
         if !shrunk && (numeric || matches!(v, Value::Number(_))) && w > avail_w - 2.0 * pad && st.align.h != HAlign::Fill {
             let n = ((avail_w - 2.0 * pad) / char_w).floor().max(1.0) as usize;
             galley = p.layout_no_wrap("#".repeat(n), font.clone(), color);
             w = galley.size().x;
+            runs_painted = false;
         }
         // Repeat fill (`*` in number formats) / Fill alignment.
         if let Some((ch, pos)) = fill_char
@@ -1086,8 +1104,16 @@ pub(crate) fn paint_quadrant(
             let angle = -(st.align.rotation as f32).to_radians();
             // Upright (±90°) wrapped text wraps to the row height: lines then stack across the column.
             let galley = if st.align.wrap && st.align.rotation.abs() == 90 {
-                let job = egui::text::LayoutJob::simple(text.clone(), font.clone(), color, (rect.height() - 2.0 * pad).max(4.0));
-                p.layout_job(job)
+                let wrap_h = (rect.height() - 2.0 * pad).max(4.0);
+                match &rjob {
+                    Some(j) => {
+                        let mut j = j.clone();
+                        j.wrap.max_width = wrap_h;
+                        j.break_on_newline = true;
+                        p.layout_job(j)
+                    }
+                    None => p.layout_job(egui::text::LayoutJob::simple(text.clone(), font.clone(), color, wrap_h)),
+                }
             } else {
                 galley.clone()
             };
@@ -1099,18 +1125,40 @@ pub(crate) fn paint_quadrant(
             cp.galley(pos2(x, y), galley.clone(), color);
         }
         let baseline = y + gh * 0.82;
-        match st.font.underline {
-            Underline::None => {}
-            Underline::Double | Underline::DoubleAccounting => {
-                cp.line_segment([pos2(x, baseline + 1.0), pos2(x + w, baseline + 1.0)], Stroke::new(1.0, color));
-                cp.line_segment([pos2(x, baseline + 3.0), pos2(x + w, baseline + 3.0)], Stroke::new(1.0, color));
+        if runs_painted && let Some(runs) = cell_runs {
+            // Per-run decorations (#774): each run's merged font says whether its slice is
+            // underlined or struck; its glyphs give the segment's extent in the galley.
+            let glyphs: Vec<(f32, f32)> =
+                galley.rows.first().map(|pr| pr.row.glyphs.iter().map(|g| (pr.pos.x + g.pos.x, g.advance_width)).collect()).unwrap_or_default();
+            for d in crate::cell_runs::decoration_lines(&glyphs, &galley.job.text, runs, &st.font, lk.text_color, &wb.theme) {
+                match d.underline {
+                    Underline::None => {}
+                    Underline::Double | Underline::DoubleAccounting => {
+                        cp.line_segment([pos2(x + d.x0, baseline + 1.0), pos2(x + d.x1, baseline + 1.0)], Stroke::new(1.0, d.color));
+                        cp.line_segment([pos2(x + d.x0, baseline + 3.0), pos2(x + d.x1, baseline + 3.0)], Stroke::new(1.0, d.color));
+                    }
+                    _ => {
+                        cp.line_segment([pos2(x + d.x0, baseline + 1.0), pos2(x + d.x1, baseline + 1.0)], Stroke::new(1.0, d.color));
+                    }
+                }
+                if d.strike {
+                    cp.line_segment([pos2(x + d.x0, y + gh * 0.55), pos2(x + d.x1, y + gh * 0.55)], Stroke::new(1.0, d.color));
+                }
             }
-            _ => {
-                cp.line_segment([pos2(x, baseline + 1.0), pos2(x + w, baseline + 1.0)], Stroke::new(1.0, color));
+        } else {
+            match st.font.underline {
+                Underline::None => {}
+                Underline::Double | Underline::DoubleAccounting => {
+                    cp.line_segment([pos2(x, baseline + 1.0), pos2(x + w, baseline + 1.0)], Stroke::new(1.0, color));
+                    cp.line_segment([pos2(x, baseline + 3.0), pos2(x + w, baseline + 3.0)], Stroke::new(1.0, color));
+                }
+                _ => {
+                    cp.line_segment([pos2(x, baseline + 1.0), pos2(x + w, baseline + 1.0)], Stroke::new(1.0, color));
+                }
             }
-        }
-        if st.font.strike {
-            cp.line_segment([pos2(x, y + gh * 0.55), pos2(x + w, y + gh * 0.55)], Stroke::new(1.0, color));
+            if st.font.strike {
+                cp.line_segment([pos2(x, y + gh * 0.55), pos2(x + w, y + gh * 0.55)], Stroke::new(1.0, color));
+            }
         }
     }
     // Borders (over fills and text).
