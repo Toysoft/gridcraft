@@ -40,6 +40,8 @@ const MAX_ITEMS: usize = 1_048_576;
 const MAX_FIELDS: usize = 16_384;
 /// The `x14:dataField` extension (Excel 2010 show-values-as additions such as rank).
 const EXT_X14_DATA_FIELD: &str = "{E15A36E0-9728-4e99-A89B-3F7291B0FE68}";
+/// Extension carrying a cache's id for slicer caches.
+const EXT_X14_CACHE_ID: &str = "{725AE2AE-9491-48be-B2B4-4EB974FC3084}";
 const NS_X14: &str = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main";
 
 const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -257,6 +259,18 @@ struct Cache {
     axis_map: Vec<Option<usize>>,
     source_xml: String,
     records: Option<(u64, String)>,
+    /// Fields slicers filter (written with items even off the axes).
+    slicer_fields: Vec<usize>,
+    /// The cache's id for slicer caches (`x14:pivotCacheDefinition pivotCacheId`).
+    slicer_id: Option<u32>,
+}
+
+/// What a slicer cache needs from a written PivotTable.
+pub struct PivotSlicerInfo {
+    /// The cache's `pivotCacheId`.
+    pub cache_id: u32,
+    /// Slicer fields: name and the captions its shared item indices refer to.
+    pub fields: Vec<(String, Vec<String>)>,
 }
 
 /// PivotTables being written; the tables themselves are finished after the styles part (their
@@ -267,6 +281,8 @@ pub struct PivotWriter {
     caches: Vec<(u32, String)>,
     pending: Vec<Pending>,
     tables: u32,
+    /// (sheet, pivot index) → slicer data of PivotTables that slicers filter.
+    slicer_info: HashMap<(usize, usize), PivotSlicerInfo>,
 }
 
 struct Pending {
@@ -283,8 +299,14 @@ impl PivotWriter {
     pub fn add_sheet(&mut self, wb: &Workbook, si: usize, out: &mut Out, rels: &mut Rels) {
         let Some(sheet) = wb.sheet(si) else { return };
         for (idx, pt) in sheet.pivots.iter().enumerate() {
-            let Some(cache) = build_cache(wb, pt, si) else { continue };
+            let slicer_fields = out.slicers.fields_for(si, idx);
+            let Some(mut cache) = build_cache(wb, pt, si, &slicer_fields) else { continue };
             let n = self.caches.len() as u32 + 1;
+            if !cache.slicer_fields.is_empty() {
+                cache.slicer_id = Some(n);
+                let fields = cache.slicer_fields.iter().filter_map(|&i| cache.fields.get(i)).map(|f| (f.name.clone(), f.item_labels())).collect();
+                self.slicer_info.insert((si, idx), PivotSlicerInfo { cache_id: n, fields });
+            }
             let cache_part = format!("xl/pivotCache/pivotCacheDefinition{n}.xml");
             let rec_rid = if let Some((count, xml)) = &cache.records {
                 let mut r = Rels::default();
@@ -306,6 +328,11 @@ impl PivotWriter {
             out.part(&format!("xl/pivotTables/_rels/pivotTable{t}.xml.rels"), None, tr.xml().into_bytes());
             self.pending.push(Pending { part: format!("xl/pivotTables/pivotTable{t}.xml"), sheet: si, idx, cache_id: n, cache });
         }
+    }
+
+    /// Slicer data of the PivotTable `idx` on sheet `si`, when it was written for a slicer.
+    pub fn slicer_info(&self, si: usize, idx: usize) -> Option<&PivotSlicerInfo> {
+        self.slicer_info.get(&(si, idx))
     }
 
     /// Adds the workbook relationships to the caches; returns the `<pivotCaches>` element (empty
@@ -412,7 +439,16 @@ fn header_text(v: &Value) -> String {
     }
 }
 
-fn build_cache(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Option<Cache> {
+/// Whether a slicer on `field` of `pt` can be written: the PivotTable's cache can be built and its
+/// source has the field.
+pub(crate) fn slicer_field_ok(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize, field: &str) -> bool {
+    let Some((si, r, _)) = resolve_source(wb, &pt.source, pivot_sheet, 0) else { return false };
+    let Some(sh) = wb.sheet(si) else { return false };
+    r.count() <= MAX_SOURCE_CELLS && (r.start.col..=r.end.col).any(|c| same(&header_text(&sh.value(CellRef::new(r.start.row, c)).scalar()), field))
+}
+
+/// `slicer_fields`: fields slicers filter, which need shared items.
+fn build_cache(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize, slicer_fields: &[String]) -> Option<Cache> {
     let (si, r, source_xml) = resolve_source(wb, &pt.source, pivot_sheet, 0)?;
     if r.count() > MAX_SOURCE_CELLS {
         return None;
@@ -567,6 +603,12 @@ fn build_cache(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Option<Cac
             cf.itemized = true;
         }
     }
+    let slicer_idx: Vec<usize> = slicer_fields.iter().filter_map(|n| find(&fields, n)).collect();
+    for &i in &slicer_idx {
+        if let Some(f) = fields.get_mut(i) {
+            f.itemized = true;
+        }
+    }
     for f in fields.iter_mut() {
         if f.group.is_some() {
             f.itemized = false;
@@ -630,7 +672,7 @@ fn build_cache(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Option<Cac
             formula: Some(f.to_string()),
         });
     }
-    Some(Cache { fields, axis_map, source_xml, records })
+    Some(Cache { fields, axis_map, source_xml, records, slicer_fields: slicer_idx, slicer_id: None })
 }
 
 fn group_items(sys: DateSystem, by: PivotDateGroup, start: f64, end: f64) -> Vec<String> {
@@ -761,7 +803,14 @@ fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem) -> String {
         }
         s.push_str("</cacheField>");
     }
-    s.push_str("</cacheFields></pivotCacheDefinition>");
+    s.push_str("</cacheFields>");
+    if let Some(id) = c.slicer_id {
+        let _ = write!(
+            s,
+            "<extLst><ext uri=\"{EXT_X14_CACHE_ID}\" xmlns:x14=\"{NS_X14}\"><x14:pivotCacheDefinition pivotCacheId=\"{id}\"/></ext></extLst>"
+        );
+    }
+    s.push_str("</pivotCacheDefinition>");
     s
 }
 
@@ -770,7 +819,8 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
     let find_db = |name: &str| c.fields.iter().position(|f| f.col.is_some() && same(&f.name, name));
     let row_idx: Vec<usize> = c.axis_map.iter().take(pt.rows.len()).filter_map(|x| *x).collect();
     let col_idx: Vec<usize> = c.axis_map.iter().skip(pt.rows.len()).filter_map(|x| *x).collect();
-    // Filters: on an axis field → hidden items there; otherwise a page field.
+    // Filters: on an axis field → hidden items there; a hidden filter (a slicer's) → hidden items
+    // of a field in no area; otherwise a page field.
     let mut hidden: HashMap<usize, &PivotFilter> = HashMap::new();
     let mut pages: Vec<(usize, &PivotFilter)> = Vec::new();
     for f in &pt.filters {
@@ -779,6 +829,11 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
             Some(p) => {
                 if let Some(Some(i)) = c.axis_map.get(p) {
                     hidden.insert(*i, f);
+                }
+            }
+            None if f.hidden => {
+                if let Some(i) = find_db(&f.source_col) {
+                    hidden.insert(i, f);
                 }
             }
             None => {
@@ -908,7 +963,7 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
         if !pt.subtotals_top {
             s.push_str(" subtotalTop=\"0\"");
         }
-        if axis.is_some() {
+        if axis.is_some() || (f.itemized && (hidden.contains_key(&i) || c.slicer_fields.contains(&i))) {
             let collapsed: &[String] = axis_field(i).map(|f| f.collapsed_items.as_slice()).unwrap_or(&[]);
             let count = labels.len() + usize::from(pt.subtotals);
             let _ = write!(s, "><items count=\"{count}\">");
@@ -1052,6 +1107,8 @@ impl FieldIn {
 struct CacheIn {
     source: String,
     fields: Vec<FieldIn>,
+    /// `x14:pivotCacheDefinition pivotCacheId`: how slicer caches name the cache.
+    slicer_id: Option<u32>,
 }
 
 /// Workbook-level pivot cache lookup, filled from `<pivotCaches>`; caches are parsed once.
@@ -1075,6 +1132,13 @@ impl CachesIn {
             }
         }
         CachesIn { by_id, parsed: HashMap::new(), next_id: 1 }
+    }
+
+    /// Item captions of field `field` in the cache a slicer cache names by `pivotCacheId`, in
+    /// shared item order (what the slicer cache's `<i x>` indices refer to).
+    pub fn slicer_labels(&self, cache_id: u32, field: &str) -> Option<&[String]> {
+        let cache = self.parsed.values().flatten().find(|c| c.slicer_id == Some(cache_id))?;
+        Some(cache.fields.iter().find(|f| f.database && same(&f.name, field))?.labels())
     }
 }
 
@@ -1151,7 +1215,9 @@ fn read_cache(cx: &mut Ctx<'_>, part: &str, sheet_name: &str) -> Option<CacheIn>
         cx.warn("a PivotTable's cache has no fields; kept as plain cells");
         return None;
     }
-    Some(CacheIn { source, fields })
+    let slicer_id =
+        x.child("extLst").and_then(|l| l.kids("ext").find_map(|e| e.child("pivotCacheDefinition"))).and_then(|d| d.attr_u32("pivotCacheId"));
+    Some(CacheIn { source, fields, slicer_id })
 }
 
 /// Reads the PivotTables related to a worksheet part.
@@ -1300,7 +1366,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 if items.iter().any(|it| it.flag("h", false)) {
                     let shown: Vec<String> = items.iter().filter(|it| !it.flag("h", false)).filter_map(|it| lab(it)).collect();
                     if !filters.iter().any(|ff| same(&ff.source_col, &name)) {
-                        filters.push(PivotFilter { source_col: name.clone(), selected: Some(shown) });
+                        filters.push(PivotFilter { source_col: name.clone(), selected: Some(shown), hidden: false });
                     }
                 }
             }
@@ -1327,7 +1393,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 })
             })
         };
-        page_filters.push(PivotFilter { source_col: name, selected });
+        page_filters.push(PivotFilter { source_col: name, selected, hidden: false });
     }
     let mut axis_filters = Vec::new();
     let (rows, rows_values) = axis(cx, &row_x, &mut axis_filters);
@@ -1341,6 +1407,23 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
         if pt.values_on_rows { rows_values.or_else(|| x.attr_u32("dataPosition").map(|p| p as usize)).filter(|p| *p < pt.rows.len()) } else { None };
     filters.extend(page_filters);
     filters.extend(axis_filters);
+    // Hidden items of a field in no area: a slicer's selection on a field the table doesn't show.
+    let page_x: Vec<i64> = pages.iter().filter_map(|p| p.attr_i64("fld")).collect();
+    for (i, e) in pfs.iter().enumerate() {
+        let placed = [&row_x, &col_x, &page_x].iter().any(|l| l.contains(&(i as i64)));
+        let items = items_of(e);
+        if placed || !items.iter().any(|it| it.flag("h", false)) {
+            continue;
+        }
+        let Some((name, _)) = field_ref(cx, cache, i) else { continue };
+        if filters.iter().any(|f| same(&f.source_col, &name)) {
+            continue;
+        }
+        let labels = cache.fields.get(i).map(|f| f.labels().to_vec()).unwrap_or_default();
+        let shown =
+            items.iter().filter(|it| !it.flag("h", false)).filter_map(|it| it.attr_u32("x").and_then(|k| labels.get(k as usize)).cloned()).collect();
+        filters.push(PivotFilter { source_col: name, selected: Some(shown), hidden: true });
+    }
     pt.filters = filters;
 
     // Values.

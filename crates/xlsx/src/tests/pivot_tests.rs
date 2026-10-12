@@ -104,7 +104,7 @@ fn workbook() -> Workbook {
                 ..PivotValue::default()
             },
         ],
-        filters: vec![PivotFilter { source_col: "Channel".into(), selected: Some(vec!["Online".into()]) }],
+        filters: vec![PivotFilter { source_col: "Channel".into(), selected: Some(vec!["Online".into()]), hidden: false }],
         layout: PivotLayout::Tabular,
         grand_totals_rows: false,
         grand_totals_cols: true,
@@ -161,8 +161,8 @@ fn workbook() -> Workbook {
             },
         ],
         filters: vec![
-            PivotFilter { source_col: "Region".into(), selected: Some(vec!["East".into(), "North".into()]) },
-            PivotFilter { source_col: "Product".into(), selected: Some(vec!["A".into(), "B".into()]) },
+            PivotFilter { source_col: "Region".into(), selected: Some(vec!["East".into(), "North".into()]), hidden: false },
+            PivotFilter { source_col: "Product".into(), selected: Some(vec!["A".into(), "B".into()]), hidden: false },
         ],
         layout: PivotLayout::Outline,
         grand_totals_rows: true,
@@ -184,7 +184,7 @@ fn workbook() -> Workbook {
         anchor: at("AB1"),
         rows: vec![field("Product")],
         values: vec![PivotValue { source_col: "Units".into(), func: PivotFunc::Product, name: "Product of Units".into(), ..PivotValue::default() }],
-        filters: vec![PivotFilter { source_col: "Channel".into(), selected: None }],
+        filters: vec![PivotFilter { source_col: "Channel".into(), selected: None, hidden: false }],
         last_range: Some(rr("AB1:AC6")),
         ..PivotTable::default()
     };
@@ -589,4 +589,102 @@ fn data_on_rows_with_one_value_field_reads_without_warning() {
     assert_eq!(pt.values_position, None);
     let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
     assert!(back.sheet(0).unwrap().pivots[0].values_on_rows);
+}
+
+/// `workbook()` plus a slicer on "Report" over the Product field of "Sales by Region", with
+/// "A" and "C" selected (Product is a column field, so the selection is its hidden items).
+fn slicer_workbook() -> Workbook {
+    let mut wb = workbook();
+    let report = wb.sheet_mut(1).unwrap();
+    let pi = report.pivots.iter().position(|p| p.name == "Sales by Region").unwrap();
+    report.pivots[pi].filters.push(PivotFilter { source_col: "Product".into(), selected: Some(vec!["A".into(), "C".into()]), hidden: false });
+    report.slicers.push(Slicer {
+        id: 1,
+        source: SlicerSource::Pivot {
+            pivots: vec![SlicerPivot { sheet: "Report".into(), name: "Sales by Region".into() }],
+            field: "Product".into(),
+            sort: PivotSort::Desc,
+            cross_filter: SlicerCrossFilter::ShowItemsWithNoData,
+            show_missing: false,
+        },
+        caption: "Pick a product".into(),
+        anchor: Anchor { cell: at("M3"), dx: 4.0, dy: 2.0, width: 180.0, height: 240.0, mode: AnchorMode::default() },
+        columns: 2,
+        name: "Product".into(),
+        style: "SlicerStyleDark1".into(),
+        row_height: Some(30.0),
+    });
+    wb
+}
+
+#[test]
+fn pivot_slicer_round_trips() {
+    let wb = slicer_workbook();
+    let bytes = write_xlsx(&wb).unwrap();
+    let parts = unzip(&bytes);
+    let text = |k: &str| String::from_utf8(parts.get(k).unwrap_or_else(|| panic!("missing {k}")).clone()).unwrap();
+    let cache = text("xl/slicerCaches/slicerCache1.xml");
+    assert!(cache.contains("sourceName=\"Product\""), "{cache}");
+    assert!(cache.contains("name=\"Sales by Region\""), "{cache}");
+    assert!(cache.contains("<tabular pivotCacheId="), "{cache}");
+    assert!(cache.contains(" s=\"1\"") && cache.contains("sortOrder=\"descending\""), "{cache}");
+    let slicer = text("xl/slicers/slicer1.xml");
+    assert!(slicer.contains("caption=\"Pick a product\"") && slicer.contains("columnCount=\"2\""), "{slicer}");
+    let ct = text("[Content_Types].xml");
+    assert!(ct.contains("/xl/slicers/slicer1.xml") && ct.contains("/xl/slicerCaches/slicerCache1.xml"), "{ct}");
+    assert!(text("xl/workbook.xml").contains("slicerCaches"));
+    let ws = text("xl/worksheets/sheet2.xml");
+    assert!(ws.contains("x14:slicerList"), "{ws}");
+    let drawing =
+        parts.keys().filter(|k| k.starts_with("xl/drawings/drawing")).map(|k| text(k)).find(|d| d.contains("sle:slicer")).expect("slicer frame");
+    assert!(drawing.contains("mc:AlternateContent") && drawing.contains("mc:Fallback"), "{drawing}");
+
+    let (back, report) = read_xlsx(&bytes).unwrap();
+    assert!(report.warnings.iter().all(|w| !w.contains("slicer") && !w.contains("embedded object")), "{:?}", report.warnings);
+    let a = &wb.sheet(1).unwrap();
+    let b = &back.sheet(1).unwrap();
+    assert_eq!(b.slicers.len(), 1);
+    let (x, y) = (&a.slicers[0], &b.slicers[0]);
+    assert_eq!((&y.source, &y.caption, y.columns, &y.name, &y.style), (&x.source, &x.caption, x.columns, &x.name, &x.style));
+    assert_eq!(y.anchor.cell, x.anchor.cell);
+    assert!((y.anchor.width - x.anchor.width).abs() < 1.0 && (y.anchor.height - x.anchor.height).abs() < 1.0);
+    assert!(y.row_height.is_some_and(|h| (h - 30.0).abs() < 1.0), "{:?}", y.row_height);
+    let pa = a.pivots.iter().find(|p| p.name == "Sales by Region").unwrap();
+    let pb = b.pivots.iter().find(|p| p.name == "Sales by Region").unwrap();
+    assert_eq!(pa.filters, pb.filters, "the slicer's selection is the pivot's hidden items");
+    // A second save is stable.
+    let (again, _) = read_xlsx(&write_xlsx(&back).unwrap()).unwrap();
+    assert_eq!(again.sheet(1).unwrap().slicers, b.slicers);
+}
+
+#[test]
+fn hostile_slicer_parts_warn_not_panic() {
+    let bytes = write_xlsx(&slicer_workbook()).unwrap();
+    let cache = "xl/slicerCaches/slicerCache1.xml";
+    let edits: [(&str, &dyn Fn(&str) -> String); 7] = [
+        // The cache names a PivotTable that doesn't exist.
+        (cache, &|s| s.replace("name=\"Sales by Region\"", "name=\"Nowhere\"")),
+        (cache, &|s| s.replace("tabId=\"", "tabId=\"99")),
+        (cache, &|s| s.replace("pivotCacheId=\"", "pivotCacheId=\"77")),
+        (cache, &|s| s.replace("<i x=\"", "<i x=\"4294967")),
+        (cache, &|_| "garbage <<<".into()),
+        ("xl/slicers/slicer1.xml", &|s| s.replace("cache=\"", "cache=\"Other")),
+        ("xl/slicers/slicer1.xml", &|_| "<slicers/>".into()),
+    ];
+    for (part, f) in edits {
+        let mut parts = unzip(&bytes);
+        let old = String::from_utf8(parts.remove(part).unwrap()).unwrap();
+        let new = f(&old);
+        assert_ne!(old, new, "edit to {part} did nothing");
+        let mut list: Vec<(String, Vec<u8>)> = parts.into_iter().collect();
+        list.push((part.to_string(), new.into_bytes()));
+        let refs: Vec<(&str, &[u8])> = list.iter().map(|(n, d)| (n.as_str(), d.as_slice())).collect();
+        let (wb, report) = read_xlsx(&super::make_zip(&refs)).unwrap();
+        let sh = wb.sheet(1).unwrap();
+        if sh.slicers.is_empty() {
+            assert!(!report.warnings.is_empty(), "no warning after editing {part}");
+        }
+        // Whatever was read saves again.
+        let _ = write_xlsx(&wb).unwrap();
+    }
 }

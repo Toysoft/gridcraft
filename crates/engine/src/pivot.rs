@@ -294,6 +294,89 @@ pub fn distinct_labels(wb: &Workbook, src: &Source, col: usize, group: PivotDate
     items.into_iter().take(limit).map(|i| i.label).collect()
 }
 
+/// Whether a filter's selected labels take in a source value: by its label, or (outside a date
+/// grouping) a number by its plain number text, which is how files name number and date items.
+fn selects(sel: &[String], v: &Value, label: &str, group: PivotDateGroup) -> bool {
+    if sel.iter().any(|s| s.eq_ignore_ascii_case(label)) {
+        return true;
+    }
+    match v.scalar() {
+        Value::Number(n) if group == PivotDateGroup::None => sel.contains(&gridcraft_core::number_to_text(n)),
+        _ => false,
+    }
+}
+
+/// A slicer tile: one item of a PivotTable field.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SlicerTile {
+    /// The item as shown (numbers and dates in the source format).
+    pub label: String,
+    /// The label a [`PivotFilter`] selects the item by: the plain number text for numbers (as
+    /// files store them), else the label.
+    pub key: String,
+    pub selected: bool,
+    /// Some source row with this item passes the PivotTable's other filters.
+    pub has_data: bool,
+}
+
+/// The items of `field` in `pt`'s source as slicer tiles: selection from the PivotTable's filter
+/// on the field, in `sort` order (`None`: source order), and with `cross` the items without data
+/// last or marked as Excel does.
+pub fn slicer_tiles(wb: &Workbook, pt: &PivotTable, sheet: usize, field: &str, sort: PivotSort, cross: SlicerCrossFilter) -> Vec<SlicerTile> {
+    let Ok(src) = read_source(wb, &pt.source, sheet) else { return vec![] };
+    let Some(col) = src.col(field) else { return vec![] };
+    let fmt_of = |c: usize| src.formats.get(c).map(String::as_str).unwrap_or("General");
+    let group_of = |name: &str| {
+        pt.rows.iter().chain(pt.columns.iter()).find(|f| f.source_col.eq_ignore_ascii_case(name)).map(|f| f.date_group).unwrap_or_default()
+    };
+    let own = pt.filters.iter().find(|f| f.source_col.eq_ignore_ascii_case(field)).and_then(|f| f.selected.as_deref());
+    let others: Vec<(usize, &[String], PivotDateGroup)> = pt
+        .filters
+        .iter()
+        .filter(|f| !f.source_col.eq_ignore_ascii_case(field))
+        .filter_map(|f| Some((src.col(&f.source_col)?, f.selected.as_deref()?, group_of(&f.source_col))))
+        .collect();
+    let mut fi = FieldItems::default();
+    let mut data: Vec<bool> = Vec::new();
+    for (i, r) in src.rows.iter().enumerate() {
+        let k = fi.intern(wb, r.get(col).unwrap_or(&Value::Empty), PivotDateGroup::None, fmt_of(col), i) as usize;
+        if data.len() <= k {
+            data.resize(k + 1, false);
+        }
+        if !data[k]
+            && others.iter().all(|(c, sel, g)| {
+                let v = r.get(*c).unwrap_or(&Value::Empty);
+                selects(sel, v, &item_label(wb, v, *g, fmt_of(*c)), *g)
+            })
+        {
+            data[k] = true;
+        }
+        if fi.items.len() > 100_000 {
+            break;
+        }
+    }
+    let mut items: Vec<(Item, bool)> = fi.items.into_iter().zip(data).collect();
+    match sort {
+        PivotSort::Asc => items.sort_by(|a, b| cmp_items(&a.0, &b.0)),
+        PivotSort::Desc => items.sort_by(|a, b| cmp_items(&b.0, &a.0)),
+        PivotSort::None => {}
+    }
+    if cross == SlicerCrossFilter::ShowItemsWithDataAtTop {
+        items.sort_by_key(|(_, d)| !*d);
+    }
+    items
+        .into_iter()
+        .map(|(it, has_data)| {
+            let key = match &it.value {
+                Value::Number(n) => gridcraft_core::number_to_text(*n),
+                _ => it.label.clone(),
+            };
+            let selected = own.is_none_or(|sel| selects(sel, &it.value, &it.label, PivotDateGroup::None));
+            SlicerTile { label: it.label, key, selected, has_data: has_data || cross == SlicerCrossFilter::None }
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------- aggregation
 
 #[derive(Clone, Debug, Default)]
@@ -864,7 +947,7 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
         .filter_map(|f| {
             let c = src.col(&f.source_col)?;
             let g = axis_group(&f.source_col);
-            Some((c, f, g.unwrap_or_default(), g.is_none()))
+            Some((c, f, g.unwrap_or_default(), g.is_none() && !f.hidden))
         })
         .collect();
     let shown_filters: Vec<&(usize, &PivotFilter, PivotDateGroup, bool)> = filters.iter().filter(|f| f.3).collect();
@@ -893,8 +976,8 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
     'rec: for (ri, rec) in src.rows.iter().enumerate() {
         for ((c, f, g, _), fmt) in filters.iter().zip(filter_fmts.iter()) {
             if let Some(sel) = &f.selected {
-                let label = item_label(wb, rec.get(*c).unwrap_or(&Value::Empty), *g, fmt);
-                if !sel.iter().any(|s| s.eq_ignore_ascii_case(&label)) {
+                let v = rec.get(*c).unwrap_or(&Value::Empty);
+                if !selects(sel, v, &item_label(wb, v, *g, fmt), *g) {
                     continue 'rec;
                 }
             }
