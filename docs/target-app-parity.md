@@ -1,6 +1,6 @@
 # Target-app parity: GridCraft vs Microsoft Excel
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (stability: command-sequence fuzzing against undo/redo, XLSX round-trip and full-recalc invariants) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (ODS: formulas import live, #711) · **Target:** Microsoft Excel (Microsoft 365)
 
 This is the authoritative parity assessment. [`ROADMAP.md`](../ROADMAP.md) summarizes it,
 [`gaps.md`](gaps.md) lists every shortfall, and the area checklists hold the detail:
@@ -99,7 +99,7 @@ performance 8, stability 8, localization 4, hardware 2, platforms 2, ecosystem 2
 | Dimension | Weight | Ready | Hours | Evidence |
 |---|---|---|---|---|
 | Features | 45 | ~59% | 300–485 | Table above |
-| File formats | 15 | ~50% | 80–120 | XLSX read/write is broad but unproven on a real corpus and in Excel; XLSB and ODS are values-only import; no XLS, XML Spreadsheet 2003, SYLK, DIF, PRN; VBA dropped; 100 MB XLSX fails (#175). [file-format-parity.md](file-format-parity.md) |
+| File formats | 15 | ~50% | 80–120 | XLSX read/write is broad but unproven on a real corpus and in Excel; XLSB is values-only import, ODS imports values and formulas (#711); no XLS, XML Spreadsheet 2003, SYLK, DIF, PRN; VBA dropped; 100 MB XLSX fails (#175). [file-format-parity.md](file-format-parity.md) |
 | UI/UX fidelity | 12 | ~55% | 50–80 | Excel-style ribbon, galleries, dialogs, formula bar, status bar; 59 commands with shortcuts vs Excel's 200+; key tips on part of the Home tab only; short context menu; single window. [ui-parity.md](ui-parity.md) |
 | Performance | 8 | ~35% | 35–55 | [Performance](#performance) |
 | Stability | 8 | ~60% | 15–25 | Never-crash rules enforced by lint, every command fuzzed with hostile params, random command sequences fuzzed against undo/redo, XLSX round-trip and full-recalc invariants, last-resort guard in `Session::execute`. Field reports: Windows Intel GPU crash (#120), error on close (#117), freeze opening from Finder (#166), screen flashing (#76) |
@@ -284,7 +284,8 @@ The inventory carried over from the 2026-10-07 ROADMAP.md, updated for what land
   elapsed time, fractions, scientific, accounting fill), General narrowing to column width.
 - Files: XLSX read/write (styles, themes, merges, CF, validation, tables, comments, hyperlinks,
   charts, pictures, sparklines, print settings, defined names, shared/array/dynamic formulas),
-  CSV/TSV with encoding and delimiter detection, HTML export, JSON; XLSB and ODS data import (values only, 10-10).
+  CSV/TSV with encoding and delimiter detection, HTML export, JSON; XLSB values-only data import
+  (10-10) and ODS import with formulas (#711).
 - Editing: cell entry with type detection and auto-formats, in-cell and formula-bar editing,
   point mode (click/drag/arrow references), reference colouring, F4 anchor cycling, function
   autocomplete and argument hints, copy/cut/paste and Paste Special (values, formats, transpose,
@@ -332,6 +333,7 @@ The inventory carried over from the 2026-10-07 ROADMAP.md, updated for what land
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | ODS: formulas import live with OpenFormula→Excel translation and cached-result fallback (#711); file-formats evidence and shipped-features list updated |
 | 2026-10-11 | minor | Stability: command-sequence fuzz harness (`crates/engine/tests/command_sequence_fuzz.rs`) checks random command sequences against undo/redo, XLSX round-trip, full-recalc and structure invariants; the sequence bugs it found are fixed (no score change) |
 | 2026-10-11 | minor | Password-encrypted workbooks open (#11): Essentials file-opening work 24–36 h |
 | 2026-10-11 | minor | Worksheet functions 505 / 523 (96.6%; 496 working): ODDFPRICE, ODDFYIELD, ODDLPRICE, ODDLYIELD |

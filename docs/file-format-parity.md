@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (ODS import translates formulas to live cells, #711) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -26,7 +26,7 @@ support comes from `crates/engine/src/io.rs` (`FileKind`), `crates/xlsx/src` and
 | `.xlt` Excel 97-2003 template | R/W | yes (read as `.xls`) | no | | — |
 | `.xlam` / `.xla` add-ins | R/W | no | no | VBA; out of scope | — |
 | `.xml` XML Spreadsheet 2003 | R/W | no | no | Simple to support | — |
-| `.ods` OpenDocument Spreadsheet | R/W | **values only** (#100) | no | Sheets, values, dates, merges, repeated cells, cached formula results; no formulas, formatting, charts; encrypted ODS refused | `ods_tests.rs` |
+| `.ods` OpenDocument Spreadsheet | R/W | **yes, partial** (#100, #711) | no | Sheets, values, dates, merges, repeated cells; formulas imported live via OpenFormula→Excel translation (prefixes, `;` separators, bracketed and quoted-sheet references, `COM.MICROSOFT.*` names; anything without an exact Excel spelling keeps its cached result as a constant, with a warning); error results become error values, matrix formulas become array formulas; no formatting, charts or other features; encrypted ODS refused | `ods_tests.rs` |
 | Password-encrypted workbooks (Agile/Standard encryption) | R | **yes** (#11): asks for the password on open; Agile (AES-128/192/256, SHA-1/256/384/512) and Standard (AES, SHA-1) | no (opens with no save path; Save As writes it without the password) | Clean-room from [MS-OFFCRYPTO] on the CFB reader. RC4, Extensible and certificate-only encryption refused with a message. Data-integrity HMAC not checked | `crypto/tests.rs`, `encrypted_tests.rs` |
 | `.xlw` Excel 4.0 workbook, `.wk*`, `.dbf` | open only (some) | no | no | Rare | — |
 
@@ -70,7 +70,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 | Streaming XLSX reader for very large files (#175), part-size limits that degrade instead of failing | 10–15 |
 | Legacy `.xls` (BIFF8): styles (fonts, fills, borders, alignment), comments, CF, validation, pictures and charts on import; corpus run; then write | 10–15 |
 | Encrypted workbooks: save with password (#11) | 4–6 |
-| XLSB and ODS: formulas and formatting on import; then write | 10–15 |
+| XLSB: formulas and formatting on import; ODS: formatting on import (formulas landed, #711); then write for both | 10–15 |
 | CSV/text: encoding choice, `.prn`, `.dif`, `.slk`, XML Spreadsheet 2003 | 4–7 |
 | PDF: embed subsetted system fonts so every script exports | (counted in [localization](localization-parity.md) script work) |
 
@@ -78,6 +78,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | ODS: formulas import live (OpenFormula→Excel translation with fallback to the cached constant, #711) |
 | 2026-10-12 | minor | CSV: saving a file opened as CSV keeps its detected separator (`;` files were rewritten with `,`) |
 | 2026-10-11 | minor | XLSX: cell/shared/array formulas read through the file→model conversion (`_xlpm.` LET/LAMBDA parameter prefixes stripped); table column names keep line breaks; table names may start with `\` |
 | 2026-10-11 | minor | CSV/TSV export writes displayed values (number formats applied, no `#####`); `.xltx`, `.xltm` and `.xlsm` saved with their own workbook content types |
