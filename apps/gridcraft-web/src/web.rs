@@ -40,11 +40,11 @@ pub fn start() {
                     }
                     let mut app = SheetApp::new(session, services(inbox.clone(), cc.egui_ctx.clone()));
                     app.ui.system_theme = true;
-                    // Follow the browser's language, except one needing script fonts (CJK, Indian
-                    // scripts): the web build has no system fonts (none are bundled), so that
-                    // interface would render as tofu.
+                    // Follow the browser's language, except one needing a script face this build
+                    // lacks: the web has no system fonts, only the Indian-script faces embedded from
+                    // craft-fonts (CRAFT_FONTS_DIR), so a CJK interface would render as tofu.
                     let browser = gridcraft_ui_egui::i18n::Language::system();
-                    if !browser.needs_script_fonts() {
+                    if browser.renders_without_system_fonts() {
                         app.ui.language = browser;
                     }
                     SheetApp::setup_context_for_language(&cc.egui_ctx, false, app.ui.language);

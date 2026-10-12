@@ -392,7 +392,10 @@ pub fn font_definitions_with(language: crate::i18n::Language, used: &[String]) -
     let mut bound: Vec<String> = Vec::new();
     // The non-Latin fallback faces have to sit at the end of each chain: a Latin font owns Latin,
     // and epaint picks the first face that has the glyph, so they only catch their own scripts.
-    let fallback = load_fallback(&mut fonts, HanOrder::of(language));
+    let mut fallback = load_fallback(&mut fonts, HanOrder::of(language));
+    // craft-fonts faces go last: system faces win where they exist, these catch the rest (the web
+    // build, a desktop without a face for the script).
+    fallback.extend(add_craft_faces(&mut fonts));
     for role in [UI, UI_BOLD, CELL, CELL_BOLD, CELL_ITALIC, CELL_BOLD_ITALIC, SERIF, MONO] {
         let paths = candidates(role);
         let refs: Vec<(&str, u32)> = paths.iter().map(|(p, i)| (p.as_str(), *i)).collect();
@@ -472,6 +475,18 @@ fn load_fallback(fonts: &mut FontDefinitions, han: HanOrder) -> Vec<String> {
 #[cfg(target_arch = "wasm32")]
 fn load_fallback(_fonts: &mut FontDefinitions, _han: HanOrder) -> Vec<String> {
     Vec::new()
+}
+
+/// Adds the embedded craft-fonts faces ([`crate::craft_fonts`]) and returns their keys; none in a
+/// build without craft-fonts.
+fn add_craft_faces(fonts: &mut FontDefinitions) -> Vec<String> {
+    let mut keys = Vec::new();
+    for f in crate::craft_fonts::CRAFT_FONTS {
+        let key = format!("craft-{} {}", f.family, f.style);
+        fonts.font_data.insert(key.clone(), Arc::new(FontData::from_static(f.bytes)));
+        keys.push(key);
+    }
+    keys
 }
 
 /// Every fallback face we look for, in chain order: `(key, candidate files)`. One file per script
@@ -860,12 +875,14 @@ mod tests {
     #[test]
     fn fallback_faces_are_appended_to_every_family() {
         // Structural: whatever loaded, the non-Latin fallback keys must sit at the end of each chain
-        // (after the Latin/default fonts) so Latin still wins for Latin text, in the language's order.
+        // (after the Latin/default fonts) so Latin still wins for Latin text, in the language's order,
+        // followed only by the embedded craft-fonts faces (the last resort).
         for han in [HanOrder::Chinese, HanOrder::Japanese] {
             let language = if han == HanOrder::Japanese { Language::Ja } else { Language::Zh };
             let fonts = font_definitions_for_language(language);
+            let craft = crate::craft_fonts::CRAFT_FONTS.iter().map(|f| format!("craft-{} {}", f.family, f.style));
             let fb_keys: Vec<String> =
-                fallback_faces(han).into_iter().map(|(k, _)| k.to_string()).filter(|k| fonts.font_data.contains_key(k)).collect();
+                fallback_faces(han).into_iter().map(|(k, _)| k.to_string()).chain(craft).filter(|k| fonts.font_data.contains_key(k)).collect();
             if fb_keys.is_empty() {
                 return; // no fallback face on this machine (minimal Linux)
             }
@@ -983,6 +1000,51 @@ mod tests {
         }
         if has(Indic::Tamil) {
             assert_eq!(drawn("கொ"), 3, "the vowel sign ொ splits around க");
+        }
+    }
+
+    #[test]
+    fn craft_fonts_draw_and_shape_indian_text_without_system_faces() {
+        // What the web build sees: egui's bundled fonts plus the embedded craft-fonts faces, no
+        // system faces. Runs only in a build with CRAFT_FONTS_DIR set (CI sets it).
+        if crate::craft_fonts::CRAFT_FONTS.is_empty() {
+            return;
+        }
+        let mut fonts = FontDefinitions::default();
+        let craft = add_craft_faces(&mut fonts);
+        if let Some(chain) = fonts.families.get_mut(&FontFamily::Proportional) {
+            chain.extend(craft);
+        }
+        drop_unparseable_fonts(&mut fonts);
+        let ctx = egui::Context::default();
+        ctx.set_fonts(fonts);
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_ui| {});
+        out.textures_delta.clear(); // nothing consumes the atlas in a headless test
+        let glyphs = |text: &str| {
+            let galley = ctx.fonts_mut(|f| f.layout_no_wrap(text.to_owned(), FontId::proportional(14.0), Color32::BLACK));
+            galley.rows.iter().flat_map(|r| r.glyphs.iter()).filter(|g| g.uv_rect.size.x > 0.0).map(|g| g.uv_rect).collect::<Vec<_>>()
+        };
+        let tofu = glyphs("\u{25FB}");
+        let samples = [
+            ("Deva", "हिन्दी"),
+            ("Beng", "বাংলা"),
+            ("Guru", "ਪੰਜਾਬੀ"),
+            ("Gujr", "ગુજરાતી"),
+            ("Orya", "ଓଡ଼ିଆ"),
+            ("Taml", "தமிழ்"),
+            ("Telu", "తెలుగు"),
+            ("Knda", "ಕನ್ನಡ"),
+            ("Mlym", "മലയാളം"),
+        ];
+        for (script, sample) in samples {
+            if !crate::craft_fonts::covers(script) {
+                continue;
+            }
+            let drawn = glyphs(sample);
+            assert!(!drawn.is_empty() && drawn.iter().all(|g| !tofu.contains(g)), "{script}: {sample:?} renders as tofu");
+        }
+        if crate::craft_fonts::covers("Deva") {
+            assert_eq!(glyphs("क्ष").len(), 1, "क + virama + ष forms the conjunct क्ष");
         }
     }
 

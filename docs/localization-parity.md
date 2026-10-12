@@ -1,6 +1,6 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (ten Indian languages, Indian-script fonts, shaping re-checked) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (web build: Indian-script faces from craft-fonts; French catalog rebuilt) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Per-language status against Excel, which ships its UI in dozens of languages (Windows language
 packs cover 100+), with localized function names, argument separators, number and date formats,
@@ -35,8 +35,10 @@ right-to-left sheets and full complex-script support. Part of
   the BSDs. **Text is shaped**: epaint 0.36 runs every run through harfrust (OpenType GSUB/GPOS),
   so conjuncts, reordered and split vowel signs render correctly wherever a face is present
   (tested: `theme::tests::indic_text_is_shaped_not_drawn_letter_by_letter`). The web build has no
-  system fonts, so CJK and Indian-script interfaces are not auto-selected there and Indian text
-  shows as boxes until craft-fonts ships Noto faces for these scripts. There is no bidirectional
+  system fonts: builds made with craft-fonts (`CRAFT_FONTS_DIR`) embed Noto Sans for the nine
+  Indian scripts (~5 MB, storytold/craft-fonts#21) as the last face in every chain, so Indian text
+  renders there too, and the web build follows a browser in an Indian language only when those
+  faces are embedded. CJK interfaces are still not auto-selected on the web (no CJK face). There is no bidirectional
   layout: Arabic and Hebrew runs shape but don't reorder. **Sheet Right-to-Left**
   (`view.rightToLeft`, Page Layout › Sheet Options, XLSX `rightToLeft`) mirrors the grid (#146):
   column A and the row headers on the right, the vertical scrollbar on the left; hit-testing,
@@ -100,12 +102,13 @@ language (none so far) and of localized function names.
    separators in CSV.
 3. Script support: shaping is done (epaint/harfrust) and system faces cover CJK, Thai, Hebrew and
    the Indian scripts. Left: bidirectional runs, right-to-left sheet tabs and printing, script
-   faces for the web build (craft-fonts), embedded subset fonts in PDF.
+   CJK faces for the web build, embedded subset fonts in PDF.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Web build: Indian-script faces from craft-fonts (`CRAFT_FONTS_DIR`); French catalog rebuilt (labels had shifted onto the wrong keys) |
 | 2026-10-11 | minor | Ten Indian languages (hi, bn, mr, te, ta, gu, kn, ml, or, pa; 381 labels each), Indian-script system faces on Windows/macOS/Linux/BSD; corrected "no shaping": epaint 0.36 shapes with harfrust. Hindi 12–18 h → 6–10 h; total 95–155 h |
 | 2026-10-11 | minor | German ribbon catalog (`i18n/de.rs`, 266 labels, ~12%); `de` locale tags (de-DE, de-AT, de-CH…) resolve to German. PR #163 (localized German formulas/numbers) still open |
 | 2026-10-11 | minor | Sheet Right-to-Left mirrors the grid (#146) |

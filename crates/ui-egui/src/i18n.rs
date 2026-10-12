@@ -180,25 +180,37 @@ impl Language {
         }
     }
 
+    /// The ISO 15924 script of an interface that needs a face egui's bundled fonts lack (CJK, the
+    /// Indian scripts); `None` for Latin, Cyrillic and the other scripts they cover.
+    pub fn script(self) -> Option<&'static str> {
+        Some(match self {
+            Self::Zh => "Hans",
+            Self::Ja => "Jpan",
+            Self::Ko => "Kore",
+            Self::Hi | Self::Mr => "Deva",
+            Self::Bn => "Beng",
+            Self::Pa => "Guru",
+            Self::Gu => "Gujr",
+            Self::Or => "Orya",
+            Self::Ta => "Taml",
+            Self::Te => "Telu",
+            Self::Kn => "Knda",
+            Self::Ml => "Mlym",
+            Self::En | Self::Es | Self::Ru | Self::PtBr | Self::De | Self::Cs | Self::Fr => return None,
+        })
+    }
+
     /// Whether the interface needs a script face that egui's bundled fonts lack (CJK, Indian
-    /// scripts). The desktop apps find one among the system fonts; the web build has none to load.
+    /// scripts). The desktop apps find one among the system fonts; the web build only has the
+    /// faces embedded from craft-fonts ([`crate::craft_fonts`]).
     pub fn needs_script_fonts(self) -> bool {
-        matches!(
-            self,
-            Self::Zh
-                | Self::Ja
-                | Self::Ko
-                | Self::Hi
-                | Self::Bn
-                | Self::Mr
-                | Self::Te
-                | Self::Ta
-                | Self::Gu
-                | Self::Kn
-                | Self::Ml
-                | Self::Or
-                | Self::Pa
-        )
+        self.script().is_some()
+    }
+
+    /// Whether this build can draw the interface without system fonts: no script face is needed,
+    /// or craft-fonts embedded one. The web build follows the browser's language only then.
+    pub fn renders_without_system_fonts(self) -> bool {
+        self.script().is_none_or(crate::craft_fonts::covers)
     }
 
     pub fn formula_locale(self) -> gridcraft_engine::formula::FormulaLocale {
@@ -762,6 +774,12 @@ mod tests {
         assert_eq!(Language::parse("xx"), None);
         assert!(Language::Hi.needs_script_fonts() && Language::Ja.needs_script_fonts());
         assert!(!Language::Fr.needs_script_fonts() && !Language::Ru.needs_script_fonts());
+        assert_eq!(Language::Mr.script(), Some("Deva"), "Marathi is written in Devanagari");
+        assert_eq!(Language::Pa.script(), Some("Guru"));
+        assert!(Language::En.renders_without_system_fonts() && Language::Ru.renders_without_system_fonts());
+        for l in Language::ALL.into_iter().filter(|l| l.needs_script_fonts()) {
+            assert_eq!(l.renders_without_system_fonts(), l.script().is_some_and(crate::craft_fonts::covers), "{l:?}");
+        }
     }
 
     #[test]
