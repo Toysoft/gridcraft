@@ -926,6 +926,10 @@ pub struct PivotField {
     /// Sort the items by this value field (its caption) instead of by their labels, in the
     /// `sort` direction (Sort > More Sort Options > by value). Ignored when `sort` is `None`.
     pub sort_by: Option<String>,
+    /// Where `sort_by` takes its values: items of fields on the other axis (source column,
+    /// item label), outer field first, e.g. sort the rows by the "Apples" column. Empty = the
+    /// grand total.
+    pub sort_scope: Vec<(String, String)>,
     /// Manual item order (item labels), used when `sort` is `None`; unlisted items follow in
     /// source order.
     pub item_order: Vec<String>,

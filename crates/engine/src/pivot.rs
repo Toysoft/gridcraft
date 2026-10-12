@@ -292,6 +292,12 @@ impl FieldItems {
     fn shown_label(&self, i: u32) -> String {
         self.get(i).map(|x| x.shown_label().to_string()).unwrap_or_default()
     }
+    /// The item a setting names by label (or, for a number item, its unformatted number text).
+    fn find(&self, label: &str) -> Option<u32> {
+        let l = label.to_lowercase();
+        let i = self.items.iter().position(|it| it.text == l || (it.formatted && number_to_text(it.num).to_lowercase() == l))?;
+        u32::try_from(i).ok()
+    }
     /// Applies a field's renamed items and manual item order. Settings name items by label; a
     /// number item also matches its unformatted number text (how a file's cache names it).
     fn apply(&mut self, f: &PivotField) {
@@ -451,11 +457,12 @@ struct Node {
     children: Vec<Node>,
 }
 
-/// Sorting of an axis by value fields: the value field each axis field sorts by, and the value
-/// of an axis path (a row path with the column total, or a column path with the row total).
+/// Sorting of an axis by value fields: per axis field, the value field it sorts by and the path
+/// on the other axis whose values it uses (empty = the total); and the value of an axis path at
+/// an other-axis path.
 struct ByValue<'a> {
-    fields: Vec<Option<usize>>,
-    value: &'a dyn Fn(&[u32], usize) -> Option<f64>,
+    fields: Vec<Option<(usize, Vec<u32>)>>,
+    value: &'a dyn Fn(&[u32], &[u32], usize) -> Option<f64>,
 }
 
 fn build_tree(paths: &[&[u32]], depth: usize, fields: &[&PivotField], items: &[FieldItems], by_value: &ByValue) -> Vec<Node> {
@@ -471,12 +478,12 @@ fn build_tree(paths: &[&[u32]], depth: usize, fields: &[&PivotField], items: &[F
             g.push(p);
         }
     }
-    let vi = by_value.fields.get(depth).copied().flatten().filter(|_| field.sort != PivotSort::None);
+    let vi = by_value.fields.get(depth).and_then(Option::as_ref).filter(|_| field.sort != PivotSort::None);
     let mut nodes: Vec<(Option<f64>, Node)> = order
         .into_iter()
         .map(|it| {
             let ps = groups.remove(&it).unwrap_or_default();
-            let key = vi.and_then(|vi| ps.first().and_then(|p| p.get(..=depth)).and_then(|p| (by_value.value)(p, vi)));
+            let key = vi.and_then(|(vi, other)| ps.first().and_then(|p| p.get(..=depth)).and_then(|p| (by_value.value)(p, other, *vi)));
             (key, Node { item: it, children: build_tree(&ps, depth + 1, fields, items, by_value) })
         })
         .collect();
@@ -1054,11 +1061,24 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
     let col_fields: Vec<&PivotField> = cols.iter().map(|(_, f)| *f).collect();
     let row_paths: Vec<&[u32]> = row_set.iter().map(Vec::as_slice).collect();
     let col_paths: Vec<&[u32]> = col_set.iter().map(Vec::as_slice).collect();
-    let value_index = |f: &&PivotField| f.sort_by.as_deref().and_then(|n| vals.iter().position(|(_, v)| v.name.eq_ignore_ascii_case(n)));
-    let row_value = |p: &[u32], vi: usize| get(p, &[], vi).as_ref().and_then(Value::as_f64);
-    let col_value = |p: &[u32], vi: usize| get(&[], p, vi).as_ref().and_then(Value::as_f64);
-    let row_by = ByValue { fields: row_fields.iter().map(value_index).collect(), value: &row_value };
-    let col_by = ByValue { fields: col_fields.iter().map(value_index).collect(), value: &col_value };
+    // The other-axis path a sort scope names: its items of the other axis's fields, outer first,
+    // up to the first field it doesn't name. An item that isn't there has no values.
+    let scope_path = |f: &PivotField, others: &[(usize, &PivotField)], other_items: &[FieldItems]| -> Vec<u32> {
+        let mut path = Vec::new();
+        for ((_, o), oi) in others.iter().zip(other_items) {
+            let Some((_, label)) = f.sort_scope.iter().find(|(c, _)| c.eq_ignore_ascii_case(&o.source_col)) else { break };
+            path.push(oi.find(label).unwrap_or(u32::MAX));
+        }
+        path
+    };
+    let sorting = |f: &PivotField, others: &[(usize, &PivotField)], other_items: &[FieldItems]| {
+        let vi = f.sort_by.as_deref().and_then(|n| vals.iter().position(|(_, v)| v.name.eq_ignore_ascii_case(n)))?;
+        Some((vi, scope_path(f, others, other_items)))
+    };
+    let row_value = |p: &[u32], other: &[u32], vi: usize| get(p, other, vi).as_ref().and_then(Value::as_f64);
+    let col_value = |p: &[u32], other: &[u32], vi: usize| get(other, p, vi).as_ref().and_then(Value::as_f64);
+    let row_by = ByValue { fields: row_fields.iter().map(|f| sorting(f, &cols, &col_items)).collect(), value: &row_value };
+    let col_by = ByValue { fields: col_fields.iter().map(|f| sorting(f, &rows, &row_items)).collect(), value: &col_value };
     let row_tree = build_tree(&row_paths, 0, &row_fields, &row_items, &row_by);
     let col_tree = build_tree(&col_paths, 0, &col_fields, &col_items, &col_by);
     let mut siblings: HashMap<Vec<u32>, Vec<u32>> = HashMap::new();
@@ -1370,9 +1390,12 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
             let Some((_, vdef)) = vals.get(*vi) else { continue };
             let cp = spec.path.as_slice();
             let Some(raw) = get(rp, cp, *vi) else {
-                // No records: blank, or the "For empty cells show" caption.
+                // No records: blank, or the "For empty cells show" caption (a number when it
+                // reads as one, as Excel stores `missingCaption="0"`).
                 if let Some(c) = &pt.empty_caption {
-                    g.set(r, l + j, Value::text(c.as_str()), ck.1, 0, None);
+                    let v = c.trim().parse::<f64>().ok().filter(|x| x.is_finite()).map(Value::number).unwrap_or_else(|| Value::text(c.as_str()));
+                    let fmt = if matches!(v, Value::Number(_)) { data_fmt.get(*vi).cloned().flatten() } else { None };
+                    g.set(r, l + j, v, ck.1, 0, fmt);
                 }
                 continue;
             };

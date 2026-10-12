@@ -92,13 +92,14 @@ fn workbook() -> Workbook {
             collapsed_items: vec!["East".into()],
             caption: Some("Area".into()),
             sort_by: Some("Sum of Sales".into()),
+            sort_scope: vec![("Product".into(), "B".into())],
             item_captions: vec![("West".into(), "**West".into())],
             subtotal: Some(true),
             repeat_labels: true,
             number_format: Some("0.0".into()),
             ..PivotField::default()
         }],
-        columns: vec![PivotField { sort: PivotSort::None, ..field("Product") }],
+        columns: vec![PivotField { sort: PivotSort::None, item_order: vec!["C".into(), "A".into(), "B".into()], ..field("Product") }],
         values: vec![
             PivotValue {
                 source_col: "Sales".into(),
@@ -364,6 +365,11 @@ fn pivot_xml_details() {
         "{t1}"
     );
     assert!(t1.contains("<field x=\"-2\"/>"));
+    // Sort by the values in the "B" column: Product's item B sits third in its `<items>`.
+    assert!(
+        t1.contains("<references count=\"2\"><reference field=\"4294967294\" count=\"1\" selected=\"0\"><x v=\"0\"/></reference><reference field=\"1\" count=\"1\" selected=\"0\"><x v=\"2\"/></reference></references>"),
+        "{t1}"
+    );
     assert!(t1.contains("subtotal=\"count\""));
     assert!(t1.contains("numFmtId=\"4\""));
     assert!(t1.contains("axis=\"axisPage\""));
@@ -611,4 +617,32 @@ fn data_on_rows_with_one_value_field_reads_without_warning() {
     assert_eq!(pt.values_position, None);
     let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
     assert!(back.sheet(0).unwrap().pivots[0].values_on_rows);
+}
+
+#[test]
+fn manual_order_in_cache_order_is_kept() {
+    // Not auto-sorted, items written in cache order: the order is still the file's, so a
+    // refresh over reordered source rows keeps it.
+    let mut wb = workbook();
+    wb.sheet_mut(1).unwrap().pivots[0].columns[0].item_order.clear();
+    let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
+    assert_eq!(back.sheet(1).unwrap().pivots[0].columns[0].item_order, ["A", "B", "C"]);
+}
+
+#[test]
+fn location_without_field_headers_has_no_values_row() {
+    let mut wb = workbook();
+    {
+        let p = &mut wb.sheet_mut(1).unwrap().pivots[2];
+        p.values.push(PivotValue { source_col: "Sales".into(), name: "Sum of Sales".into(), ..PivotValue::default() });
+        p.layout = PivotLayout::Outline;
+        p.show_headers = false;
+    }
+    let parts = unzip(&write_xlsx(&wb).unwrap());
+    let t3 = String::from_utf8(parts.get("xl/pivotTables/pivotTable3.xml").unwrap().clone()).unwrap();
+    assert!(t3.contains("firstHeaderRow=\"1\" firstDataRow=\"1\""), "{t3}");
+    wb.sheet_mut(1).unwrap().pivots[2].show_headers = true;
+    let parts = unzip(&write_xlsx(&wb).unwrap());
+    let t3 = String::from_utf8(parts.get("xl/pivotTables/pivotTable3.xml").unwrap().clone()).unwrap();
+    assert!(t3.contains("firstHeaderRow=\"1\" firstDataRow=\"2\""), "{t3}");
 }

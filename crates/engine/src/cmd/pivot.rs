@@ -1189,6 +1189,7 @@ fn sort(s: &mut Session, p: &Json) -> Result<Json> {
         let f = axis_field(C, pt, &field)?;
         f.sort = order;
         f.sort_by = by;
+        f.sort_scope.clear();
         Ok(json!({}))
     })
 }
@@ -1291,7 +1292,11 @@ fn layout(s: &mut Session, p: &Json) -> Result<Json> {
             }
         }
         if let Some((on, top)) = subtotals {
+            // Design › Subtotals applies to every field, replacing per-field settings.
             pt.subtotals = on;
+            for f in pt.rows.iter_mut().chain(pt.columns.iter_mut()) {
+                f.subtotal = None;
+            }
             if let Some(t) = top {
                 pt.subtotals_top = t;
             }
@@ -2489,5 +2494,97 @@ mod tests {
         s.execute("pivot.collapse", json!({"field": "Grp"})).unwrap();
         // 64 Sub items under the collapsed "g" show as one column group: (1 + grand total) x 256 columns fit.
         s.execute("pivot.addField", json!({"field": "Sub", "area": "columns"})).unwrap();
+    }
+
+    #[test]
+    fn design_subtotals_replace_field_settings() {
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region", "Product"], "values": ["Sales"]})).unwrap();
+        s.execute("pivot.layout", json!({"layout": "tabular"})).unwrap();
+        // A file's field can override the table default (`defaultSubtotal`).
+        edit_pt(&mut s, |p| {
+            p.subtotals = false;
+            p.rows[0].subtotal = Some(true);
+        });
+        assert!(find_row(&s, "East Total").is_some());
+        // Design › Subtotals › Do Not Show Subtotals applies to every field.
+        s.execute("pivot.subtotals", json!({"mode": "none"})).unwrap();
+        assert!(pt(&s).rows.iter().all(|f| f.subtotal.is_none()));
+        assert_eq!(find_row(&s, "East Total"), None);
+        edit_pt(&mut s, |p| p.rows[0].subtotal = Some(false));
+        s.execute("pivot.subtotals", json!({"mode": "bottom"})).unwrap();
+        assert!(find_row(&s, "East Total").is_some());
+    }
+
+    #[test]
+    fn numeric_empty_cell_caption_is_a_number() {
+        let mut s = sales();
+        s.execute("range.setValues", json!({"range": "A14", "values": [["South", "Kiwis", "1/1/2026", 1, 10]]})).unwrap();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Product"], "values": ["Sales"]})).unwrap();
+        // South has no Apples: the cell shows the caption, a number as Excel stores it.
+        edit_pt(&mut s, |p| p.empty_caption = Some("0".into()));
+        let south = find_row(&s, "South").unwrap();
+        let apples = CellRef::new(south, 1);
+        assert_eq!(text(&s, &CellRef::new(south - 3, 1).a1()), "Apples");
+        assert_eq!(val(&s, &apples.a1()), Value::Number(0.0));
+        edit_pt(&mut s, |p| p.empty_caption = Some("n/a".into()));
+        assert_eq!(val(&s, &apples.a1()), Value::text("n/a"));
+    }
+
+    /// Saves the active workbook, applies `patch` to the first PivotTable part and reopens it.
+    fn reopen_patched(s: &Session, patch: impl Fn(&str) -> String) -> (gridcraft_model::Workbook, Vec<String>) {
+        use std::io::{Read, Write};
+        let bytes = crate::io::save_bytes(&s.doc().unwrap().wb, "t.xlsx").unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for i in 0..z.len() {
+            let mut f = z.by_index(i).unwrap();
+            let name = f.name().to_string();
+            let mut b = Vec::new();
+            f.read_to_end(&mut b).unwrap();
+            if name == "xl/pivotTables/pivotTable1.xml" {
+                b = patch(&String::from_utf8(b).unwrap()).into_bytes();
+            }
+            out.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+            out.write_all(&b).unwrap();
+        }
+        let bytes = out.finish().unwrap().into_inner();
+        crate::io::open_bytes("t.xlsx", &bytes).unwrap()
+    }
+
+    #[test]
+    fn sort_by_value_in_a_column_keeps_its_scope() {
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Product"], "values": ["Sales"]})).unwrap();
+        s.execute("pivot.sort", json!({"field": "Region", "order": "desc", "by": "Sum of Sales"})).unwrap();
+        // Excel's "sort by the values in the Apples column": the scope also names Product's
+        // item 0 (Apples). Apples: East 160, West 170, North 90; totals East 415, West 285.
+        let one = "<references count=\"1\"><reference field=\"4294967294\" count=\"1\" selected=\"0\"><x v=\"0\"/></reference>";
+        let values_ref = "<reference field=\"4294967294\" count=\"1\" selected=\"0\"><x v=\"0\"/></reference>";
+        let two = format!("<references count=\"2\">{values_ref}<reference field=\"1\" count=\"1\" selected=\"0\"><x v=\"0\"/></reference>");
+        let (wb, _) = reopen_patched(&s, |x| {
+            assert!(x.contains(one), "{x}");
+            x.replace(one, &two)
+        });
+        let si = wb.active_sheet;
+        let p = wb.sheet(si).unwrap().pivots.last().unwrap();
+        assert_eq!(p.rows[0].sort_scope, vec![("Product".to_string(), "Apples".to_string())]);
+        let out = crate::pivot::compute(&wb, p, si).unwrap();
+        let labels: Vec<String> = out.grid.iter().filter_map(|r| r.first()).map(|c| c.value.display()).collect();
+        let order: Vec<&str> = labels.iter().map(String::as_str).filter(|l| ["East", "West", "North"].contains(l)).collect();
+        assert_eq!(order, ["West", "East", "North"]);
+        // Saving writes the scope back.
+        let again = crate::io::save_bytes(&wb, "t.xlsx").unwrap();
+        let (back, _) = crate::io::open_bytes("t.xlsx", &again).unwrap();
+        assert_eq!(back.sheet(si).unwrap().pivots.last().unwrap().rows[0].sort_scope, p.rows[0].sort_scope);
+        // A scope GridCraft can't represent (two Product items) loads as a sort by label, with
+        // a warning, instead of as a sort by the grand total.
+        let bad =
+            format!("<references count=\"2\">{values_ref}<reference field=\"1\" count=\"2\" selected=\"0\"><x v=\"0\"/><x v=\"1\"/></reference>");
+        let (wb2, warnings) = reopen_patched(&s, |x| x.replace(one, &bad));
+        let p2 = wb2.sheet(wb2.active_sheet).unwrap().pivots.last().unwrap();
+        assert_eq!(p2.rows[0].sort_by, None);
+        assert!(p2.rows[0].sort_scope.is_empty());
+        assert!(warnings.iter().any(|w| w.contains("scope")), "{warnings:?}");
     }
 }

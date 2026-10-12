@@ -775,6 +775,20 @@ fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem) -> String {
     s
 }
 
+/// A field's `<items>` order (cache item indexes): its manual order when it isn't auto-sorted
+/// (unlisted items after), else cache order.
+fn written_order(labels: &[String], af: Option<&PivotField>) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..labels.len()).collect();
+    if let Some(af) = af.filter(|f| f.sort == PivotSort::None && !f.item_order.is_empty()) {
+        let mut rank: HashMap<String, usize> = HashMap::with_capacity(af.item_order.len());
+        for (r, o) in af.item_order.iter().enumerate() {
+            rank.entry(o.to_lowercase()).or_insert(r);
+        }
+        order.sort_by_cached_key(|x| labels.get(*x).and_then(|l| rank.get(&l.to_lowercase()).copied()).unwrap_or(usize::MAX));
+    }
+    order
+}
+
 fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn Fn(&str) -> Option<u32>) -> String {
     let nf = c.fields.len();
     let find_db = |name: &str| c.fields.iter().position(|f| f.col.is_some() && same(&f.name, name));
@@ -865,7 +879,9 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
     let row_values = (k > 1 && pt.values_on_rows).then(|| values_at(row_map, row_idx.len()));
     // In Columns Σ Values comes after the last field: the column layout doesn't place it elsewhere.
     let col_values = (k > 1 && !pt.values_on_rows).then_some(col_idx.len());
-    let values_row = col_idx.is_empty() && !compact && ((col_values.is_some() && pt.show_values_row) || (k == 1 && pt.classic_layout));
+    // The engine shows the Values row and the classic caption row only with field headers on.
+    let values_row =
+        col_idx.is_empty() && !compact && pt.show_headers && ((col_values.is_some() && pt.show_values_row) || (k == 1 && pt.classic_layout));
     let first_data_row = if col_idx.is_empty() { 1 + usize::from(values_row) } else { 1 + col_idx.len() + usize::from(col_values.is_some()) };
     let row_levels = row_idx.len() + usize::from(row_values.is_some());
     let first_data_col = if row_levels == 0 && col_idx.is_empty() {
@@ -950,14 +966,7 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
             let collapsed: &[String] = af.map(|f| f.collapsed_items.as_slice()).unwrap_or(&[]);
             let captions: &[(String, String)] = af.map(|f| f.item_captions.as_slice()).unwrap_or(&[]);
             // Items in display order: the manual order (unlisted items after), else cache order.
-            let mut order: Vec<usize> = (0..labels.len()).collect();
-            if let Some(af) = af.filter(|f| f.sort == PivotSort::None && !f.item_order.is_empty()) {
-                let mut rank: HashMap<String, usize> = HashMap::with_capacity(af.item_order.len());
-                for (r, o) in af.item_order.iter().enumerate() {
-                    rank.entry(o.to_lowercase()).or_insert(r);
-                }
-                order.sort_by_cached_key(|x| labels.get(*x).and_then(|l| rank.get(&l.to_lowercase()).copied()).unwrap_or(usize::MAX));
-            }
+            let order = written_order(&labels, af);
             let count = labels.len() + usize::from(subtotals);
             let _ = write!(s, "><items count=\"{count}\">");
             for x in order {
@@ -979,16 +988,33 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
                 s.push_str("<item t=\"default\"/>");
             }
             s.push_str("</items>");
-            // Sort by a value field: the scope references the Values field's data item.
+            // Sort by a value field: the scope references the Values field's data item, then
+            // the other axis's items it takes the values from (index into their `<items>`).
             if let Some(d) = af
                 .filter(|f| f.sort != PivotSort::None)
                 .and_then(|f| f.sort_by.as_deref())
                 .and_then(|n| vals.iter().position(|(_, v)| same(&v.name, n)))
             {
-                let _ = write!(
-                    s,
-                    "<autoSortScope><pivotArea dataOnly=\"0\" outline=\"0\" fieldPosition=\"0\"><references count=\"1\"><reference field=\"{VALUES_FIELD}\" count=\"1\" selected=\"0\"><x v=\"{d}\"/></reference></references></pivotArea></autoSortScope>"
-                );
+                let mut refs = vec![(VALUES_FIELD.to_string(), d)];
+                if let Some(af) = af {
+                    let on_rows = pt.rows.iter().any(|r| std::ptr::eq(r, af));
+                    let (others, base) = if on_rows { (&pt.columns, pt.rows.len()) } else { (&pt.rows, 0) };
+                    for (col, label) in &af.sort_scope {
+                        let Some(q) = others.iter().position(|o| same(&o.source_col, col)) else { continue };
+                        let Some(j) = c.axis_map.get(base + q).copied().flatten() else { continue };
+                        let Some(cf) = c.fields.get(j) else { continue };
+                        let labels = cf.item_labels();
+                        let pos = written_order(&labels, others.get(q)).iter().position(|x| labels.get(*x).is_some_and(|l| same(l, label)));
+                        if let Some(pos) = pos {
+                            refs.push((j.to_string(), pos));
+                        }
+                    }
+                }
+                let _ = write!(s, "<autoSortScope><pivotArea dataOnly=\"0\" outline=\"0\" fieldPosition=\"0\"><references count=\"{}\">", refs.len());
+                for (field, x) in &refs {
+                    let _ = write!(s, "<reference field=\"{field}\" count=\"1\" selected=\"0\"><x v=\"{x}\"/></reference>");
+                }
+                s.push_str("</references></pivotArea></autoSortScope>");
             }
             if af.is_some_and(|f| f.repeat_labels) {
                 let _ =
@@ -1287,12 +1313,28 @@ fn x14_ext<'a>(e: &'a El, uri: &str) -> Option<&'a El> {
     ext.children.first()
 }
 
-/// The data field (dataFields position) a pivot field's items are sorted by: its
-/// `<autoSortScope>` references the Values field (`4294967294`) and one data item.
-fn auto_sort_data_field(e: &El) -> Option<usize> {
+/// A pivot field's sort by value, from its `<autoSortScope>`: the data field (dataFields
+/// position) the scope's Values reference (`4294967294`) names, and the other references as
+/// (cache field, index into that field's `<items>`). `Err(())` for a scope GridCraft can't
+/// represent (a reference naming no item or several).
+type AutoSort = Result<(usize, Vec<(usize, usize)>), ()>;
+
+fn auto_sort_scope(e: &El) -> Option<AutoSort> {
     let refs = e.path(&["autoSortScope", "pivotArea", "references"])?;
     let r = refs.kids("reference").find(|r| r.attr("field") == Some(VALUES_FIELD))?;
-    r.child("x").and_then(|x| x.attr_u32("v")).map(|v| v as usize)
+    let data = r.child("x").and_then(|x| x.attr_u32("v"))? as usize;
+    let mut scope = Vec::new();
+    for r in refs.kids("reference").filter(|r| r.attr("field") != Some(VALUES_FIELD)) {
+        let xs: Vec<&El> = r.kids("x").collect();
+        match (r.attr_u32("field"), xs.as_slice()) {
+            (Some(f), [x]) if !r.flag("byPosition", false) && !r.flag("relative", false) => match x.attr_u32("v") {
+                Some(v) => scope.push((f as usize, v as usize)),
+                None => return Some(Err(())),
+            },
+            _ => return Some(Err(())),
+        }
+    }
+    Some(Ok((data, scope)))
 }
 
 /// (source column name, date grouping) of a cache field used on an axis.
@@ -1380,8 +1422,9 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
 
     let mut filters: Vec<PivotFilter> = Vec::new();
 
-    // Per axis field (in rows-then-columns order): the data field its items are sorted by.
-    let mut sort_by: Vec<Option<usize>> = Vec::new();
+    // Per axis field (in rows-then-columns order): its cache field and its sort by value.
+    let mut sort_by: Vec<Option<AutoSort>> = Vec::new();
+    let mut axis_ix: Vec<usize> = Vec::new();
     let table_subtotals = pt.subtotals;
     // (fields, position of Σ Values (`-2`) among them)
     let mut axis = |cx: &mut Ctx<'_>, list: &[i64], filters: &mut Vec<PivotFilter>| -> (Vec<PivotField>, Option<usize>) {
@@ -1406,7 +1449,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                     Some("descending") => PivotSort::Desc,
                     _ => PivotSort::None,
                 };
-                by = auto_sort_data_field(e);
+                by = auto_sort_scope(e);
                 f.caption = e.attr("name").filter(|n| !n.is_empty()).map(str::to_string);
                 let own = e.flag("defaultSubtotal", true);
                 f.subtotal = (own != table_subtotals).then_some(own);
@@ -1421,9 +1464,12 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 let lab = |it: &El| it.attr_u32("x").and_then(|k| labels.get(k as usize)).cloned();
                 f.collapsed_items = items.iter().filter(|it| !it.flag("sd", true)).filter_map(|it| lab(it)).collect();
                 f.item_captions = items.iter().filter_map(|it| Some((lab(it)?, it.attr("n").filter(|n| !n.is_empty())?.to_string()))).collect();
-                // A manual order: the items are not in cache order.
+                // Not auto-sorted: the `<items>` list fixes the order, even when it happens to be
+                // cache order (new items follow it). Date groups are in date order anyway; they
+                // keep a list only when it was reordered.
                 let xs: Vec<u32> = items.iter().filter_map(|it| it.attr_u32("x")).collect();
-                if f.sort == PivotSort::None && xs.windows(2).any(|w| w[0] > w[1]) {
+                let reordered = xs.windows(2).any(|w| w[0] > w[1]);
+                if f.sort == PivotSort::None && (group == PivotDateGroup::None || reordered) {
                     f.item_order = items.iter().filter_map(|it| lab(it)).collect();
                 }
                 if items.iter().any(|it| it.flag("h", false)) {
@@ -1434,6 +1480,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 }
             }
             sort_by.push(by);
+            axis_ix.push(i);
             v.push(f);
         }
         (v, values_at)
@@ -1521,9 +1568,43 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
             pt.values.push(PivotValue { source_col: f.name.clone(), func, name, show_as, number_format });
         }
     }
+    // Sort scopes: each reference must name an item of a field on the other axis.
+    let n_rows = pt.rows.len();
+    let names: Vec<String> = pt.rows.iter().chain(pt.columns.iter()).map(|f| f.source_col.clone()).collect();
+    let item_label = |j: usize, x: usize| -> Option<String> {
+        let k = items_of(pf(j)?).get(x)?.attr_u32("x")?;
+        cache.fields.get(j)?.labels().get(k as usize).cloned()
+    };
+    let mut sorts: Vec<Option<(usize, Vec<(String, String)>)>> = Vec::with_capacity(sort_by.len());
+    for (p, by) in sort_by.into_iter().enumerate() {
+        let others = if p < n_rows { n_rows..names.len() } else { 0..n_rows };
+        let resolved = by.map(|by| {
+            let (d, refs) = by?;
+            let scope = refs
+                .into_iter()
+                .map(|(j, x)| {
+                    let k = others.clone().find(|k| axis_ix.get(*k) == Some(&j)).ok_or(())?;
+                    Ok((names.get(k).cloned().ok_or(())?, item_label(j, x).ok_or(())?))
+                })
+                .collect::<Result<Vec<_>, ()>>()?;
+            Ok((d, scope))
+        });
+        if matches!(resolved, Some(Err(()))) {
+            cx.warn(format!(
+                "PivotTable \"{}\": a sort by value of \"{}\" has a scope that is not supported; it sorts by the label",
+                pt.name,
+                names.get(p).map(String::as_str).unwrap_or("")
+            ));
+        }
+        sorts.push(resolved.and_then(Result::ok));
+    }
     let values = &pt.values;
-    for (f, by) in pt.rows.iter_mut().chain(pt.columns.iter_mut()).zip(sort_by) {
-        f.sort_by = by.and_then(|d| data_value.get(d).copied().flatten()).and_then(|v| values.get(v)).map(|v| v.name.clone());
+    for (f, by) in pt.rows.iter_mut().chain(pt.columns.iter_mut()).zip(sorts) {
+        let Some((d, scope)) = by else { continue };
+        f.sort_by = data_value.get(d).copied().flatten().and_then(|v| values.get(v)).map(|v| v.name.clone());
+        if f.sort_by.is_some() {
+            f.sort_scope = scope;
+        }
     }
 
     // Calculated fields of the cache (each PivotTable on it can use them).
