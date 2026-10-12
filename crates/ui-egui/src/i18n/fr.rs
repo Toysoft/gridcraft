@@ -301,6 +301,8 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Add header" => "Autoriser la modification des plages",
         "Add footer" => "Ajouter un en-tête",
         "(none)" => "(aucun)",
+        "Different First Page" => "Première page différente",
+        "Different Odd & Even Pages" => "Pages paires et impaires différentes",
         "Header" => "Informations",
         "Footer" => "Feuille de\nprévision",
         "Page\nNumber" => "Page précédente",
