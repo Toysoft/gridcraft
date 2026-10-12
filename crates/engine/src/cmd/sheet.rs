@@ -512,11 +512,15 @@ fn insert_copied_cells(s: &mut Session, p: &Json) -> Result<Json> {
     }
     let revision = d.revision;
     let before = (d.wb.clone(), d.selection.clone());
+    // Inside an undo group the nested steps add no undo entries of their own.
+    let nested_entries = !s.in_group(d.uid);
     let result = insert_copied_steps(s, &clip, sheet, at, shift, cut);
     let d = s.doc_mut()?;
     // The nested steps collapse into this command's single undo step.
-    for _ in 0..d.revision.saturating_sub(revision) {
-        d.undo.pop();
+    if nested_entries {
+        for _ in 0..d.revision.saturating_sub(revision) {
+            d.undo.pop();
+        }
     }
     match result {
         Ok((final_range, out)) => {
@@ -696,6 +700,7 @@ fn delete_sheet(s: &mut Session, p: &Json) -> Result<Json> {
                 }
             }
         }
+        super::edit::rewrite_python_refs(&mut cx.wb, &|_, e| gridcraft_formula::adjust::delete_sheet(e, &name, &order));
         cx.wb.names.retain(|n| n.scope != Some(i));
         for n in cx.wb.names.iter_mut() {
             if let Some(sc) = n.scope.as_mut()
@@ -770,6 +775,7 @@ fn rename_sheet(s: &mut Session, p: &Json) -> Result<Json> {
                 n.formula = gridcraft_formula::print(&gridcraft_formula::adjust::rename_sheet(e, &old, &name));
             }
         }
+        super::edit::rewrite_python_refs(&mut cx.wb, &|_, e| gridcraft_formula::adjust::rename_sheet(e, &old, &name));
         cx.structural = true;
         Ok(Json::Null)
     })

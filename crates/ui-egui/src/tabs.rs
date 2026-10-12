@@ -1,6 +1,6 @@
 //! Sheet tabs and the status bar.
 
-use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Align2, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use gridcraft_engine::model::Visibility;
 use serde_json::json;
 
@@ -200,11 +200,7 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                     pos2(bar.left() + bar.width() * frac1.max(frac0 + 0.03), bar.bottom()),
                 );
                 let resp = ui.interact(bar, ui.id().with("hscroll"), Sense::click_and_drag());
-                ui.painter().rect_filled(
-                    thumb,
-                    4.0,
-                    if resp.hovered() || resp.dragged() { Color32::from_gray(150) } else { Color32::from_gray(190) },
-                );
+                ui.painter().rect_filled(thumb, 4.0, if resp.hovered() || resp.dragged() { t.scrollbar_hover } else { t.scrollbar });
                 if resp.dragged() {
                     let dx = resp.drag_delta().x / bar.width() * total;
                     if let Some(v) = app.view_mut() {
@@ -229,6 +225,21 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
                     gridcraft_engine::Mode::Point => "Point",
                 };
                 ui.label(egui::RichText::new(app.ui.language.tr(mode)).font(theme::ui_font(12.5)).color(t.text_dim));
+                // Which Python runs cells, on workbooks that have them.
+                crate::python_ui::status(app, ui);
+                // Python cells running in the background, with a Stop button (Esc does the same).
+                if app.session.python_busy() {
+                    ui.add_space(12.0);
+                    ui.add(egui::Spinner::new().size(12.0).color(t.text_dim));
+                    ui.label(egui::RichText::new(app.ui.language.tr("Running Python…")).font(theme::ui_font(12.5)).color(t.text_dim));
+                    let stop = ui.add(
+                        egui::Button::new(egui::RichText::new(app.ui.language.tr("Stop")).font(theme::ui_font(12.0)).color(t.text))
+                            .min_size(vec2(44.0, 18.0)),
+                    );
+                    if stop.on_hover_text(app.ui.language.tr("Stop the Python cells that are running (Esc)")).clicked() {
+                        app.run_or_alert("python.stop", json!({}));
+                    }
+                }
                 if let Some(d) = app.session.active() {
                     if d.wb.vba_project.is_some() {
                         ui.add_space(12.0);

@@ -10,6 +10,7 @@ pub mod backstage;
 mod border_preview;
 mod cell_pictures;
 pub mod chartview;
+pub mod code_editor;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
@@ -26,6 +27,7 @@ pub mod outline;
 pub mod panes;
 pub mod paper_view;
 pub mod pivot_pane;
+pub mod python_ui;
 pub mod ribbon;
 pub mod selection_glide;
 pub mod tabs;
@@ -161,6 +163,8 @@ pub struct Notice {
 pub struct Services {
     pub pick_open: Option<Box<dyn Fn() -> Option<String>>>,
     pub pick_save: Option<Box<dyn Fn(&str) -> Option<String>>>,
+    /// Native picker for a program (Python Options' interpreter).
+    pub pick_program: Option<Box<dyn Fn() -> Option<String>>>,
     /// Native picture picker (PNG/JPEG), separate from workbook opening.
     pub pick_picture: Option<Box<dyn Fn() -> Option<String>>>,
     /// Browser picture picker. Each dialog owns its inbox, so canceled picks cannot
@@ -201,6 +205,8 @@ pub struct SheetApp {
     pub ui: UiState,
     pub views: HashMap<(u64, usize), SheetView>,
     pub editor: Option<editor::EditState>,
+    /// The formula bar's badge slot (the PY badge in Python mode); empty otherwise.
+    pub formula_badge: Option<formula_bar::FormulaBadge>,
     pub text_box_editor: Option<text_box::EditState>,
     pub dialog: Option<dialogs::Dialog>,
     /// The File tab's Backstage view, when open (UI-only; replaces the ribbon, grid and tabs).
@@ -240,15 +246,53 @@ pub struct SheetApp {
     /// Chart selected on the sheet (id).
     pub selected_chart: Option<u32>,
     pub started: f64,
+    /// A save waiting for Python cells to finish, so the file gets their results.
+    pending_save: Option<PendingSave>,
+    /// Numbers the saves that wait, so a control-channel reply finds how its own save ended.
+    next_save: u64,
+    /// How the saves that waited ended, by number, until the control channel has read them.
+    pub(crate) save_results: Vec<(u64, Result<Json, String>)>,
+}
+
+/// Saves that wait for the Python cells still running (checked every frame), so the file gets
+/// their results rather than `#BUSY!`. They wait as long as one cell may run (the time limit,
+/// the time imports may add and a second for the worker to start), again after each cell that
+/// finishes; then they save whatever the cells hold.
+#[derive(Clone, Debug)]
+struct PendingSave {
+    /// The saves asked for while waiting, in order.
+    saves: Vec<DeferredSave>,
+    /// When the wait ends (ms, see [`now_ms`]).
+    deadline: f64,
+    /// Cells left when last checked: fewer is progress, which restarts the wait.
+    left: usize,
+}
+
+/// One save waiting for Python.
+#[derive(Clone, Debug)]
+struct DeferredSave {
+    /// Its number (see `SheetApp::next_save`).
+    token: u64,
+    /// The workbook to save.
+    uid: u64,
+    /// `file.save` or `file.saveAs`, and its params.
+    id: &'static str,
+    params: Json,
+    /// Close the workbook once it is saved (the Save of the Save Changes? prompt).
+    close: bool,
 }
 
 impl SheetApp {
-    pub fn new(session: Session, services: Services) -> SheetApp {
+    pub fn new(mut session: Session, services: Services) -> SheetApp {
+        // Python cells run in the background, stepped every frame, so a slow cell never blocks
+        // the window.
+        session.set_python_background(true);
         SheetApp {
             session,
             ui: UiState::default(),
             views: HashMap::new(),
             editor: None,
+            formula_badge: None,
             text_box_editor: None,
             dialog: None,
             backstage: None,
@@ -279,6 +323,9 @@ impl SheetApp {
             shots: control::Shots::default(),
             selected_chart: None,
             started: now_ms(),
+            pending_save: None,
+            next_save: 1,
+            save_results: Vec::new(),
         }
     }
 
@@ -339,6 +386,15 @@ impl SheetApp {
         {
             self.commit_text_box_edit()?;
         }
+        // A save waits for the Python cells still running, so the file gets their results.
+        // (A save with nowhere to go asks where first, and comes back here with the path.)
+        if let Some(save) = deferrable_save(id, &params)
+            && self.has_save_target(&params)
+            && let Some(uid) = self.session.active().map(|d| d.uid)
+            && self.defer_save(uid, save, params.clone(), false).is_some()
+        {
+            return Ok(json!({"waitingForPython": true}));
+        }
         if let Some(r) = self.run_ui_command(id, &params) {
             return r;
         }
@@ -348,6 +404,124 @@ impl SheetApp {
             && let Ok(r) = &r
         {
             self.deliver_pdf(r);
+        }
+        r
+    }
+
+    /// A save is waiting for Python cells to finish (see [`PendingSave`]).
+    pub fn save_pending(&self) -> bool {
+        self.pending_save.is_some()
+    }
+
+    /// The number of the most recent save that had to wait for Python, if one is waiting.
+    pub(crate) fn last_pending_save(&self) -> Option<u64> {
+        self.pending_save.as_ref().and_then(|p| p.saves.last()).map(|s| s.token)
+    }
+
+    /// How long a save waits for the Python cells to make progress, in ms: as long as one cell
+    /// may run.
+    fn python_wait_ms(&self) -> f64 {
+        let p = &self.session.prefs;
+        let secs = p.python_timeout_seconds + p.python_import_seconds + 1.0;
+        if secs.is_finite() { secs.clamp(1.0, 3_600.0) * 1000.0 } else { 60_000.0 }
+    }
+
+    /// Makes a save wait while Python cells are still running, so the file gets their results.
+    /// Returns its number, or `None` when nothing runs and the save can happen now.
+    fn defer_save(&mut self, uid: u64, id: &'static str, params: Json, close: bool) -> Option<u64> {
+        let left = self.session.python_pending_cells();
+        if left == 0 {
+            return None;
+        }
+        let token = self.next_save;
+        self.next_save = self.next_save.saturating_add(1);
+        let deadline = now_ms() + self.python_wait_ms();
+        let pending = self.pending_save.get_or_insert_with(|| PendingSave { saves: Vec::new(), deadline, left });
+        pending.saves.push(DeferredSave { token, uid, id, params, close });
+        self.toast = Some(("Saving when the Python cells finish\u{2026}".into(), now_ms()));
+        Some(token)
+    }
+
+    /// Whether a save with `params` knows where to save the active workbook (else it asks).
+    fn has_save_target(&self, params: &Json) -> bool {
+        params.get("path").and_then(Json::as_str).is_some_and(|p| !p.is_empty()) || self.session.active().is_some_and(|d| d.path.is_some())
+    }
+
+    /// Asks the host where to save the active workbook (`.xlsx` when the name has no extension).
+    fn pick_save_path(&self) -> Option<String> {
+        let suggested = self.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1".into());
+        let path = self.services.pick_save.as_ref().and_then(|pick| pick(&suggested))?;
+        Some(if std::path::Path::new(&path).extension().is_none() { format!("{path}.xlsx") } else { path })
+    }
+
+    /// Saves the active workbook, then closes it if the save worked (the Save of the Save
+    /// Changes? prompt). With Python cells still running, it first waits for them, having asked
+    /// where to save a workbook that has no file yet.
+    pub fn save_and_close_workbook(&mut self) {
+        let Some(uid) = self.session.active().map(|d| d.uid) else { return };
+        let mut params = json!({});
+        if !self.has_save_target(&params) && self.services.pick_save.is_some() && self.session.python_pending_cells() > 0 {
+            let Some(path) = self.pick_save_path() else { return };
+            params = json!({"path": path});
+        }
+        if self.defer_save(uid, "file.save", params.clone(), true).is_some() {
+            return;
+        }
+        self.run_or_alert("file.save", params);
+        if self.session.active().is_some_and(|d| !d.is_dirty()) {
+            self.run_or_alert("file.close", json!({"force": true}));
+        }
+    }
+
+    /// Runs the waiting saves once the Python cells have finished, or once they have made no
+    /// progress for as long as a cell may run (the file then gets what the cells hold). Called
+    /// every frame.
+    pub(crate) fn poll_pending_save(&mut self, ctx: &egui::Context) {
+        let Some(mut pending) = self.pending_save.take() else { return };
+        let left = self.session.python_pending_cells();
+        let now = now_ms();
+        if left > 0 && left < pending.left {
+            pending.left = left;
+            pending.deadline = now + self.python_wait_ms();
+        }
+        if left > 0 && now < pending.deadline {
+            self.pending_save = Some(pending);
+            ctx.request_repaint_after(std::time::Duration::from_millis(15));
+            return;
+        }
+        if left > 0 {
+            log::warn!("saving while {left} Python cell(s) are still running: no cell finished within the time a cell may run");
+        }
+        // (The control channel reads the results a frame later; older ones went unclaimed.)
+        self.save_results.clear();
+        for save in pending.saves {
+            let r = self.save_workbook(&save);
+            self.save_results.push((save.token, r));
+        }
+    }
+
+    /// Runs a save that waited on its workbook (closing the workbook afterwards if asked and the
+    /// save worked), keeping the active workbook otherwise.
+    fn save_workbook(&mut self, save: &DeferredSave) -> Result<Json, String> {
+        let index = |app: &SheetApp| app.session.documents().iter().position(|d| d.uid == save.uid);
+        let Some(i) = index(self) else { return Err("The workbook was closed before it was saved.".into()) };
+        let keep = self.session.active().map(|d| d.uid);
+        self.session.set_active(i);
+        self.store_view_state();
+        let r = self.session.run(save.id, save.params.clone());
+        self.after_engine();
+        if let Err(e) = &r {
+            self.message = Some(("GridCraft".into(), clean_error(e)));
+        }
+        let saved = index(self).and_then(|i| self.session.documents().get(i)).is_some_and(|d| !d.is_dirty());
+        if save.close
+            && saved
+            && let Some(i) = index(self)
+        {
+            self.session.set_active(i);
+            self.run_or_alert("file.close", json!({"force": true}));
+        } else if let Some(k) = keep.and_then(|k| self.session.documents().iter().position(|d| d.uid == k)) {
+            self.session.set_active(k);
         }
         r
     }
@@ -529,6 +703,12 @@ impl SheetApp {
                 self.open_dialog(name, p.clone());
                 Ok(json!({"dialog": self.dialog.as_ref().map(|d| d.name())}))
             }
+            "ui.pane" => {
+                // `{name}` shows a task pane (comments, watch, selection, formatChart,
+                // pythonDiagnostics); no name closes it.
+                self.grid.pane = p.get("name").and_then(Json::as_str).filter(|n| !n.is_empty()).map(str::to_string);
+                Ok(json!({"pane": self.grid.pane}))
+            }
             "ui.message.dismiss" => {
                 self.message = None;
                 Ok(Json::Null)
@@ -590,10 +770,8 @@ impl SheetApp {
                 }
             }
             "saveAs" => {
-                let suggested = self.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1".into());
-                if let Some(pick) = &self.services.pick_save {
-                    if let Some(path) = pick(&suggested) {
-                        let path = if std::path::Path::new(&path).extension().is_none() { format!("{path}.xlsx") } else { path };
+                if self.services.pick_save.is_some() {
+                    if let Some(path) = self.pick_save_path() {
                         self.run_or_alert("file.save", json!({"path": path}));
                     }
                 } else if self.services.download.is_some()
@@ -728,6 +906,8 @@ impl SheetApp {
     }
 
     /// Starts editing the active cell. `text` replaces the content (typing) or pre-fills it.
+    /// Editing a Python cell (rather than typing over it) happens in the formula bar, in Python
+    /// mode.
     pub fn begin_edit(&mut self, text: Option<String>, from_formula_bar: bool) {
         if let Err(e) = self.commit_text_box_edit() {
             self.message = Some(("Text Box".into(), clean_error(&e)));
@@ -736,6 +916,10 @@ impl SheetApp {
         let Some(d) = self.session.active() else { return };
         let Some(sh) = d.wb.active() else { return };
         let at = sh.merge_at(d.selection.active).map(|m| m.start).unwrap_or(d.selection.active);
+        if text.is_none() && sh.cell(at).is_some_and(|c| c.py.is_some()) {
+            self.begin_python_edit();
+            return;
+        }
         // A picture has no editable scalar text. Selecting it, F2, or clicking
         // the formula bar must not turn its fallback value into a text edit.
         // Typing still starts an intentional replacement.
@@ -764,9 +948,137 @@ impl SheetApp {
         self.session.mode = if replace { gridcraft_engine::Mode::Enter } else { gridcraft_engine::Mode::Edit };
     }
 
+    /// Starts editing the active cell in Python mode, in the formula bar, with its code (empty
+    /// for a cell that isn't a Python cell yet). Nothing changes until the code is committed.
+    pub fn begin_python_edit(&mut self) {
+        if let Err(e) = self.commit_text_box_edit() {
+            self.message = Some(("Text Box".into(), clean_error(&e)));
+            return;
+        }
+        let Some(d) = self.session.active() else { return };
+        let Some(sh) = d.wb.active() else { return };
+        let at = sh.merge_at(d.selection.active).map(|m| m.start).unwrap_or(d.selection.active);
+        let code = sh.cell(at).and_then(|c| c.py.as_ref()).map(|p| p.code.clone()).unwrap_or_default();
+        let mut ed = editor::EditState::python(d.wb.active_sheet, at, code);
+        ed.locale = self.ui.language.formula_locale();
+        self.editor = Some(ed);
+        self.session.mode = gridcraft_engine::Mode::Edit;
+    }
+
+    /// Formulas › Insert Python › Insert xl() Reference: turns on Python mode's pointing (as F2
+    /// does), starting a Python edit of the active cell if none is open, so the next click or drag
+    /// on the sheet inserts `xl("…")`.
+    pub fn point_python(&mut self) {
+        if !self.editor.as_ref().is_some_and(|e| e.python) {
+            if self.editor.is_some() {
+                self.toggle_python();
+            } else {
+                self.begin_python_edit();
+            }
+        }
+        if let Some(ed) = self.editor.as_mut().filter(|e| e.python) {
+            ed.py_point = true;
+            ed.point = None;
+            ed.point_cell = None;
+            ed.request_focus = true;
+            self.session.mode = gridcraft_engine::Mode::Point;
+            self.toast = Some(("Click or drag on the sheet to insert an xl() reference".into(), now_ms()));
+        }
+    }
+
+    /// Whether the cell is a Python cell.
+    pub fn is_python_cell(&self, sheet: usize, at: CellRef) -> bool {
+        self.session.active().and_then(|d| d.wb.sheet(sheet)).and_then(|sh| sh.cell(at)).is_some_and(|c| c.py.is_some())
+    }
+
+    /// Leaves Python mode (the PY badge, Ctrl+Alt+Shift+P, Backspace in an empty editor): Python
+    /// goes off and the input is cleared. Committing the empty input then turns a Python cell
+    /// back into a normal cell, which undo reverses; Esc keeps the cell as it was. Not editing, it
+    /// starts that edit on the active Python cell.
+    pub fn leave_python(&mut self) {
+        if self.editor.is_none() {
+            let Some(d) = self.session.active() else { return };
+            if !self.is_python_cell(d.wb.active_sheet, d.selection.active) {
+                return;
+            }
+            self.begin_python_edit();
+        }
+        let Some((sheet, cell)) = self.editor.as_ref().filter(|e| e.python).map(|e| (e.sheet, e.cell)) else { return };
+        let was = self.is_python_cell(sheet, cell);
+        if let Some(ed) = self.editor.as_mut() {
+            ed.leave_python(was);
+        }
+        self.session.mode = gridcraft_engine::Mode::Edit;
+    }
+
+    /// Ctrl+Alt+Shift+P: Python mode on or off. Not editing, it starts a Python edit of the
+    /// active cell; in a formula edit, the text becomes code.
+    pub fn toggle_python(&mut self) {
+        match self.editor.as_mut() {
+            Some(ed) if ed.python => self.leave_python(),
+            Some(ed) => {
+                ed.enter_python();
+                self.session.mode = gridcraft_engine::Mode::Edit;
+            }
+            None => self.begin_python_edit(),
+        }
+    }
+
+    /// Commits a Python-mode edit through `python.set`; the cell stays selected.
+    fn commit_python(&mut self, ed: editor::EditState) -> bool {
+        self.session.mode = gridcraft_engine::Mode::Ready;
+        let sheet = self.session.active().and_then(|d| d.wb.sheet(ed.sheet)).map(|s| s.name.clone());
+        let mut p = json!({"cell": ed.cell.a1(), "code": ed.text});
+        if let Some(sheet) = sheet {
+            p["sheet"] = json!(sheet);
+        }
+        match self.session.run("python.set", p) {
+            Ok(_) => {
+                self.after_engine();
+                true
+            }
+            Err(e) => {
+                self.message = Some(("GridCraft".into(), clean_error(&e)));
+                self.editor = Some(ed);
+                self.session.mode = gridcraft_engine::Mode::Edit;
+                false
+            }
+        }
+    }
+
     /// Commits the edit; `then` moves the selection (dr, dc) afterwards.
     pub fn commit_edit(&mut self, dr: i64, dc: i64, array: bool, fill_selection: bool) -> bool {
-        let Some(ed) = self.editor.take() else { return true };
+        let Some(mut ed) = self.editor.take() else { return true };
+        if ed.python {
+            return self.commit_python(ed);
+        }
+        // A bare `=PY` entered with Enter or Tab starts Python mode instead.
+        if ed.is_py_trigger() {
+            ed.enter_python();
+            self.editor = Some(ed);
+            self.session.mode = gridcraft_engine::Mode::Edit;
+            return false;
+        }
+        // Left Python mode and entered nothing: the Python cell becomes a normal cell.
+        if ed.py_left && ed.text.trim().is_empty() && self.is_python_cell(ed.sheet, ed.cell) {
+            self.session.mode = gridcraft_engine::Mode::Ready;
+            let sheet = self.session.active().and_then(|d| d.wb.sheet(ed.sheet)).map(|s| s.name.clone()).unwrap_or_default();
+            return match self.session.run("python.clear", json!({"cell": ed.cell.a1(), "sheet": sheet})) {
+                Ok(_) => {
+                    if dr != 0 || dc != 0 {
+                        self.move_after_enter(dr, dc);
+                    }
+                    self.after_engine();
+                    true
+                }
+                Err(e) => {
+                    self.message = Some(("GridCraft".into(), clean_error(&e)));
+                    self.editor = Some(ed);
+                    self.session.mode = gridcraft_engine::Mode::Edit;
+                    false
+                }
+            };
+        }
         self.session.mode = gridcraft_engine::Mode::Ready;
         let text = match &ed.completion {
             Some(full) if full.to_lowercase().starts_with(&ed.text.to_lowercase()) => full.clone(),
@@ -902,6 +1214,13 @@ impl SheetApp {
             ctx.request_repaint();
         }
         control::poll(self, ctx);
+        // Python cells running in the background: take results, start the next cell.
+        if self.session.python_busy() {
+            self.session.step_python();
+            ctx.request_repaint_after(std::time::Duration::from_millis(15));
+        }
+        // A save that waited for them.
+        self.poll_pending_save(ctx);
         // Files read asynchronously (web file picker, dropped files).
         let arrived: Vec<(String, Vec<u8>)> = self
             .services
@@ -958,9 +1277,11 @@ impl SheetApp {
         } else {
             ribbon::show(self, ui);
             widgets::notice_bar(self, ui);
-            if self.session.prefs.formula_bar {
+            // Python code is edited in the formula bar, so it shows while that happens.
+            if self.session.prefs.formula_bar || self.editor.as_ref().is_some_and(|e| e.python) {
                 formula_bar::show(self, ui);
             }
+            python_ui::enable_bar(self, ui);
             if self.ui.status_bar {
                 tabs::status_bar(self, ui);
             }
@@ -994,6 +1315,8 @@ impl SheetApp {
         if self.grid.autosave
             && self.editor.is_none()
             && self.text_box_editor.is_none()
+            && self.pending_save.is_none()
+            && self.session.python_pending_cells() == 0
             && now - self.grid.last_autosave > 2000.0
             && self.session.active().is_some_and(|d| d.is_dirty() && d.path.as_deref().is_some_and(|p| p.ends_with(".xlsx")))
         {
@@ -1086,6 +1409,16 @@ pub fn clean_error(e: &str) -> String {
     e.to_string()
 }
 
+/// The command id of a save that waits for running Python cells, or `None` for any other command
+/// (Save As without a path only asks where to save).
+fn deferrable_save(id: &str, params: &Json) -> Option<&'static str> {
+    match id {
+        "file.save" => Some("file.save"),
+        "file.saveAs" if params.get("path").and_then(Json::as_str).is_some_and(|p| !p.is_empty()) => Some("file.saveAs"),
+        _ => None,
+    }
+}
+
 #[allow(clippy::disallowed_methods)] // the clock is read only off wasm
 pub fn now_ms() -> f64 {
     #[cfg(not(target_arch = "wasm32"))]
@@ -1101,4 +1434,40 @@ pub fn now_ms() -> f64 {
 
 pub fn cell(r: u32, c: u32) -> CellRef {
     CellRef::new(r, c)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gridcraft_python::client::Launcher;
+
+    /// Python cells that never make progress (nothing steps them here): a save waits for them only
+    /// as long as a cell may run, then saves what they hold, and the window keeps working.
+    #[test]
+    fn a_save_waiting_for_python_that_never_finishes_saves_anyway() {
+        let path = std::env::temp_dir().join(format!("gridcraft-save-timeout-{}.xlsx", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut s = Session::new();
+        s.new_workbook();
+        s.set_python_launcher(Launcher::InProcess);
+        let mut app = SheetApp::new(s, Services::default());
+        app.run("python.set", json!({"cell": "A1", "code": "6 * 7"})).unwrap();
+        assert!(app.session.python_pending_cells() > 0);
+        let r = app.run("file.save", json!({"path": path.to_string_lossy()})).unwrap();
+        assert_eq!(r["waitingForPython"], true);
+        assert!(app.save_pending());
+        let ctx = egui::Context::default();
+        app.poll_pending_save(&ctx);
+        assert!(app.save_pending(), "still within the time a cell may run");
+        assert!(!path.exists(), "not saved yet");
+        if let Some(p) = app.pending_save.as_mut() {
+            p.deadline = 0.0;
+        }
+        app.poll_pending_save(&ctx);
+        assert!(!app.save_pending());
+        assert!(path.exists(), "saved with what the cell holds");
+        assert!(matches!(app.save_results.as_slice(), [(_, Ok(_))]));
+        assert!(app.session.python_pending_cells() > 0, "the cell is still waiting");
+        let _ = std::fs::remove_file(&path);
+    }
 }

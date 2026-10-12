@@ -765,6 +765,7 @@ fn new_window(s: &mut Session, _: &Json) -> Result<Json> {
     let d = s.doc()?.clone();
     let mut copy = crate::DocState::new((*d.wb).clone(), d.path.clone(), format!("{}:2", d.display_title()));
     copy.selection = d.selection.clone();
+    copy.trust = d.trust;
     let i = s.add_document(copy);
     Ok(json!({"index": i}))
 }
@@ -1037,6 +1038,7 @@ fn toggle_checkbox(s: &mut Session, p: &Json) -> Result<Json> {
             let sh = cx.sheet_mut(si)?;
             if let Some(cell) = sh.cells.get_mut(c)
                 && cell.formula.is_none()
+                && cell.py.is_none()
             {
                 // An empty checkbox cell counts as FALSE.
                 let next = match cell.value {
