@@ -392,8 +392,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Workbook calculation" => "Obliczanie skoroszytu",
         "Enable iterative calculation" => "Włącz obliczanie iteracyjne",
         "Calculation settings are saved with the workbook." => "Ustawienia obliczania są zapisywane razem ze skoroszytem.",
-        // Format Cells dialog. Its labels are still English literals in the code; these entries
-        // take effect once the dialog looks them up in the catalog.
+        // Format Cells dialog (looked up through `Language::tr` once storytold/gridcraft#788 lands).
         "Format Cells" => "Formatuj komórki",
         "Cancel" => "Anuluj",
         "Alignment" => "Wyrównanie",
@@ -430,6 +429,17 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Diagonal ↘" => "Ukośna ↘",
         "Locked" => "Zablokowane",
         "Hidden" => "Ukryte",
+        "Format Cells|Fill" => "Wypełnienie",
+        "none" => "brak",
+        "thin" => "cienka",
+        "medium" => "średnia",
+        "thick" => "gruba",
+        "dashed" => "kreskowana",
+        "dotted" => "kropkowana",
+        "double" => "podwójna",
+        "Locking cells or hiding formulas has no effect until you protect the worksheet (Review › Protect Sheet)." => {
+            "Blokowanie komórek i ukrywanie formuł działa dopiero po włączeniu ochrony arkusza (Recenzja › Chroń arkusz)."
+        }
         _ => return None,
     })
 }
