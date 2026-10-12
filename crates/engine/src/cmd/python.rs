@@ -45,7 +45,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "python.output",
             "Python Output",
             [],
-            None,
+            Some("Ctrl+Alt+Shift+M"),
             "{cell?, mode?: object|value, lines?: cell|rows} → {cell, value, mode, lines}: shows the result as a Python object or converts it to cell values; `lines` keeps a multi-line text result in the cell, wrapped, or spills one line per row",
             has_doc,
             output

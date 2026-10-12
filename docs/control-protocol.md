@@ -60,7 +60,9 @@ Re-run once it has a result).
 value mode stays in its cell, wrapped (`lines: "cell"`, the default), or spills one line per row
 (`"rows"`); it answers with the cell's value and both settings. `cell.get` on a Python cell
 reports `python.output`, `python.lines`, `python.label` (the type with its size, which an
-object-mode cell shows) and `python.tabular` (whether the result is a table).
+object-mode cell shows) and `python.tabular` (whether the result is a table). The UI command
+`python.saveCsv {cell?, path?}` writes a tabular result to `path` as CSV, or, without a path,
+returns it as `csv`; it never opens a dialog.
 
 Use `engine.execute` with `{command: "view.theme", params: {mode: "system"}}`
 to choose the display theme; `mode` accepts `"system"`, `"light"`, or `"dark"`.
