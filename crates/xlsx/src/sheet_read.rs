@@ -1132,6 +1132,10 @@ fn merge_x14_data_bar(cx: &Ctx<'_>, db: &El, rule: &mut CfRule) -> bool {
     };
     let mut skipped = false;
     for (name, _) in &db.attrs {
+        // `direction` is checked separately below: only a non-default direction is unmodelled.
+        if name == "direction" {
+            continue;
+        }
         if !matches!(
             name.as_str(),
             "minLength"
@@ -1139,13 +1143,17 @@ fn merge_x14_data_bar(cx: &Ctx<'_>, db: &El, rule: &mut CfRule) -> bool {
                 | "showValue"
                 | "border"
                 | "gradient"
-                | "direction"
                 | "negativeBarColorSameAsPositive"
                 | "negativeBarBorderColorSameAsPositive"
                 | "axisPosition"
         ) {
             skipped = true;
         }
+    }
+    // Bar direction has no modelled home: an rtl bar would save back as ltr, so a direction
+    // other than Excel's schema default ("context") warns instead of silently flipping it.
+    if db.attr("direction").is_some_and(|d| d != "context") {
+        skipped = true;
     }
     for child in &db.children {
         if !matches!(child.name.as_str(), "cfvo" | "fillColor" | "borderColor" | "negativeFillColor" | "negativeBorderColor" | "axisColor") {

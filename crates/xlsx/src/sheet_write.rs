@@ -935,6 +935,12 @@ fn cf_rule_xml(cf: &CondFormat, priority: u32, out: &mut Out) -> CfXml {
                 if let Some((lo, hi)) = limits {
                     let _ = write!(a, " minLength=\"{lo}\" maxLength=\"{hi}\"");
                 }
+                // The classic side writes `showValue="0"` when values are hidden; the x14 side
+                // must mirror it or an Excel that merges the refinement over the classic rule
+                // would bring the values back.
+                if !*show_value {
+                    a.push_str(" showValue=\"0\"");
+                }
                 if !*gradient {
                     a.push_str(" gradient=\"0\"");
                 }

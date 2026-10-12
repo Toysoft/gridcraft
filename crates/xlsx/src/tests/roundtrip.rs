@@ -991,6 +991,39 @@ fn x14_extensions_round_trip() {
     assert_eq!(back.sheet(0).unwrap().sparklines, wb.sheet(0).unwrap().sparklines);
 }
 
+/// #703: the x14 dataBar must mirror the classic `showValue="0"` — if Excel merges the x14
+/// refinement over the classic rule, hidden values would reappear without it.
+#[test]
+fn x14_databar_mirrors_hidden_values() {
+    let mut wb = Workbook::new();
+    let s = wb.sheet_mut(0).unwrap();
+    s.cond_formats.push(CondFormat {
+        ranges: vec![rr("B2:B10")],
+        rule: CfRule::DataBar {
+            min: CfValueKind::Min,
+            max: CfValueKind::Max,
+            color: Color::Rgb(0x638EC6),
+            gradient: false,
+            show_value: false,
+            border: None,
+            negative_fill: None,
+            negative_border: None,
+            axis: None,
+            limits: None,
+        },
+        priority: 1,
+        stop_if_true: false,
+    });
+    let bytes = write_xlsx(&wb).unwrap();
+    let (xml, _) = sheet1_xml(&bytes);
+    // Both sides carry the flag: the classic bar and its x14 refinement.
+    assert!(xml.contains("<dataBar showValue=\"0\">"), "{xml}");
+    assert!(xml.contains("<x14:dataBar showValue=\"0\" gradient=\"0\" axisPosition=\"none\">"), "{xml}");
+    let (back, rep) = read_xlsx(&bytes).unwrap();
+    assert!(rep.warnings.is_empty(), "{:?}", rep.warnings);
+    assert_eq!(back.sheet(0).unwrap().cond_formats, wb.sheet(0).unwrap().cond_formats);
+}
+
 /// #703: MS-XLSX couples `negativeBorderColor` to `border="1"` (the element MUST exist iff
 /// `negativeBarBorderColorSameAsPositive="0"` *and* `border="1"`). A negative border colour
 /// without a border is not expressible, so writing forces the border on with an automatic

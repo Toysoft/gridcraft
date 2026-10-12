@@ -343,6 +343,21 @@ fn unmodelled_and_hostile_x14() {
     assert!(!*gradient);
     assert!(rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
 
+    // Bar direction is unmodelled: an rtl bar still merges (gradient honoured) but warns,
+    // because saving it back would silently flip the direction to left-to-right.
+    let body = X14_DATABAR_SHEET.replace(r#"gradient="0""#, r#"gradient="0" direction="rtl""#);
+    let (wb, rep) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
+    let CfRule::DataBar { gradient, .. } = &wb.sheet(0).unwrap().cond_formats[0].rule else { panic!("not a data bar") };
+    assert!(!*gradient, "the extension was not merged");
+    assert!(rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
+
+    // …but a file carrying Excel's schema default (`direction="context"`) must not warn.
+    let body = X14_DATABAR_SHEET.replace(r#"gradient="0""#, r#"gradient="0" direction="context""#);
+    let (wb, rep) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
+    let CfRule::DataBar { gradient, .. } = &wb.sheet(0).unwrap().cond_formats[0].rule else { panic!("not a data bar") };
+    assert!(!*gradient, "the extension was not merged");
+    assert!(!rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
+
     // A hostile maxLength clamps to Excel's 100 percent.
     let body = X14_DATABAR_SHEET.replace(r#"maxLength="100""#, r#"maxLength="4294967295""#);
     let (wb, _) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();

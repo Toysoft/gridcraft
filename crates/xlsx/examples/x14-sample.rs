@@ -1,6 +1,8 @@
 //! Writes a workbook exercising every x14 conditional-format extension — solid bar with
-//! border/negative colours/axis/length limits, custom icon set, `5Boxes` (x14-only), plus a
-//! sparkline — for a manual open-in-Excel check: it must open with no repair prompt.
+//! border/negative colours/axis/length limits, a bar with hidden values (`showValue="0"`
+//! mirrored on both sides), a bar with non-default length limits, custom icon set, `5Boxes`
+//! (x14-only), plus a sparkline — for a manual open-in-Excel check: it must open with no
+//! repair prompt.
 //!
 //! Usage: `cargo run -p gridcraft-xlsx --example x14-sample -- [out.xlsx]`
 //! (default `/tmp/opencode/x14-writer-sample.xlsx`).
@@ -78,6 +80,43 @@ fn run(path: &str) -> Result<(), Box<dyn std::error::Error>> {
             limits: None,
         },
         priority: 5,
+        stop_if_true: false,
+    });
+    // Solid bar with hidden values: `showValue="0"` must appear on both the classic bar and
+    // the x14 refinement, or Excel merging the x14 side would bring the values back.
+    s.cond_formats.push(CondFormat {
+        ranges: vec![gridcraft_core::RangeRef::parse("H2:H10").ok_or("range")?],
+        rule: CfRule::DataBar {
+            min: CfValueKind::Min,
+            max: CfValueKind::Max,
+            color: Color::Rgb(0x638EC6),
+            gradient: false,
+            show_value: false,
+            border: None,
+            negative_fill: None,
+            negative_border: None,
+            axis: None,
+            limits: None,
+        },
+        priority: 6,
+        stop_if_true: false,
+    });
+    // Solid bar with non-default length limits (bars occupy the middle 5–95% of the cell).
+    s.cond_formats.push(CondFormat {
+        ranges: vec![gridcraft_core::RangeRef::parse("I2:I10").ok_or("range")?],
+        rule: CfRule::DataBar {
+            min: CfValueKind::Min,
+            max: CfValueKind::Max,
+            color: Color::Rgb(0x638EC6),
+            gradient: false,
+            show_value: true,
+            border: None,
+            negative_fill: None,
+            negative_border: None,
+            axis: None,
+            limits: Some((5, 95)),
+        },
+        priority: 7,
         stop_if_true: false,
     });
     // Custom icon set: 3Arrows with every position drawn from 3Triangles.
