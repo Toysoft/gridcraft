@@ -111,6 +111,33 @@ pub struct Clipboard {
     /// A multi-area copy: the areas as selected (for the marquee). `wb` then holds them slid
     /// together into one block at `range`. Empty for a single-range copy.
     pub areas: Vec<RangeRef>,
+    /// Trust of the source document: pasting content from a file someone else made carries it.
+    pub trust: Trust,
+}
+
+/// Whether a document's active content (macros) may run without asking the person first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Trust {
+    /// Made in this session: a new workbook or a sample.
+    #[default]
+    Local,
+    /// Opened from a file, or holding content pasted from one: active content asks before it
+    /// runs.
+    FromFile,
+}
+
+impl Trust {
+    /// Whether active content may run without asking.
+    pub fn allows_code(self) -> bool {
+        self == Trust::Local
+    }
+
+    /// The trust of a document after it receives content from a document with trust `source`:
+    /// content from an untrusted file leaves the receiver untrusted.
+    pub fn receive(self, source: Trust) -> Trust {
+        if source == Trust::FromFile { Trust::FromFile } else { self }
+    }
 }
 
 /// In-cell edit mode as shown in the status bar.
@@ -139,6 +166,8 @@ pub struct DocState {
     pub sheet_selections: Vec<Selection>,
     /// Allow Edit Ranges unlocked with their password in this session: (sheet name, title).
     pub unlocked_ranges: Vec<(String, String)>,
+    /// Whether the workbook's active content may run without asking.
+    pub trust: Trust,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -163,6 +192,7 @@ impl DocState {
             title,
             sheet_selections: vec![],
             unlocked_ranges: vec![],
+            trust: Trust::Local,
         }
     }
     pub fn is_dirty(&self) -> bool {
