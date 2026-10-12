@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (formula bar grows to five lines; code editor widget) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (ribbon groups collapse into launcher popups when narrow) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Interaction, controls and feel, against Excel. Part of [target-app-parity.md](target-app-parity.md).
 **UI/UX fidelity: ~55% ready, 50–80 h** (estimated). Ribbon command coverage is measured
@@ -15,7 +15,7 @@ Sources: `crates/ui-egui/src` (ribbon, grid, editor, formula bar, dialogs, panes
 | Element | Excel | GridCraft | Status |
 |---|---|---|---|
 | Title bar, Quick Access Toolbar, AutoSave toggle | yes | yes | done; macOS window controls misaligned (#170), Dock icon size (#169) |
-| Ribbon: tabs, groups, split buttons, galleries, contextual tabs | yes | yes (Table Design, Chart Design, Format, PivotTable, Header & Footer tabs); large split buttons (Formulas › AutoSum); arrows at the card's edges scroll a tab wider than the window | done; missing contextual tabs for pictures, shapes, sparklines, slicers; groups do not collapse when narrow |
+| Ribbon: tabs, groups, split buttons, galleries, contextual tabs | yes | yes (Table Design, Chart Design, Format, PivotTable, Header & Footer tabs); large split buttons (Formulas › AutoSum); arrows at the card's edges scroll a tab wider than the window; when the card is too narrow for a tab, its groups collapse rightmost-first into launcher buttons that open the group in a dropdown popup, re-expanding as space returns (per-tab plan with 24 px hysteresis, ≈ 540 px floor on Home below which the scroll arrows take over; one submenu at a time, like Excel) (#434) | done; missing contextual tabs for pictures, shapes, sparklines, slicers |
 | Ribbon collapse, simplified ribbon, customize ribbon/QAT | yes | partial | customization missing (File ▸ Options is the one missing File command) |
 | Ribbon: tabs, groups, split buttons, galleries, contextual tabs | yes | yes (Table Design, Chart Design, Format, PivotTable tabs) | done; missing contextual tabs for pictures, shapes, sparklines, header/footer, slicers |
 | Ribbon collapse, simplified ribbon, customize ribbon/QAT | yes | partial | customization missing |
@@ -161,6 +161,7 @@ scrollbar bugs 2–4 · pixel/feel pass against observed Excel 7–12.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Ribbon: groups too wide for the card collapse rightmost-first into launcher popups, re-expanding as space returns (24 px hysteresis, per-tab plans, ≈ 540 px floor on Home below which the scroll arrows take over) (#434) |
 | 2026-10-11 | minor | Formula bar grows from one to five lines then scrolls; in-cell editor capped at five lines; code editor widget (Python and LaTeX colouring, Tab indent, Enter keeps indentation) |
 | 2026-10-11 | minor | Ribbon: scroll arrows on a tab wider than the window, Formulas › AutoSum as a split button with its function menu, View › Show in two columns so Headings is no longer cut off |
 | 2026-10-11 | minor | Theme tokens for icon, reference, on-accent and sheet-control colours; WCAG 2 contrast test over both themes (dark danger red and selected header text adjusted) |
