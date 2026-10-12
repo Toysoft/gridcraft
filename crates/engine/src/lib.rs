@@ -319,6 +319,8 @@ pub struct Session {
     depth: u32,
     /// Macros the person allowed to run in this session: (document uid, macro content hash).
     pub macro_approvals: std::collections::HashSet<(u64, u64)>,
+    /// The macro being debugged, between debugger actions.
+    pub macro_debug: Option<macros::debug::Debugger>,
     /// Windows hidden with View › Hide.
     pub hidden_windows: Vec<usize>,
     /// Draw tab tool: "" (select), "pen" or "eraser"; pen colour and width.
@@ -401,6 +403,12 @@ impl Session {
         if let Err(why) = (spec.enabled)(self) {
             return Err(EngineError::Disabled(id.to_string(), why));
         }
+        // While a macro is being debugged its undo group is open: other edits of the workbooks it
+        // touched wait. Other workbooks stay editable.
+        let locked = self.active().is_some_and(|d| self.macro_debug.as_ref().is_some_and(|m| m.locks(d.uid)));
+        if self.depth == 0 && spec.undoable && id != "macro.debug" && locked {
+            return Err(EngineError::Disabled(id.to_string(), macros::debug::BUSY.into()));
+        }
         let before = self.active().map(|d| (d.uid, d.wb.clone(), d.selection.clone()));
         let params = if params.is_null() { Json::Object(Default::default()) } else { params };
         let (first_group, group_epoch) = (self.next_group, self.group_epoch);
@@ -426,6 +434,7 @@ impl Session {
                     d.selection = sel.clone();
                     d.calc.rebuild(&d.wb);
                 }
+                macros::debug::recover(self);
                 return Err(EngineError::Internal(id.to_string(), msg));
             }
         };
