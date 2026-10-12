@@ -1,6 +1,6 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (German ribbon catalog added) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Italian ribbon catalog and Italian formulas added) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Per-language status against Excel, which ships its UI in dozens of languages (Windows language
 packs cover 100+), with localized function names, argument separators, number and date formats,
@@ -20,10 +20,13 @@ right-to-left sheets and full complex-script support. Part of
 - **About 2,200 user-visible strings** in all (heuristic source scan: ~1,700 UI and command
   strings plus ~500 function descriptions), so each shipped language covers **~12%** (measured
   count / estimated total).
-- **en-US only formulas and formats.** Function names, `,` argument separator, `.` decimal
-  separator, en-US number and date formats (`crates/numfmt` says "en-US only"). Users ask for
-  localized function names and `;` separators (#45). German with localized numbers and formulas
-  is in PR #163 (open).
+- **Formulas follow the interface language in Spanish, German, Brazilian Portuguese,
+  Russian and Italian** (#45): function names (403–459 per language), booleans, errors, table specifiers and
+  separators, at the editor boundary only; files and APIs keep canonical English
+  ([formula-input.md](formula-input.md)). The names come from machine-translated Microsoft pages
+  (two agreeing signals per entry, sources in `crates/formula/src/input/`) and have no native
+  review. French and Czech formulas stay English. Number and date formats are en-US only
+  (`crates/numfmt` says "en-US only"); PR #163 (German formulas and numbers) is open.
 - **Script support.** System-font fallback for CJK, Thai and Hebrew landed in #38 (closes #32;
   #142 is still open pending confirmation). There is no complex-text shaping: Arabic and
   Devanagari don't join or reorder, and there is no bidirectional layout. **Sheet Right-to-Left**
@@ -55,7 +58,8 @@ separators, number/date formats, machine translation with agent review, and scri
 | Korean | ko | 266 (~12%) | no | Hangul via the CJK fallback; IME unverified | no | menus only | 6–10 h |
 | Vietnamese | vi | 0 (0%) | no | Latin with stacked diacritics: unverified | no | none | 6–10 h |
 
-Other shipped languages: Russian (ru) and German (de), 266 labels each (~12%), menus only.
+Other shipped languages: Russian (ru) and German (de), 266 labels each (~12%), menus only; Italian
+(it), 381 labels (the full reference table), menus only, not yet reviewed by a second native speaker.
 
 **Total:** catalog work 10–20 h + languages 92–144 h ≈ **100–165 h**. Parallelizes almost fully
 once the catalog covers dialogs and commands. **Needs a human:** native-speaker review of every
@@ -66,9 +70,9 @@ language (none so far) and of localized function names.
 1. Extend the catalog from the ribbon to every user-visible string (dialogs, menus, task panes,
    status and error messages, command labels, function descriptions), with a missing-key check
    in `cargo xtask ci`. Language switching and the system-language default already exist (#31).
-2. Locale-aware formulas: localized function-name tables and separators at the formula-bar
-   boundary only (files keep en-US invariant names), locale number and date formats, list
-   separators in CSV.
+2. Locale-aware formulas: function tables and separators exist for es, de, pt-BR and ru at the
+   formula-bar boundary (files keep canonical names); still missing: tables for French and the
+   other languages, locale number and date formats, list separators in CSV.
 3. Text shaping and fallback: a shaping engine for grid, editor and PDF text (Arabic, Devanagari,
    Thai), system font fallback for CJK, bidirectional runs, right-to-left sheet tabs and printing;
    embedded subset fonts in PDF.
@@ -77,6 +81,9 @@ language (none so far) and of localized function names.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Italian formulas (`input/it.rs`): 455 function names, `;` arguments, decimal comma, `\` / `.` array separators, VERO/FALSO, errors and table specifiers; the lexer ends an array row at a row separator that is a word character |
+| 2026-10-12 | minor | Italian (it) ribbon table (`i18n/it.rs`, 381 labels: every key of the reference table, in the names Italian Excel users know); `it` locale tags (it-IT, it-CH, it_IT.UTF-8) resolve to Italian; formulas and number formats stay en-US |
+| 2026-10-11 | minor | Formulas follow the interface language in es, de, pt-BR and ru (names, booleans, errors, table specifiers, separators); infrastructure item 2 partly done |
 | 2026-10-11 | minor | German ribbon catalog (`i18n/de.rs`, 266 labels, ~12%); `de` locale tags (de-DE, de-AT, de-CH…) resolve to German. PR #163 (localized German formulas/numbers) still open |
 | 2026-10-11 | minor | Sheet Right-to-Left mirrors the grid (#146) |
 | 2026-10-11 | minor | Czech (cs) ribbon table: 266 labels (~12%), menus only |
