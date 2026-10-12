@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~25 points of "ready for real work" and ~160–240 h away
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (password-encrypted workbooks open, #11) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (ten Indian languages and Indian-script fonts) · **Target:** Microsoft Excel (Microsoft 365)
 
 GridCraft aims at full Microsoft Excel parity, and at being better in places: faster, open (XLSX
 is the native format), fully scriptable by agents (MCP, control channel, CLI), and on the web.
@@ -62,7 +62,7 @@ collaboration, mobile, AI).
 | File formats | ~50% | 80–120 | [file-format-parity.md](docs/file-format-parity.md) |
 | Performance | ~35% | 35–55 | [target-app-parity.md](docs/target-app-parity.md#performance) |
 | Stability | ~60% | 15–25 | [gaps.md](docs/gaps.md) |
-| Localization | ~10% (ribbon in 6 languages) | 100–165 | [localization-parity.md](docs/localization-parity.md) |
+| Localization | ~10% (ribbon in 19 languages) | 100–165 | [localization-parity.md](docs/localization-parity.md) |
 | Hardware (multi-core calc, GPU, pen, multi-window) | ~40% | 25–40 | [hardware-parity.md](docs/hardware-parity.md) |
 | Platforms | ~80% (no iOS/Android; ahead on Linux, BSD, RISC-V) | 30–60 | [target-app-parity.md](docs/target-app-parity.md#platforms) |
 | Ecosystem / add-ins | ~10% (VBA out of scope; own scripts, MCP, CLI) | 25–40 | [target-app-parity.md](docs/target-app-parity.md#ecosystem-and-ai) |
@@ -89,21 +89,21 @@ collaboration, mobile, AI).
 
 ## Languages
 
-The ribbon is translated into Japanese, Simplified Chinese, Korean, Brazilian Portuguese, Russian
-and German (266–268 labels each, ~12% of ~2,200 strings; merged 10-10 in #31, #104, #82, German
-added 10-11), the
-interface follows the system language, and CJK, Thai and Hebrew text falls back to system fonts
-(#38). Dialogs, menus and messages are English; formulas and number formats are en-US only.
+The ribbon, status bar and Backstage are translated into Japanese, Simplified Chinese, Korean,
+Brazilian Portuguese, Russian, German, Czech, Spanish, French and ten Indian languages (Hindi,
+Bengali, Marathi, Telugu, Tamil, Gujarati, Kannada, Malayalam, Odia, Punjabi; 381 labels each,
+~17% of ~2,200 strings), the interface follows the system language, and CJK, Thai, Hebrew and
+Indian-script text falls back to system fonts and is shaped (conjuncts, reordered vowel signs). Dialogs, menus and messages are English; formulas and number formats are en-US only.
 Localized German formulas and numbers are in PR #163. Detail: [localization-parity.md](docs/localization-parity.md).
 
 | Language | Code | Status | UI strings |
 |---|---|---|---|
 | English | en | full (source language) | 100% |
 | Simplified Chinese | zh-Hans | menus only | ~12% |
-| Spanish | es | none | 0% |
-| Hindi | hi | none | 0% |
+| Spanish | es | menus only | ~17% |
+| Hindi | hi | menus only | ~17% |
 | Arabic | ar | none (no RTL layout, no shaping) | 0% |
-| French | fr | none | 0% |
+| French | fr | menus only | ~17% |
 | Portuguese | pt-BR | menus only | ~12% |
 | Indonesian | id | none | 0% |
 | Japanese | ja | menus only | ~12% |
@@ -111,7 +111,7 @@ Localized German formulas and numbers are in PR #163. Detail: [localization-pari
 | Korean | ko | menus only | ~12% |
 | Vietnamese | vi | none | 0% |
 
-Other shipped languages: 2 (Russian and German, menus only, ~12%).
+Other shipped languages: 11 (Russian, Czech, and the Indian languages bn, mr, te, ta, gu, kn, ml, or, pa; menus only, ~17%).
 
 ## Upcoming
 
@@ -132,6 +132,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
+| 2026-10-11 | Ten Indian interface languages (Hindi, Bengali, Marathi, Telugu, Tamil, Gujarati, Kannada, Malayalam, Odia, Punjabi) and system Indian-script fonts on Windows, macOS, Linux and BSD, shaped correctly |
 | 2026-10-11 | Command-sequence fuzzing: random command sequences checked against undo/redo, XLSX round-trip and full recalculation; fixes for the table, legacy-array, spill, AutoSum, Watch Window and sheet-copy bugs it found |
 | 2026-10-11 | Password-protected workbooks open: GridCraft asks for the password and decrypts Agile and Standard encryption (#11) |
 | 2026-10-11 | Text boxes keep their formatting: run size, bold, italic, typeface, text colour and outline, alignment, vertical anchor and "no outline" (#377) |
@@ -177,6 +178,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Ten Indian languages, Indian-script fonts; language counts and table updated; progress log row |
 | 2026-10-11 | minor | Password-encrypted workbooks open (#11); progress log row |
 | 2026-10-11 | minor | Forecast Sheet (#322); progress log row |
 | 2026-10-11 | minor | Worksheet functions 505 / 523 (ODD* bond functions); progress log row |
