@@ -1327,6 +1327,17 @@ fn items_of(e: &El) -> Vec<&El> {
     e.child("items").map(|it| it.kids("item").filter(|i| i.attr("t").is_none_or(|t| t == "data")).collect()).unwrap_or_default()
 }
 
+/// Whether a `<pivotField>` shows subtotals: custom subtotal functions (Field Settings ›
+/// Subtotals › Custom, `sumSubtotal` and the like, ECMA-376 §18.10.1.69) turn them on as
+/// well as `defaultSubtotal`.
+fn field_subtotals(e: &El) -> bool {
+    has_custom_subtotals(e) || e.flag("defaultSubtotal", true)
+}
+
+fn has_custom_subtotals(e: &El) -> bool {
+    CUSTOM_SUBTOTALS.iter().any(|a| e.flag(a, false))
+}
+
 /// The x14 element of an `<extLst><ext uri>` (e.g. `x14:pivotField`), if present.
 fn x14_ext<'a>(e: &'a El, uri: &str) -> Option<&'a El> {
     let ext = e.child("extLst")?.kids("ext").find(|x| x.attr("uri").is_some_and(|u| u.eq_ignore_ascii_case(uri)))?;
@@ -1421,7 +1432,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
     if let Some(f) = first_axis {
         pt.subtotals = x14_ext(x, EXT_XPDL_TABLE)
             .and_then(|e| e.attr("EnabledSubtotalsDefault"))
-            .map_or_else(|| f.flag("defaultSubtotal", true), |v| v == "1" || v.eq_ignore_ascii_case("true"));
+            .map_or_else(|| field_subtotals(f), |v| v == "1" || v.eq_ignore_ascii_case("true"));
         pt.subtotals_top = f.flag("subtotalTop", true);
     }
     pt.grand_totals_rows = x.flag("colGrandTotals", true);
@@ -1471,13 +1482,11 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 };
                 by = auto_sort_scope(e);
                 f.caption = e.attr("name").filter(|n| !n.is_empty()).map(str::to_string);
-                // Custom subtotal functions (Field Settings › Subtotals › Custom, `sumSubtotal`
-                // and the like, ECMA-376 §18.10.1.69) also turn subtotals on.
-                let custom = CUSTOM_SUBTOTALS.iter().any(|a| e.flag(a, false));
+                let custom = has_custom_subtotals(e);
                 if custom {
                     cx.warn(format!("PivotTable field \"{name}\": custom subtotal functions are not supported; it shows the automatic subtotal"));
                 }
-                let own = custom || e.flag("defaultSubtotal", true);
+                let own = field_subtotals(e);
                 f.subtotal = (own != table_subtotals).then_some(own);
                 f.repeat_labels = x14_ext(e, EXT_X14_FIELD).is_some_and(|x| x.flag("fillDownLabels", false));
                 if group == PivotDateGroup::None {

@@ -2667,6 +2667,34 @@ mod tests {
     }
 
     #[test]
+    fn custom_subtotals_on_the_first_field_keep_the_table_default() {
+        use std::io::Read;
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region", "Product"], "values": ["Units"]})).unwrap();
+        s.execute("pivot.layout", json!({"layout": "tabular"})).unwrap();
+        // Custom Sum subtotal on Region (cache field 0, the first axis field), no xpdl extension.
+        let (wb, _) = reopen_patched(&s, |x| {
+            assert!(!x.contains("pivotTableDefinition16"), "{x}");
+            let start = x.find("<pivotField ").unwrap();
+            let end = start + x[start..].find("</pivotField>").unwrap();
+            let field = x[start..end]
+                .replacen("<pivotField ", "<pivotField defaultSubtotal=\"0\" sumSubtotal=\"1\" ", 1)
+                .replace("<item t=\"default\"/>", "<item t=\"sum\"/>");
+            assert!(field.contains("t=\"sum\""), "{field}");
+            format!("{}{field}{}", &x[..start], &x[end..])
+        });
+        let p = wb.sheet(wb.active_sheet).unwrap().pivots.last().unwrap();
+        assert!(p.subtotals);
+        assert_eq!([p.rows[0].subtotal, p.rows[1].subtotal], [None, None]);
+        // Saving doesn't add a table default of "off" the file never had.
+        let bytes = crate::io::save_bytes(&wb, "t.xlsx").unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        z.by_name("xl/pivotTables/pivotTable1.xml").unwrap().read_to_string(&mut xml).unwrap();
+        assert!(!xml.contains("EnabledSubtotalsDefault=\"0\""), "{xml}");
+    }
+
+    #[test]
     fn sort_scope_on_a_vanished_item_sorts_as_after_saving() {
         let mut s = sales();
         s.execute("range.setValues", json!({"range": "A14", "values": [["South", "Kiwis", "1/1/2026", 1, 10]]})).unwrap();
