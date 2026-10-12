@@ -172,7 +172,7 @@ fn workbook_switcher(
             .map(|(i, d)| (d.uid, i, d.display_title(), i == app.session.active_index(), d.is_dirty()))
             .collect(),
     };
-    let Some((_, _, title, _, dirty)) = documents.iter().find(|(_, _, _, active, _)| *active) else { return None };
+    let (_, _, title, _, dirty) = documents.iter().find(|(_, _, _, active, _)| *active)?;
     let multiple = documents.len() > 1;
     let open_count = if multiple { format!("  ({} open)", documents.len()) } else { String::new() };
     let text = format!("{title}{}{}", if *dirty { " — Unsaved" } else { "" }, open_count);

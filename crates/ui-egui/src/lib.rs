@@ -777,17 +777,25 @@ impl SheetApp {
         }
     }
 
-    pub fn open_path(&mut self, path: &str) {
-        match self.run("file.open", json!({"path": path})) {
+    pub fn open_path(&mut self, path: &str) -> bool {
+        let opened = match self.run("file.open", json!({"path": path})) {
             Ok(r) => {
                 self.after_document_change();
                 self.after_open(Some(path), &r);
+                true
             }
             // A password-protected workbook: ask for the password; the dialog opens it.
-            Err(e) if e.contains(gridcraft_engine::io::PASSWORD_REQUIRED) => self.open_dialog("openPassword", json!({"path": path})),
-            Err(e) => self.message = Some(("GridCraft".into(), clean_error(&e))),
-        }
+            Err(e) if e.contains(gridcraft_engine::io::PASSWORD_REQUIRED) => {
+                self.open_dialog("openPassword", json!({"path": path}));
+                false
+            }
+            Err(e) => {
+                self.message = Some(("GridCraft".into(), clean_error(&e)));
+                false
+            }
+        };
         self.after_engine();
+        opened
     }
 
     /// What follows a successful `file.open`: the workbook shows (not the Backstage), the Recent

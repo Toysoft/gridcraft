@@ -10,7 +10,6 @@
 //! that leaves winit's delegate alone, behind a safe main-thread API.
 
 use fmv_macos_events::{Event, Inbox, Registration};
-use gridcraft_ui_egui::SheetApp;
 
 /// Keeps the Apple-event handlers registered; hold it until the event loop returns.
 pub struct AppleEvents {
@@ -34,16 +33,8 @@ impl AppleEvents {
     }
 }
 
-/// Open the documents and act on the quit requests that arrived since the last frame.
-pub fn poll(inbox: &Inbox, app: &mut SheetApp, ctx: &egui::Context) {
-    for e in inbox.drain() {
-        match e {
-            Event::Open(paths) => {
-                for p in paths.iter().filter_map(|p| p.to_str()) {
-                    app.open_path(p);
-                }
-            }
-            Event::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-        }
-    }
+/// Events received since the last frame. The desktop shell routes open requests because it owns
+/// the workbook windows and can focus an existing one or replace an untouched blank workbook.
+pub fn drain(inbox: &Inbox) -> Vec<Event> {
+    inbox.drain()
 }

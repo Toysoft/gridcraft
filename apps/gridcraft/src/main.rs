@@ -21,12 +21,47 @@ mod print;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use gridcraft_engine::Session;
-use gridcraft_ui_egui::{Services, SheetApp, WorkbookWindowAction, WorkbookWindowInfo};
+use gridcraft_engine::{Prefs, Session};
+use gridcraft_ui_egui::{Services, SheetApp, UiState, WorkbookWindowAction, WorkbookWindowInfo};
 use serde_json::json;
+
+#[derive(Clone)]
+struct AppPreferences {
+    ui: UiState,
+    engine: Prefs,
+}
+
+impl AppPreferences {
+    fn new(app: &SheetApp) -> Self {
+        Self { ui: app.ui.clone(), engine: app.session.prefs.clone() }
+    }
+
+    fn update_from(&mut self, app: &SheetApp) {
+        self.ui.dark = app.ui.dark;
+        self.ui.system_theme = app.ui.system_theme;
+        self.ui.status_bar = app.ui.status_bar;
+        self.ui.animations = app.ui.animations;
+        self.ui.recent.clone_from(&app.ui.recent);
+        self.ui.language = app.ui.language;
+        self.ui.interface_scale = app.ui.interface_scale;
+        self.engine = app.session.prefs.clone();
+    }
+
+    fn apply_to(&self, app: &mut SheetApp) {
+        app.ui.dark = self.ui.dark;
+        app.ui.system_theme = self.ui.system_theme;
+        app.ui.status_bar = self.ui.status_bar;
+        app.ui.animations = self.ui.animations;
+        app.ui.recent.clone_from(&self.ui.recent);
+        app.ui.language = self.ui.language;
+        app.ui.interface_scale = self.ui.interface_scale;
+        app.session.prefs = self.engine.clone();
+    }
+}
 
 struct App {
     windows: Vec<SheetApp>,
+    preferences: AppPreferences,
     focused: Option<u64>,
     focus_request: Option<u64>,
     #[cfg(target_os = "macos")]
@@ -40,8 +75,10 @@ struct App {
 impl App {
     fn new(app: SheetApp) -> Self {
         let focused = app.session.active().map(|d| d.uid);
+        let preferences = AppPreferences::new(&app);
         let mut this = Self {
             windows: vec![app],
+            preferences,
             focused,
             focus_request: None,
             #[cfg(target_os = "macos")]
@@ -53,6 +90,21 @@ impl App {
         };
         this.split_workbooks();
         this
+    }
+
+    fn apply_preferences(&mut self) {
+        for app in &mut self.windows {
+            self.preferences.apply_to(app);
+        }
+    }
+
+    fn capture_preferences(&mut self) {
+        let index =
+            self.focus_request.or(self.focused).and_then(|id| self.windows.iter().position(|app| Self::window_id(app) == Some(id))).unwrap_or(0);
+        if let Some(app) = self.windows.get(index) {
+            self.preferences.update_from(app);
+        }
+        self.apply_preferences();
     }
 
     fn viewport_id(id: u64) -> egui::ViewportId {
@@ -100,6 +152,37 @@ impl App {
             .collect()
     }
 
+    fn same_path(left: &str, right: &str) -> bool {
+        let left = std::path::Path::new(left);
+        let right = std::path::Path::new(right);
+        left == right || left.canonicalize().ok().zip(right.canonicalize().ok()).is_some_and(|(left, right)| left == right)
+    }
+
+    fn open_path(&mut self, path: &str) {
+        if let Some(id) = self.windows.iter().find_map(|app| {
+            let document = app.session.active()?;
+            document.path.as_deref().is_some_and(|open| Self::same_path(open, path)).then_some(document.uid)
+        }) {
+            self.focus_request = Some(id);
+            return;
+        }
+
+        let target = self.focused.and_then(|id| self.windows.iter().position(|app| Self::window_id(app) == Some(id))).unwrap_or(0);
+        let Some(app) = self.windows.get_mut(target) else { return };
+        let reuse_window = app.session.documents().is_empty()
+            || (app.session.documents().len() == 1 && app.session.active().is_some_and(|document| document.path.is_none() && !document.is_dirty()));
+        if !app.open_path(path) {
+            return;
+        }
+        self.preferences.update_from(app);
+        if reuse_window {
+            // The engine opens into an empty coordinator or replaces an untouched blank document
+            // in place. Keep that workbook in the same native window and bring it forward.
+            self.focus_request = Self::window_id(app);
+        }
+        self.split_workbooks();
+    }
+
     fn split_workbooks(&mut self) {
         let mut extracted = Vec::new();
         for app in &mut self.windows {
@@ -136,6 +219,7 @@ impl App {
             session.add_document(document);
             let mut app = SheetApp::new(session, services());
             app.ui = ui_state;
+            self.preferences.apply_to(&mut app);
             self.windows.push(app);
             self.focus_request = Some(id);
         }
@@ -222,6 +306,7 @@ impl App {
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.apply_preferences();
         #[cfg(target_os = "macos")]
         {
             if self.native_menu.is_none() && std::env::var_os("GRIDCRAFT_NO_NATIVE_MENU").is_none() {
@@ -233,12 +318,21 @@ impl eframe::App for App {
                     menu.poll(app, ctx);
                 }
             }
-            if let Some(inbox) = &self.apple_events
-                && let Some(app) = self.focused.and_then(|id| self.windows.iter_mut().find(|app| Self::window_id(app) == Some(id)))
-            {
-                apple_events::poll(inbox, app, ctx);
+            let events = self.apple_events.as_ref().map(apple_events::drain).unwrap_or_default();
+            for event in events {
+                match event {
+                    fmv_macos_events::Event::Open(paths) => {
+                        for path in paths.iter().filter_map(|path| path.to_str()) {
+                            self.open_path(path);
+                        }
+                    }
+                    // #496 will provide the shared dirty-workbook quit flow. Preserve the
+                    // existing close request until that PR is available to build on.
+                    fmv_macos_events::Event::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                }
             }
         }
+        self.capture_preferences();
         if let Some(app) = self.windows.first_mut() {
             app.logic_for_workbook_window(ctx);
             app.poll_printing(ctx);
@@ -273,6 +367,7 @@ impl eframe::App for App {
         }
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.apply_preferences();
         self.split_workbooks();
         let activate = self.focus_request.take();
         let ctx = ui.ctx().clone();
@@ -310,6 +405,7 @@ impl eframe::App for App {
             });
         }
         self.focused = focused;
+        self.capture_preferences();
         for action in actions {
             self.handle_action(action);
         }
@@ -345,9 +441,7 @@ impl eframe::App for App {
     }
     fn on_exit(&mut self) {
         print::finish_pending_jobs();
-        if let Some(app) = self.windows.first() {
-            save_prefs(app);
-        }
+        save_prefs(&self.preferences.ui, &self.preferences.engine);
         // macOS (#117): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
         // AppKit's Touch Bar support observes that view (KVO), so in the next display cycle
@@ -409,16 +503,16 @@ fn load_prefs(app: &mut SheetApp) {
     }
 }
 
-fn save_prefs(app: &SheetApp) {
+fn save_prefs(ui: &UiState, prefs: &Prefs) {
     if !prefs_enabled() {
         return;
     }
     let Some(dir) = config_dir() else { return };
     let _ = std::fs::create_dir_all(&dir);
-    if let Ok(b) = serde_json::to_vec_pretty(&app.ui) {
+    if let Ok(b) = serde_json::to_vec_pretty(ui) {
         let _ = std::fs::write(dir.join("ui.json"), b);
     }
-    if let Ok(b) = serde_json::to_vec_pretty(&app.session.prefs) {
+    if let Ok(b) = serde_json::to_vec_pretty(prefs) {
         let _ = std::fs::write(dir.join("prefs.json"), b);
     }
 }
@@ -708,6 +802,12 @@ mod packaging_tests {
 mod tests {
     use super::*;
 
+    fn csv(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("gridcraft-window-{name}-{}.csv", std::process::id()));
+        std::fs::write(&path, "value\n1\n").unwrap();
+        path
+    }
+
     #[test]
     fn each_open_document_gets_its_own_window() {
         let mut session = Session::new();
@@ -737,6 +837,109 @@ mod tests {
 
         let titles: Vec<String> = app.windows.iter().filter_map(|window| window.session.active().map(|document| document.title.clone())).collect();
         assert_eq!(titles, ["Report", "Book1", "Book2"]);
+    }
+
+    #[test]
+    fn opening_a_file_reuses_an_untouched_blank_window() {
+        let path = csv("replace-blank");
+        let mut session = Session::new();
+        session.new_workbook();
+        let mut app = App::new(SheetApp::new(session, Services::default()));
+
+        app.open_path(path.to_str().unwrap());
+
+        assert_eq!(app.windows.len(), 1);
+        assert_eq!(app.windows[0].session.documents().len(), 1);
+        assert_eq!(app.windows[0].session.active().and_then(|document| document.path.as_deref()), path.to_str());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn opening_a_file_without_a_focused_workbook_uses_the_coordinator_window() {
+        let path = csv("empty-coordinator");
+        let mut app = App::new(SheetApp::new(Session::new(), Services::default()));
+        assert_eq!(app.focused, None);
+
+        app.open_path(path.to_str().unwrap());
+
+        assert_eq!(app.windows.len(), 1);
+        assert_eq!(app.windows[0].session.active().and_then(|document| document.path.as_deref()), path.to_str());
+        assert!(app.focus_request.is_some());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn opening_a_file_beside_a_changed_blank_uses_a_new_window() {
+        let path = csv("keep-dirty-blank");
+        let mut session = Session::new();
+        session.new_workbook();
+        session.execute("cell.set", json!({"cell": "A1", "input": "keep me"})).unwrap();
+        let mut app = App::new(SheetApp::new(session, Services::default()));
+
+        app.open_path(path.to_str().unwrap());
+
+        assert_eq!(app.windows.len(), 2);
+        assert!(app.windows.iter().any(|window| window.session.active().is_some_and(|document| document.path.is_none() && document.is_dirty())));
+        assert!(app.windows.iter().any(|window| window.session.active().and_then(|document| document.path.as_deref()) == path.to_str()));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn reopening_a_file_focuses_its_existing_window() {
+        let first = csv("existing-first");
+        let second = csv("existing-second");
+        let mut session = Session::new();
+        session.new_workbook();
+        let mut app = App::new(SheetApp::new(session, Services::default()));
+        app.open_path(first.to_str().unwrap());
+        let first_id = App::window_id(&app.windows[0]).unwrap();
+        app.open_path(second.to_str().unwrap());
+        assert_eq!(app.windows.len(), 2);
+
+        app.focus_request = None;
+        app.focused = App::window_id(&app.windows[1]);
+        app.open_path(first.to_str().unwrap());
+
+        assert_eq!(app.windows.len(), 2);
+        assert_eq!(app.focus_request, Some(first_id));
+        let _ = std::fs::remove_file(first);
+        let _ = std::fs::remove_file(second);
+    }
+
+    #[test]
+    fn preferences_from_the_focused_window_are_shared_and_saved() {
+        let mut session = Session::new();
+        session.new_workbook();
+        session.new_workbook();
+        let mut app = App::new(SheetApp::new(session, Services::default()));
+        let second = App::window_id(&app.windows[1]);
+        app.focused = second;
+        app.focus_request = None;
+        app.windows[1].ui.dark = true;
+        app.windows[1].ui.system_theme = false;
+        app.windows[1].ui.language = gridcraft_ui_egui::i18n::Language::Ja;
+        app.windows[1].ui.recent = vec!["second.xlsx".into()];
+        app.windows[1].session.prefs.formula_bar = false;
+
+        app.capture_preferences();
+
+        assert!(app.preferences.ui.dark);
+        assert_eq!(app.preferences.ui.language, gridcraft_ui_egui::i18n::Language::Ja);
+        assert_eq!(app.preferences.ui.recent, ["second.xlsx"]);
+        assert!(!app.preferences.engine.formula_bar);
+        assert!(app.windows.iter().all(|window| window.ui.dark));
+        assert!(app.windows.iter().all(|window| window.ui.language == gridcraft_ui_egui::i18n::Language::Ja));
+        assert!(app.windows.iter().all(|window| !window.session.prefs.formula_bar));
+    }
+
+    #[test]
+    fn egui_widget_ids_are_scoped_to_the_workbook_window() {
+        let mut session = Session::new();
+        session.new_workbook();
+        session.new_workbook();
+        let app = App::new(SheetApp::new(session, Services::default()));
+
+        assert_ne!(app.windows[0].widget_id("formula_bar"), app.windows[1].widget_id("formula_bar"));
     }
 
     #[cfg(target_os = "macos")]
