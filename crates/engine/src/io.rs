@@ -323,6 +323,8 @@ pub fn to_html(wb: &Workbook, sheet: usize) -> String {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_file(path: &str) -> Result<Vec<u8>> {
+    // The one place the engine reads a user-named file: automation roots are enforced here.
+    crate::file_access::check_read(path).map_err(EngineError::Other)?;
     let meta = std::fs::metadata(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     if meta.len() > 2 * 1024 * 1024 * 1024 {
         return Err(EngineError::Other("files larger than 2 GB aren't supported".into()));
@@ -337,8 +339,11 @@ pub fn read_file(path: &str) -> Result<Vec<u8>> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn write_file(path: &str, bytes: &[u8]) -> Result<()> {
+    // The one place the engine writes a user-named file: automation roots are enforced here.
+    crate::file_access::check_write(path).map_err(EngineError::Other)?;
     // Write to a temporary file, then rename: a crash never leaves a half-written workbook.
     let tmp = format!("{path}.sctmp");
+    crate::file_access::check_write(&tmp).map_err(EngineError::Other)?;
     std::fs::write(&tmp, bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     std::fs::rename(&tmp, path).map_err(|e| EngineError::Other(format!("{path}: {e}")))
 }
