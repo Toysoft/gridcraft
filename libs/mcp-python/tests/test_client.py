@@ -13,7 +13,7 @@ class TestGridCraftClient:
         client = GridCraftClient(_testing=True)
         with patch('socket.socket'):
             client.start()
-        assert client.process is None # _testing=True, так что Popen не вызывается
+        assert client.process is None # _testing=True, so Popen is never called
     
     def test_start_connection_failed(self, mock_popen):
         client = GridCraftClient(_testing=False)
