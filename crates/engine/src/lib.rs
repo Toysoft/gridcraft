@@ -267,6 +267,8 @@ pub struct Prefs {
     pub formula_bar: bool,
     /// Seconds one Python cell may run.
     pub python_timeout_seconds: f64,
+    /// The user's Python for Python cells (a path, or a name on PATH); empty to look for one.
+    pub python_interpreter: String,
 }
 
 impl Default for Prefs {
@@ -282,6 +284,7 @@ impl Default for Prefs {
             user_dictionary: vec![],
             formula_bar: true,
             python_timeout_seconds: 5.0,
+            python_interpreter: String::new(),
         }
     }
 }
