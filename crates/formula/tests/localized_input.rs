@@ -1,9 +1,9 @@
 //! German, Brazilian Portuguese, Russian and the full Spanish table: entry and display syntax.
 use gridcraft_core::CellError;
-use gridcraft_formula::FormulaLocale::{self, De, Es, PtBr, Ru};
+use gridcraft_formula::FormulaLocale::{self, De, Es, Pl, PtBr, Ru};
 use gridcraft_formula::{parse, parse_input, print, print_input};
 
-const LOCALIZED: [FormulaLocale; 4] = [Es, De, PtBr, Ru];
+const LOCALIZED: [FormulaLocale; 5] = [Es, De, PtBr, Ru, Pl];
 
 fn canonical(src: &str, locale: FormulaLocale) -> String {
     print(&parse_input(src, locale, |_| false).unwrap_or_else(|e| panic!("{locale:?} `{src}`: {e}")))
@@ -27,6 +27,12 @@ fn each_language_spells_formulas_like_its_excel() {
         (Ru, "СУММ({1;2:3;4})", "SUM({1,2;3,4})"),
         (Ru, "СУММ(Таблица1[[#Итого];[Сумма]])", "SUM(Таблица1[[#Totals],[Сумма]])"),
         (Es, "CONTAR.SI.CONJUNTO(A1:A3;\">1\")", "COUNTIFS(A1:A3,\">1\")"),
+        // Polish, as observed in Polish Excel (see `input/pl.rs`).
+        (Pl, "JEŻELI(PRAWDA;WYSZUKAJ.PIONOWO(A2;D:E;2;FAŁSZ);#N/D)", "IF(TRUE,VLOOKUP(A2,D:E,2,FALSE),#N/A)"),
+        (Pl, "SUMA({1\\2;3\\4})+1,5", "SUM({1,2;3,4})+1.5"),
+        (Pl, "SUMA.JEŻELI(Tabela1[[#Nagłówki];[a]];\">1,5\")", "SUMIF(Tabela1[[#Headers],[a]],\">1,5\")"),
+        (Pl, "JEŻELI.BŁĄD(1/0;#DZIEL/0!)+X.WYSZUKAJ(1;A:A;B:B)", "IFERROR(1/0,#DIV/0!)+XLOOKUP(1,A:A,B:B)"),
+        (Pl, "ILE.WIERSZY(Tabela1[#Wszystko])+MODUŁ.LICZBY(#ARG!)", "ROWS(Tabela1[#All])+ABS(#VALUE!)"),
         (Es, "SI.ERROR(1/0;#¡VALOR!)", "IFERROR(1/0,#VALUE!)"),
     ] {
         assert_eq!(canonical(local, locale), english, "{locale:?} entry");
@@ -61,6 +67,8 @@ fn english_names_and_any_letter_case_are_accepted() {
     assert_eq!(canonical("zählenwenn(A1:A3;1)", De), "COUNTIF(A1:A3,1)");
     assert_eq!(canonical("сумм(1;2)+#н/д", Ru), "SUM(1,2)+#N/A");
     assert_eq!(canonical("{истина:ложь}", Ru), "{TRUE;FALSE}");
+    assert_eq!(canonical("suma.jeżeli(A1:A3;1)+fałsz+średnia(1)", Pl), "SUMIF(A1:A3,1)+FALSE+AVERAGE(1)");
+    assert_eq!(canonical("złącz.tekst(\"a\";\"b\")", Pl), "CONCAT(\"a\",\"b\")");
     // A local name that is another function's English name means the local function, as in
     // Spanish Excel: DECIMAL is FIXED there, and the base conversion is CONV.DECIMAL.
     assert_eq!(canonical("DECIMAL(1,5;1)", Es), "FIXED(1.5,1)");
