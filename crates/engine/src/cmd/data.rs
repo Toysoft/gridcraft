@@ -295,6 +295,7 @@ fn do_sort(s: &mut Session, r: RangeRef, header: bool, keys: Vec<SortKey>, by_co
         let lanes: Vec<u32> = if by_cols { (body.start.row..=body.end.row).collect() } else { (body.start.col..=body.end.col).collect() };
         let mut moved: Vec<(CellRef, Option<Cell>)> = Vec::with_capacity(body.count() as usize);
         let mut pictures = Vec::new();
+        let mut runs = Vec::new();
         for (dst_i, &src_i) in order.iter().enumerate() {
             for &k in &lanes {
                 let src = line(src_i, k);
@@ -309,6 +310,9 @@ fn do_sort(s: &mut Session, r: RangeRef, header: bool, keys: Vec<SortKey>, by_co
                 }
                 if let Some(picture) = sh.cell_pictures.get(&src) {
                     pictures.push((dst, picture.clone()));
+                }
+                if let Some(cr) = sh.cell_runs.get(&src) {
+                    runs.push((dst, cr.clone()));
                 }
                 moved.push((dst, cell));
             }
@@ -353,6 +357,8 @@ fn do_sort(s: &mut Session, r: RangeRef, header: bool, keys: Vec<SortKey>, by_co
             }
         }
         shm.cell_pictures.extend(pictures);
+        // After `set_cell` cleared the destinations, the runs go back with their rows.
+        shm.cell_runs.extend(runs);
         for (i, h) in heights.into_iter().enumerate() {
             let row = body.start.row + i as u32;
             match h {
@@ -752,6 +758,15 @@ fn remove_duplicates(s: &mut Session, p: &Json) -> Result<Json> {
                     .filter_map(move |col| sh.cell_pictures.get(&CellRef::new(*row, col)).map(|p| (CellRef::new(start + i as u32, col), p.clone())))
             })
             .collect();
+        // Rich-text runs travel with the kept rows, like the pictures.
+        let runs: Vec<_> = keep
+            .iter()
+            .enumerate()
+            .flat_map(|(i, row)| {
+                (r.start.col..=r.end.col)
+                    .filter_map(move |col| sh.cell_runs.get(&CellRef::new(*row, col)).map(|cr| (CellRef::new(start + i as u32, col), cr.clone())))
+            })
+            .collect();
         let rows: Vec<Vec<Option<Cell>>> =
             keep.iter().map(|row| (r.start.col..=r.end.col).map(|c| sh.cell(CellRef::new(*row, c)).cloned()).collect()).collect();
         let shm = cx.sheet_mut(sheet)?;
@@ -768,6 +783,7 @@ fn remove_duplicates(s: &mut Session, p: &Json) -> Result<Json> {
             }
         }
         shm.cell_pictures.extend(pictures);
+        shm.cell_runs.extend(runs);
         for c in RangeRef::new(CellRef::new(start, r.start.col), r.end).iter() {
             cx.changed.push((sheet, c));
         }
