@@ -350,7 +350,7 @@ impl eframe::App for App {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         let viewport_id = ctx.viewport_id();
         let root_id = self.windows.first().and_then(Self::window_id);
-        let Some(app) = self.windows.iter_mut().find(|app| {
+        let Some(index) = self.windows.iter().position(|app| {
             Self::window_id(app).is_some_and(|id| {
                 let expected = if root_id == Some(id) { egui::ViewportId::ROOT } else { Self::viewport_id(id) };
                 expected == viewport_id
@@ -358,12 +358,15 @@ impl eframe::App for App {
         }) else {
             return;
         };
-        app.raw_input_hook(raw);
+        self.windows[index].raw_input_hook(raw);
         // Files dropped on the window open as workbooks.
-        for f in std::mem::take(&mut raw.dropped_files) {
-            if let Some(p) = f.path().to_str().map(str::to_string).filter(|p| !p.is_empty()) {
-                app.open_path(&p);
-            }
+        let paths: Vec<String> = std::mem::take(&mut raw.dropped_files)
+            .into_iter()
+            .filter_map(|file| file.path().to_str().map(str::to_string).filter(|path| !path.is_empty()))
+            .collect();
+        self.focused = Self::window_id(&self.windows[index]);
+        for path in paths {
+            self.open_path(&path);
         }
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -743,11 +746,13 @@ fn main() -> eframe::Result<()> {
                         Err(e) => log::error!("control channel on port {port}: {e}"),
                     }
                 }
-                let mut shell = App::new(app);
+                let shell = App::new(app);
                 #[cfg(target_os = "macos")]
-                {
+                let shell = {
+                    let mut shell = shell;
                     shell.apple_events = Some(apple_events.connect(&cc.egui_ctx));
-                }
+                    shell
+                };
                 Ok(Box::new(shell))
             }),
         )
