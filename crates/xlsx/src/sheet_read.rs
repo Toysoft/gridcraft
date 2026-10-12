@@ -39,6 +39,8 @@ struct RowState {
 const MAX_HYPERLINK_CELLS: u64 = 10_000;
 
 pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<Sheet, IoError> {
+    // The x14 ids recorded by read_cf index this sheet's cond_formats only.
+    cx.cf_ext_ids.clear();
     let bytes = cx.pkg.read(part)?.ok_or_else(|| IoError::Format(format!("missing part {part}")))?;
     let rels = cx.pkg.rels(part)?;
     let mut sheet = Sheet::new(name);
@@ -655,6 +657,12 @@ fn read_cf(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
                 continue;
             }
         };
+        // An x14 id ext (inside the rule element or a direct child) links this rule to its
+        // x14 refinement, read later by read_ext.
+        let ext_id = x14_rule_id(r);
+        if !ext_id.is_empty() {
+            cx.cf_ext_ids.push((capped_id(&ext_id), sheet.cond_formats.len()));
+        }
         sheet.cond_formats.push(CondFormat {
             ranges: ranges.clone(),
             rule,
@@ -662,6 +670,32 @@ fn read_cf(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
             stop_if_true: r.flag("stopIfTrue", false),
         });
     }
+}
+
+/// The `x14:id` linking a classic conditional-format rule to its x14 extension: the id ext
+/// inside the rule's `dataBar`/`iconSet`/`colorScale` element, or (PR #610's shape) the rule's
+/// own extLst. Empty when the rule carries none.
+fn x14_rule_id(r: &El) -> String {
+    ["dataBar", "iconSet", "colorScale"]
+        .iter()
+        .find_map(|n| r.child(n).and_then(|e| e.child("extLst")).and_then(ext_lst_id))
+        .or_else(|| r.child("extLst").and_then(ext_lst_id))
+        .unwrap_or_default()
+}
+
+/// The `x14:id` text of an `extLst`; empty ids count as absent.
+fn ext_lst_id(e: &El) -> Option<String> {
+    let id = e.kids("ext").find_map(|x| x.child("id"))?.text.trim().to_string();
+    (!id.is_empty()).then_some(id)
+}
+
+/// A stored x14 id, capped at 256 bytes on a char boundary so a hostile file can't balloon it.
+fn capped_id(id: &str) -> String {
+    let mut end = id.len().min(256);
+    while !id.is_char_boundary(end) {
+        end -= 1;
+    }
+    id.get(..end).unwrap_or_default().to_string()
 }
 
 /// A `dataValidation` (main namespace, or x14 with `xm:f` formulas and an `xm:sqref` child).
@@ -930,7 +964,7 @@ fn read_threaded(cx: &Ctx<'_>, x: &El, sheet: &mut Sheet) {
     }
 }
 
-/// Worksheet extensions: x14 data validations and sparklines.
+/// Worksheet extensions: x14 data validations, sparklines and conditional formats.
 fn read_ext(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
     for ext in e.kids("ext") {
         for c in &ext.children {
@@ -959,10 +993,106 @@ fn read_ext(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
                         }
                     }
                 }
-                "conditionalFormattings" => cx.warn("some Excel 2010 conditional format extensions were skipped"),
+                "conditionalFormattings" => read_x14_conditional_formats(cx, c, sheet),
                 _ => {}
             }
         }
+    }
+}
+
+/// x14 conditional-format extensions (Excel 2010): each `x14:cfRule` is linked to its classic
+/// rule by GUID and refines it. Data bars are merged; anything unmatched or unmodelled warns
+/// once, honestly.
+fn read_x14_conditional_formats(cx: &mut Ctx<'_>, c: &El, sheet: &mut Sheet) {
+    let mut skipped = false;
+    for cf in c.kids("conditionalFormatting") {
+        for r in cf.kids("cfRule") {
+            let id = r.attr("id").unwrap_or("");
+            let Some(index) = cx.cf_ext_ids.iter().find(|(sid, _)| sid == id).map(|(_, i)| *i) else {
+                skipped = true;
+                continue;
+            };
+            let Some(rule) = sheet.cond_formats.get_mut(index).map(|f| &mut f.rule) else {
+                skipped = true;
+                continue;
+            };
+            let Some(db) = r.child("dataBar") else {
+                skipped = true;
+                continue;
+            };
+            skipped |= merge_x14_data_bar(cx, db, rule);
+        }
+    }
+    if skipped {
+        cx.warn("some Excel 2010 conditional format extensions were skipped");
+    }
+}
+
+/// Merges an x14 data bar into the classic rule it refines. Returns whether any part of the
+/// extension had to be skipped; a rule that isn't a data bar is skipped wholesale (icon sets
+/// are a later task).
+fn merge_x14_data_bar(cx: &Ctx<'_>, db: &El, rule: &mut CfRule) -> bool {
+    let CfRule::DataBar { min, max, color, gradient, border, negative_fill, negative_border, axis, limits, .. } = rule else {
+        return true;
+    };
+    let mut skipped = false;
+    for (name, _) in &db.attrs {
+        if !matches!(name.as_str(), "minLength" | "maxLength" | "gradient" | "border" | "negativeBarColorAsSame" | "negativeBarBorderColorAsSame") {
+            skipped = true;
+        }
+    }
+    for child in &db.children {
+        if !matches!(child.name.as_str(), "cfvo" | "border" | "negativeFill" | "negativeBorderColor" | "axis") {
+            skipped = true;
+        }
+    }
+    *gradient = db.flag("gradient", true);
+    let (lo, hi) = (db.attr_u32("minLength"), db.attr_u32("maxLength"));
+    *limits = match (lo, hi) {
+        (None, None) => None,
+        (lo, hi) => Some((lo.unwrap_or(10).min(100) as u8, hi.unwrap_or(90).min(100) as u8)),
+    };
+    let ext_color = |name: &str| db.child(name).and_then(|e| e.child("color")).map(|c| read_color(c, &cx.palette));
+    *border = ext_color("border");
+    *negative_fill = ext_color("negativeFill");
+    *negative_border = ext_color("negativeBorderColor");
+    *axis = ext_color("axis");
+    if db.flag("negativeBarColorAsSame", false) {
+        *negative_fill = Some(*color);
+    }
+    let cfvos: Vec<&El> = db.kids("cfvo").collect();
+    if cfvos.len() > 2 {
+        skipped = true;
+    }
+    for (slot, v) in [min, max].into_iter().zip(cfvos) {
+        if let Some(kind) = x14_cfvo(v) {
+            *slot = kind;
+        } else {
+            // Unusable bound: keep the classic one and say so.
+            skipped = true;
+        }
+    }
+    skipped
+}
+
+/// One x14 `cfvo`, its value in an `xm:f` child (`autoMin`/`autoMax` carry none). `None` when
+/// the type or its value can't be used.
+fn x14_cfvo(e: &El) -> Option<CfValueKind> {
+    let t = e.attr("type").unwrap_or("num");
+    if t == "autoMin" {
+        return Some(CfValueKind::Min);
+    }
+    if t == "autoMax" {
+        return Some(CfValueKind::Max);
+    }
+    let f = e.child("f").map(|f| f.text.trim()).filter(|f| !f.is_empty())?;
+    let n = || f.parse::<f64>().ok().filter(|v| v.is_finite());
+    match t {
+        "num" => n().map(CfValueKind::Number),
+        "percent" => n().map(CfValueKind::Percent),
+        "percentile" => n().map(CfValueKind::Percentile),
+        "formula" => Some(CfValueKind::Formula(from_file(f))),
+        _ => None,
     }
 }
 

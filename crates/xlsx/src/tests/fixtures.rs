@@ -278,6 +278,80 @@ Check this</t></r></text></comment></commentList></comments>"#;
     assert_eq!(s.sparklines[0].kind, gridcraft_model::SparklineKind::Column);
 }
 
+/// An Excel-shaped x14 data bar: the classic rule carries a GUID ext, the sheet-level ext holds
+/// the x14 refinement linked by that GUID.
+const X14_DATABAR_SHEET: &str = r#"<sheetData>
+<row r="1"><c r="A1"><v>1</v></c><c r="B1"><v>-5</v></c></row>
+</sheetData>
+<conditionalFormatting sqref="A1:B1"><cfRule type="dataBar" priority="1">
+<dataBar><cfvo type="min"/><cfvo type="max"/><color rgb="FF638EC8"/>
+<extLst><ext xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" uri="{B025F937-C7B1-47D3-B67F-A62EFF666E3E}"><x14:id>{D4A5D3C2-6B7E-4E8F-9A01-2C3B4D5E6F70}</x14:id></ext></extLst>
+</dataBar></cfRule></conditionalFormatting>
+<extLst><ext xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}">
+<x14:conditionalFormattings><x14:conditionalFormatting xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">
+<x14:cfRule type="dataBar" id="{D4A5D3C2-6B7E-4E8F-9A01-2C3B4D5E6F70}" priority="1">
+<x14:dataBar minLength="0" maxLength="100" gradient="0" border="1" negativeBarColorAsSame="0" negativeBarBorderColorAsSame="0">
+<x14:cfvo type="autoMin"/><x14:cfvo type="autoMax"/>
+<x14:border><x14:color rgb="FF638EC8"/></x14:border>
+<x14:negativeFill><x14:color rgb="FFFF0000"/></x14:negativeFill>
+<x14:negativeBorderColor><x14:color rgb="FF000000"/></x14:negativeBorderColor>
+<x14:axis><x14:color rgb="FF000000"/></x14:axis>
+</x14:dataBar></x14:cfRule>
+<xm:sqref>A1:B1</xm:sqref>
+</x14:conditionalFormatting></x14:conditionalFormattings>
+</ext></extLst>"#;
+
+#[test]
+fn excel_shaped_x14_databar_imports() {
+    let (wb, rep) = read_xlsx(&minimal(X14_DATABAR_SHEET, &[], "", "")).unwrap();
+    let s = wb.sheet(0).unwrap();
+    let CfRule::DataBar { gradient, border, negative_fill, negative_border, axis, limits, .. } = &s.cond_formats[0].rule else {
+        panic!("not a data bar: {:?}", s.cond_formats[0].rule)
+    };
+    assert!(!*gradient);
+    assert_eq!(*border, Some(Color::Rgb(0x638EC8)));
+    assert_eq!(*negative_fill, Some(Color::Rgb(0xFF0000)));
+    assert_eq!(*negative_border, Some(Color::Rgb(0x000000)));
+    assert_eq!(*axis, Some(Color::Rgb(0x000000)));
+    assert_eq!(*limits, Some((0, 100)));
+    assert!(!rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
+}
+
+#[test]
+fn pre_610_id_placement_still_links() {
+    // The id ext as a direct child of <cfRule> (after </dataBar>) instead of inside it.
+    let ext = r#"<extLst><ext xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" uri="{B025F937-C7B1-47D3-B67F-A62EFF666E3E}"><x14:id>{D4A5D3C2-6B7E-4E8F-9A01-2C3B4D5E6F70}</x14:id></ext></extLst>"#;
+    let body = X14_DATABAR_SHEET.replace(&format!("{ext}\n</dataBar></cfRule>"), &format!("</dataBar>{ext}</cfRule>"));
+    let (wb, rep) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
+    let s = wb.sheet(0).unwrap();
+    let CfRule::DataBar { gradient, .. } = &s.cond_formats[0].rule else { panic!("not a data bar: {:?}", s.cond_formats[0].rule) };
+    assert!(!*gradient);
+    assert!(!rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
+}
+
+#[test]
+fn unmodelled_and_hostile_x14() {
+    // An attribute outside the modelled set warns, while what is modelled still imports.
+    let body = X14_DATABAR_SHEET.replace(r#"negativeBarBorderColorAsSame="0">"#, r#"negativeBarBorderColorAsSame="0" direction="rtl">"#);
+    let (wb, rep) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
+    let CfRule::DataBar { gradient, .. } = &wb.sheet(0).unwrap().cond_formats[0].rule else { panic!("not a data bar") };
+    assert!(!*gradient);
+    assert!(rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
+
+    // A hostile maxLength clamps to Excel's 100 percent.
+    let body = X14_DATABAR_SHEET.replace(r#"maxLength="100""#, r#"maxLength="4294967295""#);
+    let (wb, _) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
+    let CfRule::DataBar { limits, .. } = &wb.sheet(0).unwrap().cond_formats[0].rule else { panic!("not a data bar") };
+    assert_eq!(*limits, Some((0, 100)));
+
+    // A 100 KB id: no panic, and the rule stays unmatched (the stored id is capped at 256 bytes).
+    let body = X14_DATABAR_SHEET.replace("{D4A5D3C2-6B7E-4E8F-9A01-2C3B4D5E6F70}", &"A".repeat(100 * 1024));
+    let (wb, rep) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
+    let CfRule::DataBar { gradient, .. } = &wb.sheet(0).unwrap().cond_formats[0].rule else { panic!("not a data bar") };
+    assert!(*gradient, "the extension was not merged");
+    assert!(rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
+}
+
 #[test]
 fn drawing_with_picture_and_chart() {
     let png: &[u8] = b"\x89PNG\r\n\x1a\nfakeimagedata";

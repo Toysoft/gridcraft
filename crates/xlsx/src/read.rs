@@ -28,6 +28,9 @@ pub struct Ctx<'a> {
     pub num_fmts: std::collections::HashMap<u32, String>,
     /// Value metadata blocks, indexed by the worksheet's one-based `vm` attribute.
     pub cell_pictures: Vec<Option<Arc<CellPicture>>>,
+    /// x14 extension ids of the current sheet's conditional-format rules: (id, index into
+    /// `sheet.cond_formats`). Cleared per sheet; the sheet's x14 ext links back by id.
+    pub cf_ext_ids: Vec<(String, usize)>,
 }
 
 impl Ctx<'_> {
@@ -79,6 +82,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         next_id: 1,
         num_fmts: Default::default(),
         cell_pictures: vec![],
+        cf_ext_ids: vec![],
     };
     let root_rels = cx.pkg.rels("")?;
     let wb_part = find_rel(&root_rels, "officeDocument").map(|r| r.target.clone()).unwrap_or_else(|| "xl/workbook.xml".into());
