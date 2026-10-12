@@ -16,7 +16,9 @@
 
 use std::fmt::Write as _;
 
-use gridcraft_model::{Anchor, PivotFilter, PivotSort, PivotTable, Sheet, Slicer, SlicerCrossFilter, SlicerPivot, SlicerSource, Workbook};
+use gridcraft_model::{
+    Anchor, PivotDateGroup, PivotFilter, PivotSort, PivotTable, Sheet, Slicer, SlicerCrossFilter, SlicerPivot, SlicerSource, Workbook,
+};
 
 use crate::package::Rel;
 use crate::read::Ctx;
@@ -207,19 +209,27 @@ pub fn resolve(
         };
         used[fi] = true;
         let anchor = found.frames[fi].2;
-        // A PivotTable without a filter on the field takes the cache's selection.
-        let selected: Option<Vec<String>> = tab.cache_id.and_then(|id| caches.slicer_labels(id, &def.source)).and_then(|labels| {
+        // The cache field's items and date grouping. A PivotTable without a filter on the field
+        // takes the cache's selection; with everything selected it still keeps the field's
+        // grouping (the cache field's, ECMA-376 §18.10.1.33) when no Rows/Columns field has it.
+        let field = tab.cache_id.and_then(|id| caches.slicer_labels(id, &def.source));
+        let group = field.map(|(_, g)| g).unwrap_or_default();
+        let selected: Option<Vec<String>> = field.and_then(|(labels, _)| {
             let sel: Vec<String> = tab.items.iter().filter(|(_, s)| *s).filter_map(|(x, _)| labels.get(*x as usize).cloned()).collect();
             (tab.items.iter().any(|(_, s)| !s) && !sel.is_empty()).then_some(sel)
         });
-        if let Some(sel) = selected {
-            for &(psi, pi) in &targets {
-                let Some(pt) = wb.sheet_mut(psi).and_then(|sh| sh.pivots.get_mut(pi)) else { continue };
-                if pt.filters.iter().any(|f| f.source_col.eq_ignore_ascii_case(&def.source)) {
-                    continue;
+        for &(psi, pi) in &targets {
+            let Some(pt) = wb.sheet_mut(psi).and_then(|sh| sh.pivots.get_mut(pi)) else { continue };
+            if pt.filters.iter().any(|f| f.source_col.eq_ignore_ascii_case(&def.source)) {
+                continue;
+            }
+            match &selected {
+                Some(sel) => pt.set_filter(&def.source, Some(sel.clone()), group),
+                None if group != PivotDateGroup::None && pt.field_group(&def.source) != group => {
+                    pt.filters.push(PivotFilter { source_col: def.source.clone(), selected: None, hidden: true, date_group: group });
+                    pt.normalize_filter_groups();
                 }
-                let on_axis = pt.rows.iter().chain(pt.columns.iter()).any(|f| f.source_col.eq_ignore_ascii_case(&def.source));
-                pt.filters.push(PivotFilter { source_col: def.source.clone(), selected: Some(sel.clone()), hidden: !on_axis });
+                None => {}
             }
         }
         let pivots = targets
@@ -414,7 +424,13 @@ impl SlicerWriter {
             let SlicerSource::Pivot { sort, cross_filter, show_missing, .. } = &sl.source else { continue };
             let field = info.fields.iter().find(|f| f.name.eq_ignore_ascii_case(&p.field));
             let labels: &[String] = field.map(|f| f.labels.as_slice()).unwrap_or(&[]);
-            let sel = pt.filters.iter().find(|f| f.source_col.eq_ignore_ascii_case(&p.field)).and_then(|f| f.selected.as_deref());
+            // The selection at the base cache field's level (the items written below).
+            let level = pt.field_group(&p.field);
+            let sel = pt
+                .filters
+                .iter()
+                .find(|f| f.source_col.eq_ignore_ascii_case(&p.field) && pt.filter_group(f) == level)
+                .and_then(|f| f.selected.as_deref());
             let mut on: Vec<bool> = labels.iter().map(|l| sel.is_none_or(|s| s.iter().any(|x| x.eq_ignore_ascii_case(l)))).collect();
             if !on.contains(&true) {
                 on.iter_mut().for_each(|o| *o = true);

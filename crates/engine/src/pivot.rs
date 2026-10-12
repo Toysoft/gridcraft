@@ -321,23 +321,22 @@ pub struct SlicerTile {
 
 /// The items of `field` in `pt`'s source as slicer tiles: selection from the PivotTable's filter
 /// on the field, in `sort` order (`None`: source order), and with `cross` the items without data
-/// last or marked as Excel does. A date-grouped field's tiles are its groups (`Qtr1`, `Jan`…),
-/// the items its filter selects.
+/// last or marked as Excel does. A date-grouped field's tiles are the groups of its base cache
+/// field (`Jan`…, the finest level), which is what Excel's slicer lists. A filter on another
+/// level of the field filters like another field's.
 pub fn slicer_tiles(wb: &Workbook, pt: &PivotTable, sheet: usize, field: &str, sort: PivotSort, cross: SlicerCrossFilter) -> Vec<SlicerTile> {
     let Ok(src) = read_source(wb, &pt.source, sheet) else { return vec![] };
     let Some(col) = src.col(field) else { return vec![] };
     let fmt_of = |c: usize| src.formats.get(c).map(String::as_str).unwrap_or("General");
-    let group_of = |name: &str| {
-        pt.rows.iter().chain(pt.columns.iter()).find(|f| f.source_col.eq_ignore_ascii_case(name)).map(|f| f.date_group).unwrap_or_default()
-    };
-    let own = pt.filters.iter().find(|f| f.source_col.eq_ignore_ascii_case(field)).and_then(|f| f.selected.as_deref());
+    let group = pt.field_group(field);
+    let own_level = |f: &PivotFilter| f.source_col.eq_ignore_ascii_case(field) && pt.filter_group(f) == group;
+    let own = pt.filters.iter().find(|f| own_level(f)).and_then(|f| f.selected.as_deref());
     let others: Vec<(usize, &[String], PivotDateGroup)> = pt
         .filters
         .iter()
-        .filter(|f| !f.source_col.eq_ignore_ascii_case(field))
-        .filter_map(|f| Some((src.col(&f.source_col)?, f.selected.as_deref()?, group_of(&f.source_col))))
+        .filter(|f| !own_level(f))
+        .filter_map(|f| Some((src.col(&f.source_col)?, f.selected.as_deref()?, pt.filter_group(f))))
         .collect();
-    let group = group_of(field);
     let mut fi = FieldItems::default();
     let mut data: Vec<bool> = Vec::new();
     for (i, r) in src.rows.iter().enumerate() {
@@ -939,17 +938,14 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
     if vals.len() > MAX_VALUE_FIELDS {
         return Err(format!("A PivotTable can have at most {MAX_VALUE_FIELDS} value fields."));
     }
-    let axis_group = |name: &str| -> Option<PivotDateGroup> {
-        pt.rows.iter().chain(pt.columns.iter()).find(|f| f.source_col.eq_ignore_ascii_case(name)).map(|f| f.date_group)
-    };
+    let on_axis = |name: &str| pt.rows.iter().chain(pt.columns.iter()).any(|f| f.source_col.eq_ignore_ascii_case(name));
     // (column, filter, grouping used for labels, shown as a report filter)
     let filters: Vec<(usize, &PivotFilter, PivotDateGroup, bool)> = pt
         .filters
         .iter()
         .filter_map(|f| {
             let c = src.col(&f.source_col)?;
-            let g = axis_group(&f.source_col);
-            Some((c, f, g.unwrap_or_default(), g.is_none() && !f.hidden))
+            Some((c, f, pt.filter_group(f), !on_axis(&f.source_col) && !f.hidden))
         })
         .collect();
     let shown_filters: Vec<&(usize, &PivotFilter, PivotDateGroup, bool)> = filters.iter().filter(|f| f.3).collect();

@@ -506,8 +506,10 @@ pub(crate) fn slicer_field_ok(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize
 
 /// Whether the PivotTables `members` (sheet, index) can be written with one pivot cache, as the
 /// PivotTables a slicer connects must be: they have the same source (written the same way) and
-/// calculated fields, and a date-grouped field (which a cache groups for all its tables) is
-/// grouped the same way by every table that uses it, `slicer_fields` counting as used by all.
+/// the same calculated fields (a cache's calculated fields are read back into each of its
+/// tables), and a date-grouped field (which a cache groups for all its tables) has the same base
+/// grouping (the finest level, on the axes or by the filters) in every table that uses it,
+/// `slicer_fields` counting as used by all.
 pub(crate) fn can_share(wb: &Workbook, members: &[(usize, usize)], slicer_fields: &[String]) -> bool {
     let pts: Vec<(&PivotTable, usize)> = members.iter().filter_map(|&(si, pi)| Some((wb.sheet(si)?.pivots.get(pi)?, si))).collect();
     if pts.len() != members.len() {
@@ -521,31 +523,30 @@ pub(crate) fn can_share(wb: &Workbook, members: &[(usize, usize)], slicer_fields
         }
         source = Some(here);
     }
-    fn axis(pt: &PivotTable) -> impl Iterator<Item = &PivotField> {
-        pt.rows.iter().chain(pt.columns.iter())
-    }
-    let groups =
-        |pt: &PivotTable, col: &str| -> Vec<PivotDateGroup> { axis(pt).filter(|f| same(&f.source_col, col)).map(|f| f.date_group).collect() };
-    let uses = |pt: &PivotTable, col: &str| {
-        axis(pt).any(|f| same(&f.source_col, col))
-            || pt.filters.iter().any(|f| same(&f.source_col, col))
-            || slicer_fields.iter().any(|f| same(f, col))
+    // The base grouping a table gives a column (finest of its axis fields' and its filter's).
+    let base = |pt: &PivotTable, col: &str| -> Option<PivotDateGroup> {
+        let axis = pt.rows.iter().chain(pt.columns.iter()).filter(|f| same(&f.source_col, col)).map(|f| f.date_group);
+        axis.chain(pt.filters.iter().filter(|f| same(&f.source_col, col)).map(|f| pt.filter_group(f))).min_by_key(|g| g.coarseness())
     };
+    let uses = |pt: &PivotTable, col: &str| base(pt, col).is_some() || slicer_fields.iter().any(|f| same(f, col));
     for (pt, _) in &pts {
-        for f in axis(pt).filter(|f| f.date_group != PivotDateGroup::None) {
-            let want = groups(pt, &f.source_col);
-            if pts.iter().any(|(o, _)| uses(o, &f.source_col) && groups(o, &f.source_col) != want) {
+        let cols = pt.rows.iter().chain(pt.columns.iter()).map(|f| &f.source_col).chain(pt.filters.iter().map(|f| &f.source_col));
+        for col in cols {
+            let want = base(pt, col);
+            if want.is_some_and(|g| g != PivotDateGroup::None) && pts.iter().any(|(o, _)| uses(o, col) && base(o, col) != want) {
                 return false;
             }
         }
     }
     let formula = |f: &str| f.trim().trim_start_matches('=').trim().to_lowercase();
-    pts.iter().all(|(a, _)| {
-        a.calculated_fields.iter().all(|cf| {
-            pts.iter()
-                .all(|(b, _)| b.calculated_fields.iter().filter(|x| same(&x.name, &cf.name)).all(|x| formula(&x.formula) == formula(&cf.formula)))
-        })
-    })
+    let calc = |pt: &PivotTable| -> Vec<(String, String)> {
+        let mut v: Vec<(String, String)> = pt.calculated_fields.iter().map(|cf| (cf.name.trim().to_lowercase(), formula(&cf.formula))).collect();
+        v.sort();
+        v.dedup_by(|a, b| a.0 == b.0);
+        v
+    };
+    let first = pts.first().map(|(pt, _)| calc(pt)).unwrap_or_default();
+    pts.iter().all(|(pt, _)| calc(pt) == first)
 }
 
 /// The cache of `tables` (PivotTable, its sheet), which [`can_share`] one, and each table's axis
@@ -604,10 +605,16 @@ fn build_cache(wb: &Workbook, tables: &[(&PivotTable, usize)], slicer_fields: &[
         }
     }
 
-    // Which fields are on an axis, and how dates are grouped: per base column, the base field
-    // takes the finest grouping and coarser ones become extra (non-database) fields chained
-    // through `par`, as Excel lays them out.
-    let axis: Vec<&PivotField> = tables.iter().flat_map(|(pt, _)| pt.rows.iter().chain(pt.columns.iter())).collect();
+    // How dates are grouped, by the axis fields and the filters (a filtered field in no area keeps
+    // its grouping): per base column, the base field takes the finest grouping and coarser ones
+    // become extra (non-database) fields chained through `par`, as Excel lays them out.
+    let used: Vec<(&str, PivotDateGroup)> = tables
+        .iter()
+        .flat_map(|(pt, _)| {
+            let axis = pt.rows.iter().chain(pt.columns.iter()).map(|f| (f.source_col.as_str(), f.date_group));
+            axis.chain(pt.filters.iter().map(|f| (f.source_col.as_str(), pt.filter_group(f))))
+        })
+        .collect();
     let groupable = |f: &CField| {
         let s = &f.stats;
         s.number
@@ -619,29 +626,22 @@ fn build_cache(wb: &Workbook, tables: &[(&PivotTable, usize)], slicer_fields: &[
     };
     // (base column field, groupings fine → coarse)
     let mut groupings: Vec<(usize, Vec<PivotDateGroup>)> = Vec::new();
-    for pf in &axis {
-        let Some(b) = find(&fields, &pf.source_col) else { continue };
-        if pf.date_group == PivotDateGroup::None || !fields.get(b).is_some_and(groupable) {
+    for &(col, by) in &used {
+        let Some(b) = find(&fields, col) else { continue };
+        if by == PivotDateGroup::None || !fields.get(b).is_some_and(groupable) {
             continue;
         }
         match groupings.iter_mut().find(|(x, _)| *x == b) {
             Some((_, v)) => {
-                if !v.contains(&pf.date_group) {
-                    v.push(pf.date_group);
+                if !v.contains(&by) {
+                    v.push(by);
                 }
             }
-            None => groupings.push((b, vec![pf.date_group])),
+            None => groupings.push((b, vec![by])),
         }
     }
-    let fineness = |g: &PivotDateGroup| match g {
-        PivotDateGroup::Days => 0,
-        PivotDateGroup::Months => 1,
-        PivotDateGroup::Quarters => 2,
-        PivotDateGroup::Years => 3,
-        PivotDateGroup::None => 4,
-    };
     for (b, list) in groupings.iter_mut() {
-        list.sort_by_key(fineness);
+        list.sort_by_key(|g| g.coarseness());
         let (min, max) = fields.get(*b).map(|f| (f.stats.min, f.stats.max)).unwrap_or((0.0, 0.0));
         let (start, end) = (min.floor(), max.floor() + 1.0);
         let make = |by: PivotDateGroup| Group { by, base: *b, par: None, start, end, items: group_items(wb.date_system, by, start, end) };
@@ -926,31 +926,26 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, axis_map: &[
     let find_db = |name: &str| c.fields.iter().position(|f| f.col.is_some() && same(&f.name, name));
     let row_idx: Vec<usize> = axis_map.iter().take(pt.rows.len()).filter_map(|x| *x).collect();
     let col_idx: Vec<usize> = axis_map.iter().skip(pt.rows.len()).filter_map(|x| *x).collect();
-    // Filters: on an axis field → hidden items there; a hidden filter (a slicer's) → hidden items
-    // of a field in no area; otherwise a page field.
+    // Filters go on the cache field holding their items: the axis field at the filter's date
+    // level, else the field grouped at that level, else the base field. On a field in Rows or
+    // Columns, or a hidden filter (a slicer's), they're hidden items; otherwise a page field.
     let mut hidden: HashMap<usize, &PivotFilter> = HashMap::new();
     let mut pages: Vec<(usize, &PivotFilter)> = Vec::new();
     for f in &pt.filters {
-        let axis_pos = pt.rows.iter().chain(pt.columns.iter()).position(|a| same(&a.source_col, &f.source_col));
-        match axis_pos {
-            Some(p) => {
-                if let Some(Some(i)) = axis_map.get(p) {
-                    hidden.insert(*i, f);
-                }
-            }
-            None if f.hidden => {
-                if let Some(i) = find_db(&f.source_col) {
-                    hidden.insert(i, f);
-                }
-            }
-            None => {
-                if let Some(i) = find_db(&f.source_col)
-                    && !pages.iter().any(|(j, _)| *j == i)
-                {
-                    pages.push((i, f));
-                    hidden.insert(i, f);
-                }
-            }
+        let g = pt.filter_group(f);
+        let mut axis = pt.rows.iter().chain(pt.columns.iter());
+        let on_axis = axis.clone().any(|a| same(&a.source_col, &f.source_col));
+        let level = axis.position(|a| same(&a.source_col, &f.source_col) && a.date_group == g).and_then(|p| axis_map.get(p).copied().flatten());
+        let grouped = || {
+            let b = find_db(&f.source_col)?;
+            c.fields.iter().position(|cf| cf.group.as_ref().is_some_and(|gr| gr.base == b && gr.by == g))
+        };
+        let Some(i) = level.or_else(grouped).or_else(|| find_db(&f.source_col)) else { continue };
+        if on_axis || f.hidden {
+            hidden.insert(i, f);
+        } else if !pages.iter().any(|(j, _)| *j == i) {
+            pages.push((i, f));
+            hidden.insert(i, f);
         }
     }
     let find_calc = |name: &str| c.fields.iter().position(|f| f.formula.is_some() && same(&f.name, name));
@@ -1070,7 +1065,7 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, axis_map: &[
         if !pt.subtotals_top {
             s.push_str(" subtotalTop=\"0\"");
         }
-        if axis.is_some() || (f.itemized && (hidden.contains_key(&i) || c.slicer_fields.contains(&i))) {
+        if axis.is_some() || ((f.itemized || f.group.is_some()) && (hidden.contains_key(&i) || c.slicer_fields.contains(&i))) {
             let collapsed: &[String] = axis_field(i).map(|f| f.collapsed_items.as_slice()).unwrap_or(&[]);
             let count = labels.len() + usize::from(pt.subtotals);
             let _ = write!(s, "><items count=\"{count}\">");
@@ -1242,10 +1237,16 @@ impl CachesIn {
     }
 
     /// Item captions of field `field` in the cache a slicer cache names by `pivotCacheId`, in
-    /// shared item order (what the slicer cache's `<i x>` indices refer to).
-    pub fn slicer_labels(&self, cache_id: u32, field: &str) -> Option<&[String]> {
+    /// shared item order (what the slicer cache's `<i x>` indices refer to), and the field's date
+    /// grouping. `None` for a grouping GridCraft can't compute.
+    pub fn slicer_labels(&self, cache_id: u32, field: &str) -> Option<(&[String], PivotDateGroup)> {
         let cache = self.parsed.values().flatten().find(|c| c.slicer_id == Some(cache_id))?;
-        Some(cache.fields.iter().find(|f| f.database && same(&f.name, field))?.labels())
+        let f = cache.fields.iter().find(|f| f.database && same(&f.name, field))?;
+        let group = match &f.group {
+            None => PivotDateGroup::None,
+            Some((_, by, _)) => (*by)?,
+        };
+        Some((f.labels(), group))
     }
 }
 
@@ -1473,7 +1474,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 if items.iter().any(|it| it.flag("h", false)) {
                     let shown: Vec<String> = items.iter().filter(|it| !it.flag("h", false)).filter_map(|it| lab(it)).collect();
                     if !filters.iter().any(|ff| same(&ff.source_col, &name)) {
-                        filters.push(PivotFilter { source_col: name.clone(), selected: Some(shown), hidden: false });
+                        filters.push(PivotFilter { source_col: name.clone(), selected: Some(shown), hidden: false, date_group: group });
                     }
                 }
             }
@@ -1484,7 +1485,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
     let mut page_filters = Vec::new();
     for p in &pages {
         let Some(i) = p.attr_i64("fld").filter(|i| *i >= 0).map(|i| i as usize) else { continue };
-        let Some((name, _)) = field_ref(cx, cache, i) else { continue };
+        let Some((name, group)) = field_ref(cx, cache, i) else { continue };
         let labels = cache.fields.get(i).map(|f| f.labels().to_vec()).unwrap_or_default();
         let selected = if let Some(k) = p.attr_u32("item") {
             labels.get(k as usize).map(|l| vec![l.clone()])
@@ -1500,7 +1501,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 })
             })
         };
-        page_filters.push(PivotFilter { source_col: name, selected, hidden: false });
+        page_filters.push(PivotFilter { source_col: name, selected, hidden: false, date_group: group });
     }
     let mut axis_filters = Vec::new();
     let (rows, rows_values) = axis(cx, &row_x, &mut axis_filters);
@@ -1515,6 +1516,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
     filters.extend(page_filters);
     filters.extend(axis_filters);
     // Hidden items of a field in no area: a slicer's selection on a field the table doesn't show.
+    // A date-grouped cache field keeps its grouping, so the items are its groups.
     let page_x: Vec<i64> = pages.iter().filter_map(|p| p.attr_i64("fld")).collect();
     for (i, e) in pfs.iter().enumerate() {
         let placed = [&row_x, &col_x, &page_x].iter().any(|l| l.contains(&(i as i64)));
@@ -1522,16 +1524,22 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
         if placed || !items.iter().any(|it| it.flag("h", false)) {
             continue;
         }
-        let Some((name, _)) = field_ref(cx, cache, i) else { continue };
+        // Items of a grouping GridCraft can't compute could never match a source value.
+        if let Some(f) = cache.fields.get(i).filter(|f| matches!(f.group, Some((_, None, _)))) {
+            cx.warn(format!("PivotTable \"{}\": the filter on grouped field \"{}\" is not supported and was ignored", pt.name, f.name));
+            continue;
+        }
+        let Some((name, group)) = field_ref(cx, cache, i) else { continue };
         if filters.iter().any(|f| same(&f.source_col, &name)) {
             continue;
         }
         let labels = cache.fields.get(i).map(|f| f.labels().to_vec()).unwrap_or_default();
         let shown =
             items.iter().filter(|it| !it.flag("h", false)).filter_map(|it| it.attr_u32("x").and_then(|k| labels.get(k as usize)).cloned()).collect();
-        filters.push(PivotFilter { source_col: name, selected: Some(shown), hidden: true });
+        filters.push(PivotFilter { source_col: name, selected: Some(shown), hidden: true, date_group: group });
     }
     pt.filters = filters;
+    pt.normalize_filter_groups();
 
     // Values.
     if let Some(df) = x.child("dataFields") {

@@ -99,26 +99,12 @@ pub fn slicer_pivots(wb: &Workbook, pivots: &[SlicerPivot]) -> Vec<(usize, usize
 
 /// Sets `field`'s item selection (`None`: everything) on each PivotTable and refreshes them. A field
 /// outside Rows and Columns gets a hidden filter (no report filter cell), as an Excel slicer does.
+/// The labels are in the grouping of the field's base cache field, as the tiles are.
 fn set_pivot_selection(wb: &mut Workbook, pivots: &[(usize, usize)], field: &str, selected: Option<Vec<String>>) -> Result<()> {
     for &(si, pi) in pivots {
         let Some(pt) = wb.sheet_mut(si).and_then(|sh| sh.pivots.get_mut(pi)) else { continue };
-        let on_axis = pt.rows.iter().chain(pt.columns.iter()).any(|f| f.source_col.eq_ignore_ascii_case(field));
-        match (pt.filters.iter().position(|f| f.source_col.eq_ignore_ascii_case(field)), selected.clone()) {
-            (Some(i), None) => {
-                if on_axis || pt.filters.get(i).is_some_and(|f| f.hidden) {
-                    pt.filters.remove(i);
-                } else if let Some(f) = pt.filters.get_mut(i) {
-                    f.selected = None;
-                }
-            }
-            (Some(i), Some(sel)) => {
-                if let Some(f) = pt.filters.get_mut(i) {
-                    f.selected = Some(sel);
-                }
-            }
-            (None, Some(sel)) => pt.filters.push(PivotFilter { source_col: field.to_string(), selected: Some(sel), hidden: !on_axis }),
-            (None, None) => {}
-        }
+        let group = pt.field_group(field);
+        pt.set_filter(field, selected.clone(), group);
         pv::refresh(wb, si, pi, false).map_err(EngineError::Other)?;
     }
     Ok(())

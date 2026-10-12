@@ -104,7 +104,7 @@ fn workbook() -> Workbook {
                 ..PivotValue::default()
             },
         ],
-        filters: vec![PivotFilter { source_col: "Channel".into(), selected: Some(vec!["Online".into()]), hidden: false }],
+        filters: vec![PivotFilter { source_col: "Channel".into(), selected: Some(vec!["Online".into()]), ..PivotFilter::default() }],
         layout: PivotLayout::Tabular,
         grand_totals_rows: false,
         grand_totals_cols: true,
@@ -161,8 +161,8 @@ fn workbook() -> Workbook {
             },
         ],
         filters: vec![
-            PivotFilter { source_col: "Region".into(), selected: Some(vec!["East".into(), "North".into()]), hidden: false },
-            PivotFilter { source_col: "Product".into(), selected: Some(vec!["A".into(), "B".into()]), hidden: false },
+            PivotFilter { source_col: "Region".into(), selected: Some(vec!["East".into(), "North".into()]), ..PivotFilter::default() },
+            PivotFilter { source_col: "Product".into(), selected: Some(vec!["A".into(), "B".into()]), ..PivotFilter::default() },
         ],
         layout: PivotLayout::Outline,
         grand_totals_rows: true,
@@ -184,7 +184,7 @@ fn workbook() -> Workbook {
         anchor: at("AB1"),
         rows: vec![field("Product")],
         values: vec![PivotValue { source_col: "Units".into(), func: PivotFunc::Product, name: "Product of Units".into(), ..PivotValue::default() }],
-        filters: vec![PivotFilter { source_col: "Channel".into(), selected: None, hidden: false }],
+        filters: vec![PivotFilter { source_col: "Channel".into(), ..PivotFilter::default() }],
         last_range: Some(rr("AB1:AC6")),
         ..PivotTable::default()
     };
@@ -597,7 +597,11 @@ fn slicer_workbook() -> Workbook {
     let mut wb = workbook();
     let report = wb.sheet_mut(1).unwrap();
     let pi = report.pivots.iter().position(|p| p.name == "Sales by Region").unwrap();
-    report.pivots[pi].filters.push(PivotFilter { source_col: "Product".into(), selected: Some(vec!["A".into(), "C".into()]), hidden: false });
+    report.pivots[pi].filters.push(PivotFilter {
+        source_col: "Product".into(),
+        selected: Some(vec!["A".into(), "C".into()]),
+        ..PivotFilter::default()
+    });
     report.slicers.push(Slicer {
         id: 1,
         source: SlicerSource::Pivot {
@@ -670,7 +674,12 @@ fn pivot_slicer_keeps_every_connected_pivot_table() {
         anchor: at("AF1"),
         rows: vec![field("Region")],
         values: vec![PivotValue { source_col: "Units".into(), func: PivotFunc::Sum, name: "Sum of Units".into(), ..PivotValue::default() }],
-        filters: vec![PivotFilter { source_col: "Product".into(), selected: Some(vec!["A".into(), "C".into()]), hidden: true }],
+        filters: vec![PivotFilter {
+            source_col: "Product".into(),
+            selected: Some(vec!["A".into(), "C".into()]),
+            hidden: true,
+            ..PivotFilter::default()
+        }],
         ..PivotTable::default()
     });
     if let SlicerSource::Pivot { pivots, .. } = &mut report.slicers[0].source {
@@ -705,6 +714,46 @@ fn pivot_slicer_keeps_every_connected_pivot_table() {
     }
 }
 
+/// PivotTables a slicer connects share one cache only when they have the same calculated fields:
+/// a cache's calculated fields are read back into each of its tables, so sharing would add one
+/// table's calculated field to the other.
+#[test]
+fn pivot_slicer_shares_no_cache_across_calculated_fields() {
+    let mut wb = slicer_workbook();
+    let report = wb.sheet_mut(1).unwrap();
+    let pi = report.pivots.iter().position(|p| p.name == "Sales by Region").unwrap();
+    report.pivots[pi].calculated_fields.push(PivotCalcField { name: "Price".into(), formula: "=Sales/Units".into() });
+    report.pivots.push(PivotTable {
+        id: 4,
+        name: "Units by Region".into(),
+        source: "Data!$A$1:$F$9".into(),
+        anchor: at("AF1"),
+        rows: vec![field("Region")],
+        values: vec![PivotValue { source_col: "Units".into(), func: PivotFunc::Sum, name: "Sum of Units".into(), ..PivotValue::default() }],
+        filters: vec![PivotFilter {
+            source_col: "Product".into(),
+            selected: Some(vec!["A".into(), "C".into()]),
+            hidden: true,
+            ..PivotFilter::default()
+        }],
+        ..PivotTable::default()
+    });
+    if let SlicerSource::Pivot { pivots, .. } = &mut report.slicers[0].source {
+        pivots.push(SlicerPivot { sheet: "Report".into(), name: "Units by Region".into() });
+    }
+    let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
+    let calc = |name: &str| back.sheet(1).unwrap().pivots.iter().find(|p| p.name == name).unwrap().calculated_fields.clone();
+    assert_eq!(calc("Sales by Region"), vec![PivotCalcField { name: "Price".into(), formula: "=Sales/Units".into() }]);
+    assert_eq!(calc("Units by Region"), vec![]);
+
+    // With the same calculated fields they share one cache and stay connected.
+    let report = wb.sheet_mut(1).unwrap();
+    let units = report.pivots.iter().position(|p| p.name == "Units by Region").unwrap();
+    report.pivots[units].calculated_fields.push(PivotCalcField { name: "Price".into(), formula: "=Sales/Units".into() });
+    let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
+    assert_eq!(back.sheet(1).unwrap().slicers[0].source, wb.sheet(1).unwrap().slicers[0].source);
+}
+
 /// A slicer on a date field grouped by quarters lists the groups, in date order.
 #[test]
 fn pivot_slicer_on_grouped_dates_writes_the_groups() {
@@ -717,7 +766,7 @@ fn pivot_slicer_on_grouped_dates_writes_the_groups() {
         anchor: at("AF1"),
         rows: vec![PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Quarters, ..PivotField::default() }],
         values: vec![PivotValue { source_col: "Sales".into(), func: PivotFunc::Sum, name: "Sum of Sales".into(), ..PivotValue::default() }],
-        filters: vec![PivotFilter { source_col: "Date".into(), selected: Some(vec!["Qtr2".into()]), hidden: false }],
+        filters: vec![PivotFilter { source_col: "Date".into(), selected: Some(vec!["Qtr2".into()]), ..PivotFilter::default() }],
         ..PivotTable::default()
     });
     report.slicers.push(Slicer {
@@ -749,7 +798,7 @@ fn pivot_slicer_on_grouped_dates_writes_the_groups() {
     let b = back.sheet(1).unwrap();
     assert_eq!(b.slicers[0].source, wb.sheet(1).unwrap().slicers[0].source);
     let pb = b.pivots.iter().find(|p| p.name == "By Quarter").unwrap();
-    assert_eq!(pb.filters, vec![PivotFilter { source_col: "Date".into(), selected: Some(vec!["Qtr2".into()]), hidden: false }]);
+    assert_eq!(pb.filters, vec![PivotFilter { source_col: "Date".into(), selected: Some(vec!["Qtr2".into()]), ..PivotFilter::default() }]);
 }
 
 #[test]
