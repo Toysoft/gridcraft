@@ -126,7 +126,7 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 
 ### 17. Insert objects (F)
 - SmartArt, WordArt, signature line, objects, 3-D models, screenshot; 8 shape kinds vs ~170;
-  pictures in cells (#61, PR #105). Equations exist (LaTeX source with a live preview); there is
+  pictures in cells (#61, PR #105). Equations exist (LaTeX source with a live preview, Office Math in xlsx); there is
   no structured (WYSIWYG) equation editing and no ink equations. **Estimate:** 25–40 h.
 
 ### 18. Accessibility (U)

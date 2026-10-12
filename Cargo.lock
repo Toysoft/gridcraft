@@ -1695,6 +1695,7 @@ dependencies = [
  "aes",
  "gridcraft-core",
  "gridcraft-formula",
+ "gridcraft-math",
  "gridcraft-model",
  "quick-xml",
  "sha1",
