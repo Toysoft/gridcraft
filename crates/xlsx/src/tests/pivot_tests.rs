@@ -92,7 +92,7 @@ fn workbook() -> Workbook {
             collapsed_items: vec!["East".into()],
             caption: Some("Area".into()),
             sort_by: Some("Sum of Sales".into()),
-            sort_scope: vec![("Product".into(), "B".into())],
+            sort_scope: vec![PivotScopeItem { source_col: "Product".into(), item: "B".into(), ..PivotScopeItem::default() }],
             item_captions: vec![("West".into(), "**West".into())],
             subtotal: Some(true),
             repeat_labels: true,

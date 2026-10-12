@@ -2568,7 +2568,8 @@ mod tests {
         });
         let si = wb.active_sheet;
         let p = wb.sheet(si).unwrap().pivots.last().unwrap();
-        assert_eq!(p.rows[0].sort_scope, vec![("Product".to_string(), "Apples".to_string())]);
+        let apples = gridcraft_model::PivotScopeItem { source_col: "Product".into(), item: "Apples".into(), ..Default::default() };
+        assert_eq!(p.rows[0].sort_scope, vec![apples]);
         let out = crate::pivot::compute(&wb, p, si).unwrap();
         let labels: Vec<String> = out.grid.iter().filter_map(|r| r.first()).map(|c| c.value.display()).collect();
         let order: Vec<&str> = labels.iter().map(String::as_str).filter(|l| ["East", "West", "North"].contains(l)).collect();
@@ -2586,5 +2587,121 @@ mod tests {
         assert_eq!(p2.rows[0].sort_by, None);
         assert!(p2.rows[0].sort_scope.is_empty());
         assert!(warnings.iter().any(|w| w.contains("scope")), "{warnings:?}");
+    }
+
+    /// Saves and reopens a workbook.
+    fn reopen(wb: &gridcraft_model::Workbook) -> gridcraft_model::Workbook {
+        let bytes = crate::io::save_bytes(wb, "t.xlsx").unwrap();
+        crate::io::open_bytes("t.xlsx", &bytes).unwrap().0
+    }
+    /// The labels in the report's first column, as computed from `wb`, keeping only `keep`.
+    fn first_col(wb: &gridcraft_model::Workbook, keep: &[&str]) -> Vec<String> {
+        let si = wb.active_sheet;
+        let p = wb.sheet(si).unwrap().pivots.last().unwrap();
+        let out = crate::pivot::compute(wb, p, si).unwrap();
+        out.grid.iter().filter_map(|r| r.first()).map(|c| c.value.display()).filter(|l| keep.contains(&l.as_str())).collect()
+    }
+    const VALUES_REF: &str = "<reference field=\"4294967294\" count=\"1\" selected=\"0\"><x v=\"0\"/></reference>";
+    /// The Values-only sort scope the writer emits, as a `<references>` opening.
+    fn values_only() -> String {
+        format!("<references count=\"1\">{VALUES_REF}")
+    }
+
+    #[test]
+    fn sort_scope_tells_date_levels_of_one_column_apart() {
+        use gridcraft_model::{PivotDateGroup, PivotField};
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Date"], "values": ["Sales"]})).unwrap();
+        edit_pt(&mut s, |p| {
+            let date = p.columns[0].clone();
+            p.columns =
+                vec![PivotField { date_group: PivotDateGroup::Years, ..date.clone() }, PivotField { date_group: PivotDateGroup::Quarters, ..date }];
+        });
+        s.execute("pivot.sort", json!({"field": "Region", "order": "desc", "by": "Sum of Sales"})).unwrap();
+        // Sort by the values in the 2026 › Qtr2 column: Years is cache field 5 (item 1 = 2026,
+        // after "<1/15/2026"), Quarters the Date field 2 (item 2 = Qtr2). Qtr2 holds West 70,
+        // East 60, North 30; the totals are East 415, West 285, North 135.
+        let refs = format!(
+            "<references count=\"3\">{VALUES_REF}<reference field=\"5\" count=\"1\" selected=\"0\"><x v=\"1\"/></reference><reference field=\"2\" count=\"1\" selected=\"0\"><x v=\"2\"/></reference>"
+        );
+        let (wb, _) = reopen_patched(&s, |x| {
+            assert!(x.contains(&values_only()), "{x}");
+            x.replace(&values_only(), &refs)
+        });
+        let regions = ["East", "West", "North"];
+        assert_eq!(first_col(&wb, &regions), ["West", "East", "North"]);
+        // Saving writes both references back.
+        let back = reopen(&wb);
+        let scope = |wb: &gridcraft_model::Workbook| wb.sheet(wb.active_sheet).unwrap().pivots.last().unwrap().rows[0].sort_scope.clone();
+        assert_eq!(scope(&back).len(), 2);
+        assert_eq!(scope(&back), scope(&wb));
+        assert_eq!(first_col(&back, &regions), ["West", "East", "North"]);
+    }
+
+    #[test]
+    fn custom_subtotal_functions_keep_the_subtotal_rows() {
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region", "Product"], "values": ["Units"]})).unwrap();
+        s.execute("pivot.layout", json!({"layout": "tabular"})).unwrap();
+        // Field Settings › Subtotals › Custom (Sum and Count) on Product, as Excel stores it.
+        let (wb, warnings) = reopen_patched(&s, |x| {
+            let start = x.match_indices("<pivotField ").nth(1).unwrap().0;
+            let end = start + x[start..].find("</pivotField>").unwrap();
+            let field = x[start..end]
+                .replacen("<pivotField ", "<pivotField defaultSubtotal=\"0\" sumSubtotal=\"1\" countSubtotal=\"1\" ", 1)
+                .replace("<item t=\"default\"/>", "<item t=\"sum\"/><item t=\"count\"/>");
+            assert!(field.contains("t=\"sum\""), "{field}");
+            format!("{}{field}{}", &x[..start], &x[end..])
+        });
+        let p = wb.sheet(wb.active_sheet).unwrap().pivots.last().unwrap();
+        assert_ne!(p.rows[1].subtotal, Some(false));
+        // Shown with the automatic subtotal, with a warning.
+        let plain = reopen(&s.doc().unwrap().wb);
+        let all = |wb: &gridcraft_model::Workbook| {
+            let si = wb.active_sheet;
+            let out = crate::pivot::compute(wb, wb.sheet(si).unwrap().pivots.last().unwrap(), si).unwrap();
+            out.grid.iter().map(|r| r.iter().map(|c| c.value.display()).collect::<Vec<_>>()).collect::<Vec<_>>()
+        };
+        assert_eq!(all(&wb), all(&plain));
+        assert!(warnings.iter().any(|w| w.contains("subtotal")), "{warnings:?}");
+    }
+
+    #[test]
+    fn sort_scope_on_a_vanished_item_sorts_as_after_saving() {
+        let mut s = sales();
+        s.execute("range.setValues", json!({"range": "A14", "values": [["South", "Kiwis", "1/1/2026", 1, 10]]})).unwrap();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Product"], "values": ["Sales"]})).unwrap();
+        s.execute("pivot.sort", json!({"field": "Region", "order": "desc", "by": "Sum of Sales"})).unwrap();
+        // Sorted by the values in the Kiwis column (Product item 3)…
+        let refs = format!("<references count=\"2\">{VALUES_REF}<reference field=\"1\" count=\"1\" selected=\"0\"><x v=\"3\"/></reference>");
+        let (mut wb, _) = reopen_patched(&s, |x| x.replace(&values_only(), &refs));
+        assert_eq!(wb.sheet(wb.active_sheet).unwrap().pivots.last().unwrap().rows[0].sort_scope.len(), 1);
+        // …then Kiwis leaves the source: the rows sort by the grand total, before and after saving.
+        let src = wb.sheets.iter().position(|sh| sh.name == "Sheet1").unwrap();
+        wb.sheet_mut(src).unwrap().set_value(CellRef::parse("B14").unwrap(), Value::text("Apples"));
+        let regions = ["East", "West", "North", "South"];
+        let total_order = ["East", "West", "North", "South"];
+        assert_eq!(first_col(&wb, &regions), total_order);
+        assert_eq!(first_col(&reopen(&wb), &regions), total_order);
+    }
+
+    #[test]
+    fn date_groups_not_sorted_are_in_date_order() {
+        let mut s = sales();
+        // The first record is in Qtr4.
+        s.execute("cell.set", json!({"cell": "C2", "input": "12/1/2026"})).unwrap();
+        s.execute("insert.pivotTable", json!({"rows": ["Date"], "values": ["Sales"]})).unwrap();
+        s.execute("pivot.group", json!({"field": "Date", "by": "quarters"})).unwrap();
+        s.execute("pivot.sort", json!({"field": "Date", "order": "none"})).unwrap();
+        let quarters = ["Qtr1", "Qtr2", "Qtr3", "Qtr4"];
+        assert_eq!(first_col(&s.doc().unwrap().wb, &quarters), quarters);
+        let back = reopen(&s.doc().unwrap().wb);
+        assert_eq!(first_col(&back, &quarters), quarters);
+        // A reordered list still wins; items it doesn't name follow in date order.
+        let mut wb = back;
+        let si = wb.active_sheet;
+        wb.sheet_mut(si).unwrap().pivots.last_mut().unwrap().rows[0].item_order = vec!["Qtr3".into()];
+        assert_eq!(first_col(&wb, &quarters), ["Qtr3", "Qtr1", "Qtr2", "Qtr4"]);
+        assert_eq!(first_col(&reopen(&wb), &quarters), ["Qtr3", "Qtr1", "Qtr2", "Qtr4"]);
     }
 }

@@ -491,7 +491,10 @@ fn build_tree(paths: &[&[u32]], depth: usize, fields: &[&PivotField], items: &[F
         (Some(x), Some(y)) => match field.sort {
             PivotSort::Asc => cmp_items(x, y),
             PivotSort::Desc => cmp_items(y, x),
-            PivotSort::None => x.rank.unwrap_or(usize::MAX).cmp(&y.rank.unwrap_or(usize::MAX)).then(x.first.cmp(&y.first)),
+            PivotSort::None => x.rank.unwrap_or(usize::MAX).cmp(&y.rank.unwrap_or(usize::MAX)).then_with(|| {
+                // Date groups are in date order, like the groups Excel's cache lists.
+                if field.date_group == PivotDateGroup::None { x.first.cmp(&y.first) } else { cmp_items(x, y) }
+            }),
         },
         _ => Ordering::Equal,
     };
@@ -1062,12 +1065,16 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
     let row_paths: Vec<&[u32]> = row_set.iter().map(Vec::as_slice).collect();
     let col_paths: Vec<&[u32]> = col_set.iter().map(Vec::as_slice).collect();
     // The other-axis path a sort scope names: its items of the other axis's fields, outer first,
-    // up to the first field it doesn't name. An item that isn't there has no values.
+    // up to the first field it doesn't name. A scope naming an item that isn't there sorts by the
+    // grand total, as the writer then drops it.
     let scope_path = |f: &PivotField, others: &[(usize, &PivotField)], other_items: &[FieldItems]| -> Vec<u32> {
         let mut path = Vec::new();
         for ((_, o), oi) in others.iter().zip(other_items) {
-            let Some((_, label)) = f.sort_scope.iter().find(|(c, _)| c.eq_ignore_ascii_case(&o.source_col)) else { break };
-            path.push(oi.find(label).unwrap_or(u32::MAX));
+            let Some(e) = f.sort_scope.iter().find(|e| e.is_of(o)) else { break };
+            match oi.find(&e.item) {
+                Some(i) => path.push(i),
+                None => return Vec::new(),
+            }
         }
         path
     };

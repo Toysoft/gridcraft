@@ -895,7 +895,8 @@ pub enum PivotSort {
     #[default]
     Asc,
     Desc,
-    /// Source order (first appearance).
+    /// Manual order: the field's `item_order`, then source order (first appearance); date
+    /// groups in date order.
     None,
 }
 
@@ -908,6 +909,25 @@ pub enum PivotDateGroup {
     Quarters,
     Months,
     Days,
+}
+
+/// An item of a field on the other axis that a sort by value takes its values from (e.g. the
+/// "Apples" column). The field is named by source column and date grouping, so two levels
+/// grouped from one date column (Years and Quarters) stay apart.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PivotScopeItem {
+    pub source_col: String,
+    pub date_group: PivotDateGroup,
+    /// The item's label.
+    pub item: String,
+}
+
+impl PivotScopeItem {
+    /// Whether this names an item of `f`.
+    pub fn is_of(&self, f: &PivotField) -> bool {
+        self.date_group == f.date_group && self.source_col.eq_ignore_ascii_case(&f.source_col)
+    }
 }
 
 /// A field placed in the Rows or Columns area.
@@ -926,12 +946,12 @@ pub struct PivotField {
     /// Sort the items by this value field (its caption) instead of by their labels, in the
     /// `sort` direction (Sort > More Sort Options > by value). Ignored when `sort` is `None`.
     pub sort_by: Option<String>,
-    /// Where `sort_by` takes its values: items of fields on the other axis (source column,
-    /// item label), outer field first, e.g. sort the rows by the "Apples" column. Empty = the
-    /// grand total.
-    pub sort_scope: Vec<(String, String)>,
+    /// Where `sort_by` takes its values: an item of each field on the other axis, outer field
+    /// first, up to the first field it doesn't name (e.g. sort the rows by the "Apples" column).
+    /// Empty, or naming an item that isn't there, = the grand total.
+    pub sort_scope: Vec<PivotScopeItem>,
     /// Manual item order (item labels), used when `sort` is `None`; unlisted items follow in
-    /// source order.
+    /// source order (date groups in date order).
     pub item_order: Vec<String>,
     /// Renamed items: (item label, caption shown instead).
     pub item_captions: Vec<(String, String)>,

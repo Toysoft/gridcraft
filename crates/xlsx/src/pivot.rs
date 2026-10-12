@@ -18,7 +18,8 @@ use gridcraft_core::date::datetime_from_serial;
 use gridcraft_core::{CellRef, DateSystem, RangeRef, Value, number_to_text};
 use gridcraft_formula::quote_sheet;
 use gridcraft_model::{
-    PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLayout, PivotShowAs, PivotSort, PivotTable, PivotValue, Workbook,
+    PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLayout, PivotScopeItem, PivotShowAs, PivotSort, PivotTable, PivotValue,
+    Workbook,
 };
 
 use crate::IoError;
@@ -51,6 +52,20 @@ const NS_XPDL: &str = "http://schemas.microsoft.com/office/spreadsheetml/2016/pi
 /// The field index of the Values (data) field in pivot areas and `<colFields>` is -2, which
 /// `<reference field>` stores unsigned.
 const VALUES_FIELD: &str = "4294967294";
+/// `<pivotField>` attributes that turn on a custom subtotal function.
+const CUSTOM_SUBTOTALS: [&str; 11] = [
+    "sumSubtotal",
+    "countASubtotal",
+    "avgSubtotal",
+    "maxSubtotal",
+    "minSubtotal",
+    "productSubtotal",
+    "countSubtotal",
+    "stdDevSubtotal",
+    "stdDevPSubtotal",
+    "varSubtotal",
+    "varPSubtotal",
+];
 const NS_X14: &str = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main";
 
 const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -989,7 +1004,9 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
             }
             s.push_str("</items>");
             // Sort by a value field: the scope references the Values field's data item, then
-            // the other axis's items it takes the values from (index into their `<items>`).
+            // the other axis's items it takes the values from (index into their `<items>`), as
+            // the engine resolves them: outer field first, up to the first field it doesn't
+            // name; none when it names an item that isn't there (the grand total).
             if let Some(d) = af
                 .filter(|f| f.sort != PivotSort::None)
                 .and_then(|f| f.sort_by.as_deref())
@@ -999,14 +1016,17 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
                 if let Some(af) = af {
                     let on_rows = pt.rows.iter().any(|r| std::ptr::eq(r, af));
                     let (others, base) = if on_rows { (&pt.columns, pt.rows.len()) } else { (&pt.rows, 0) };
-                    for (col, label) in &af.sort_scope {
-                        let Some(q) = others.iter().position(|o| same(&o.source_col, col)) else { continue };
+                    for (q, o) in others.iter().enumerate() {
+                        // A field without a source column isn't on the axis (the engine skips it too).
                         let Some(j) = c.axis_map.get(base + q).copied().flatten() else { continue };
-                        let Some(cf) = c.fields.get(j) else { continue };
-                        let labels = cf.item_labels();
-                        let pos = written_order(&labels, others.get(q)).iter().position(|x| labels.get(*x).is_some_and(|l| same(l, label)));
-                        if let Some(pos) = pos {
-                            refs.push((j.to_string(), pos));
+                        let Some(e) = af.sort_scope.iter().find(|e| e.is_of(o)) else { break };
+                        let labels = c.fields.get(j).map(CField::item_labels).unwrap_or_default();
+                        match written_order(&labels, Some(o)).iter().position(|x| labels.get(*x).is_some_and(|l| same(l, &e.item))) {
+                            Some(pos) => refs.push((j.to_string(), pos)),
+                            None => {
+                                refs.truncate(1);
+                                break;
+                            }
                         }
                     }
                 }
@@ -1451,7 +1471,13 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 };
                 by = auto_sort_scope(e);
                 f.caption = e.attr("name").filter(|n| !n.is_empty()).map(str::to_string);
-                let own = e.flag("defaultSubtotal", true);
+                // Custom subtotal functions (Field Settings › Subtotals › Custom, `sumSubtotal`
+                // and the like, ECMA-376 §18.10.1.69) also turn subtotals on.
+                let custom = CUSTOM_SUBTOTALS.iter().any(|a| e.flag(a, false));
+                if custom {
+                    cx.warn(format!("PivotTable field \"{name}\": custom subtotal functions are not supported; it shows the automatic subtotal"));
+                }
+                let own = custom || e.flag("defaultSubtotal", true);
                 f.subtotal = (own != table_subtotals).then_some(own);
                 f.repeat_labels = x14_ext(e, EXT_X14_FIELD).is_some_and(|x| x.flag("fillDownLabels", false));
                 if group == PivotDateGroup::None {
@@ -1465,8 +1491,8 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 f.collapsed_items = items.iter().filter(|it| !it.flag("sd", true)).filter_map(|it| lab(it)).collect();
                 f.item_captions = items.iter().filter_map(|it| Some((lab(it)?, it.attr("n").filter(|n| !n.is_empty())?.to_string()))).collect();
                 // Not auto-sorted: the `<items>` list fixes the order, even when it happens to be
-                // cache order (new items follow it). Date groups are in date order anyway; they
-                // keep a list only when it was reordered.
+                // cache order (new items follow it). The engine shows date groups in date order,
+                // so they keep a list only when it was reordered.
                 let xs: Vec<u32> = items.iter().filter_map(|it| it.attr_u32("x")).collect();
                 let reordered = xs.windows(2).any(|w| w[0] > w[1]);
                 if f.sort == PivotSort::None && (group == PivotDateGroup::None || reordered) {
@@ -1570,21 +1596,22 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
     }
     // Sort scopes: each reference must name an item of a field on the other axis.
     let n_rows = pt.rows.len();
-    let names: Vec<String> = pt.rows.iter().chain(pt.columns.iter()).map(|f| f.source_col.clone()).collect();
+    let keys: Vec<(String, PivotDateGroup)> = pt.rows.iter().chain(pt.columns.iter()).map(|f| (f.source_col.clone(), f.date_group)).collect();
     let item_label = |j: usize, x: usize| -> Option<String> {
         let k = items_of(pf(j)?).get(x)?.attr_u32("x")?;
         cache.fields.get(j)?.labels().get(k as usize).cloned()
     };
-    let mut sorts: Vec<Option<(usize, Vec<(String, String)>)>> = Vec::with_capacity(sort_by.len());
+    let mut sorts: Vec<Option<(usize, Vec<PivotScopeItem>)>> = Vec::with_capacity(sort_by.len());
     for (p, by) in sort_by.into_iter().enumerate() {
-        let others = if p < n_rows { n_rows..names.len() } else { 0..n_rows };
+        let others = if p < n_rows { n_rows..keys.len() } else { 0..n_rows };
         let resolved = by.map(|by| {
             let (d, refs) = by?;
             let scope = refs
                 .into_iter()
                 .map(|(j, x)| {
                     let k = others.clone().find(|k| axis_ix.get(*k) == Some(&j)).ok_or(())?;
-                    Ok((names.get(k).cloned().ok_or(())?, item_label(j, x).ok_or(())?))
+                    let (source_col, date_group) = keys.get(k).cloned().ok_or(())?;
+                    Ok(PivotScopeItem { source_col, date_group, item: item_label(j, x).ok_or(())? })
                 })
                 .collect::<Result<Vec<_>, ()>>()?;
             Ok((d, scope))
@@ -1593,7 +1620,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
             cx.warn(format!(
                 "PivotTable \"{}\": a sort by value of \"{}\" has a scope that is not supported; it sorts by the label",
                 pt.name,
-                names.get(p).map(String::as_str).unwrap_or("")
+                keys.get(p).map(|k| k.0.as_str()).unwrap_or("")
             ));
         }
         sorts.push(resolved.and_then(Result::ok));
