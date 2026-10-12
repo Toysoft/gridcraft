@@ -348,7 +348,7 @@ fn background_edits_during_the_first_run_of_a_worker_process() {
 /// Cells on this machine's own Python (3.11 or newer), found by the search, when there is one.
 #[test]
 fn cells_run_on_the_users_python_when_the_search_finds_one() {
-    let detection = gridcraft_python::interp::detect("");
+    let detection = gridcraft_python::interp::detect(&std::env::var("GRIDCRAFT_TEST_PYTHON").unwrap_or_default(), None);
     if detection.found.is_none() {
         eprintln!("skipped: no Python 3.11 or newer here ({:?})", detection.rejected);
         return;
@@ -359,7 +359,7 @@ fn cells_run_on_the_users_python_when_the_search_finds_one() {
     assert_eq!(s.python_backend()["kind"], "cpython");
     s.execute("range.setValues", json!({"range": "A1:B3", "values": [["k", "v"], ["a", 1], ["b", 2]]})).unwrap();
     s.execute("python.initialization", json!({"code": "import sys\nscale = 10"})).unwrap();
-    s.execute("python.set", json!({"cell": "D1", "code": "rows = xl('A1:B3')\nsys.version_info[0]"})).unwrap();
+    s.execute("python.set", json!({"cell": "D1", "code": "rows = xl('A1:B3')\n# A frame when pandas is there.\nrows = rows.values.tolist() if hasattr(rows, 'values') else rows\nsys.version_info[0]"})).unwrap();
     assert_eq!(v(&s, "D1"), Value::Number(3.0));
     s.execute("python.set", json!({"cell": "D2", "code": "[r[1] * scale for r in rows[1:]]"})).unwrap();
     assert_eq!(v(&s, "D2"), Value::Number(10.0));

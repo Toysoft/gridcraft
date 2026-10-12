@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Python in cells: the `python` crate, worker processes, the engine runtime) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Python in cells: package installs) · **Target:** Microsoft Excel (Microsoft 365)
 
 How GridCraft is built today. Rules for contributors are in [`AGENTS.md`](../AGENTS.md).
 
@@ -92,6 +92,23 @@ it like any other cell. Code is written with `python.set`, never by typing `=PY(
   every third-party package, so a cell that imports one, or uses a construct Monty's compiler does
   not support, is refused before any of it runs, with a message that asks for CPython. CPython runs
   with the access of the person's account, so pandas and numpy work.
+- **Packages** (`python/env.rs`, `engine/pyenv.rs`). GridCraft keeps one virtual environment of
+  its own, made from the CPython it found (it never downloads an interpreter), in the app's data
+  folder: `~/Library/Application Support/GridCraft/python-env` on macOS,
+  `$XDG_DATA_HOME/gridcraft/python-env` (by default `~/.local/share`) on Linux and BSD, and
+  `%LOCALAPPDATA%\GridCraft\python-env` on Windows; `GRIDCRAFT_PYTHON_ENV` or
+  `python.options {environment}` move it. The search for Python tries it after `VIRTUAL_ENV` and
+  `CONDA_PREFIX` and before `PATH`. `python.install` installs only after the person approves the
+  exact list (`approve: true`; otherwise it answers with the question as `EngineError::Approve`),
+  and only into a virtual environment: the person's own venv or conda environment when that runs
+  cells, otherwise GridCraft's (made first with `uv venv --seed` or `python -m venv`), never a
+  system or externally managed Python. Requirements are a name, plain extras and a version
+  specifier only (no URLs, paths, options or markers; at most 32). The install runs `uv pip
+  install` when `uv` is on `PATH` (and the target is not a conda environment), else `python -m
+  pip install`, with `--only-binary :all:`, from
+  an argument list, on a thread with a 10-minute deadline; `python.stop` cancels it. When it
+  succeeds, the search runs again and every workbook's Python cells run again. Workbooks declare
+  the packages they need with `python.packages` (kept in hidden names, so they travel in xlsx).
 - **Runtime** (`engine/python.rs`). After every top-level command that changed a workbook,
   `Session::execute` compares the workbook before and after and runs the Python cells whose code
   changed or whose `xl()` references read changed cells, and every Python cell after the first of
@@ -135,6 +152,7 @@ rpm, tarball), FreeBSD, and web (WASM; WebGPU or WebGL2; no Python cells). Relea
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Python in cells: GridCraft's own Python environment and package installs the person approves |
 | 2026-10-12 | minor | Python in cells: the `python` crate (L1), worker processes, protocol, built-in and CPython backends, the engine runtime, the trust gate, files and the web build |
 | 2026-10-11 | minor | Engine building blocks for multi-command actions: undo groups, recording buffer, document trust, chunked hidden-name storage |
 | 2026-10-10 | major | Created from the code on main: crates, layers, data flow, agent control, known gaps |

@@ -17,6 +17,7 @@ pub mod outline;
 pub mod paper;
 pub mod pivot;
 pub mod pivot_calc;
+pub mod pyenv;
 pub mod python;
 pub mod record;
 pub mod sample;
@@ -51,6 +52,10 @@ pub enum EngineError {
     NoDocument,
     #[error("{0}")]
     Other(String),
+    /// The command needs the person's approval (active content to run, packages to install);
+    /// run it again with `approve: true` to go ahead.
+    #[error("approve: {0} (run again with `approve: true`)")]
+    Approve(String),
     #[error("internal error in `{0}` (the workbook was kept as it was): {1}")]
     Internal(String, String),
 }
@@ -269,6 +274,9 @@ pub struct Prefs {
     pub python_timeout_seconds: f64,
     /// The user's Python for Python cells (a path, or a name on PATH); empty to look for one.
     pub python_interpreter: String,
+    /// Where GridCraft's own Python environment lives; empty for `GRIDCRAFT_PYTHON_ENV`, else the
+    /// app's data folder.
+    pub python_environment: String,
 }
 
 impl Default for Prefs {
@@ -285,6 +293,7 @@ impl Default for Prefs {
             formula_bar: true,
             python_timeout_seconds: 5.0,
             python_interpreter: String::new(),
+            python_environment: String::new(),
         }
     }
 }
