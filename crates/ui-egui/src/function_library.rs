@@ -1,9 +1,13 @@
 //! The Formulas tab's Function Library: the function categories, their menus, the AutoSum menu
-//! (shared with Home › Editing), and the Recently Used list.
+//! (shared with Home › Editing), and the Recently Used list, which follows the formulas entered
+//! from any source (the ribbon, the control channel, MCP or a script) by reading the session's
+//! journal.
 
 use std::sync::OnceLock;
 
 use egui::{Ui, vec2};
+use gridcraft_engine::formula::lexer::{Tok, tokenize};
+use gridcraft_engine::formula::normalize_function_name;
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
@@ -58,6 +62,7 @@ pub fn default_recent() -> Vec<String> {
 pub struct FnEntry {
     pub name: String,
     pub category: String,
+    pub description: String,
 }
 
 /// Every function, sorted by name (built once; the list is static).
@@ -66,7 +71,13 @@ pub fn all() -> &'static [FnEntry] {
     LIST.get_or_init(|| {
         let mut list: Vec<FnEntry> = gridcraft_engine::cmd::formulas::function_list()
             .iter()
-            .filter_map(|f| Some(FnEntry { name: f["name"].as_str()?.to_string(), category: f["category"].as_str().unwrap_or("").to_string() }))
+            .filter_map(|f| {
+                Some(FnEntry {
+                    name: f["name"].as_str()?.to_string(),
+                    category: f["category"].as_str().unwrap_or("").to_string(),
+                    description: f["description"].as_str().unwrap_or("").to_string(),
+                })
+            })
             .collect();
         list.sort_by(|a, b| a.name.cmp(&b.name));
         list.dedup_by(|a, b| a.name == b.name);
@@ -83,6 +94,28 @@ pub fn find(name: &str) -> Option<&'static FnEntry> {
 /// The functions of one engine category, in name order.
 pub fn in_category(id: &str) -> impl Iterator<Item = &'static FnEntry> + '_ {
     all().iter().filter(move |f| f.category == id)
+}
+
+/// The longest formula text read for Recently Used (Excel's formula length limit).
+const FORMULA_MAX: usize = 8_192;
+
+/// The functions a formula (`=…`) calls, outermost first, known functions only.
+pub fn functions_in_formula(text: &str) -> Vec<String> {
+    let Some(body) = text.trim_start().strip_prefix('=') else { return vec![] };
+    // A formula longer than Excel allows was not typed by a person; it is not worth the scan.
+    if body.len() > FORMULA_MAX {
+        return vec![];
+    }
+    let mut out: Vec<String> = Vec::new();
+    for t in tokenize(body).unwrap_or_default() {
+        if let Tok::Func(name) = t.tok {
+            let name = normalize_function_name(&name);
+            if find(&name).is_some() && !out.contains(&name) {
+                out.push(name);
+            }
+        }
+    }
+    out
 }
 
 /// Moves `names` (most recent first) to the front of `recent`, keeping at most [`RECENT_MAX`].
@@ -113,6 +146,67 @@ pub fn lenient_recent<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Stri
         }
     }
     Ok(out)
+}
+
+/// The formula texts a journaled command entered, in the order of its params.
+fn journal_formulas<'a>(id: &str, params: &'a Json, out: &mut Vec<&'a str>) {
+    if !(id.starts_with("cell.") || id.starts_with("range.")) {
+        return;
+    }
+    fn walk<'a>(v: &'a Json, out: &mut Vec<&'a str>, depth: usize) {
+        match v {
+            Json::String(s) if s.starts_with('=') => out.push(s),
+            // A range's values are rows of cells; anything deeper is not a cell value.
+            Json::Array(a) if depth < 2 => a.iter().for_each(|x| walk(x, out, depth + 1)),
+            _ => {}
+        }
+    }
+    for key in ["input", "value", "values", "formula"] {
+        if let Some(v) = params.get(key) {
+            walk(v, out, 0);
+        }
+    }
+}
+
+/// The most formula texts read in one frame: a large paste needs only its last few functions.
+const SCAN_BUDGET: usize = 2_000;
+
+/// Reads the journal entries added since the last call and moves the functions their formulas
+/// call to the front of Recently Used.
+///
+/// The journal also holds nested commands (AutoSum's own `cell.set`), which only repeat a
+/// function already counted. When the journal passes [`gridcraft_engine::JOURNAL_LIMIT`] entries
+/// it drops its oldest [`gridcraft_engine::JOURNAL_TRIM`], which this allows for.
+pub fn harvest(app: &mut SheetApp) {
+    let len = app.session.journal.len();
+    if len < app.journal_seen {
+        app.journal_seen = app.journal_seen.saturating_sub(gridcraft_engine::JOURNAL_TRIM).min(len);
+    }
+    if len == app.journal_seen {
+        return;
+    }
+    // Newest first: the last entries name the most recent functions.
+    let mut names: Vec<String> = Vec::new();
+    let mut scanned = 0;
+    'entries: for (id, params) in app.session.journal.get(app.journal_seen..).unwrap_or_default().iter().rev() {
+        let mut formulas = Vec::new();
+        journal_formulas(id, params, &mut formulas);
+        for f in formulas.iter().rev() {
+            for n in functions_in_formula(f) {
+                if !names.contains(&n) {
+                    names.push(n);
+                }
+            }
+            scanned += 1;
+            if names.len() >= RECENT_MAX || scanned >= SCAN_BUDGET {
+                break 'entries;
+            }
+        }
+    }
+    app.journal_seen = len;
+    if !names.is_empty() {
+        push_recent(&mut app.ui.recent_functions, &names);
+    }
 }
 
 /// The name a function shows under in the interface language.
@@ -207,6 +301,32 @@ mod tests {
         assert!(all().windows(2).all(|w| w[0].name < w[1].name), "sorted by name, without duplicates");
         assert_eq!(find("SUM").map(|f| f.category.as_str()), Some("MathTrig"));
         assert!(find("NOT_A_FUNCTION").is_none());
+    }
+
+    #[test]
+    fn formulas_name_their_functions_outermost_first() {
+        assert_eq!(functions_in_formula("=IF(SUM(A1:A3)>2,_xlfn.XLOOKUP(1,B:B,C:C),sum(1))"), ["IF", "SUM", "XLOOKUP"]);
+        assert!(functions_in_formula("=MYLAMBDA(1)+A1").is_empty(), "only known functions");
+        assert!(functions_in_formula("SUM(1)").is_empty(), "not a formula");
+        assert!(functions_in_formula("=\"SUM(\"").is_empty(), "inside a string");
+        assert!(functions_in_formula(&format!("=SUM({})", "1+".repeat(9000))).is_empty(), "too long");
+        assert!(functions_in_formula("=((((").is_empty());
+        assert!(functions_in_formula("=").is_empty());
+    }
+
+    #[test]
+    fn journal_entries_give_their_formulas() {
+        let entries = [
+            ("range.setValues", json!({"values": [["=SUM(1)", 2], ["x", "=PMT(1,2,3)"]]})),
+            ("cell.set", json!({"input": "=NPV(1,2)"})),
+            ("home.bold", json!({"input": "=IRR(1)"})),
+            ("range.setValues", json!({"values": [[["=FV(1,2,3)"]]]})),
+        ];
+        let mut out = Vec::new();
+        for (id, params) in &entries {
+            journal_formulas(id, params, &mut out);
+        }
+        assert_eq!(out, ["=SUM(1)", "=PMT(1,2,3)", "=NPV(1,2)"]);
     }
 
     #[test]

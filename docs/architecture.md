@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Function Library module; accent icons and the small split button) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Recently Used reads the session journal) · **Target:** Microsoft Excel (Microsoft 365)
 
 How GridCraft is built today. Rules for contributors are in [`AGENTS.md`](../AGENTS.md).
 
@@ -65,7 +65,9 @@ drawing its own:
 - **Function Library**: `function_library.rs` holds the function categories (engine id and
   label, in the Insert Function dialog's order), the function list built once from
   `cmd::formulas::function_list`, and the menus of Formulas › Function Library, including the
-  AutoSum menu that Home › Editing shares.
+  AutoSum menu that Home › Editing shares. Recently Used (`UiState::recent_functions`) is fed
+  by `function_library::harvest`, which reads the journal entries added since the last frame,
+  so formulas entered through the control channel, MCP or a script count as well as typed ones.
 - **Code editor**: `widgets::code_editor(ui, id, &mut text, Lang, max_lines)` (`code_editor.rs`)
   edits code in the monospace font with `Tokens::syntax` colours: Python (keywords, strings
   including triple-quoted ones, numbers, comments, builtins) and LaTeX (commands, scripts,
@@ -101,6 +103,7 @@ rpm, tarball), FreeBSD, and web (WASM; WebGPU or WebGL2). Release workflows in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Recently Used reads the session journal |
 | 2026-10-11 | minor | Function Library module; accent icons and the small split button |
 | 2026-10-11 | minor | UI building blocks: code editor, growing formula bar |
 | 2026-10-11 | minor | UI building blocks: ribbon widgets and overflow |

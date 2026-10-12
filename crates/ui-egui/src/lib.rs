@@ -247,10 +247,13 @@ pub struct SheetApp {
     /// Chart selected on the sheet (id).
     pub selected_chart: Option<u32>,
     pub started: f64,
+    /// How much of the session's journal Recently Used has read (see [`function_library::harvest`]).
+    pub(crate) journal_seen: usize,
 }
 
 impl SheetApp {
     pub fn new(session: Session, services: Services) -> SheetApp {
+        let journal_seen = session.journal.len();
         SheetApp {
             session,
             ui: UiState::default(),
@@ -286,6 +289,7 @@ impl SheetApp {
             shots: control::Shots::default(),
             selected_chart: None,
             started: now_ms(),
+            journal_seen,
         }
     }
 
@@ -909,6 +913,8 @@ impl SheetApp {
             ctx.request_repaint();
         }
         control::poll(self, ctx);
+        // Formulas entered since the last frame, from any source, feed Recently Used.
+        function_library::harvest(self);
         // Files read asynchronously (web file picker, dropped files).
         let arrived: Vec<(String, Vec<u8>)> = self
             .services
