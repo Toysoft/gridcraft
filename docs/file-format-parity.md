@@ -77,7 +77,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-12 | minor | "Remove trailing zeros after the decimal point" (on by default): off, `720.0` opens as 720 formatted `0.0` and saves back as `720.0` |
+| 2026-10-12 | minor | "Remove trailing zeros after the decimal separator" (on by default): off, `720.0` opens as 720 formatted `0.0` and saves back as `720.0` |
 | 2026-10-12 | minor | CSV/TSV/text open follows the Automatic Data Conversion options (leading zeros, long numbers, digits around E) |
 | 2026-10-12 | minor | CSV: saving a file opened as CSV keeps its detected separator (`;` files were rewritten with `,`) |
 | 2026-10-11 | minor | XLSX: cell/shared/array formulas read through the file→model conversion (`_xlpm.` LET/LAMBDA parameter prefixes stripped); table column names keep line breaks; table names may start with `\` |

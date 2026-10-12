@@ -37,7 +37,7 @@ pub struct DataConversion {
     /// "Convert digits surrounding the letter E to a number in scientific notation": off keeps
     /// `1244121406E6`, and any number written with an exponent, as text.
     pub digits_around_e: bool,
-    /// "Remove trailing zeros after the decimal point", GridCraft's addition to the list: on (the
+    /// "Remove trailing zeros after the decimal separator", GridCraft's addition to the list: on (the
     /// default, as in Excel) `720.0` shows and saves as `720`. Off, a number written with trailing
     /// decimal zeros gets a number format that shows them (`720.0` → `0.0`, `3.10` → `0.00`), so the
     /// grid shows it as written and a saved CSV writes it back the same. It stays a number.
