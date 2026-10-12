@@ -2504,6 +2504,7 @@ fn object_anchor(sh: &Sheet, kind: &str, id: u32) -> Option<gridcraft_engine::mo
         "chart" => sh.charts.iter().find(|c| c.id == id).map(|c| c.anchor),
         "image" => sh.images.iter().find(|c| c.id == id).map(|c| c.anchor),
         "slicer" => sh.slicers.iter().find(|c| c.id == id).map(|c| c.anchor),
+        "group" => sh.group_anchor(id),
         _ => sh.shapes.iter().find(|c| c.id == id).map(|c| c.anchor),
     }
 }
@@ -2516,6 +2517,8 @@ fn delete_selected_object(app: &mut SheetApp, sh: &Sheet) -> bool {
         "image"
     } else if sh.shapes.iter().any(|object| object.id == id) {
         "shape"
+    } else if sh.drawing_group(id).is_some() {
+        "group"
     } else {
         return false;
     };

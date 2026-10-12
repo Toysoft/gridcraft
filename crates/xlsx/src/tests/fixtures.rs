@@ -1,7 +1,7 @@
 //! Hand-written packages exercising specific reader paths.
 
 use gridcraft_core::{CellError, CellRef, DateSystem, RangeRef, Value};
-use gridcraft_model::{CalcMode, CfRule, Color, HAlign, PatternType, StyleId, Underline, Visibility};
+use gridcraft_model::{AnchorMode, CalcMode, CfRule, Color, DrawingRef, HAlign, PatternType, StyleId, Underline, Visibility};
 
 use super::minimal;
 use crate::read_xlsx;
@@ -410,6 +410,129 @@ fn drawing_with_picture_and_chart() {
     let sp = &s.shapes[0];
     assert_eq!(sp.kind, gridcraft_model::ShapeKind::Ellipse);
     assert_eq!(sp.anchor.mode, gridcraft_model::AnchorMode::Absolute);
+}
+
+#[test]
+fn grouped_objects_import_as_groups_through_nested_group_transforms() {
+    // Columns are 64 px and rows 20 px. The anchor spans B2:F12 (x 64, y 20, 256 × 200 px). The
+    // outer group's child box (offset 100,50 px, extent 512 × 400 px) fills it at half scale; the
+    // nested group sits at child 356,250 (256 × 200) → sheet 192,120 (128 × 100) and maps its own
+    // child box (0,0, 1280 × 1000 px) at a further tenth. The SmartArt frame at the back of the
+    // outer group isn't supported and is dropped.
+    let drawing = r#"<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+      <xdr:twoCellAnchor editAs="oneCell"><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>5</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>11</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+        <xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id="2" name="Outer"/><xdr:cNvGrpSpPr/></xdr:nvGrpSpPr>
+          <xdr:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="2438400" cy="1905000"/><a:chOff x="952500" y="476250"/><a:chExt cx="4876800" cy="3810000"/></a:xfrm></xdr:grpSpPr>
+          <xdr:graphicFrame><xdr:nvGraphicFramePr><xdr:cNvPr id="7" name="D"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="952500" y="476250"/><a:ext cx="952500" cy="952500"/></xdr:xfrm>
+            <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" r:dm="rId9"/></a:graphicData></a:graphic></xdr:graphicFrame>
+          <xdr:pic><xdr:nvPicPr><xdr:cNvPr id="3" name="P" descr="banner"/><xdr:cNvPicPr/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill>
+            <xdr:spPr><a:xfrm><a:off x="1333500" y="952500"/><a:ext cx="1219200" cy="762000"/></a:xfrm></xdr:spPr></xdr:pic>
+          <xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id="4" name="Inner"/><xdr:cNvGrpSpPr/></xdr:nvGrpSpPr>
+            <xdr:grpSpPr><a:xfrm><a:off x="3390900" y="2381250"/><a:ext cx="2438400" cy="1905000"/><a:chOff x="0" y="0"/><a:chExt cx="12192000" cy="9525000"/></a:xfrm></xdr:grpSpPr>
+            <xdr:graphicFrame><xdr:nvGraphicFramePr><xdr:cNvPr id="5" name="C"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="3048000" y="2381250"/><a:ext cx="6096000" cy="4762500"/></xdr:xfrm>
+              <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="rId2"/></a:graphicData></a:graphic></xdr:graphicFrame>
+            <xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="6" name="T"/><xdr:cNvSpPr txBox="1"/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="6096000" cy="2381250"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr>
+              <xdr:txBody><a:bodyPr/><a:p><a:r><a:t>Label</a:t></a:r></a:p></xdr:txBody></xdr:sp>
+          </xdr:grpSp>
+        </xdr:grpSp><xdr:clientData/></xdr:twoCellAnchor>
+    </xdr:wsDr>"#;
+    let chart = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:ser><c:idx val="0"/><c:val><c:numRef><c:f>Data!$A$1:$A$3</c:f></c:numRef></c:val></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+    let drels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image1.png"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"/></Relationships>"#;
+    let srels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>"#;
+    let bytes = minimal(
+        r#"<sheetData/><drawing r:id="rId1"/>"#,
+        &[
+            ("xl/worksheets/_rels/sheet1.xml.rels", srels),
+            ("xl/drawings/drawing1.xml", drawing),
+            ("xl/drawings/_rels/drawing1.xml.rels", drels),
+            ("xl/charts/chart1.xml", chart),
+            ("xl/media/image1.png", "fake image data"),
+        ],
+        "",
+        "",
+    );
+    let (wb, rep) = read_xlsx(&bytes).unwrap();
+    let s = wb.sheet(0).unwrap();
+    // Only the dropped SmartArt frame is reported.
+    let drawing_warnings: Vec<&String> = rep.warnings.iter().filter(|w| w.contains("skipped") || w.contains("group")).collect();
+    assert_eq!(drawing_warnings, vec!["an embedded object (SmartArt, OLE…) was skipped"]);
+    let near = |a: f32, b: f32| (a - b).abs() < 0.01;
+    assert_eq!(s.images.len(), 1);
+    let img = &s.images[0].anchor;
+    assert_eq!(s.images[0].alt, "banner");
+    assert_eq!(img.cell, at("B3"));
+    assert!(near(img.dx, 20.0) && near(img.dy, 5.0) && near(img.width, 64.0) && near(img.height, 40.0), "{img:?}");
+    assert_eq!(img.mode, AnchorMode::MoveOnly);
+    assert_eq!(s.charts.len(), 1);
+    let ch = &s.charts[0].anchor;
+    assert_eq!(ch.cell, at("D8"));
+    assert!(near(ch.dx, 32.0) && near(ch.dy, 5.0) && near(ch.width, 64.0) && near(ch.height, 50.0), "{ch:?}");
+    assert_eq!(ch.mode, AnchorMode::MoveOnly);
+    assert_eq!(s.shapes.len(), 1);
+    let sp = &s.shapes[0].anchor;
+    assert_eq!((sp.cell, s.shapes[0].text.as_str()), (at("D7"), "Label"));
+    assert!(near(sp.dx, 0.0) && near(sp.dy, 0.0) && near(sp.width, 64.0) && near(sp.height, 25.0), "{sp:?}");
+
+    // The grouping is kept: the outer group holds the picture and the nested group (back to
+    // front), which holds the chart and the text box, each with its own box and child space.
+    let structure = |s: &gridcraft_model::Sheet| {
+        let outer = s.groups.iter().find(|g| g.name == "Outer").unwrap().clone();
+        let inner = s.groups.iter().find(|g| g.name == "Inner").unwrap().clone();
+        assert_eq!(s.groups.len(), 2);
+        assert_eq!(outer.members, vec![DrawingRef::Image(s.images[0].id), DrawingRef::Group(inner.id)]);
+        assert_eq!(inner.members, vec![DrawingRef::Chart(s.charts[0].id), DrawingRef::Shape(s.shapes[0].id)]);
+        assert_eq!((outer.anchor.mode, inner.anchor.mode), (AnchorMode::MoveOnly, AnchorMode::MoveOnly));
+        assert_eq!(s.outer_group(DrawingRef::Shape(s.shapes[0].id)), Some(outer.id));
+        (outer, inner)
+    };
+    let (outer, inner) = structure(s);
+    assert_eq!(outer.anchor.cell, at("B2"));
+    assert!(near(outer.anchor.width, 256.0) && near(outer.anchor.height, 200.0), "{:?}", outer.anchor);
+    assert_eq!((outer.child_offset, outer.child_extent), ((952500, 476250), (4876800, 3810000)));
+    assert_eq!(inner.anchor.cell, at("D7"));
+    assert!(near(inner.anchor.width, 128.0) && near(inner.anchor.height, 100.0), "{:?}", inner.anchor);
+    assert_eq!((inner.child_offset, inner.child_extent), ((0, 0), (12192000, 9525000)));
+
+    // Saved: one anchor holding the outer grpSp, its members in order and in the file's child
+    // coordinate spaces (the dropped SmartArt frame shrinks the outer group to its members' box).
+    let saved = crate::write_xlsx(&wb).unwrap();
+    let mut pkg = crate::package::Package::open(&saved).unwrap();
+    let x = pkg.read_xml("xl/drawings/drawing1.xml").unwrap().unwrap();
+    assert_eq!(x.children.len(), 1);
+    let anchor = &x.children[0];
+    assert_eq!(anchor.attr("editAs"), Some("oneCell"));
+    let g = anchor.child("grpSp").unwrap();
+    assert_eq!(g.path(&["nvGrpSpPr", "cNvPr"]).and_then(|c| c.attr("name")), Some("Outer"));
+    let kinds = |g: &crate::xml::El| g.children.iter().map(|c| c.name.clone()).collect::<Vec<_>>();
+    assert_eq!(kinds(g), vec!["nvGrpSpPr", "grpSpPr", "pic", "grpSp"]);
+    let pair = |e: Option<&crate::xml::El>, a: &str, b: &str| e.map(|e| (e.attr_i64(a).unwrap(), e.attr_i64(b).unwrap())).unwrap();
+    let close = |(a, b): (i64, i64), (c, d): (i64, i64)| (a - c).abs() <= 2 && (b - d).abs() <= 2;
+    let pic_xf = g.path(&["pic", "spPr", "xfrm"]);
+    assert!(close(pair(pic_xf.and_then(|x| x.child("off")), "x", "y"), (1333500, 952500)));
+    assert!(close(pair(pic_xf.and_then(|x| x.child("ext")), "cx", "cy"), (1219200, 762000)));
+    let ig = g.child("grpSp").unwrap();
+    assert_eq!(kinds(ig), vec!["nvGrpSpPr", "grpSpPr", "graphicFrame", "sp"]);
+    let ch_xf = ig.path(&["graphicFrame", "xfrm"]);
+    assert!(close(pair(ch_xf.and_then(|x| x.child("off")), "x", "y"), (3048000, 2381250)));
+    assert!(close(pair(ch_xf.and_then(|x| x.child("ext")), "cx", "cy"), (6096000, 4762500)));
+    let sp_xf = ig.path(&["sp", "spPr", "xfrm"]);
+    assert!(close(pair(sp_xf.and_then(|x| x.child("off")), "x", "y"), (0, 0)));
+
+    // Reopened: the same groups and members in the same places.
+    let (back, rep) = read_xlsx(&saved).unwrap();
+    assert!(rep.warnings.is_empty(), "{:?}", rep.warnings);
+    let b = back.sheet(0).unwrap();
+    let (bo, _) = structure(b);
+    let same = |x: &gridcraft_model::Anchor, y: &gridcraft_model::Anchor| {
+        x.cell == y.cell && near(x.dx, y.dx) && near(x.dy, y.dy) && near(x.width, y.width) && near(x.height, y.height) && x.mode == y.mode
+    };
+    assert!(same(&b.images[0].anchor, img), "{:?}", b.images[0].anchor);
+    assert!(same(&b.charts[0].anchor, ch), "{:?}", b.charts[0].anchor);
+    assert!(same(&b.shapes[0].anchor, sp), "{:?}", b.shapes[0].anchor);
+    // The outer group now spans its members (B3+20,5 → 204 × 150 px) at the file's half scale.
+    assert_eq!(bo.anchor.cell, at("B3"));
+    assert!(near(bo.anchor.width, 204.0) && near(bo.anchor.height, 150.0), "{:?}", bo.anchor);
+    assert!(close(bo.child_offset, (1333500, 952500)) && close(bo.child_extent, (3886200, 2857500)), "{:?}", (bo.child_offset, bo.child_extent));
 }
 
 #[test]

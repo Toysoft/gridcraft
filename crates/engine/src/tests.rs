@@ -2624,6 +2624,65 @@ fn set_anchor_mode_changes_following() {
     assert!(s.execute("object.setAnchorMode", json!({"kind": "image", "id": id, "mode": "sideways"})).is_err());
 }
 
+/// Object commands on a grouped picture act on its outermost group, as clicking a member
+/// selects the group in Excel: moving it moves everything in the group (nested groups too) by
+/// the same offset, and deleting it deletes the group.
+#[test]
+fn object_commands_on_a_grouped_member_act_on_the_group() {
+    use gridcraft_model::{AnchorMode, DrawingGroup, DrawingRef};
+    let mut s = s();
+    let a = add_image(&mut s, "B2", AnchorMode::MoveAndSize);
+    let b = add_image(&mut s, "D4", AnchorMode::MoveAndSize);
+    let loose = add_image(&mut s, "H8", AnchorMode::MoveAndSize);
+    let (outer, inner) = {
+        let d = s.doc_mut().unwrap();
+        let wb = std::sync::Arc::make_mut(&mut d.wb);
+        let inner = wb.next_object_id();
+        let outer = inner + 1;
+        let sh = wb.sheet_mut(0).unwrap();
+        let (aa, ba) = (sh.images[0].anchor, sh.images[1].anchor);
+        let group =
+            |id, name: &str, anchor, members| DrawingGroup { id, name: name.into(), anchor, child_offset: (0, 0), child_extent: (100, 100), members };
+        sh.groups.push(group(inner, "Inner", ba, vec![DrawingRef::Image(b)]));
+        sh.groups.push(group(outer, "Outer", aa, vec![DrawingRef::Image(a), DrawingRef::Group(inner)]));
+        (outer, inner)
+    };
+    let rect = |s: &Session, id: u32| s.doc().unwrap().wb.active().unwrap().drawing_rect(DrawingRef::Image(id)).unwrap();
+    let (a0, b0, l0) = (rect(&s, a), rect(&s, b), rect(&s, loose));
+    s.execute("object.move", json!({"kind": "image", "id": b, "at": "E6", "dx": 0, "dy": 0})).unwrap();
+    let (a1, b1) = (rect(&s, a), rect(&s, b));
+    assert_eq!(image_cell(&s, b), Some(CellRef::parse("E6").unwrap()));
+    let (mx, my) = (b1.x - b0.x, b1.y - b0.y);
+    assert!(mx > 0.0 && my > 0.0);
+    assert!((a1.x - a0.x - mx).abs() < 0.01 && (a1.y - a0.y - my).abs() < 0.01, "{a0:?} {a1:?}");
+    assert_eq!((a1.w, a1.h, b1.w, b1.h), (40.0, 40.0, 40.0, 40.0));
+    assert_eq!(rect(&s, loose), l0);
+    // Sizing the group (by `kind: "group"`) scales its members about its top-left corner.
+    let g = s.doc().unwrap().wb.active().unwrap().drawing_rect(DrawingRef::Group(outer)).unwrap();
+    s.execute("object.move", json!({"kind": "group", "id": outer, "width": g.w * 2.0, "height": g.h})).unwrap();
+    let b2 = rect(&s, b);
+    assert!((b2.w - 80.0).abs() < 0.01 && (b2.x - (g.x + (b1.x - g.x) * 2.0)).abs() < 0.01, "{b2:?}");
+    // The group takes an anchor mode as a whole.
+    s.execute("object.setAnchorMode", json!({"kind": "image", "id": a, "mode": "absolute"})).unwrap();
+    {
+        let sh = s.doc().unwrap().wb.active().unwrap();
+        assert!(sh.images.iter().filter(|i| i.id != loose).all(|i| i.anchor.mode == AnchorMode::Absolute));
+        assert!(sh.groups.iter().all(|g| g.anchor.mode == AnchorMode::Absolute));
+        assert_eq!(sh.images.iter().find(|i| i.id == loose).unwrap().anchor.mode, AnchorMode::MoveAndSize);
+    }
+    // Deleting a member deletes the group with everything in it; undo brings it back.
+    s.execute("object.delete", json!({"kind": "image", "id": b})).unwrap();
+    {
+        let sh = s.doc().unwrap().wb.active().unwrap();
+        assert_eq!(sh.images.iter().map(|i| i.id).collect::<Vec<_>>(), vec![loose]);
+        assert!(sh.groups.is_empty());
+    }
+    s.execute("edit.undo", json!({})).unwrap();
+    let sh = s.doc().unwrap().wb.active().unwrap();
+    assert_eq!((sh.images.len(), sh.groups.len()), (3, 2));
+    assert_eq!(sh.outer_group(DrawingRef::Group(inner)), Some(outer));
+}
+
 /// A sort moves only objects anchored inside the sorted block on both axes: a picture beside
 /// the block (same rows, other columns) stays where it is.
 #[test]

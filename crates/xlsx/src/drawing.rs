@@ -1,12 +1,17 @@
 //! DrawingML spreadsheet drawings (`xl/drawings/drawingN.xml`): anchors, pictures, shapes and
 //! chart frames.
 
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 use gridcraft_core::{CellRef, MAX_COLS, MAX_ROWS};
-use gridcraft_model::{Anchor, AnchorMode, Color, Image, Shape, ShapeFormat, ShapeKind, ShapeTextAlign, ShapeTextAnchor, Sheet, Theme};
+use gridcraft_model::{
+    Anchor, AnchorMode, Color, DrawingGroup, DrawingRef, Image, MAX_GROUP_DEPTH, ObjectRect, Shape, ShapeFormat, ShapeKind, ShapeTextAlign,
+    ShapeTextAnchor, Sheet, Theme,
+};
 
 use crate::IoError;
+use crate::package::Rel;
 use crate::read::Ctx;
 use crate::tables::EMU_PER_PX;
 use crate::xml::{El, esc, esc_attr};
@@ -121,78 +126,184 @@ fn mime_for(name: &str) -> &'static str {
     }
 }
 
+/// Where a drawing object goes: the model anchor pictures, charts and shapes take, and the pixel
+/// box a group lays its children out in.
+#[derive(Clone, Copy)]
+struct Place {
+    anchor: Anchor,
+    rect: ObjectRect,
+}
+
+/// An object's own transform (`a:xfrm`) inside a group: frames carry it directly, groups in
+/// `grpSpPr`, pictures and shapes in `spPr`.
+fn obj_xfrm(obj: &El) -> Option<&El> {
+    match obj.name.as_str() {
+        "graphicFrame" => obj.child("xfrm"),
+        "grpSp" => obj.path(&["grpSpPr", "xfrm"]),
+        _ => obj.path(&["spPr", "xfrm"]),
+    }
+}
+
+/// A point (`off`/`chOff`, attributes `x`/`y`) or size (`ext`/`chExt`, `cx`/`cy`) of an `a:xfrm`,
+/// in EMUs.
+fn xfrm_pair(xf: Option<&El>, name: &str, a: &str, b: &str) -> Option<(f64, f64)> {
+    let e = xf?.child(name)?;
+    Some((e.attr_i64(a).unwrap_or(0) as f64, e.attr_i64(b).unwrap_or(0) as f64))
+}
+
+/// The linear map from a group's child coordinate space (EMUs) onto its on-sheet box: the child
+/// box `chOff`/`chExt` of the group's `a:xfrm` fills `rect`. Without a usable child extent the
+/// group's own `off`/`ext` stand in for it, and failing that EMUs map to pixels at 1:1 scale.
+struct GroupMap {
+    rect: ObjectRect,
+    origin: (f64, f64),
+    scale: (f64, f64),
+}
+
+impl GroupMap {
+    fn new(xf: Option<&El>, rect: ObjectRect) -> GroupMap {
+        let off = xfrm_pair(xf, "off", "x", "y");
+        let ext = xfrm_pair(xf, "ext", "cx", "cy");
+        let ch_ext = xfrm_pair(xf, "chExt", "cx", "cy");
+        let usable = |s: Option<(f64, f64)>| s.filter(|(cx, cy)| *cx > 0.0 && *cy > 0.0);
+        let (origin, span) = match usable(ch_ext) {
+            Some(span) => (xfrm_pair(xf, "chOff", "x", "y").or(off).unwrap_or((0.0, 0.0)), Some(span)),
+            None => (off.unwrap_or((0.0, 0.0)), usable(ext)),
+        };
+        let axis = |len: f64, span: Option<f64>| match span {
+            Some(s) if len > 0.0 => len / s,
+            _ => 1.0 / EMU_PER_PX,
+        };
+        let scale = (axis(rect.w, span.map(|s| s.0)), axis(rect.h, span.map(|s| s.1)));
+        GroupMap { rect, origin, scale }
+    }
+
+    /// The on-sheet box of a child with transform `xf`; a child without one fills the group.
+    fn child(&self, xf: Option<&El>) -> ObjectRect {
+        let (Some(off), Some(ext)) = (xfrm_pair(xf, "off", "x", "y"), xfrm_pair(xf, "ext", "cx", "cy")) else { return self.rect };
+        ObjectRect {
+            x: self.rect.x + (off.0 - self.origin.0) * self.scale.0,
+            y: self.rect.y + (off.1 - self.origin.1) * self.scale.1,
+            w: ext.0.max(0.0) * self.scale.0,
+            h: ext.1.max(0.0) * self.scale.1,
+        }
+    }
+
+    /// The child box (offset and extent, EMUs) that the group's on-sheet box maps onto.
+    fn child_box(&self) -> ((i64, i64), (i64, i64)) {
+        let emu = |v: f64| if v.is_finite() { v.round().clamp(-1e15, 1e15) as i64 } else { 0 };
+        ((emu(self.origin.0), emu(self.origin.1)), (emu(self.rect.w / self.scale.0), emu(self.rect.h / self.scale.1)))
+    }
+}
+
+/// The objects among `children`, resolving markup-compatibility blocks to their first choice
+/// holding a frame (chartex charts), else the fallback.
+fn drawing_objects(children: &[El]) -> Vec<&El> {
+    children
+        .iter()
+        .flat_map(|o| match o.name.as_str() {
+            "AlternateContent" => o
+                .child("Choice")
+                .filter(|c| c.child("graphicFrame").is_some())
+                .or_else(|| o.child("Fallback"))
+                .map(|c| c.children.iter().collect())
+                .unwrap_or_default(),
+            _ => vec![o],
+        })
+        .collect()
+}
+
 pub fn read_drawing(cx: &mut Ctx<'_>, part: &str, sheet: &mut Sheet) -> Result<(), IoError> {
     let Some(x) = cx.optional_xml(part)? else { return Ok(()) };
     let rels = cx.pkg.rels(part)?;
     for a in &x.children {
         let Some(anchor) = read_anchor(a, sheet) else { continue };
-        // Objects in markup-compatibility blocks: the first choice (chartex frames), else the
-        // fallback.
-        let objs: Vec<&El> = a
-            .children
-            .iter()
-            .flat_map(|o| match o.name.as_str() {
-                "AlternateContent" => o
-                    .child("Choice")
-                    .filter(|c| c.child("graphicFrame").is_some())
-                    .or_else(|| o.child("Fallback"))
-                    .map(|c| c.children.iter().collect())
-                    .unwrap_or_default(),
-                _ => vec![o],
-            })
-            .collect();
-        for obj in objs {
-            match obj.name.as_str() {
-                "pic" => {
-                    let Some(rid) = obj.path(&["blipFill", "blip"]).and_then(|b| b.attr("embed")) else { continue };
-                    let Some(rel) = rels.iter().find(|r| r.id == rid && !r.external) else {
-                        cx.warn("a linked (not embedded) picture was skipped");
-                        continue;
-                    };
-                    let target = rel.target.clone();
-                    let Some(data) = cx.pkg.read(&target)? else {
-                        cx.warn(format!("missing picture {target}"));
-                        continue;
-                    };
-                    let alt = obj.path(&["nvPicPr", "cNvPr"]).and_then(|c| c.attr("descr")).unwrap_or("").to_string();
-                    let id = cx.next_object_id();
-                    sheet.images.push(Image { id, anchor, data, mime: mime_for(&target).to_string(), alt });
-                }
-                "graphicFrame" => {
-                    let Some(gd) = obj.path(&["graphic", "graphicData"]) else { continue };
-                    let uri = gd.attr("uri").unwrap_or("");
-                    if let Some(rid) = gd.child("chart").and_then(|c| c.attr("id")) {
-                        let Some(rel) = rels.iter().find(|r| r.id == rid) else { continue };
-                        let target = rel.target.clone();
-                        if let Some(cx_xml) = cx.optional_xml(&target)? {
-                            let chartex = uri.contains("chartex");
-                            match if chartex { crate::chartex::read_chartex(&cx_xml) } else { crate::chart::read_chart(&cx_xml) } {
-                                Some(mut ch) => {
-                                    ch.id = cx.next_object_id();
-                                    ch.anchor = anchor;
-                                    sheet.charts.push(ch);
-                                }
-                                None => cx.warn(format!("chart {target} has no supported plot and was skipped")),
-                            }
-                        }
-                    } else if uri.contains("chartex") || uri.contains("chartEx") {
-                        cx.warn("a histogram, waterfall, treemap… chart without its chart part was skipped");
-                    } else {
-                        cx.warn("an embedded object (SmartArt, OLE…) was skipped");
-                    }
-                }
-                "sp" | "cxnSp" => {
-                    if let Some(s) = read_shape(obj, anchor) {
-                        let id = cx.next_object_id();
-                        sheet.shapes.push(Shape { id, ..s });
-                    }
-                }
-                "grpSp" => cx.warn("grouped shapes are not supported and were skipped"),
-                _ => {}
-            }
+        let place = Place { anchor, rect: sheet.anchor_rect(&anchor) };
+        for obj in drawing_objects(&a.children) {
+            read_object(cx, &rels, sheet, obj, place, 0)?;
         }
     }
     Ok(())
+}
+
+/// Imports one drawing object at `place`, returning what it became. A group's children are laid
+/// out through the group's child coordinate space (nested groups compose), keep the outer
+/// anchor's mode and are listed, back to front, in a [`DrawingGroup`]; children that aren't
+/// supported are dropped with their own warning.
+fn read_object(cx: &mut Ctx<'_>, rels: &[Rel], sheet: &mut Sheet, obj: &El, place: Place, depth: usize) -> Result<Option<DrawingRef>, IoError> {
+    let anchor = place.anchor;
+    match obj.name.as_str() {
+        "pic" => {
+            let Some(rid) = obj.path(&["blipFill", "blip"]).and_then(|b| b.attr("embed")) else { return Ok(None) };
+            let Some(rel) = rels.iter().find(|r| r.id == rid && !r.external) else {
+                cx.warn("a linked (not embedded) picture was skipped");
+                return Ok(None);
+            };
+            let target = rel.target.clone();
+            let Some(data) = cx.pkg.read(&target)? else {
+                cx.warn(format!("missing picture {target}"));
+                return Ok(None);
+            };
+            let alt = obj.path(&["nvPicPr", "cNvPr"]).and_then(|c| c.attr("descr")).unwrap_or("").to_string();
+            let id = cx.next_object_id();
+            sheet.images.push(Image { id, anchor, data, mime: mime_for(&target).to_string(), alt });
+            Ok(Some(DrawingRef::Image(id)))
+        }
+        "graphicFrame" => {
+            let Some(gd) = obj.path(&["graphic", "graphicData"]) else { return Ok(None) };
+            let uri = gd.attr("uri").unwrap_or("");
+            if let Some(rid) = gd.child("chart").and_then(|c| c.attr("id")) {
+                let Some(rel) = rels.iter().find(|r| r.id == rid) else { return Ok(None) };
+                let target = rel.target.clone();
+                if let Some(cx_xml) = cx.optional_xml(&target)? {
+                    let chartex = uri.contains("chartex");
+                    match if chartex { crate::chartex::read_chartex(&cx_xml) } else { crate::chart::read_chart(&cx_xml) } {
+                        Some(mut ch) => {
+                            let id = cx.next_object_id();
+                            ch.id = id;
+                            ch.anchor = anchor;
+                            sheet.charts.push(ch);
+                            return Ok(Some(DrawingRef::Chart(id)));
+                        }
+                        None => cx.warn(format!("chart {target} has no supported plot and was skipped")),
+                    }
+                }
+            } else if uri.contains("chartex") || uri.contains("chartEx") {
+                cx.warn("a histogram, waterfall, treemap… chart without its chart part was skipped");
+            } else {
+                cx.warn("an embedded object (SmartArt, OLE…) was skipped");
+            }
+            Ok(None)
+        }
+        "sp" | "cxnSp" => {
+            let Some(s) = read_shape(obj, anchor) else { return Ok(None) };
+            let id = cx.next_object_id();
+            sheet.shapes.push(Shape { id, ..s });
+            Ok(Some(DrawingRef::Shape(id)))
+        }
+        "grpSp" => {
+            if depth >= MAX_GROUP_DEPTH {
+                cx.warn("deeply nested grouped shapes were skipped");
+                return Ok(None);
+            }
+            let id = cx.next_object_id();
+            let map = GroupMap::new(obj_xfrm(obj), place.rect);
+            let mut members = Vec::new();
+            for child in drawing_objects(&obj.children) {
+                let rect = map.child(obj_xfrm(child));
+                let place = Place { anchor: sheet.rect_anchor(rect, anchor.mode), rect };
+                members.extend(read_object(cx, rels, sheet, child, place, depth + 1)?);
+            }
+            if members.is_empty() {
+                return Ok(None);
+            }
+            let name = obj.path(&["nvGrpSpPr", "cNvPr"]).and_then(|c| c.attr("name")).unwrap_or("").to_string();
+            let (child_offset, child_extent) = map.child_box();
+            sheet.groups.push(DrawingGroup { id, name, anchor, child_offset, child_extent, members });
+            Ok(Some(DrawingRef::Group(id)))
+        }
+        _ => Ok(None),
+    }
 }
 
 fn read_shape(obj: &El, anchor: Anchor) -> Option<Shape> {
@@ -296,9 +407,14 @@ fn anchor_open(sheet: &Sheet, a: &Anchor) -> (String, &'static str) {
     (open, "</xdr:twoCellAnchor>")
 }
 
-fn xfrm(a: &Anchor, tag: &str) -> String {
-    let e = |v: f32| ((v.max(0.0) as f64) * EMU_PER_PX).round() as i64;
-    format!("<{tag}><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{}\" cy=\"{}\"/></{tag}>", e(a.width), e(a.height))
+/// EMUs for a length or position in pixels.
+fn emu(v: f64) -> i64 {
+    if v.is_finite() { (v * EMU_PER_PX).round().clamp(-1e15, 1e15) as i64 } else { 0 }
+}
+
+/// An `a:xfrm`/`xdr:xfrm` with an offset and extent in EMUs.
+fn xfrm(tag: &str, off: (i64, i64), ext: (i64, i64)) -> String {
+    format!("<{tag}><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/></{tag}>", off.0, off.1, ext.0.max(0), ext.1.max(0))
 }
 
 pub fn srgb(c: &Color, theme: &Theme) -> Option<String> {
@@ -313,135 +429,285 @@ pub enum Obj<'a> {
     Shape(&'a Shape),
 }
 
-/// The drawing part for a sheet's objects (relationship ids already assigned).
-pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
-    let mut s = String::from(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<xdr:wsDr xmlns:xdr=\"http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">",
-    );
-    for (i, o) in objs.iter().enumerate() {
-        let id = i + 2;
-        let close_tag;
-        match o {
-            Obj::Image(img, rid) => {
-                let (open, close) = anchor_open(sheet, &img.anchor);
-                close_tag = close;
-                s.push_str(&open);
-                let _ = write!(
-                    s,
-                    "<xdr:pic><xdr:nvPicPr><xdr:cNvPr id=\"{id}\" name=\"Picture {}\" descr=\"{}\"/><xdr:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip r:embed=\"{rid}\"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>",
-                    id - 1,
-                    esc_attr(&img.alt),
-                    xfrm(&img.anchor, "a:xfrm")
-                );
-            }
-            Obj::Chart(ch, rid) if crate::chartex::is_chartex(ch.kind) => {
-                // Chartex frames come with a fallback for readers that don't know them.
-                let (open, close) = anchor_open(sheet, &ch.anchor);
-                close_tag = close;
-                s.push_str(&open);
-                let (prefix, ns) = crate::chartex::requires(ch.kind);
-                let _ = write!(
-                    s,
-                    "<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice xmlns:{prefix}=\"{ns}\" Requires=\"{prefix}\"><xdr:graphicFrame macro=\"\"><xdr:nvGraphicFramePr><xdr:cNvPr id=\"{id}\" name=\"Chart {}\"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>{}<a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/drawing/2014/chartex\"><cx:chart xmlns:cx=\"http://schemas.microsoft.com/office/drawing/2014/chartex\" r:id=\"{rid}\"/></a:graphicData></a:graphic></xdr:graphicFrame></mc:Choice><mc:Fallback><xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"0\" name=\"\"/><xdr:cNvSpPr><a:spLocks noTextEdit=\"1\"/></xdr:cNvSpPr></xdr:nvSpPr><xdr:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang=\"en-US\"/><a:t>This chart type can't be shown by this application.</a:t></a:r></a:p></xdr:txBody></xdr:sp></mc:Fallback></mc:AlternateContent>",
-                    id - 1,
-                    xfrm(&ch.anchor, "xdr:xfrm"),
-                    xfrm(&ch.anchor, "a:xfrm")
-                );
-            }
-            Obj::Chart(ch, rid) => {
-                let (open, close) = anchor_open(sheet, &ch.anchor);
-                close_tag = close;
-                s.push_str(&open);
-                let _ = write!(
-                    s,
-                    "<xdr:graphicFrame macro=\"\"><xdr:nvGraphicFramePr><xdr:cNvPr id=\"{id}\" name=\"Chart {}\"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>{}<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"><c:chart r:id=\"{rid}\"/></a:graphicData></a:graphic></xdr:graphicFrame>",
-                    id - 1,
-                    xfrm(&ch.anchor, "xdr:xfrm")
-                );
-            }
-            Obj::Shape(sh) => {
-                let (open, close) = anchor_open(sheet, &sh.anchor);
-                close_tag = close;
-                s.push_str(&open);
-                if let Some(xml) = ink::write(sh, theme, id) {
-                    s.push_str(&xml);
-                    s.push_str("<xdr:clientData/>");
-                    s.push_str(close_tag);
-                    continue;
-                }
-                let (prst, tx) = match sh.kind {
-                    ShapeKind::Rectangle => ("rect", false),
-                    ShapeKind::RoundedRectangle => ("roundRect", false),
-                    ShapeKind::Ellipse => ("ellipse", false),
-                    ShapeKind::Triangle => ("triangle", false),
-                    ShapeKind::Line | ShapeKind::Arrow => ("line", false),
-                    ShapeKind::TextBox => ("rect", true),
-                    ShapeKind::Icon | ShapeKind::Ink => ("rect", false),
-                };
-                let _ = write!(
-                    s,
-                    "<xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"{id}\" name=\"Shape {}\"/><xdr:cNvSpPr{}/></xdr:nvSpPr><xdr:spPr>{}<a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>",
-                    id - 1,
-                    if tx { " txBox=\"1\"" } else { "" },
-                    xfrm(&sh.anchor, "a:xfrm")
-                );
-                if let Some(c) = srgb(&sh.fill, theme) {
-                    let _ = write!(s, "<a:solidFill>{c}</a:solidFill>");
-                }
-                let line_c = srgb(&sh.line, theme);
-                if sh.format.no_line {
-                    s.push_str("<a:ln><a:noFill/></a:ln>");
-                } else if line_c.is_some() || sh.kind == ShapeKind::Arrow {
-                    s.push_str("<a:ln w=\"9525\">");
-                    match line_c {
-                        Some(c) => {
-                            let _ = write!(s, "<a:solidFill>{c}</a:solidFill>");
-                        }
-                        None => s.push_str("<a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill>"),
+impl Obj<'_> {
+    fn anchor(&self) -> &Anchor {
+        match self {
+            Obj::Image(o, _) => &o.anchor,
+            Obj::Chart(o, _) => &o.anchor,
+            Obj::Shape(o) => &o.anchor,
+        }
+    }
+
+    fn drawing_ref(&self) -> DrawingRef {
+        match self {
+            Obj::Image(o, _) => DrawingRef::Image(o.id),
+            Obj::Chart(o, _) => DrawingRef::Chart(o.id),
+            Obj::Shape(o) => DrawingRef::Shape(o.id),
+        }
+    }
+}
+
+/// How a group's members are written: the linear map from sheet pixels into the group's child
+/// coordinate space (EMUs).
+struct ChildSpace {
+    origin_px: (f64, f64),
+    origin_emu: (f64, f64),
+    /// EMUs per pixel on each axis.
+    factor: (f64, f64),
+}
+
+impl ChildSpace {
+    /// The child space of group `g`, now spanning `b` and written at `off` in its parent's space.
+    /// The space the group was opened (or last moved) with is kept: its anchor box maps onto its
+    /// child box. A group without extent on an axis gets the space readers fall back to, its
+    /// own offset at 1:1.
+    fn new(sheet: &Sheet, g: &DrawingGroup, b: ObjectRect, off: (i64, i64)) -> ChildSpace {
+        if b.w <= 0.0 || b.h <= 0.0 {
+            return ChildSpace { origin_px: (b.x, b.y), origin_emu: (off.0 as f64, off.1 as f64), factor: (EMU_PER_PX, EMU_PER_PX) };
+        }
+        let r0 = sheet.anchor_rect(&g.anchor);
+        let axis = |len: f64, span: i64| if len > 0.0 && span > 0 { span as f64 / len } else { EMU_PER_PX };
+        ChildSpace {
+            origin_px: (r0.x, r0.y),
+            origin_emu: (g.child_offset.0 as f64, g.child_offset.1 as f64),
+            factor: (axis(r0.w, g.child_extent.0), axis(r0.h, g.child_extent.1)),
+        }
+    }
+
+    /// The offset and extent (EMUs) of a member with sheet box `r`.
+    fn place(&self, r: ObjectRect) -> ((i64, i64), (i64, i64)) {
+        let e = |v: f64| if v.is_finite() { v.round().clamp(-1e15, 1e15) as i64 } else { 0 };
+        (
+            (e(self.origin_emu.0 + (r.x - self.origin_px.0) * self.factor.0), e(self.origin_emu.1 + (r.y - self.origin_px.1) * self.factor.1)),
+            (e(r.w * self.factor.0), e(r.h * self.factor.1)),
+        )
+    }
+}
+
+/// A drawing part being written.
+struct DrawingOut<'a> {
+    s: String,
+    sheet: &'a Sheet,
+    theme: &'a Theme,
+    objs: &'a [Obj<'a>],
+    /// Where each object is in `objs` (the first, should ids repeat).
+    index: HashMap<DrawingRef, usize>,
+    /// Objects already written, by index in `objs`, and groups already written: each goes out
+    /// once.
+    done: Vec<bool>,
+    groups_done: HashSet<u32>,
+    next_id: usize,
+}
+
+impl DrawingOut<'_> {
+    fn take_id(&mut self) -> usize {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
+    /// A member's box; a group's is the box around its members that are written.
+    fn rect(&self, r: DrawingRef) -> Option<ObjectRect> {
+        self.sheet.drawing_rect_with(r, &|o| self.index.get(&o).and_then(|&i| self.objs.get(i)).map(|o| self.sheet.anchor_rect(o.anchor())))
+    }
+
+    /// A `grpSp` for group `id` spanning `b`, at `off`/`ext` in its parent's space, with its
+    /// members back to front in its own child space.
+    fn group(&mut self, id: u32, b: ObjectRect, off: (i64, i64), ext: (i64, i64), depth: usize) {
+        let sheet = self.sheet;
+        let Some(g) = sheet.drawing_group(id) else { return };
+        if depth >= MAX_GROUP_DEPTH || !self.groups_done.insert(id) {
+            return;
+        }
+        let space = ChildSpace::new(sheet, g, b, off);
+        let (ch_off, ch_ext) = space.place(b);
+        let cid = self.take_id();
+        let name = if g.name.is_empty() { format!("Group {}", cid - 1) } else { g.name.clone() };
+        let _ = write!(
+            self.s,
+            "<xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id=\"{cid}\" name=\"{}\"/><xdr:cNvGrpSpPr/></xdr:nvGrpSpPr><xdr:grpSpPr><a:xfrm><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/><a:chOff x=\"{}\" y=\"{}\"/><a:chExt cx=\"{}\" cy=\"{}\"/></a:xfrm></xdr:grpSpPr>",
+            esc_attr(&name),
+            off.0,
+            off.1,
+            ext.0.max(0),
+            ext.1.max(0),
+            ch_off.0,
+            ch_off.1,
+            ch_ext.0.max(0),
+            ch_ext.1.max(0)
+        );
+        for m in &g.members {
+            let Some(r) = self.rect(*m) else { continue };
+            let (moff, mext) = space.place(r);
+            match m {
+                DrawingRef::Group(n) => self.group(*n, r, moff, mext, depth + 1),
+                leaf => {
+                    let Some(&i) = self.index.get(leaf) else { continue };
+                    let (Some(o), Some(false)) = (self.objs.get(i), self.done.get(i).copied()) else { continue };
+                    if let Some(d) = self.done.get_mut(i) {
+                        *d = true;
                     }
-                    if sh.kind == ShapeKind::Arrow {
-                        s.push_str("<a:tailEnd type=\"triangle\"/>");
-                    }
-                    s.push_str("</a:ln>");
+                    let oid = self.take_id();
+                    write_obj(&mut self.s, self.theme, o, oid, moff, mext);
                 }
-                s.push_str("</xdr:spPr>");
-                if !sh.text.is_empty() {
-                    let f = &sh.format;
-                    let anchor = match f.anchor {
-                        Some(ShapeTextAnchor::Top) => " anchor=\"t\"",
-                        Some(ShapeTextAnchor::Middle) => " anchor=\"ctr\"",
-                        Some(ShapeTextAnchor::Bottom) => " anchor=\"b\"",
-                        None if sh.kind == ShapeKind::TextBox => " anchor=\"t\"",
-                        None => "",
-                    };
-                    let _ = write!(s, "<xdr:txBody><a:bodyPr wrap=\"square\" rtlCol=\"0\"{anchor}/><a:lstStyle/>");
-                    let ppr = match f.align {
-                        None => "",
-                        Some(ShapeTextAlign::Left) => "<a:pPr algn=\"l\"/>",
-                        Some(ShapeTextAlign::Center) => "<a:pPr algn=\"ctr\"/>",
-                        Some(ShapeTextAlign::Right) => "<a:pPr algn=\"r\"/>",
-                    };
-                    let (rpr_attrs, rpr_body) = run_props(f, theme);
-                    for line in sh.text.split('\n') {
-                        if line.is_empty() {
-                            let _ = write!(s, "<a:p>{ppr}<a:endParaRPr lang=\"en-US\"{rpr_attrs}/></a:p>");
-                        } else if rpr_body.is_empty() {
-                            let _ = write!(s, "<a:p>{ppr}<a:r><a:rPr lang=\"en-US\"{rpr_attrs}/><a:t>{}</a:t></a:r></a:p>", esc(line));
-                        } else {
-                            let _ =
-                                write!(s, "<a:p>{ppr}<a:r><a:rPr lang=\"en-US\"{rpr_attrs}>{rpr_body}</a:rPr><a:t>{}</a:t></a:r></a:p>", esc(line));
-                        }
-                    }
-                    s.push_str("</xdr:txBody>");
-                }
-                s.push_str("</xdr:sp>");
             }
         }
-        s.push_str("<xdr:clientData/>");
-        s.push_str(close_tag);
+        self.s.push_str("</xdr:grpSp>");
     }
-    s.push_str("</xdr:wsDr>");
-    s
+}
+
+/// The drawing part for a sheet's objects (relationship ids already assigned). A grouped object
+/// goes out with its outermost group: one anchor holding the `grpSp`, written where the group's
+/// first object comes in `objs`.
+pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
+    let mut index = HashMap::new();
+    for (i, o) in objs.iter().enumerate() {
+        index.entry(o.drawing_ref()).or_insert(i);
+    }
+    let mut out = DrawingOut {
+        s: String::from(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<xdr:wsDr xmlns:xdr=\"http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">",
+        ),
+        sheet,
+        theme,
+        objs,
+        index,
+        done: vec![false; objs.len()],
+        groups_done: HashSet::new(),
+        next_id: 2,
+    };
+    for (i, o) in objs.iter().enumerate() {
+        if let Some(gid) = sheet.outer_group(o.drawing_ref())
+            && !out.groups_done.contains(&gid)
+            && let (Some(g), Some(b)) = (sheet.drawing_group(gid), out.rect(DrawingRef::Group(gid)))
+        {
+            let (open, close) = anchor_open(sheet, &sheet.rect_anchor(b, g.anchor.mode));
+            out.s.push_str(&open);
+            out.group(gid, b, (emu(b.x), emu(b.y)), (emu(b.w), emu(b.h)), 0);
+            out.s.push_str("<xdr:clientData/>");
+            out.s.push_str(close);
+        }
+        if out.done.get(i).copied().unwrap_or(true) {
+            continue;
+        }
+        if let Some(d) = out.done.get_mut(i) {
+            *d = true;
+        }
+        let a = o.anchor();
+        let (open, close) = anchor_open(sheet, a);
+        out.s.push_str(&open);
+        let id = out.take_id();
+        write_obj(&mut out.s, theme, o, id, (0, 0), (emu(a.width.max(0.0) as f64), emu(a.height.max(0.0) as f64)));
+        out.s.push_str("<xdr:clientData/>");
+        out.s.push_str(close);
+    }
+    out.s.push_str("</xdr:wsDr>");
+    out.s
+}
+
+/// One object's element, with `cNvPr` id `id` and its transform at `off`/`ext` (EMUs).
+fn write_obj(s: &mut String, theme: &Theme, o: &Obj<'_>, id: usize, off: (i64, i64), ext: (i64, i64)) {
+    match o {
+        Obj::Image(img, rid) => {
+            let _ = write!(
+                s,
+                "<xdr:pic><xdr:nvPicPr><xdr:cNvPr id=\"{id}\" name=\"Picture {}\" descr=\"{}\"/><xdr:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip r:embed=\"{rid}\"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>",
+                id - 1,
+                esc_attr(&img.alt),
+                xfrm("a:xfrm", off, ext)
+            );
+        }
+        Obj::Chart(ch, rid) if crate::chartex::is_chartex(ch.kind) => {
+            // Chartex frames come with a fallback for readers that don't know them.
+            let (prefix, ns) = crate::chartex::requires(ch.kind);
+            let _ = write!(
+                s,
+                "<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice xmlns:{prefix}=\"{ns}\" Requires=\"{prefix}\"><xdr:graphicFrame macro=\"\"><xdr:nvGraphicFramePr><xdr:cNvPr id=\"{id}\" name=\"Chart {}\"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>{}<a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/drawing/2014/chartex\"><cx:chart xmlns:cx=\"http://schemas.microsoft.com/office/drawing/2014/chartex\" r:id=\"{rid}\"/></a:graphicData></a:graphic></xdr:graphicFrame></mc:Choice><mc:Fallback><xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"0\" name=\"\"/><xdr:cNvSpPr><a:spLocks noTextEdit=\"1\"/></xdr:cNvSpPr></xdr:nvSpPr><xdr:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang=\"en-US\"/><a:t>This chart type can't be shown by this application.</a:t></a:r></a:p></xdr:txBody></xdr:sp></mc:Fallback></mc:AlternateContent>",
+                id - 1,
+                xfrm("xdr:xfrm", off, ext),
+                xfrm("a:xfrm", off, ext)
+            );
+        }
+        Obj::Chart(_, rid) => {
+            let _ = write!(
+                s,
+                "<xdr:graphicFrame macro=\"\"><xdr:nvGraphicFramePr><xdr:cNvPr id=\"{id}\" name=\"Chart {}\"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>{}<a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/chart\"><c:chart r:id=\"{rid}\"/></a:graphicData></a:graphic></xdr:graphicFrame>",
+                id - 1,
+                xfrm("xdr:xfrm", off, ext)
+            );
+        }
+        Obj::Shape(sh) => {
+            if let Some(xml) = ink::write(sh, theme, id, off, ext) {
+                s.push_str(&xml);
+                return;
+            }
+            let (prst, tx) = match sh.kind {
+                ShapeKind::Rectangle => ("rect", false),
+                ShapeKind::RoundedRectangle => ("roundRect", false),
+                ShapeKind::Ellipse => ("ellipse", false),
+                ShapeKind::Triangle => ("triangle", false),
+                ShapeKind::Line | ShapeKind::Arrow => ("line", false),
+                ShapeKind::TextBox => ("rect", true),
+                ShapeKind::Icon | ShapeKind::Ink => ("rect", false),
+            };
+            let _ = write!(
+                s,
+                "<xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"{id}\" name=\"Shape {}\"/><xdr:cNvSpPr{}/></xdr:nvSpPr><xdr:spPr>{}<a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>",
+                id - 1,
+                if tx { " txBox=\"1\"" } else { "" },
+                xfrm("a:xfrm", off, ext)
+            );
+            if let Some(c) = srgb(&sh.fill, theme) {
+                let _ = write!(s, "<a:solidFill>{c}</a:solidFill>");
+            }
+            let line_c = srgb(&sh.line, theme);
+            if sh.format.no_line {
+                s.push_str("<a:ln><a:noFill/></a:ln>");
+            } else if line_c.is_some() || sh.kind == ShapeKind::Arrow {
+                s.push_str("<a:ln w=\"9525\">");
+                match line_c {
+                    Some(c) => {
+                        let _ = write!(s, "<a:solidFill>{c}</a:solidFill>");
+                    }
+                    None => s.push_str("<a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill>"),
+                }
+                if sh.kind == ShapeKind::Arrow {
+                    s.push_str("<a:tailEnd type=\"triangle\"/>");
+                }
+                s.push_str("</a:ln>");
+            }
+            s.push_str("</xdr:spPr>");
+            if !sh.text.is_empty() {
+                let f = &sh.format;
+                let anchor = match f.anchor {
+                    Some(ShapeTextAnchor::Top) => " anchor=\"t\"",
+                    Some(ShapeTextAnchor::Middle) => " anchor=\"ctr\"",
+                    Some(ShapeTextAnchor::Bottom) => " anchor=\"b\"",
+                    None if sh.kind == ShapeKind::TextBox => " anchor=\"t\"",
+                    None => "",
+                };
+                let _ = write!(s, "<xdr:txBody><a:bodyPr wrap=\"square\" rtlCol=\"0\"{anchor}/><a:lstStyle/>");
+                let ppr = match f.align {
+                    None => "",
+                    Some(ShapeTextAlign::Left) => "<a:pPr algn=\"l\"/>",
+                    Some(ShapeTextAlign::Center) => "<a:pPr algn=\"ctr\"/>",
+                    Some(ShapeTextAlign::Right) => "<a:pPr algn=\"r\"/>",
+                };
+                let (rpr_attrs, rpr_body) = run_props(f, theme);
+                for line in sh.text.split('\n') {
+                    if line.is_empty() {
+                        let _ = write!(s, "<a:p>{ppr}<a:endParaRPr lang=\"en-US\"{rpr_attrs}/></a:p>");
+                    } else if rpr_body.is_empty() {
+                        let _ = write!(s, "<a:p>{ppr}<a:r><a:rPr lang=\"en-US\"{rpr_attrs}/><a:t>{}</a:t></a:r></a:p>", esc(line));
+                    } else {
+                        let _ = write!(s, "<a:p>{ppr}<a:r><a:rPr lang=\"en-US\"{rpr_attrs}>{rpr_body}</a:rPr><a:t>{}</a:t></a:r></a:p>", esc(line));
+                    }
+                }
+                s.push_str("</xdr:txBody>");
+            }
+            s.push_str("</xdr:sp>");
+        }
+    }
 }
 
 /// A text run's `a:rPr` attributes (size, bold, italic) and children in schema order (outline,
