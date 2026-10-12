@@ -261,6 +261,7 @@ fn language_switch_translates_the_ribbon_and_persists() {
         (Language::PtBr, "Dados"),
         (Language::De, "Daten"),
         (Language::Hi, "डेटा"),
+        (Language::Pa, "ਡਾਟਾ"),
         (Language::Or, "ଡାଟା"),
         (Language::Ml, "ഡാറ്റ"),
         (Language::Kn, "ಡೇಟಾ"),

@@ -22,6 +22,7 @@ mod ko;
 mod ml;
 mod mr;
 mod or;
+mod pa;
 mod pt;
 mod ru;
 mod ta;
@@ -52,10 +53,11 @@ pub enum Language {
     Kn,
     Ml,
     Or,
+    Pa,
 }
 
 impl Language {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::En,
         Self::Es,
         Self::Zh,
@@ -75,6 +77,7 @@ impl Language {
         Self::Kn,
         Self::Ml,
         Self::Or,
+        Self::Pa,
     ];
 
     /// The language's own name, shown in the switcher.
@@ -99,6 +102,7 @@ impl Language {
             Self::Kn => "ಕನ್ನಡ",
             Self::Ml => "മലയാളം",
             Self::Or => "ଓଡ଼ିଆ",
+            Self::Pa => "ਪੰਜਾਬੀ",
         }
     }
 
@@ -124,6 +128,7 @@ impl Language {
             Self::Kn => "kn",
             Self::Ml => "ml",
             Self::Or => "or",
+            Self::Pa => "pa",
         }
     }
 
@@ -132,6 +137,11 @@ impl Language {
     }
 
     fn from_tag(tag: &str) -> Option<Self> {
+        // Punjabi in Pakistan is written in Shahmukhi (Arabic script), not the Gurmukhi catalog.
+        let lower = tag.trim().to_ascii_lowercase();
+        if lower.starts_with("pa") && lower.split(['-', '_', '.']).any(|part| part == "arab" || part == "pk") {
+            return None;
+        }
         match tag.trim().split(['-', '_']).next()?.to_ascii_lowercase().as_str() {
             "en" => Some(Self::En),
             "es" => Some(Self::Es),
@@ -152,6 +162,7 @@ impl Language {
             "kn" => Some(Self::Kn),
             "ml" => Some(Self::Ml),
             "or" => Some(Self::Or),
+            "pa" => Some(Self::Pa),
             _ => None,
         }
     }
@@ -174,7 +185,19 @@ impl Language {
     pub fn needs_script_fonts(self) -> bool {
         matches!(
             self,
-            Self::Zh | Self::Ja | Self::Ko | Self::Hi | Self::Or | Self::Ml | Self::Kn | Self::Gu | Self::Ta | Self::Te | Self::Mr | Self::Bn
+            Self::Zh
+                | Self::Ja
+                | Self::Ko
+                | Self::Hi
+                | Self::Bn
+                | Self::Mr
+                | Self::Te
+                | Self::Ta
+                | Self::Gu
+                | Self::Kn
+                | Self::Ml
+                | Self::Or
+                | Self::Pa
         )
     }
 
@@ -207,6 +230,7 @@ impl Language {
             Self::Kn => kn::translate(text),
             Self::Ml => ml::translate(text),
             Self::Or => or::translate(text),
+            Self::Pa => pa::translate(text),
         };
         translated.unwrap_or_else(|| text.rsplit_once('|').map_or(text, |(_, label)| label))
     }
@@ -680,6 +704,7 @@ mod tests {
             assert!(kn::translate(english).is_some_and(|text| !text.is_empty()), "missing Kannada: {english}");
             assert!(ml::translate(english).is_some_and(|text| !text.is_empty()), "missing Malayalam: {english}");
             assert!(or::translate(english).is_some_and(|text| !text.is_empty()), "missing Odia: {english}");
+            assert!(pa::translate(english).is_some_and(|text| !text.is_empty()), "missing Punjabi: {english}");
         }
         assert_eq!(Language::Ja.tr("Data"), "データ");
         assert_eq!(Language::Zh.tr("Data"), "数据");
@@ -721,6 +746,8 @@ mod tests {
         assert_eq!(Language::Ml.tr("Sheet1!A1"), "Sheet1!A1");
         assert_eq!(Language::Or.tr("Data"), "ଡାଟା");
         assert_eq!(Language::Or.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Pa.tr("Data"), "ਡਾਟਾ");
+        assert_eq!(Language::Pa.tr("Sheet1!A1"), "Sheet1!A1");
         // A `context|label` key shows only its label in English and splits the translation.
         assert_eq!(Language::En.tr("Page Layout|Orientation"), "Orientation");
         assert_eq!(Language::Ja.tr("Page Layout|Orientation"), "印刷の向き");
@@ -794,6 +821,12 @@ mod tests {
         assert_eq!(Language::from_tag("or-IN"), Some(Language::Or));
         assert_eq!(Language::from_tag("or_IN"), Some(Language::Or));
         assert_eq!(Language::parse("or"), Some(Language::Or));
+        assert_eq!(Language::from_tag("pa-IN"), Some(Language::Pa));
+        assert_eq!(Language::from_tag("pa-Guru-IN"), Some(Language::Pa));
+        assert_eq!(Language::parse("pa"), Some(Language::Pa));
+        assert_eq!(Language::from_tag("pa-Arab-PK"), None, "Shahmukhi Punjabi is not the Gurmukhi catalog");
+        assert_eq!(Language::from_tag("pa_PK"), None);
+        assert_eq!(Language::from_tag("pt-PT"), Some(Language::PtBr), "only Punjabi tags are screened");
     }
 
     #[test]
