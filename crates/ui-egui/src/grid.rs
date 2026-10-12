@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use egui::{Align2, Color32, CursorIcon, FontId, Painter, Pos2, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
-use gridcraft_engine::cf::{CfCache, CfLook};
+use gridcraft_engine::cf::{BarLook, CfCache, CfLook};
 use gridcraft_engine::core::{CellRef, MAX_COLS, MAX_ROWS, RangeRef, Value, col_to_letters};
 use gridcraft_engine::model::{BorderLine, BorderStyle, Color, HAlign, LineIndex, PatternType, Sheet, Style, Underline, VAlign, Workbook};
 use serde_json::json;
@@ -905,19 +905,26 @@ pub(crate) fn paint_quadrant(
         }
         let v = sh.value(c);
         if let Some(l) = cfl
-            && let Some((frac, rgb, gradient)) = l.bar
+            && let Some(bl) = &l.bar
         {
-            let bar = Rect::from_min_size(pos2(rect.left() + 2.0, rect.top() + 2.0), vec2((rect.width() - 4.0) * frac, rect.height() - 4.0));
+            let (bar, axis_x) = bar_geometry(*rect, bl);
+            let rgb = if bl.frac < 0.0 { bl.negative_fill } else { bl.color };
             let col = theme::color32(rgb);
-            if gradient {
+            if bl.gradient {
                 let mut mesh = egui::Mesh::default();
                 let light = Color32::from_rgb(
                     ((rgb[0] as u16 + 255 * 3) / 4) as u8,
                     ((rgb[1] as u16 + 255 * 3) / 4) as u8,
                     ((rgb[2] as u16 + 255 * 3) / 4) as u8,
                 );
+                // Solid at the axis, fading toward the far end; mirrored for negative bars.
+                let corners = if bl.frac < 0.0 {
+                    [(bar.left_top(), light), (bar.right_top(), col), (bar.right_bottom(), col), (bar.left_bottom(), light)]
+                } else {
+                    [(bar.left_top(), col), (bar.right_top(), light), (bar.right_bottom(), light), (bar.left_bottom(), col)]
+                };
                 let i = mesh.vertices.len() as u32;
-                for (pt, cc) in [(bar.left_top(), col), (bar.right_top(), light), (bar.right_bottom(), light), (bar.left_bottom(), col)] {
+                for (pt, cc) in corners {
                     mesh.colored_vertex(pt, cc);
                 }
                 mesh.add_triangle(i, i + 1, i + 2);
@@ -926,6 +933,12 @@ pub(crate) fn paint_quadrant(
                 p.rect_stroke(bar, 0.0, Stroke::new(1.0, col), StrokeKind::Inside);
             } else {
                 p.rect_filled(bar, 0.0, col);
+            }
+            if let Some(border) = bl.border {
+                p.rect_stroke(bar, 0.0, Stroke::new(1.0, theme::color32(border)), StrokeKind::Inside);
+            }
+            if let (Some(x), Some(axis)) = (axis_x, bl.axis) {
+                p.line_segment([pos2(x, rect.top() + 2.0), pos2(x, rect.bottom() - 2.0)], Stroke::new(1.0, theme::color32(axis)));
             }
         }
         let mut text_left = rect.left();
@@ -1285,6 +1298,77 @@ pub(crate) fn paint_border(p: &Painter, pts: [Pos2; 2], style: BorderStyle, col:
     }
 }
 
+/// Where a data bar sits in its cell: the bar's rectangle, and the x of the axis line when the
+/// rule colours one. The bar grows from the axis (zero) toward its side — left for a negative
+/// `frac` — covering `|frac|` of that side's drawable width.
+pub fn bar_geometry(cell: Rect, look: &BarLook) -> (Rect, Option<f32>) {
+    let left = cell.left() + 2.0;
+    let right = cell.right() - 2.0;
+    let top = cell.top() + 2.0;
+    let bottom = cell.bottom() - 2.0;
+    let axis_x = left + look.axis_frac.clamp(0.0, 1.0) * (right - left).max(0.0);
+    let mag = look.frac.abs().clamp(0.0, 1.0);
+    // `max`/`min` take the sane side of a stray NaN, keeping the rect finite.
+    let bar = if look.frac < 0.0 {
+        Rect::from_min_max(pos2((axis_x - mag * (axis_x - left).max(0.0)).max(left), top), pos2(axis_x, bottom))
+    } else {
+        Rect::from_min_max(pos2(axis_x, top), pos2((axis_x + mag * (right - axis_x).max(0.0)).min(right), bottom))
+    };
+    (bar, look.axis.is_some().then_some(axis_x))
+}
+
+/// The shape families a conditional-format icon set draws, apart from colour.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IconShape {
+    Arrow,
+    TrafficLight,
+    Rating,
+    Quarter,
+    Star,
+    Triangle,
+    Box,
+    Dot,
+}
+
+/// Which shape an icon set's name draws (`3Arrows`, `5Quarters`, `3Stars`…); names outside the
+/// families fall back to a plain dot.
+pub fn cf_icon_shape(set: &str) -> IconShape {
+    let s = set.to_ascii_lowercase();
+    if s.contains("arrow") {
+        IconShape::Arrow
+    } else if s.contains("trafficlight") {
+        IconShape::TrafficLight
+    } else if s.contains("rating") {
+        IconShape::Rating
+    } else if s.contains("quarter") {
+        IconShape::Quarter
+    } else if s.contains("star") {
+        IconShape::Star
+    } else if s.contains("triangle") {
+        IconShape::Triangle
+    } else if s.contains("box") {
+        IconShape::Box
+    } else {
+        IconShape::Dot
+    }
+}
+
+/// A rating, quarter or box icon: an outline (circle or square) that fills from the bottom with
+/// the slot's share of the set — a meter, original to GridCraft.
+fn icon_meter(p: &Painter, r: Rect, idx: usize, n: usize, round: bool) {
+    if round {
+        p.circle_stroke(r.center(), r.width() / 2.0 - 0.5, Stroke::new(1.0, Color32::GRAY));
+    } else {
+        p.rect_stroke(r, 1.0, Stroke::new(1.0, Color32::GRAY), StrokeKind::Inside);
+    }
+    let frac = idx as f32 / (n - 1).max(1) as f32;
+    p.rect_filled(
+        Rect::from_min_size(pos2(r.left() + 2.0, r.bottom() - 2.0 - (r.height() - 4.0) * frac), vec2(r.width() - 4.0, (r.height() - 4.0) * frac)),
+        1.0,
+        Color32::from_rgb(0x2B, 0x7C, 0xD3),
+    );
+}
+
 fn paint_cf_icon(p: &Painter, r: Rect, set: &str, idx: usize) {
     let n = gridcraft_engine::cf::icon_count(set);
     let palette3 = [Color32::from_rgb(0xD1, 0x3B, 0x2F), Color32::from_rgb(0xF2, 0xB8, 0x2E), Color32::from_rgb(0x2E, 0x9E, 0x4F)];
@@ -1298,28 +1382,45 @@ fn paint_cf_icon(p: &Painter, r: Rect, set: &str, idx: usize) {
             (0x2F as f32 * (1.0 - t) + 0x4F as f32 * t) as u8,
         )
     };
-    let lower = set.to_ascii_lowercase();
-    if lower.contains("arrow") {
-        let c = r.center();
-        let s = r.width() / 2.0;
-        let pts = if idx + 1 == n {
-            vec![pos2(c.x, c.y - s), pos2(c.x + s, c.y + 0.1 * s), pos2(c.x - s, c.y + 0.1 * s)]
-        } else if idx == 0 {
-            vec![pos2(c.x, c.y + s), pos2(c.x - s, c.y - 0.1 * s), pos2(c.x + s, c.y - 0.1 * s)]
-        } else {
-            vec![pos2(c.x + s, c.y), pos2(c.x - 0.1 * s, c.y - s), pos2(c.x - 0.1 * s, c.y + s)]
-        };
-        p.add(egui::Shape::convex_polygon(pts, col, Stroke::NONE));
-    } else if lower.contains("rating") || lower.contains("quarter") {
-        p.circle_stroke(r.center(), r.width() / 2.0 - 0.5, Stroke::new(1.0, Color32::GRAY));
-        let frac = idx as f32 / (n - 1).max(1) as f32;
-        p.rect_filled(
-            Rect::from_min_size(pos2(r.left() + 2.0, r.bottom() - 2.0 - (r.height() - 4.0) * frac), vec2(r.width() - 4.0, (r.height() - 4.0) * frac)),
-            1.0,
-            Color32::from_rgb(0x2B, 0x7C, 0xD3),
-        );
-    } else {
-        p.circle_filled(r.center(), r.width() / 2.0 - 0.5, col);
+    match cf_icon_shape(set) {
+        IconShape::Arrow => {
+            let c = r.center();
+            let s = r.width() / 2.0;
+            let pts = if idx + 1 == n {
+                vec![pos2(c.x, c.y - s), pos2(c.x + s, c.y + 0.1 * s), pos2(c.x - s, c.y + 0.1 * s)]
+            } else if idx == 0 {
+                vec![pos2(c.x, c.y + s), pos2(c.x - s, c.y - 0.1 * s), pos2(c.x + s, c.y - 0.1 * s)]
+            } else {
+                vec![pos2(c.x + s, c.y), pos2(c.x - 0.1 * s, c.y - s), pos2(c.x - 0.1 * s, c.y + s)]
+            };
+            p.add(egui::Shape::convex_polygon(pts, col, Stroke::NONE));
+        }
+        IconShape::Star => {
+            // A five-point star, filled by triangles fanned from its centre: the outline is not
+            // convex, so a single polygon would tessellate wrong.
+            let c = r.center();
+            let outer = r.width() / 2.0 - 0.5;
+            let pt = |i: usize| {
+                let rad = if i.is_multiple_of(2) { outer } else { outer * 0.45 };
+                let a = (-90.0 + i as f32 * 36.0).to_radians();
+                pos2(c.x + rad * a.cos(), c.y + rad * a.sin())
+            };
+            for i in 0..10 {
+                p.add(egui::Shape::convex_polygon(vec![c, pt(i), pt((i + 1) % 10)], col, Stroke::NONE));
+            }
+        }
+        IconShape::Triangle => {
+            p.add(egui::Shape::convex_polygon(
+                vec![pos2(r.center().x, r.top() + 0.5), pos2(r.right() - 0.5, r.bottom() - 0.5), pos2(r.left() + 0.5, r.bottom() - 0.5)],
+                col,
+                Stroke::NONE,
+            ));
+        }
+        IconShape::Rating | IconShape::Quarter => icon_meter(p, r, idx, n, true),
+        IconShape::Box => icon_meter(p, r, idx, n, false),
+        IconShape::TrafficLight | IconShape::Dot => {
+            p.circle_filled(r.center(), r.width() / 2.0 - 0.5, col);
+        }
     }
 }
 
