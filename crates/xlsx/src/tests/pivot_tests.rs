@@ -86,7 +86,18 @@ fn workbook() -> Workbook {
         name: "Sales by Region".into(),
         source: "Data!$A$1:$F$9".into(),
         anchor: at("A4"),
-        rows: vec![PivotField { source_col: "Region".into(), sort: PivotSort::Asc, collapsed_items: vec!["East".into()], ..PivotField::default() }],
+        rows: vec![PivotField {
+            source_col: "Region".into(),
+            sort: PivotSort::Desc,
+            collapsed_items: vec!["East".into()],
+            caption: Some("Area".into()),
+            sort_by: Some("Sum of Sales".into()),
+            item_captions: vec![("West".into(), "**West".into())],
+            subtotal: Some(true),
+            repeat_labels: true,
+            number_format: Some("0.0".into()),
+            ..PivotField::default()
+        }],
         columns: vec![PivotField { sort: PivotSort::None, ..field("Product") }],
         values: vec![
             PivotValue {
@@ -113,6 +124,13 @@ fn workbook() -> Workbook {
         style: "PivotStyleMedium9".into(),
         show_headers: false,
         last_range: Some(rr("A2:H12")),
+        row_header_caption: Some("Vehicle".into()),
+        col_header_caption: Some("Type".into()),
+        data_caption: Some("Data".into()),
+        grand_total_caption: Some("Days".into()),
+        empty_caption: Some("0".into()),
+        show_values_row: false,
+        classic_layout: true,
         calculated_fields: vec![],
         values_on_rows: false,
         values_position: None,
@@ -125,8 +143,14 @@ fn workbook() -> Workbook {
         source: "SalesTbl".into(),
         anchor: at("K4"),
         rows: vec![
-            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Years, sort: PivotSort::None, collapsed_items: vec!["2024".into()] },
-            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Months, sort: PivotSort::Asc, collapsed_items: vec![] },
+            PivotField {
+                source_col: "Date".into(),
+                date_group: PivotDateGroup::Years,
+                sort: PivotSort::None,
+                collapsed_items: vec!["2024".into()],
+                ..PivotField::default()
+            },
+            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Months, sort: PivotSort::Asc, ..PivotField::default() },
         ],
         columns: vec![PivotField { sort: PivotSort::Desc, ..field("Product") }],
         values: vec![
@@ -172,9 +196,7 @@ fn workbook() -> Workbook {
         style: "PivotStyleDark3".into(),
         show_headers: true,
         last_range: Some(rr("K2:Z30")),
-        calculated_fields: vec![],
-        values_on_rows: false,
-        values_position: None,
+        ..PivotTable::default()
     };
     // Pivot 3: defaults, defined-name source, compact.
     let p3 = PivotTable {
