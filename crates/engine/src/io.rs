@@ -175,7 +175,17 @@ pub fn save_bytes(wb: &Workbook, path: &str) -> Result<Vec<u8>> {
 /// characters in each cell" (Microsoft Support, *Excel formatting and features that are not
 /// transferred to other file formats*): number formats applied, never column-width `#####`.
 fn csv(wb: &Workbook, sh: &Sheet, delimiter: u8) -> Vec<u8> {
-    gridcraft_xlsx::write_csv(sh, delimiter, |c| crate::display::value_text(wb, sh, c))
+    gridcraft_xlsx::write_csv(sh, delimiter, |c| {
+        // General's grid display fits an 11-character budget. Export the full number instead
+        // so saving a CSV cannot round a long identifier or a precise decimal to fit the grid.
+        if wb.styles.get(sh.style_id(c)).num_fmt.as_str() == "General"
+            && let gridcraft_core::Value::Number(n) = sh.value(c)
+        {
+            gridcraft_core::value::number_to_text(n)
+        } else {
+            crate::display::value_text(wb, sh, c)
+        }
+    })
 }
 
 fn esc(s: &str) -> String {
@@ -540,8 +550,16 @@ mod tests {
         use gridcraft_model::{Cell, Formula, LineInfo, NumFmt, StyleId};
         let mut wb = Workbook::new();
         let mut styled = |code: &str| wb.styles.derive(StyleId::DEFAULT, |s| s.num_fmt = NumFmt::new(code));
-        let (date, money, pct, frac, text, fixed, thousands) =
-            (styled("yyyy-mm-dd"), styled("$#,##0.00"), styled("0.0%"), styled("# ?/?"), styled("@"), styled("0.00"), styled("#,##0"));
+        let (date, money, pct, frac, text, fixed, thousands, scientific) = (
+            styled("yyyy-mm-dd"),
+            styled("$#,##0.00"),
+            styled("0.0%"),
+            styled("# ?/?"),
+            styled("@"),
+            styled("0.00"),
+            styled("#,##0"),
+            styled("0.00E+00"),
+        );
         let sh = wb.sheet_mut(0).unwrap();
         let cells = [
             ("A1", Cell { value: Value::Number(46023.0), formula: None, style: date }),
@@ -555,6 +573,9 @@ mod tests {
             ("B2", Cell { value: Value::Number(12345678.9), formula: None, style: fixed }),
             ("C2", Cell { value: Value::Number(-0.25), formula: None, style: StyleId::DEFAULT }),
             ("D2", Cell { value: Value::Number(1234567.0), formula: None, style: thousands }),
+            ("E2", Cell { value: Value::Number(124412140710.0), formula: None, style: StyleId::DEFAULT }),
+            ("F2", Cell { value: Value::Number(0.123456789012345), formula: None, style: StyleId::DEFAULT }),
+            ("G2", Cell { value: Value::Number(124412140710.0), formula: None, style: scientific }),
         ];
         for (a, c) in cells {
             sh.set_cell(CellRef::parse(a).unwrap(), c);
@@ -563,7 +584,10 @@ mod tests {
         sh.cols.insert(1, LineInfo { size: Some(1.0), ..Default::default() });
         sh.show_formulas = true;
         let csv = String::from_utf8(save_bytes(&wb, "out.csv").unwrap()).unwrap();
-        assert_eq!(csv, "2026-01-01,\"$1,234.50\",12.5%,1 1/2,007,#N/A,TRUE\r\n2026-01-02,12345678.90,-0.25,\"1,234,567\",,,\r\n");
+        assert_eq!(
+            csv,
+            "2026-01-01,\"$1,234.50\",12.5%,1 1/2,007,#N/A,TRUE\r\n2026-01-02,12345678.90,-0.25,\"1,234,567\",124412140710,0.123456789012345,1.24E+11\r\n"
+        );
         let tsv = String::from_utf8(save_bytes(&wb, "out.tsv").unwrap()).unwrap();
         assert!(tsv.starts_with("2026-01-01\t$1,234.50\t12.5%\t"), "{tsv}");
     }
