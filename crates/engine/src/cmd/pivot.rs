@@ -1002,22 +1002,15 @@ fn move_field(s: &mut Session, p: &Json) -> Result<Json> {
             }
             return Ok(json!({}));
         }
-        // Keep axis settings (sort, grouping) when moving between rows and columns.
-        let kept = pt.rows.iter().chain(pt.columns.iter()).find(|f| f.source_col.eq_ignore_ascii_case(&field)).cloned();
-        let hidden = pt.filters.iter().find(|f| f.source_col.eq_ignore_ascii_case(&field)).cloned();
-        let src_field = remove_from_area(C, pt, &field, from)?;
+        // Values in or out: the field leaves its area. Between Rows, Columns and Filters it moves
+        // the way addField moves it, keeping its axis settings, date grouping and filter
+        // selection (`from` is only checked).
+        let src_field = if from == "values" || to == "values" {
+            remove_from_area(C, pt, &field, from)?
+        } else {
+            remove_from_area(C, &mut pt.clone(), &field, from)?
+        };
         add_to_area(C, pt, src, &src_field, to, None, None, pos)?;
-        if matches!(to, "rows" | "columns") {
-            let list = if to == "rows" { &mut pt.rows } else { &mut pt.columns };
-            if let (Some(k), Some(slot)) = (kept, list.iter_mut().find(|f| f.source_col.eq_ignore_ascii_case(&src_field))) {
-                *slot = k;
-            }
-            if let Some(h) = hidden.filter(|h| h.selected.is_some())
-                && !pt.filters.iter().any(|f| f.source_col.eq_ignore_ascii_case(&src_field))
-            {
-                pt.filters.push(h);
-            }
-        }
         Ok(json!({"field": src_field, "to": to}))
     })
 }
@@ -1703,6 +1696,34 @@ mod tests {
         s.execute("pivot.group", json!({"field": "Date", "by": "years"})).unwrap();
         assert_eq!(text(&s, "A4"), "2026");
         assert!(s.execute("pivot.group", json!({"field": "Region", "by": "years"})).is_err());
+    }
+
+    #[test]
+    fn move_field_keeps_the_date_grouping() {
+        use gridcraft_model::PivotDateGroup;
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Date"], "values": ["Sales"]})).unwrap();
+        s.execute("pivot.group", json!({"field": "Date", "by": "months"})).unwrap();
+        // Columns → Filters: the report filter keeps the months.
+        s.execute("pivot.moveField", json!({"field": "Date", "from": "columns", "to": "filters"})).unwrap();
+        let p = pt(&s);
+        assert!(p.columns.is_empty());
+        let f = p.filters.iter().find(|f| f.source_col == "Date").unwrap();
+        assert_eq!(p.filter_group(f), PivotDateGroup::Months);
+        // Filters → Rows: Date on rows grouped by the filter's grouping.
+        s.execute("pivot.moveField", json!({"field": "Date", "from": "filters", "to": "rows"})).unwrap();
+        let p = pt(&s);
+        assert_eq!(p.rows.iter().find(|f| f.source_col == "Date").map(|f| f.date_group), Some(PivotDateGroup::Months));
+        assert!(p.filters.is_empty());
+        assert!(find_row(&s, "Jan").is_some());
+        // Undo brings back the report filter with its months.
+        s.execute("edit.undo", json!({})).unwrap();
+        let p = pt(&s);
+        assert!(p.rows.iter().all(|f| f.source_col != "Date"));
+        assert_eq!(p.filters.first().map(|f| p.filter_group(f)), Some(PivotDateGroup::Months));
+        // Rows → Values takes the field off Rows.
+        s.execute("pivot.moveField", json!({"field": "Region", "from": "rows", "to": "values"})).unwrap();
+        assert!(pt(&s).rows.is_empty());
     }
 
     #[test]
