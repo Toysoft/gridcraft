@@ -262,6 +262,15 @@ fn very_narrow_home_collapses_all_groups() {
 }
 
 #[test]
+fn every_tab_survives_320_px() {
+    for tab in TABS {
+        let h = app_at(320.0, tab); // implicit no-panic assertion
+        assert!(RibbonOverflow::get(&h.ctx).visible_height > 0.0, "{tab}: card laid out");
+        assert!(RibbonOverflow::get(&h.ctx).content_height <= RibbonOverflow::get(&h.ctx).visible_height + 0.5, "{tab}: still fits the card height");
+    }
+}
+
+#[test]
 fn switching_tabs_does_not_apply_the_previous_tabs_plan() {
     let mut h = app_at(700.0, "Home");
     let home_plan = gridcraft_ui_egui::ribbon::collapsed_names(&h.ctx, "Home");
