@@ -1993,9 +1993,10 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
     if resp.drag_started() || (primary_clicked && app.grid.drag == Drag::None) {
         // Where the press began (a drag is only recognised after the pointer has moved).
         let Some(p) = pointer.press_origin().map(|p| geo.mirror_pos(p)).or(pos) else { return };
-        // The outline band's − / + and level buttons act on release, like buttons.
+        // The outline band's − / + and level buttons act on release, like buttons. A cell being
+        // edited is entered first, as for any other click on the sheet: the button may hide it.
         if let Some(action) = crate::outline::hit(geo, sh, p) {
-            if primary_clicked {
+            if primary_clicked && (app.editor.is_none() || app.commit_edit(0, 0, false, false)) {
                 let (command, params) = action.command();
                 app.run_or_alert(command, params);
             }

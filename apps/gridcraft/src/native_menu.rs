@@ -311,6 +311,8 @@ impl NativeMenu {
                 app.copy_to_clipboard(ctx, &id);
             } else if id == "edit.paste" {
                 app.paste_from_clipboard();
+            } else if id == "data.group" || id == "data.ungroup" {
+                app.group_selection(id == "data.group");
             } else {
                 app.run_or_alert(&id, json!({}));
             }

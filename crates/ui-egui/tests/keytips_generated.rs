@@ -1999,7 +1999,8 @@ fn keytip_aga_() {
 fn keytip_agg_() {
     let mut h = harness(blank());
     sequence(&mut h, "AGG", false);
-    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.group"), "AGG must journal data.group");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "AGG must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
 }
 
 #[test]
@@ -2252,7 +2253,8 @@ fn keytip_auc_() {
 fn keytip_auu_() {
     let mut h = harness(blank());
     sequence(&mut h, "AUU", false);
-    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.ungroup"), "AUU must journal data.ungroup");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "AUU must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
 }
 
 #[test]

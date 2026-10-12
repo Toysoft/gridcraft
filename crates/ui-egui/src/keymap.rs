@@ -39,6 +39,9 @@ pub enum Shortcut {
     DropDown,
     /// Ctrl+Alt+= / Ctrl+Alt+-: zoom in / out.
     Zoom(i32),
+    /// Alt+Shift+Right / Left (Cmd+Shift+K / J on Mac): group / ungroup the selection, asking
+    /// Rows or Columns unless whole rows or columns are selected.
+    Group(bool),
 }
 
 fn run(id: &'static str) -> Shortcut {
@@ -104,8 +107,8 @@ pub fn lookup(key: Key, physical: Option<Key>, m: Modifiers, mac: bool) -> Optio
         G if cmd && s && !mac => Shortcut::Dialog("statistics", json!({})),
         H if cmd && s && mac => Shortcut::Dialog("find", json!({"replace": true})),
         R if cmd && s && mac => Shortcut::Dialog("sort", json!({})),
-        K if cmd && s && mac => run("data.group"),
-        J if cmd && s && mac => run("data.ungroup"),
+        K if cmd && s && mac => Shortcut::Group(true),
+        J if cmd && s && mac => Shortcut::Group(false),
         P if cmd && !s => run("file.print"),
         Period if cmd && s => run("home.increaseFontSize"),
         Comma if cmd && s => run("home.decreaseFontSize"),
@@ -135,8 +138,8 @@ pub fn lookup(key: Key, physical: Option<Key>, m: Modifiers, mac: bool) -> Optio
         ArrowDown if alt && !s => Shortcut::DropDown,
         PageDown if alt => Shortcut::ScreenRight,
         PageUp if alt => Shortcut::ScreenLeft,
-        ArrowRight if alt && s && !mac => run("data.group"),
-        ArrowLeft if alt && s && !mac => run("data.ungroup"),
+        ArrowRight if alt && s && !mac => Shortcut::Group(true),
+        ArrowLeft if alt && s && !mac => Shortcut::Group(false),
         ArrowRight if alt && !s && mac => run("sheet.next"),
         ArrowLeft if alt && !s && mac => run("sheet.previous"),
         F1 if alt && s => run("home.insertSheet"),
@@ -230,6 +233,7 @@ pub(crate) fn dispatch(app: &mut SheetApp, ctx: &egui::Context, key: Key, physic
             let percent = (i32::from(sh.zoom).saturating_add(step)).clamp(10, 400);
             app.run_or_alert("view.zoom", json!({"percent": percent}));
         }
+        Shortcut::Group(on) => app.group_selection(on),
     }
     true
 }

@@ -491,6 +491,18 @@ impl SheetApp {
         self.desktop_theme = desktop_theme::DesktopTheme::start();
     }
 
+    /// Data ▸ Group / Ungroup from the ribbon, a menu or a shortcut: whole rows or whole columns
+    /// are (un)grouped right away; any other range asks whether to (un)group its rows or its
+    /// columns, as Excel's Group dialog does. Programmatic `data.group` calls never ask.
+    pub fn group_selection(&mut self, on: bool) {
+        let whole = self.session.active().map(|d| d.selection.current()).is_some_and(|r| r.is_full_rows() != r.is_full_cols());
+        if whole {
+            self.run_or_alert(if on { "data.group" } else { "data.ungroup" }, json!({}));
+        } else {
+            self.open_dialog(if on { "group" } else { "ungroup" }, json!({}));
+        }
+    }
+
     pub fn run_or_alert(&mut self, id: &str, params: Json) {
         // A menu/shortcut opens the settings first; the Print page's button submits explicitly.
         if id == "file.print" {

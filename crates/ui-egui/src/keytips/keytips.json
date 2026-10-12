@@ -1832,10 +1832,10 @@
   },
   {
    "seq": "AGG",
-   "kind": "command",
+   "kind": "control",
    "target": "data.group",
    "excel": "Group",
-   "note": ""
+   "note": "asks Rows or Columns unless whole rows or columns are selected"
   },
   {
    "seq": "AH",
@@ -2057,10 +2057,10 @@
   },
   {
    "seq": "AUU",
-   "kind": "command",
+   "kind": "control",
    "target": "data.ungroup",
    "excel": "Ungroup",
-   "note": ""
+   "note": "asks Rows or Columns unless whole rows or columns are selected"
   },
   {
    "seq": "AV",

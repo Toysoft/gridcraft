@@ -100,6 +100,17 @@ impl Dialog {
         let p = |k: &str| params.get(k).cloned().unwrap_or(Json::Null);
         use Field::*;
         let d = match name {
+            // Data ▸ Group / Ungroup on a range that isn't whole rows or columns.
+            "group" | "ungroup" => {
+                let (title, command) = if name == "group" { ("Group", "data.group") } else { ("Ungroup", "data.ungroup") };
+                Dialog::form(
+                    name,
+                    title,
+                    command,
+                    vec![Choice { key: "by", label: title, options: vec![("rows", "Rows"), ("cols", "Columns")] }],
+                    json!({"by": "rows"}),
+                )
+            }
             "insertCells" => Dialog::form(
                 "insertCells",
                 "Insert",

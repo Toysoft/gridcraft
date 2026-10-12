@@ -1982,13 +1982,13 @@ fn data(app: &mut SheetApp, ui: &mut Ui) {
     ui.vertical(|ui| {
         let __k = small_button(ui, Icon::Group, "Group", "Group", false);
         control_keytip(app, ui, &__k, "data.group");
-        if __k.clicked() {
-            act(app, "data.group", json!({}));
+        if __k.clicked() || invoke(app, "data.group") {
+            app.group_selection(true);
         }
         let __k = small_button(ui, Icon::Ungroup, "Ungroup", "Ungroup", false);
         control_keytip(app, ui, &__k, "data.ungroup");
-        if __k.clicked() {
-            act(app, "data.ungroup", json!({}));
+        if __k.clicked() || invoke(app, "data.ungroup") {
+            app.group_selection(false);
         }
         let __k = small_button(ui, Icon::Subtotal, "Subtotal", "Subtotal", false);
         control_keytip(app, ui, &__k, "dialog:subtotal");
@@ -1997,10 +1997,14 @@ fn data(app: &mut SheetApp, ui: &mut Ui) {
         }
     });
     ui.vertical(|ui| {
-        if small_button(ui, Icon::Plus, "Show Detail", "Show Detail", false).clicked() {
+        let __k = small_button(ui, Icon::Plus, "Show Detail", "Show Detail", false);
+        control_keytip(app, ui, &__k, "data.showDetail");
+        if __k.clicked() {
             act(app, "data.showDetail", json!({}));
         }
-        if small_button(ui, Icon::Minus, "Hide Detail", "Hide Detail", false).clicked() {
+        let __k = small_button(ui, Icon::Minus, "Hide Detail", "Hide Detail", false);
+        control_keytip(app, ui, &__k, "data.hideDetail");
+        if __k.clicked() {
             act(app, "data.hideDetail", json!({}));
         }
     });

@@ -273,7 +273,7 @@ pub const SEQUENCES: &[(&str, Entry)] = &[
     ("AFW", Entry::Finish(Action::Pending("data.fromWeb"))),  // pending; Excel: Get External Data: From Web; reserved until the command lands
     ("AG", Entry::Continue),                                  // Excel: Group Menu; group level: containment(Group)
     ("AGA", Entry::Finish(Action::Pending("data.autoOutline"))), // pending; Excel: Auto Outline; Auto Outline; reserved until the command lands
-    ("AGG", Entry::Finish(Action::Command("data.group"))),    // Excel: Group
+    ("AGG", Entry::Finish(Action::Control("data.group"))),    // Excel: Group; asks Rows or Columns unless whole rows or columns are selected
     ("AH", Entry::Finish(Action::Command("data.hideDetail"))), // Excel: Hide Detail
     ("AJ", Entry::Finish(Action::Command("data.showDetail"))), // Excel: Show Detail
     ("AK", Entry::Finish(Action::Command("data.queriesConnections"))), // Excel: Edit Links; Edit Links (Queries & Connections);
@@ -304,7 +304,7 @@ pub const SEQUENCES: &[(&str, Entry)] = &[
     ("AT", Entry::Finish(Action::Command("data.filter"))),                // Excel: Filter
     ("AU", Entry::Continue),                                              // Excel: Ungroup Menu; group level: containment(Ungroup)
     ("AUC", Entry::Finish(Action::Pending("data.clearOutline"))), // pending; Excel: Clear Outline; feature gap; reserved until the command lands
-    ("AUU", Entry::Finish(Action::Command("data.ungroup"))),      // Excel: Ungroup
+    ("AUU", Entry::Finish(Action::Control("data.ungroup"))),      // Excel: Ungroup; asks Rows or Columns unless whole rows or columns are selected
     ("AV", Entry::Continue),                                      // Excel: Data Validation Menu; group level: containment(Data Validation)
     ("AVI", Entry::Finish(Action::Command("data.circleInvalid"))), // Excel: Circle Invalid Data
     ("AVR", Entry::Finish(Action::Pending("data.clearValidationCircles"))), // pending; Excel: Clear Validation Circles; reserved until the command lands

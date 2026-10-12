@@ -105,8 +105,11 @@ fn windows_and_mac_variants() {
     // Navigation keys go by what they are, not where: the numpad's arrows and Page Down (Num
     // Lock off) report Num6 / Num3 as their physical keys.
     let alt_shift = Modifiers { alt: true, shift: true, ..Modifiers::NONE };
-    assert_eq!(lookup(Key::ArrowRight, Some(Key::Num6), alt_shift, false), run("data.group"));
-    assert_eq!(lookup(Key::ArrowLeft, Some(Key::Num4), alt_shift, false), run("data.ungroup"));
+    assert_eq!(lookup(Key::ArrowRight, Some(Key::Num6), alt_shift, false), Some(Shortcut::Group(true)));
+    assert_eq!(lookup(Key::ArrowLeft, Some(Key::Num4), alt_shift, false), Some(Shortcut::Group(false)));
+    let mac_cmd_shift = Modifiers { shift: true, ..mac_cmd };
+    assert_eq!(lookup(Key::K, Some(Key::K), mac_cmd_shift, true), Some(Shortcut::Group(true)));
+    assert_eq!(lookup(Key::J, Some(Key::J), mac_cmd_shift, true), Some(Shortcut::Group(false)));
     assert_eq!(lookup(Key::PageDown, Some(Key::Num3), Modifiers::ALT, false), Some(Shortcut::ScreenRight));
     assert_eq!(lookup(Key::PageDown, Some(Key::Num3), CTRL_SHIFT, false), None);
     // Plain keys stay with the grid (typing, navigation).
