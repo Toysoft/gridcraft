@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (created from the code on main; supersedes the local-only plan/architecture.md for committed docs) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (equations: the `math` crate and the layout cache) · **Target:** Microsoft Excel (Microsoft 365)
 
 How GridCraft is built today. Rules for contributors are in [`AGENTS.md`](../AGENTS.md).
 
@@ -16,6 +16,7 @@ including tests, 2026-10-10.
 | L0 | `numfmt` | ~2.1k | Excel number-format codes (sections, conditions, colours, dates, elapsed time, fractions, scientific, fill), General, `TEXT()`; en-US only |
 | L1 | `formula` | ~1.7k | Tokenizer, parser, AST, printer (A1 and R1C1), reference adjustment for copy, fill and structural edits |
 | L1 | `functions` | ~13.4k | The function library: `FnSpec` registry (name, arity, category, scalar args, signature, description) and pure implementations; automatic array lifting |
+| L1 | `math` | ~1.1k | Equations: LaTeX laid out by RaTeX (MIT, pinned) into plain glyph, rule and path data, and LaTeX to Office Math; every entry point capped and panic-guarded |
 | L2 | `model` | ~2.2k | Workbook, sheets, copy-on-write cell store (64-row bands behind `Arc`), interned styles, names, tables, CF, validation, comments, charts, shapes, images, sparklines, print settings, protection |
 | L2 | `calc` | ~2.9k | Evaluator (references, names, tables, LET/LAMBDA, special forms like OFFSET/INDIRECT/SUBTOTAL) and dependency-graph recalculation with dynamic arrays, spills and cycle detection; single-threaded |
 | L2 | `xlsx` | ~10.7k | XLSX read/write (transitional and strict read), CSV/TSV, XLSB and ODS data import, PivotTable caches, DrawingML charts and drawings; byte slices only (WASM-safe); lenient reader that reports warnings |
@@ -43,6 +44,47 @@ including tests, 2026-10-10.
 5. **Files**: `engine/io.rs` sniffs content (XLSX, XLSB, ODS) before trusting the extension and
    dispatches to `crates/xlsx`; imports that lose data return warnings shown to the user.
 
+## UI building blocks
+
+The panels in `crates/ui-egui` share a few pieces, so a new feature reuses them instead of
+drawing its own:
+
+- **Colours**: `theme::Tokens`, each with a light and a dark value. The sheet stays white in both
+  themes, so colours drawn on it (`sheet_ref_colors`, `sheet_control_*`, icons through
+  `icons::paint_on_sheet`) keep their light values. `theme::contrast_tests` holds every
+  foreground/background pair to WCAG 2 (4.5:1 for text, 3:1 for glyphs) in both themes; a new
+  token pair is added there. Icons (`icons.rs`, drawn in code) take their paper and category
+  colours (`theme::Cat`) from the tokens.
+- **Ribbon widgets**: `widgets.rs` has the buttons every tab is built from (`big_button`,
+  `small_button`, `split_button`, `big_split_button`, `toggle_button`), translated through
+  `i18n` in one place. Split buttons return the main and arrow responses separately, with
+  accessible names (`AutoSum`, `AutoSum options`). The ribbon card scrolls a tab wider than the
+  window, with arrows at its edges; `ribbon::RibbonOverflow` records the groups' size each frame,
+  and a test keeps every tab within the card's three rows.
+- **Code editor**: `widgets::code_editor(ui, id, &mut text, Lang, max_lines)` (`code_editor.rs`)
+  edits code in the monospace font with `Tokens::syntax` colours: Python (keywords, strings
+  including triple-quoted ones, numbers, comments, builtins) and LaTeX (commands, scripts,
+  comments). Tab indents (every selected line, Shift+Tab dedents), Enter keeps the line's
+  indentation (one level more after a Python colon), and it scrolls past `max_lines` with the
+  caret in view. The tokenizer and the key edits are pure functions with tests, including
+  hostile input.
+- **Code editor marks**: `code_editor_marked` underlines a byte range in the error colour (the
+  equation editor marks the position of a LaTeX error with it).
+- **Formula bar**: grows with its content from one line to `formula_bar::MAX_LINES` (five), then
+  scrolls; `formula_bar::BarLayout` records where its parts went each frame, for tests.
+
+## Equations
+
+An equation is a shape (`ShapeKind::Equation`) whose `text` is its LaTeX source; it selects,
+opens and deletes as its own object kind (`ObjKind::Equation`). `gridcraft-math` is the only
+code that calls the layout engine (RaTeX), and only through `layout`, `check` and `to_omml`,
+which cap the source (4 KB, nesting 32) and run under `catch_unwind`. The result is cached on
+the shape (`Shape::math`, never saved); `Workbook::refresh_equations` rebuilds stale layouts when
+a document is created and on every commit, so painting only reads the cache and nothing in a
+paint path can reach the layout engine. The equation editor's preview and the gallery are the
+only other callers, through the same guarded entry points. The gate that admitted RaTeX is
+recorded in [`decisions.md`](decisions.md) and re-run by `crates/math/tests/gate.rs`.
+
 ## Agent control
 
 - Desktop control channel: `gridcraft --control 7979`, JSON lines on localhost
@@ -68,4 +110,8 @@ rpm, tarball), FreeBSD, and web (WASM; WebGPU or WebGL2). Release workflows in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Equations: the `math` crate (L1), the layout cache and code editor marks |
+| 2026-10-11 | minor | UI building blocks: code editor, growing formula bar |
+| 2026-10-11 | minor | UI building blocks: ribbon widgets and overflow |
+| 2026-10-11 | minor | UI building blocks: theme tokens and the contrast test |
 | 2026-10-10 | major | Created from the code on main: crates, layers, data flow, agent control, known gaps |

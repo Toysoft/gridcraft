@@ -250,6 +250,18 @@ impl Workbook {
         }
         None
     }
+    /// Rebuilds the cached layout of every equation whose source changed (or was never laid
+    /// out, as after loading a file).
+    pub fn refresh_equations(&mut self) {
+        let stale = |s: &crate::Shape| s.kind == crate::ShapeKind::Equation && s.math.get(&s.text).is_none();
+        // Only sheets with a stale equation are copied (sheets are shared with undo snapshots).
+        for sh in self.sheets.iter_mut().filter(|sh| sh.shapes.iter().any(stale)) {
+            for s in Arc::make_mut(sh).shapes.iter_mut().filter(|s| s.kind == crate::ShapeKind::Equation) {
+                s.math.refresh(&s.text);
+            }
+        }
+    }
+
     pub fn next_object_id(&self) -> u32 {
         let mut m = 0;
         for s in &self.sheets {
@@ -269,7 +281,7 @@ impl Workbook {
                 m = m.max(c.id);
             }
         }
-        m + 1
+        m.saturating_add(1)
     }
 }
 
@@ -300,5 +312,20 @@ mod tests {
         assert!(wb.check_sheet_name("a/b", None).is_err());
         assert!(wb.check_sheet_name(&"x".repeat(32), None).is_err());
         assert!(wb.check_sheet_name("Budget 2026", None).is_ok());
+    }
+
+    #[test]
+    fn object_ids_saturate_instead_of_overflowing() {
+        let mut wb = Workbook::new();
+        let image = |id| crate::Image { id, anchor: Default::default(), data: vec![], mime: String::new(), alt: String::new() };
+        assert_eq!(wb.next_object_id(), 1);
+        if let Some(sh) = wb.sheet_mut(0) {
+            sh.images.push(image(7));
+        }
+        assert_eq!(wb.next_object_id(), 8);
+        if let Some(sh) = wb.sheet_mut(0) {
+            sh.images.push(image(u32::MAX));
+        }
+        assert_eq!(wb.next_object_id(), u32::MAX, "an id read from a file at the maximum saturates");
     }
 }
