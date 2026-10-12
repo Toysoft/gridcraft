@@ -6,7 +6,28 @@ Start the desktop app with a control port:
 gridcraft --control 7979            # or GRIDCRAFT_CONTROL_PORT=7979
 ```
 
-Then send newline-delimited JSON to `127.0.0.1:7979`. Every request line gets one reply line:
+Then send newline-delimited JSON to `127.0.0.1:7979`. Every request line gets one reply line.
+
+## Authentication
+
+The first line on every connection must authenticate:
+
+```json
+{"id": 0, "method": "auth", "params": {"token": "…"}}
+{"id": 0, "ok": true, "result": {"authenticated": true}}
+```
+
+The token is `GRIDCRAFT_CONTROL_TOKEN` when it is set where the app starts, else a random one the
+app writes on startup to `gridcraft-control-<port>.token` in `$XDG_RUNTIME_DIR` (when set) or the
+per-user temporary folder (`$TMPDIR` on macOS), readable by the user only. The app logs the
+file's path. `gridcraft-cli send` and `gridcraft-cli mcp --connect` read the token from
+`GRIDCRAFT_CONTROL_TOKEN` or that file by themselves.
+
+Any other first line, including one that isn't JSON (such as an HTTP request a web page sends to
+the port), gets an error reply and the connection is closed. Loopback alone doesn't keep other
+local programs, or a page in the user's browser, out of the control channel.
+
+## Requests
 
 ```json
 {"id": 1, "method": "engine.execute", "params": {"command": "cell.set", "params": {"cell": "B2", "input": "=SUM(A1:A9)"}}}

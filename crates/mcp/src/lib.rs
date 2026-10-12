@@ -19,6 +19,7 @@ mod headless;
 mod server;
 mod tools;
 
+pub mod auth;
 pub use backend::{Backend, Remote};
 pub use headless::Headless;
 pub use server::{COMMANDS_URI, FUNCTIONS_URI, PROTOCOL_VERSION, SUPPORTED_VERSIONS, Server, WORKBOOK_URI};

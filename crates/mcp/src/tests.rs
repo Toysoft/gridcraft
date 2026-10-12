@@ -382,7 +382,7 @@ fn remote_backend_over_tcp() {
     });
     let addr = control_addr(&port.to_string());
     assert_eq!(addr, format!("127.0.0.1:{port}"));
-    let mut s = Server::new(Box::new(Remote::connect(&addr).unwrap()));
+    let mut s = Server::new(Box::new(Remote::connect_with_token(&addr, None).unwrap()));
     assert_eq!(ok(&mut s, "evaluate_formula", json!({"formula": "=1+1"}))["result"], json!(2.0));
     // Second call reconnects transparently.
     ok(&mut s, "set_cell", json!({"cell": "A1", "input": "7"}));
