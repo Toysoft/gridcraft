@@ -187,7 +187,7 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
                 (
                     "app.language.set",
                     "Interface Language",
-                    "{language: \"en\"|\"zh\"|\"ja\"|\"ko\"|\"ru\"|\"pt\"|\"de\"|\"cs\"|\"es\"|\"fr\"|\"hi\"|\"bn\"|\"mr\"} (alias: code)",
+                    "{language: \"en\"|\"zh\"|\"ja\"|\"ko\"|\"ru\"|\"pt\"|\"de\"|\"cs\"|\"es\"|\"fr\"|\"hi\"|\"bn\"|\"mr\"|\"te\"} (alias: code)",
                 ),
                 ("app.language.english", "Interface Language: English", ""),
                 ("app.language.japanese", "Interface Language: Japanese", ""),

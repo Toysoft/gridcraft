@@ -20,6 +20,7 @@ mod ko;
 mod mr;
 mod pt;
 mod ru;
+mod te;
 mod zh;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,11 +41,26 @@ pub enum Language {
     Hi,
     Bn,
     Mr,
+    Te,
 }
 
 impl Language {
-    pub const ALL: [Self; 13] =
-        [Self::En, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::PtBr, Self::De, Self::Cs, Self::Fr, Self::Hi, Self::Bn, Self::Mr];
+    pub const ALL: [Self; 14] = [
+        Self::En,
+        Self::Es,
+        Self::Zh,
+        Self::Ja,
+        Self::Ko,
+        Self::Ru,
+        Self::PtBr,
+        Self::De,
+        Self::Cs,
+        Self::Fr,
+        Self::Hi,
+        Self::Bn,
+        Self::Mr,
+        Self::Te,
+    ];
 
     /// The language's own name, shown in the switcher.
     pub fn name(self) -> &'static str {
@@ -62,6 +78,7 @@ impl Language {
             Self::Hi => "हिन्दी",
             Self::Bn => "বাংলা",
             Self::Mr => "मराठी",
+            Self::Te => "తెలుగు",
         }
     }
 
@@ -81,6 +98,7 @@ impl Language {
             Self::Hi => "hi",
             Self::Bn => "bn",
             Self::Mr => "mr",
+            Self::Te => "te",
         }
     }
 
@@ -103,6 +121,7 @@ impl Language {
             "hi" => Some(Self::Hi),
             "bn" => Some(Self::Bn),
             "mr" => Some(Self::Mr),
+            "te" => Some(Self::Te),
             _ => None,
         }
     }
@@ -123,7 +142,7 @@ impl Language {
     /// Whether the interface needs a script face that egui's bundled fonts lack (CJK, Indian
     /// scripts). The desktop apps find one among the system fonts; the web build has none to load.
     pub fn needs_script_fonts(self) -> bool {
-        matches!(self, Self::Zh | Self::Ja | Self::Ko | Self::Hi | Self::Mr | Self::Bn)
+        matches!(self, Self::Zh | Self::Ja | Self::Ko | Self::Hi | Self::Te | Self::Mr | Self::Bn)
     }
 
     pub fn formula_locale(self) -> gridcraft_engine::formula::FormulaLocale {
@@ -149,6 +168,7 @@ impl Language {
             Self::Hi => hi::translate(text),
             Self::Bn => bn::translate(text),
             Self::Mr => mr::translate(text),
+            Self::Te => te::translate(text),
         };
         translated.unwrap_or_else(|| text.rsplit_once('|').map_or(text, |(_, label)| label))
     }
@@ -616,6 +636,7 @@ mod tests {
             assert!(hi::translate(english).is_some_and(|text| !text.is_empty()), "missing Hindi: {english}");
             assert!(bn::translate(english).is_some_and(|text| !text.is_empty()), "missing Bengali: {english}");
             assert!(mr::translate(english).is_some_and(|text| !text.is_empty()), "missing Marathi: {english}");
+            assert!(te::translate(english).is_some_and(|text| !text.is_empty()), "missing Telugu: {english}");
         }
         assert_eq!(Language::Ja.tr("Data"), "データ");
         assert_eq!(Language::Zh.tr("Data"), "数据");
@@ -645,6 +666,8 @@ mod tests {
         assert_eq!(Language::Bn.tr("Sheet1!A1"), "Sheet1!A1");
         assert_eq!(Language::Mr.tr("Data"), "डेटा");
         assert_eq!(Language::Mr.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Te.tr("Data"), "డేటా");
+        assert_eq!(Language::Te.tr("Sheet1!A1"), "Sheet1!A1");
         // A `context|label` key shows only its label in English and splits the translation.
         assert_eq!(Language::En.tr("Page Layout|Orientation"), "Orientation");
         assert_eq!(Language::Ja.tr("Page Layout|Orientation"), "印刷の向き");
@@ -700,6 +723,9 @@ mod tests {
         assert_eq!(Language::from_tag("mr-IN"), Some(Language::Mr));
         assert_eq!(Language::from_tag("mr_IN"), Some(Language::Mr));
         assert_eq!(Language::parse("mr"), Some(Language::Mr));
+        assert_eq!(Language::from_tag("te-IN"), Some(Language::Te));
+        assert_eq!(Language::from_tag("te_IN"), Some(Language::Te));
+        assert_eq!(Language::parse("te"), Some(Language::Te));
     }
 
     #[test]
