@@ -3,8 +3,8 @@
 
 use std::fmt::Write as _;
 
-use gridcraft_core::Value;
-use gridcraft_formula::{Expr, SheetSel};
+use gridcraft_core::{CellRef, RangeRef, Value};
+use gridcraft_formula::{BinOp, Expr, Reference, SheetSel};
 use gridcraft_model::{Chart, ChartKind, Color, LegendPos, LineDash, Series, Trendline, TrendlineKind, Workbook};
 
 use crate::drawing::{dml_color, srgb};
@@ -72,111 +72,207 @@ fn data_ref(e: Option<&El>) -> Option<String> {
     // Literal values become an array constant.
     for k in ["numLit", "strLit"] {
         if let Some(l) = e.child(k) {
-            return points_literal(l, l, k == "numLit").map(|(_, lit)| lit);
+            return read_points(l, l).map(|p| literal(&p, k == "numLit"));
         }
     }
     None
 }
 
-/// Cells a series reference covers: `Sheet!$A$1:$A$9`, or a union `(Sheet!$A$1:$A$3,Sheet!$A$5)`.
-fn ref_cells(f: &str) -> Option<u64> {
-    let f = f.trim();
-    let inner = f.strip_prefix('(').and_then(|x| x.strip_suffix(')')).unwrap_or(f);
-    let mut parts = Vec::new();
-    let (mut quoted, mut start) = (false, 0);
-    for (i, c) in inner.char_indices() {
-        match c {
-            '\'' => quoted = !quoted,
-            ',' if !quoted => {
-                parts.push(inner.get(start..i)?);
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    parts.push(inner.get(start..)?);
-    let mut total = 0u64;
-    for p in parts {
-        let addr = p.rsplit_once('!').map_or(p, |(_, a)| a).trim();
-        let r = gridcraft_core::RangeRef::parse(addr)?;
-        total = total.checked_add(u64::from(r.width()) * u64::from(r.height()))?;
-    }
-    Some(total)
-}
-
 /// Most cached points a PivotChart series keeps (the chart renderer's own cap).
-const MAX_CACHED_POINTS: u64 = 100_000;
+const MAX_CACHED_POINTS: usize = 100_000;
 
-/// The points of a cache or literal (`c` holds `ptCount`, `pts` the `<c:pt>`s) as an array
-/// constant, with the point count. Missing points become `#N/A` (numbers) or `""` (text) so
-/// positions line up. Without a `ptCount`, the highest index sets the count.
-fn points_literal(c: &El, pts: &El, numeric: bool) -> Option<(u64, String)> {
-    let idx = |p: &El| p.attr("idx").and_then(|v| v.trim().parse::<usize>().ok());
-    let count = match c.child_val("ptCount") {
-        Some(v) => v.trim().parse::<u64>().ok()?,
-        None => pts.kids("pt").filter_map(idx).max().map_or(0, |m| m as u64 + 1),
-    };
-    if !(1..=MAX_CACHED_POINTS).contains(&count) {
+/// The points of a cache or literal (`c` holds `ptCount`, `pts` the `<c:pt>`s), by index; missing
+/// points are `None`. Points without a valid `idx` (schema-invalid, but some writers omit it) go
+/// in document order. A missing, unreadable or too small `ptCount` gives way to the points present.
+fn read_points<'a>(c: &El, pts: &'a El) -> Option<Vec<Option<&'a str>>> {
+    let at = |i: usize, p: &El| p.attr("idx").and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(i);
+    let placed = || pts.kids("pt").enumerate().map(|(i, p)| (at(i, p), p)).filter(|(i, _)| *i < MAX_CACHED_POINTS);
+    let highest = placed().map(|(i, _)| i + 1).max().unwrap_or(0);
+    let count =
+        c.child_val("ptCount").and_then(|v| v.trim().parse::<usize>().ok()).filter(|n| (highest..=MAX_CACHED_POINTS).contains(n)).unwrap_or(highest);
+    if count == 0 {
         return None;
     }
-    let mut vals: Vec<Option<&str>> = vec![None; usize::try_from(count).ok()?];
-    for p in pts.kids("pt") {
-        if let (Some(slot), Some(v)) = (idx(p).and_then(|i| vals.get_mut(i)), p.child("v")) {
+    let mut vals = vec![None; count];
+    for (i, p) in placed() {
+        if let (Some(slot), Some(v)) = (vals.get_mut(i), p.child("v")) {
             *slot = Some(v.text.as_str());
         }
     }
-    let items: Vec<String> = vals
+    Some(vals)
+}
+
+/// Points as an array constant. Missing points become `#N/A` (numbers) or `""` (text) so
+/// positions line up.
+fn literal<S: AsRef<str>>(points: &[Option<S>], numeric: bool) -> String {
+    let items: Vec<String> = points
         .iter()
-        .map(|v| match (v, numeric) {
+        .map(|v| match (v.as_ref().map(AsRef::as_ref), numeric) {
             (Some(t), true) => t.trim().parse::<f64>().ok().filter(|n| n.is_finite()).map_or_else(|| "#N/A".to_string(), num),
             (None, true) => "#N/A".to_string(),
             (Some(t), false) => format!("\"{}\"", t.replace('"', "\"\"")),
             (None, false) => "\"\"".to_string(),
         })
         .collect();
-    Some((count, format!("{{{}}}", items.join(","))))
+    format!("{{{}}}", items.join(","))
 }
 
-/// The points cached under a series reference: `numCache`, `strCache`, or the innermost level
-/// of a `multiLvlStrCache`.
-fn cache_literal(r: &El) -> Option<(u64, String)> {
-    if let Some(c) = r.child("numCache") {
-        points_literal(c, c, true)
-    } else if let Some(c) = r.child("strCache") {
-        points_literal(c, c, false)
+/// The points cached under a PivotChart series reference.
+#[derive(Clone, Debug)]
+struct CachedPoints {
+    points: Vec<Option<String>>,
+    numeric: bool,
+    /// A `multiLvlStrRef`: one column (or row) of cells per level, the innermost last. The
+    /// cache holds the innermost level.
+    multi_level: bool,
+}
+
+/// What a PivotChart series saved with its references, plotted when the referenced cells don't
+/// hold it (see [`plot_cached`]).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct PivotSeriesCache {
+    name: Option<String>,
+    categories: Option<CachedPoints>,
+    values: Option<CachedPoints>,
+    /// The values' `numCache` format code.
+    number_format: Option<String>,
+}
+
+/// `numCache`, `strCache`, or the innermost level of a `multiLvlStrCache`, under `cat` or `val`.
+fn cached_points(e: Option<&El>) -> Option<CachedPoints> {
+    let e = e?;
+    let owned = |p: Vec<Option<&str>>| p.into_iter().map(|v| v.map(str::to_string)).collect();
+    if let Some(c) = e.path(&["numRef", "numCache"]) {
+        Some(CachedPoints { points: owned(read_points(c, c)?), numeric: true, multi_level: false })
+    } else if let Some(c) = e.path(&["strRef", "strCache"]) {
+        Some(CachedPoints { points: owned(read_points(c, c)?), numeric: false, multi_level: false })
     } else {
-        let c = r.child("multiLvlStrCache")?;
-        points_literal(c, c.child("lvl")?, false)
+        let c = e.path(&["multiLvlStrRef", "multiLvlStrCache"])?;
+        Some(CachedPoints { points: owned(read_points(c, c.child("lvl")?)?), numeric: false, multi_level: true })
     }
+}
+
+fn pivot_series_cache(s: &El) -> PivotSeriesCache {
+    PivotSeriesCache {
+        name: s.path(&["tx", "strRef", "strCache", "pt", "v"]).map(|v| v.text.clone()),
+        categories: cached_points(s.child("cat")),
+        values: cached_points(s.child("val")),
+        number_format: s
+            .path(&["val", "numRef", "numCache", "formatCode"])
+            .map(|c| c.text.trim())
+            .filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("General"))
+            .map(str::to_string),
+    }
+}
+
+/// The references of a series formula: one area, or a union `(Sheet!$A$1:$A$3,Sheet!$A$5)`.
+fn ref_areas<'e>(e: &'e Expr, out: &mut Vec<&'e Reference>) -> bool {
+    match e {
+        Expr::Ref(r) => {
+            out.push(r);
+            true
+        }
+        Expr::Paren(x) => ref_areas(x, out),
+        Expr::Binary(BinOp::Union, a, b) => ref_areas(a, out) && ref_areas(b, out),
+        _ => false,
+    }
+}
+
+/// Whether a cell shows the cached point: numbers within rounding, text as is. A number cache
+/// leaves out cells that hold no number.
+fn point_matches(v: &Value, p: Option<&str>, numeric: bool) -> bool {
+    match (v, p) {
+        (Value::Number(n), Some(t)) => t.trim().parse::<f64>().is_ok_and(|c| c == *n || (c - n).abs() <= 1e-9 * c.abs().max(n.abs())),
+        (Value::Number(_), None) => false,
+        (_, None) => numeric || v.is_empty(),
+        (_, Some(_)) if numeric => false,
+        (Value::Text(s), Some(t)) => **s == *t,
+        (Value::Bool(b), Some(t)) => t.eq_ignore_ascii_case(if *b { "TRUE" } else { "FALSE" }),
+        (Value::Error(e), Some(t)) => e.as_str() == t,
+        (Value::Empty, Some(t)) => t.is_empty(),
+        (Value::Array(_), Some(_)) => false,
+    }
+}
+
+/// Whether the cells a series formula refers to (on sheet `home` when unqualified) hold the
+/// cached points, one cell per point.
+fn live_matches(wb: &Workbook, home: usize, f: &str, p: &CachedPoints) -> bool {
+    let Ok(e) = gridcraft_formula::parse(f) else { return false };
+    let mut refs = Vec::new();
+    if !ref_areas(&e, &mut refs) {
+        return false;
+    }
+    let mut areas = Vec::with_capacity(refs.len());
+    for r in refs {
+        let si = match &r.sheet {
+            SheetSel::Current => Some(home),
+            SheetSel::Named(n) => wb.sheet_index(n),
+            SheetSel::Span(..) => None,
+        };
+        let Some(sheet) = si.and_then(|i| wb.sheet(i)) else { return false };
+        areas.push((sheet, r.range()));
+    }
+    let n = p.points.len();
+    if p.multi_level {
+        // Only the innermost level is cached: the last column of a block with a row per point,
+        // or the last row of one with a column per point.
+        let [(sheet, r)] = areas[..] else { return false };
+        let leaf = if r.height() as usize == n {
+            RangeRef::new(CellRef::new(r.start.row, r.end.col), r.end)
+        } else if r.width() as usize == n {
+            RangeRef::new(CellRef::new(r.end.row, r.start.col), r.end)
+        } else {
+            return false;
+        };
+        areas = vec![(sheet, leaf)];
+    }
+    if areas.iter().try_fold(0u64, |t, (_, r)| t.checked_add(r.count())) != Some(n as u64) {
+        return false;
+    }
+    areas.iter().flat_map(|(sheet, r)| r.iter().map(|c| sheet.value(c))).zip(&p.points).all(|(v, pt)| point_matches(&v, pt.as_deref(), p.numeric))
 }
 
 /// A PivotChart's `<c:f>` formulas only approximate its PivotTable: often just the table's corner
 /// cell, or a block that takes in the grand total row. Excel draws the chart from the PivotTable,
-/// and the cached points are what it shows. When a series' categories or values don't cover their
-/// cached points, the series plots the cached points (and its cached name) instead; refreshing
-/// the PivotTable rebinds the chart to live cells.
-fn use_pivot_cache(s: &El, ser: &mut Series) {
-    let cached = |tag: &str, f: Option<&str>| -> Option<String> {
-        let e = s.child(tag)?;
-        let r = ["numRef", "strRef", "multiLvlStrRef"].iter().find_map(|k| e.child(k))?;
-        let (count, lit) = cache_literal(r)?;
-        (f.and_then(ref_cells) != Some(count)).then_some(lit)
-    };
-    let categories = cached("cat", ser.categories.as_deref());
-    let values = cached("val", Some(ser.values.as_str()));
-    if categories.is_none() && values.is_none() {
-        return;
-    }
-    ser.categories = categories.or(ser.categories.take());
-    if let Some(v) = values {
-        ser.values = v;
-    }
-    if let Some(name) = s.path(&["tx", "strRef", "strCache", "pt", "v"]) {
-        ser.name = Some(format!("\"{}\"", name.text.replace('"', "\"\"")));
+/// and the cached points are what it shows. When the cells a series' categories or values refer
+/// to (on sheet `si`) don't hold their cached points, the series plots the cached points (and its
+/// cached name) instead; refreshing the PivotTable rebinds the chart to live cells.
+pub(crate) fn plot_cached(wb: &Workbook, si: usize, ch: &mut Chart, caches: &[PivotSeriesCache]) {
+    for (ser, c) in ch.series.iter_mut().zip(caches) {
+        let stale = |f: Option<&str>, p: &&CachedPoints| !f.is_some_and(|f| live_matches(wb, si, f, p));
+        let categories = c.categories.as_ref().filter(|p| stale(ser.categories.as_deref(), p)).map(|p| literal(&p.points, p.numeric));
+        let values = c.values.as_ref().filter(|p| stale(Some(&ser.values), p)).map(|p| literal(&p.points, p.numeric));
+        if categories.is_none() && values.is_none() {
+            continue;
+        }
+        if categories.is_some() {
+            ser.categories = categories;
+        }
+        if let Some(v) = values {
+            ser.values = v;
+            ser.number_format.clone_from(&c.number_format);
+        }
+        if let Some(name) = &c.name {
+            ser.name = Some(format!("\"{}\"", name.replace('"', "\"\"")));
+        }
     }
 }
 
-fn read_series(s: &El, pivot: bool) -> Series {
+/// [`plot_cached`] for the PivotCharts read from a workbook (by chart id), once every sheet's
+/// cells are in.
+pub(crate) fn plot_pivot_caches(wb: &mut Workbook, pending: &[(u32, Vec<PivotSeriesCache>)]) {
+    for (id, caches) in pending {
+        let at = wb.sheets.iter().enumerate().find_map(|(si, sh)| sh.charts.iter().position(|c| c.id == *id).map(|ci| (si, ci)));
+        let Some((si, ci)) = at else { continue };
+        let Some(mut ch) = wb.sheet(si).and_then(|sh| sh.charts.get(ci)).cloned() else { continue };
+        plot_cached(wb, si, &mut ch, caches);
+        if let Some(slot) = wb.sheet_mut(si).and_then(|sh| sh.charts.get_mut(ci)) {
+            *slot = ch;
+        }
+    }
+}
+
+fn read_series(s: &El) -> Series {
     let name = s.child("tx").and_then(|tx| {
         if let Some(f) = tx.path(&["strRef", "f"]) {
             let t = f.text.trim();
@@ -191,7 +287,8 @@ fn read_series(s: &El, pivot: bool) -> Series {
         .and_then(dml_color)
         .or_else(|| sp.and_then(|p| p.path(&["ln", "solidFill"])).and_then(dml_color))
         .or_else(|| s.path(&["marker", "spPr", "solidFill"]).and_then(dml_color));
-    let mut ser = Series {
+    let values = s.child("val").or_else(|| s.child("yVal"));
+    Series {
         name,
         categories: data_ref(s.child("cat")).or_else(|| data_ref(s.child("xVal"))),
         values: data_ref(s.child("val")).or_else(|| data_ref(s.child("yVal"))).unwrap_or_default(),
@@ -201,22 +298,14 @@ fn read_series(s: &El, pivot: bool) -> Series {
         kind: None,
         smooth: bool_val(s, "smooth"),
         trendlines: s.kids("trendline").filter_map(read_trendline).collect(),
-        number_format: None,
-    };
-    if pivot {
-        use_pivot_cache(s, &mut ser);
-    }
-    // Literal values (a `numLit`, or the cached points above) keep the format code saved with them.
-    if ser.values.starts_with('{') {
-        let v = s.child("val").or_else(|| s.child("yVal"));
-        ser.number_format = v
-            .and_then(|v| v.child("numLit").or_else(|| v.path(&["numRef", "numCache"])))
-            .and_then(|c| c.child("formatCode"))
+        // Literal values keep the format code saved with them.
+        number_format: values
+            .filter(|v| v.child("numRef").is_none())
+            .and_then(|v| v.path(&["numLit", "formatCode"]))
             .map(|c| c.text.trim())
             .filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("General"))
-            .map(str::to_string);
+            .map(str::to_string),
     }
-    ser
 }
 
 const DASHES: [(LineDash, &str); 11] = [
@@ -291,7 +380,9 @@ fn axis_ids(g: &El) -> Vec<String> {
     g.kids("axId").filter_map(|a| a.attr("val")).map(str::to_string).collect()
 }
 
-pub fn read_chart(root: &El) -> Option<Chart> {
+/// A chart part, with the cached points of each series when it is a PivotChart (empty otherwise),
+/// for [`plot_cached`] once the workbook's cells are read.
+pub(crate) fn read_chart(root: &El) -> Option<(Chart, Vec<PivotSeriesCache>)> {
     let chart = root.child("chart")?;
     let plot = chart.child("plotArea")?;
     let groups: Vec<(&El, ChartKind)> = plot.children.iter().filter_map(|g| group_kind(g).map(|k| (g, k))).collect();
@@ -299,14 +390,18 @@ pub fn read_chart(root: &El) -> Option<Chart> {
     let first_axes = axis_ids(first);
     let pivot = root.path(&["pivotSource", "name"]).map(|n| n.text.trim().to_string()).filter(|n| !n.is_empty());
     let mut series = vec![];
+    let mut caches = vec![];
     for (gi, (g, k)) in groups.iter().enumerate() {
         for s in g.kids("ser") {
-            let mut ser = read_series(s, pivot.is_some());
+            let mut ser = read_series(s);
             if gi > 0 {
                 ser.kind = Some(*k);
                 ser.secondary = axis_ids(g) != first_axes;
             }
             series.push(ser);
+            if pivot.is_some() {
+                caches.push(pivot_series_cache(s));
+            }
         }
     }
     let kind = if groups.len() > 1 { ChartKind::Combo } else { first_kind };
@@ -331,7 +426,7 @@ pub fn read_chart(root: &El) -> Option<Chart> {
             _ => LegendPos::Right,
         },
     };
-    Some(Chart {
+    let ch = Chart {
         id: 0,
         kind,
         anchor: Default::default(),
@@ -351,7 +446,8 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         source: None,
         by_rows: false,
         pivot,
-    })
+    };
+    Some((ch, caches))
 }
 
 // ---------------------------------------------------------------- writing

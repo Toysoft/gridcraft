@@ -1,12 +1,34 @@
 //! Reading charts as Excel saved them: PivotChart series and deleted automatic titles.
 
-use gridcraft_model::{Chart, ChartKind, Workbook};
+use std::sync::Arc;
+
+use gridcraft_core::{CellRef, Value};
+use gridcraft_model::{Chart, ChartKind, Sheet, Workbook};
 
 const NS: &str =
     r#"xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main""#;
 
+/// Reads a chart part as part of `wb` (sheet 0): PivotChart series whose cells don't hold their
+/// cached points plot the cache.
+fn read_in(wb: &Workbook, xml: &str) -> Chart {
+    let (mut c, caches) = crate::chart::read_chart(&crate::xml::parse(xml.as_bytes()).unwrap()).unwrap();
+    crate::chart::plot_cached(wb, 0, &mut c, &caches);
+    c
+}
+
 fn read(xml: &str) -> Chart {
-    crate::chart::read_chart(&crate::xml::parse(xml.as_bytes()).unwrap()).unwrap()
+    read_in(&Workbook::new(), xml)
+}
+
+/// A workbook with one sheet holding `cells` (A1 address, value).
+fn book(name: &str, cells: &[(&str, Value)]) -> Workbook {
+    let mut sheet = Sheet::new(name);
+    for (a, v) in cells {
+        sheet.set_value(CellRef::parse(a).unwrap(), v.clone());
+    }
+    let mut wb = Workbook::new();
+    wb.sheets = vec![Arc::new(sheet)];
+    wb
 }
 
 fn str_cache(f: &str, pts: &[&str]) -> String {
@@ -69,9 +91,11 @@ fn pivot_charts_plot_their_cached_points_when_the_references_do_not_cover_them()
     let back = read(&crate::chart::write_chart(&Workbook::new(), 0, &c));
     assert_eq!(back.series[0].number_format, c.series[0].number_format);
 
-    // References that cover the cached points stay live, and so do an ordinary chart's.
+    // References whose cells hold the cached points stay live, and so do an ordinary chart's.
     let live = ser(&str_cache("Summary!$B$4", &["Total"]), &str_cache("Summary!$A$5:$A$7", &cats), &num_cache("Summary!$B$5:$B$7", 3, &[(0, "1")]));
-    let c = read(&chart_xml(true, &format!(r#"<c:pieChart>{live}</c:pieChart>"#), ""));
+    let mut cells = vec![("B4", Value::text("Total")), ("B5", Value::Number(1.0))];
+    cells.extend(["A5", "A6", "A7"].into_iter().zip(cats).map(|(a, t)| (a, Value::text(t))));
+    let c = read_in(&book("Summary", &cells), &chart_xml(true, &format!(r#"<c:pieChart>{live}</c:pieChart>"#), ""));
     assert_eq!((c.series[0].name.as_deref(), c.series[0].values.as_str()), (Some("Summary!$B$4"), "Summary!$B$5:$B$7"));
     assert_eq!(c.series[0].number_format, None, "live references use their cells' format");
     let plain = ser(&str_cache("Graph!$J$2", &["Events"]), &str_cache("Graph!$J$2", &cats), &num_cache("Graph!$J$2", 3, &[(0, "18")]));
@@ -90,6 +114,86 @@ fn pivot_charts_plot_their_cached_points_when_the_references_do_not_cover_them()
             .collect::<Vec<_>>()
     };
     assert_eq!(parts(&back), parts(&c));
+}
+
+#[test]
+fn a_one_point_pivot_chart_at_the_corner_cell_plots_its_cache() {
+    // A PivotTable with one row item: every formula points at the corner cell, which holds the
+    // table's header, and each cache has one point, like the cell count. Excel plots the cache.
+    let bar = ser(&str_cache("Data!$J$2", &["Events"]), &str_cache("Data!$J$2", &["Truck 1"]), &num_cache("Data!$J$2", 1, &[(0, "18")]));
+    let chart = chart_xml(true, &format!(r#"<c:barChart><c:barDir val="col"/>{bar}<c:axId val="1"/><c:axId val="2"/></c:barChart>"#), "");
+    let drawing = r#"<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><xdr:oneCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>4</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:ext cx="4572000" cy="2743200"/><xdr:graphicFrame><xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="C"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="rId1"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:oneCellAnchor></xdr:wsDr>"#;
+    let rel = |kind: &str, target: &str| {
+        format!(
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}" Target="{target}"/></Relationships>"#
+        )
+    };
+    let (srels, drels) = (rel("drawing", "../drawings/drawing1.xml"), rel("chart", "../charts/chart1.xml"));
+    let body = r#"<sheetData><row r="2"><c r="J2" t="inlineStr"><is><t>Sum of Events</t></is></c></row></sheetData><drawing r:id="rId1"/>"#;
+    let parts = [
+        ("xl/worksheets/_rels/sheet1.xml.rels", srels.as_str()),
+        ("xl/drawings/drawing1.xml", drawing),
+        ("xl/drawings/_rels/drawing1.xml.rels", drels.as_str()),
+        ("xl/charts/chart1.xml", chart.as_str()),
+    ];
+    let (wb, _) = crate::read_xlsx(&super::minimal(body, &parts, "", "")).unwrap();
+    let s = &wb.sheets[0].charts[0].series[0];
+    assert_eq!((s.name.as_deref(), s.categories.as_deref(), s.values.as_str()), (Some("\"Events\""), Some(r#"{"Truck 1"}"#), "{18}"));
+}
+
+#[test]
+fn multi_level_pivot_categories_stay_live_when_their_cells_hold_the_cache() {
+    // Two levels of row labels in A4:B7, the outer one (country) on the left; the cache keeps
+    // the innermost level first.
+    let cities = ["Ottawa", "Toronto", "Boston", "NYC"];
+    let leaf: String = cities.iter().enumerate().map(|(i, v)| format!(r#"<c:pt idx="{i}"><c:v>{v}</c:v></c:pt>"#)).collect();
+    let outer = r#"<c:pt idx="0"><c:v>Canada</c:v></c:pt><c:pt idx="2"><c:v>USA</c:v></c:pt>"#;
+    let cat = format!(
+        r#"<c:multiLvlStrRef><c:f>Graph!$A$4:$B$7</c:f><c:multiLvlStrCache><c:ptCount val="4"/><c:lvl>{leaf}</c:lvl><c:lvl>{outer}</c:lvl></c:multiLvlStrCache></c:multiLvlStrRef>"#
+    );
+    let val = num_cache("Graph!$C$4:$C$7", 4, &[(0, "1"), (1, "2"), (2, "3"), (3, "4")]);
+    let xml = chart_xml(
+        true,
+        &format!(
+            r#"<c:barChart><c:barDir val="col"/>{}<c:axId val="1"/><c:axId val="2"/></c:barChart>"#,
+            ser(&str_cache("Graph!$C$3", &["Total"]), &cat, &val)
+        ),
+        "",
+    );
+    let mut cells = vec![("A4", Value::text("Canada")), ("A6", Value::text("USA")), ("C3", Value::text("Total"))];
+    for (i, city) in cities.iter().enumerate() {
+        cells.push((["B4", "B5", "B6", "B7"][i], Value::text(*city)));
+        cells.push((["C4", "C5", "C6", "C7"][i], Value::Number(i as f64 + 1.0)));
+    }
+    let wb = book("Graph", &cells);
+    let c = read_in(&wb, &xml);
+    let s = &c.series[0];
+    assert_eq!((s.name.as_deref(), s.categories.as_deref(), s.values.as_str()), (Some("Graph!$C$3"), Some("Graph!$A$4:$B$7"), "Graph!$C$4:$C$7"));
+    // A save keeps the reference.
+    let back = read_in(&wb, &crate::chart::write_chart(&wb, 0, &c));
+    assert_eq!(back.series[0].categories.as_deref(), Some("Graph!$A$4:$B$7"));
+
+    // When the innermost level's cells show other labels, the cache is plotted.
+    cells.push(("B5", Value::text("Montreal")));
+    let c = read_in(&book("Graph", &cells), &xml);
+    assert_eq!(c.series[0].categories.as_deref(), Some(r#"{"Ottawa","Toronto","Boston","NYC"}"#));
+}
+
+#[test]
+fn literal_series_keep_their_points_without_a_valid_pt_count() {
+    // Not valid by the schema, but readable: the points present set the count, and points
+    // without an index go in document order.
+    let values = |lit: &str| {
+        let s = format!("<c:ser><c:idx val=\"0\"/><c:order val=\"0\"/><c:val><c:numLit>{lit}</c:numLit></c:val></c:ser>");
+        read(&chart_xml(false, &format!("<c:pieChart>{s}</c:pieChart>"), "")).series[0].values.clone()
+    };
+    let pts = r#"<c:pt idx="0"><c:v>1</c:v></c:pt><c:pt idx="1"><c:v>2</c:v></c:pt>"#;
+    assert_eq!(values(&format!(r#"<c:ptCount val="x"/>{pts}"#)), "{1,2}");
+    assert_eq!(values(&format!(r#"<c:ptCount val="0"/>{pts}"#)), "{1,2}");
+    assert_eq!(values(&format!(r#"<c:ptCount val="1"/>{pts}"#)), "{1,2}");
+    assert_eq!(values("<c:pt><c:v>1</c:v></c:pt><c:pt><c:v>2</c:v></c:pt>"), "{1,2}");
+    // A valid count still keeps trailing gaps.
+    assert_eq!(values(&format!(r#"<c:ptCount val="3"/>{pts}"#)), "{1,2,#N/A}");
 }
 
 #[test]
