@@ -596,6 +596,16 @@ mod tests {
         assert_eq!(Language::Es.tr("Data"), "Datos");
         assert_eq!(Language::Es.tr("Freeze Panes"), "Inmovilizar paneles");
         assert_eq!(Language::Es.tr("Sheet1!A1"), "Sheet1!A1");
+        // Spot checks across the French backstage block, whose labels were once paired with the
+        // wrong keys ("Close" read "Société", "Ruler" read "Enregistrer sous").
+        assert_eq!(Language::Fr.tr("Close"), "Fermer");
+        assert_eq!(Language::Fr.tr("Save As"), "Enregistrer sous");
+        assert_eq!(Language::Fr.tr("Ruler"), "Règle");
+        assert_eq!(Language::Fr.tr("Sheet Name"), "Nom de la feuille");
+        assert_eq!(
+            Language::Fr.tr("Calculation settings are saved with the workbook."),
+            "Les paramètres de calcul sont enregistrés avec le classeur."
+        );
         assert_eq!(Language::De.tr("Data"), "Daten");
         assert_eq!(Language::De.tr("Sheet1!A1"), "Sheet1!A1");
         assert_eq!(Language::Fr.tr("Data"), "Données");

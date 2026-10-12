@@ -973,12 +973,20 @@ pub(crate) fn paint_quadrant(
         if text.is_empty() {
             continue;
         }
+        // Right-to-left text (Arabic, Hebrew) is laid out in display order by `bidi`, whose pieces
+        // a repeat-fill position can't be inserted into, so the fill is dropped.
+        let rtl = crate::bidi::has_rtl(&text);
+        let fill_char = if rtl { None } else { fill_char };
         let color = ncolor.unwrap_or(lk.text_color);
         let halign = match st.align.h {
             HAlign::General => match v {
                 Value::Number(_) => HAlign::Right,
                 Value::Bool(_) | Value::Error(_) => HAlign::Center,
                 _ if numeric => HAlign::Right,
+                // General follows the text's reading order (Excel's "Context"): Arabic or Hebrew
+                // text sits on the right and spills left. A right-to-left sheet is mirrored as a
+                // whole, which already puts it there.
+                _ if rtl && !geo.rtl && crate::bidi::starts_rtl(&text) => HAlign::Right,
                 _ => HAlign::Left,
             },
             h => h,
@@ -989,7 +997,13 @@ pub(crate) fn paint_quadrant(
         // Rotated text wraps along its own direction (below), not across the column width.
         if !rotated && (st.align.wrap || st.align.h == HAlign::Justify) {
             let wrap_w = (rect.width() - 2.0 * pad - indent).max(4.0);
-            let mut job = egui::text::LayoutJob::simple(text.clone(), font.clone(), color, wrap_w);
+            let mut job = if rtl {
+                // Break lines in reading order first, then put each line in display order.
+                let lines = crate::bidi::wrap(&text, wrap_w, |s| p.layout_no_wrap(s.to_string(), font.clone(), color).size().x);
+                crate::bidi::layout_job(&lines, font.clone(), color)
+            } else {
+                egui::text::LayoutJob::simple(text.clone(), font.clone(), color, wrap_w)
+            };
             job.halign = match halign {
                 HAlign::Center | HAlign::CenterAcross => egui::Align::Center,
                 HAlign::Right => egui::Align::RIGHT,
@@ -1013,7 +1027,11 @@ pub(crate) fn paint_quadrant(
             .flatten();
         let shrunk = small.is_some();
         let font = small.unwrap_or(font);
-        let mut galley = p.layout_no_wrap(first_line.clone(), font.clone(), color);
+        let mut galley = if rtl {
+            p.layout_job(crate::bidi::layout_job(&first_line, font.clone(), color))
+        } else {
+            p.layout_no_wrap(first_line.clone(), font.clone(), color)
+        };
         let mut w = galley.size().x;
         // Numbers and dates never overflow: they show #### when too narrow.
         if !shrunk && (numeric || matches!(v, Value::Number(_))) && w > avail_w - 2.0 * pad && st.align.h != HAlign::Fill {

@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~25 points of "ready for real work" and ~160–240 h away
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (password-encrypted workbooks open, #11) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (Arabic cell text reads right to left) · **Target:** Microsoft Excel (Microsoft 365)
 
 GridCraft aims at full Microsoft Excel parity, and at being better in places: faster, open (XLSX
 is the native format), fully scriptable by agents (MCP, control channel, CLI), and on the web.
@@ -42,8 +42,8 @@ long `.xls` track, so about half parallelizes (≈30–50 wall-clock hours with 
 
 Why alpha: all six core workflows in the [alpha gate](docs/roadmap.md#alpha-gate) pass end to end on macOS with save and reopen, and the core workflow works end to end (open an XLSX, enter formulas and data, format, sort
 and filter, chart, pivot, print to PDF, save XLSX), but users still hit blocking gaps on real
-files: 100 MB workbooks don't open (#175), there's no `.xls` (#121), Arabic and Devanagari text
-isn't shaped (Chinese text still reported in #142), charts lose their type and options on round trip, and
+files: 100 MB workbooks don't open (#175), there's no `.xls` (#121), Arabic text is right to left
+in cells only (Chinese text still reported in #142), charts lose their type and options on round trip, and
 nobody has yet confirmed that Excel opens our output without a repair prompt across a real
 corpus. Beta needs those closed (see [beta gates](docs/roadmap.md#beta-gates)).
 
@@ -102,8 +102,8 @@ Localized German formulas and numbers are in PR #163. Detail: [localization-pari
 | Simplified Chinese | zh-Hans | menus only | ~12% |
 | Spanish | es | none | 0% |
 | Hindi | hi | none | 0% |
-| Arabic | ar | none (no RTL layout, no shaping) | 0% |
-| French | fr | none | 0% |
+| Arabic | ar | none (cells, sheet tabs and formula bar right to left, not while editing; no RTL UI) | 0% |
+| French | fr | menus only | ~17% |
 | Portuguese | pt-BR | menus only | ~12% |
 | Indonesian | id | none | 0% |
 | Japanese | ja | menus only | ~12% |
@@ -132,6 +132,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
+| 2026-10-12 | Arabic and Hebrew cell text reads right to left: numbers keep their digit order and mixed Latin/Arabic lines are ordered correctly (Unicode Bidirectional Algorithm), wrapped cells too |
 | 2026-10-11 | Command-sequence fuzzing: random command sequences checked against undo/redo, XLSX round-trip and full recalculation; fixes for the table, legacy-array, spill, AutoSum, Watch Window and sheet-copy bugs it found |
 | 2026-10-11 | Password-protected workbooks open: GridCraft asks for the password and decrypts Agile and Standard encryption (#11) |
 | 2026-10-11 | Text boxes keep their formatting: run size, bold, italic, typeface, text colour and outline, alignment, vertical anchor and "no outline" (#377) |
@@ -177,6 +178,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Bidirectional cell text; Arabic language row; progress log row |
 | 2026-10-11 | minor | Password-encrypted workbooks open (#11); progress log row |
 | 2026-10-11 | minor | Forecast Sheet (#322); progress log row |
 | 2026-10-11 | minor | Worksheet functions 505 / 523 (ODD* bond functions); progress log row |
