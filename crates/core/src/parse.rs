@@ -68,7 +68,7 @@ fn parse_numeric(t: &str, sys: DateSystem) -> Option<(f64, Option<&'static str>)
 fn parse_plain(t: &str) -> Option<(f64, Option<&'static str>)> {
     let mut s = t;
     let mut neg = false;
-    let mut currency = false;
+    let mut currency = None;
     let mut percent = false;
     if let Some(r) = s.strip_prefix('-') {
         neg = true;
@@ -76,8 +76,8 @@ fn parse_plain(t: &str) -> Option<(f64, Option<&'static str>)> {
     } else if let Some(r) = s.strip_prefix('+') {
         s = r.trim_start();
     }
-    if let Some(r) = s.strip_prefix('$') {
-        currency = true;
+    if let Some((symbol, r)) = s.strip_prefix('$').map(|r| ('$', r)).or_else(|| s.strip_prefix('£').map(|r| ('£', r))) {
+        currency = Some(symbol);
         s = r.trim_start();
         if !neg && let Some(r2) = s.strip_prefix('-') {
             neg = true;
@@ -127,8 +127,13 @@ fn parse_plain(t: &str) -> Option<(f64, Option<&'static str>)> {
     if neg {
         n = -n;
     }
-    let fmt = if currency {
-        Some(if digits.contains('.') { "\"$\"#,##0.00" } else { "\"$\"#,##0" })
+    let fmt = if let Some(symbol) = currency {
+        Some(match (symbol, digits.contains('.')) {
+            ('£', true) => "\"£\"#,##0.00",
+            ('£', false) => "\"£\"#,##0",
+            (_, true) => "\"$\"#,##0.00",
+            (_, false) => "\"$\"#,##0",
+        })
     } else if percent {
         Some(if digits.contains('.') { "0.00%" } else { "0%" })
     } else if sci {
@@ -331,6 +336,26 @@ mod tests {
         assert_eq!(p("1e3").value, Value::Number(1000.0));
         assert_eq!(p("1 1/2").value, Value::Number(1.5));
         assert_eq!(p(".5").value, Value::Number(0.5));
+    }
+
+    #[test]
+    fn pound_currency() {
+        for (input, expected, format) in [
+            ("£5", 5.0, "\"£\"#,##0"),
+            ("£5.50", 5.5, "\"£\"#,##0.00"),
+            ("£1,234.50", 1234.5, "\"£\"#,##0.00"),
+            ("-£5", -5.0, "\"£\"#,##0"),
+            ("£-5", -5.0, "\"£\"#,##0"),
+            ("(£5)", -5.0, "\"£\"#,##0"),
+        ] {
+            assert_eq!(p(input), Parsed { value: Value::number(expected), format: Some(format) }, "{input}");
+            assert_eq!(parse_number_text(input), Some(expected), "{input} in arithmetic");
+        }
+        assert_eq!(p("'£5"), Parsed { value: Value::text("£5"), format: None });
+        for input in ["£", "£five", "£1,23", "££5"] {
+            assert_eq!(p(input).value, Value::text(input));
+            assert_eq!(parse_number_text(input), None);
+        }
     }
 
     #[test]

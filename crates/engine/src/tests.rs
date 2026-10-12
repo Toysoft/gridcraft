@@ -53,6 +53,27 @@ fn entering_empty_cells_preserves_whole_sheet_formatting() {
 }
 
 #[test]
+fn pound_currency_entry_calculates_and_round_trips() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "£5"})).unwrap();
+    s.execute("cell.set", json!({"cell": "B1", "input": "=A1*2"})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::number(5.0));
+    assert_eq!(v(&s, "B1"), Value::number(10.0));
+    s.execute("cell.set", json!({"cell": "A2", "input": "'£5"})).unwrap();
+    assert_eq!(v(&s, "A2"), Value::text("£5"));
+    s.execute("cell.set", json!({"cell": "B2", "input": "=A2*2"})).unwrap();
+    assert_eq!(v(&s, "B2"), Value::number(10.0));
+    let d = s.doc().unwrap();
+    let sh = d.wb.active().unwrap();
+    let at = CellRef::parse("A1").unwrap();
+    assert_eq!(crate::display::cell_text(&d.wb, sh, at), "£5");
+    let (reopened, _) = gridcraft_xlsx::read_xlsx(&gridcraft_xlsx::write_xlsx(&d.wb).unwrap()).unwrap();
+    let sh = reopened.active().unwrap();
+    assert_eq!(sh.value(at), Value::number(5.0));
+    assert_eq!(crate::display::cell_text(&reopened, sh, at), "£5");
+}
+
+#[test]
 fn pasted_currency_text_keeps_the_number_from_the_clipboard_html() {
     // #257: "Rp10,000.00" copied from Excel for the web / LibreOffice Calc pasted as text. Their
     // clipboard HTML records the number (x:num, sdval); paste keeps it and shows the same text.
