@@ -1223,7 +1223,8 @@ fn paste_special_shortcuts(d: &mut Dialog, ctx: &egui::Context) {
 fn ok_cancel(ui: &mut egui::Ui, confirm: &mut bool, open: &mut bool) {
     ui.add_space(8.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let ok = ui.add(egui::Button::new(egui::RichText::new("   OK   ").color(Color32::WHITE)).fill(crate::theme::Tokens::get(ui.ctx()).accent));
+        let t = crate::theme::Tokens::get(ui.ctx());
+        let ok = ui.add(egui::Button::new(egui::RichText::new("   OK   ").color(t.on_accent)).fill(t.accent));
         if ok.clicked() || ui.input(|i| i.key_pressed(Key::Enter)) {
             *confirm = true;
         }
@@ -1965,7 +1966,7 @@ fn recommended_charts(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, con
         match app.run("insert.chart", params) {
             Ok(r) => {
                 // The new chart is selected, as after inserting any object.
-                app.selected_chart = r.get("chart").and_then(Json::as_u64).and_then(|id| u32::try_from(id).ok());
+                app.select_object_id(r.get("chart").and_then(Json::as_u64).and_then(|id| u32::try_from(id).ok()));
                 *open = false;
             }
             Err(e) => app.message = Some((d.title.clone(), crate::clean_error(&e))),
@@ -2371,8 +2372,8 @@ fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool
     );
     ui.add_space(8.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let solve =
-            ui.add(egui::Button::new(egui::RichText::new("  Solve  ").color(Color32::WHITE)).fill(crate::theme::Tokens::get(ui.ctx()).accent));
+        let t = crate::theme::Tokens::get(ui.ctx());
+        let solve = ui.add(egui::Button::new(egui::RichText::new("  Solve  ").color(t.on_accent)).fill(t.accent));
         if solve.clicked() && !text(d, "objective").trim().is_empty() {
             *confirm = true;
         }
@@ -2425,7 +2426,7 @@ fn spelling(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bo
     let word = it["word"].as_str().unwrap_or("").to_string();
     let cell = it["cell"].as_str().unwrap_or("").to_string();
     ui.label(format!("Not in Dictionary ({cell}):"));
-    ui.label(egui::RichText::new(&word).strong().color(Color32::from_rgb(0xC4, 0x2B, 0x1C)));
+    ui.label(egui::RichText::new(&word).strong().color(crate::theme::Tokens::get(ui.ctx()).danger));
     let sugg: Vec<String> =
         it["suggestions"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
     ui.label("Suggestions:");
