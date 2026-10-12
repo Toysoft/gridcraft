@@ -80,6 +80,8 @@ pub struct Tokens {
     pub sheet_control_text: Color32,
     /// A placeholder fill on the sheet (a picture that has not loaded).
     pub sheet_track: Color32,
+    /// The macro recording dot (Record Macro, the status bar).
+    pub recording: Color32,
 }
 
 /// The eight category colours, in the order of [`Tokens::cat`].
@@ -180,6 +182,7 @@ impl Tokens {
             sheet_control_border: SHEET_CONTROL_BORDER,
             sheet_control_text: SHEET_CONTROL_TEXT,
             sheet_track: SHEET_TRACK,
+            recording: rgb(0xC42B1C),
         }
     }
 
@@ -236,6 +239,7 @@ impl Tokens {
             sheet_control_border: SHEET_CONTROL_BORDER,
             sheet_control_text: SHEET_CONTROL_TEXT,
             sheet_track: SHEET_TRACK,
+            recording: rgb(0xF1705F),
         }
     }
 
@@ -951,6 +955,8 @@ mod contrast_tests {
         add("selection border on sheet", t.sel_border, t.grid_bg, GLYPH);
         add("sheet control text", t.sheet_control_text, t.sheet_control_bg, TEXT);
         add("sheet control border on sheet", t.sheet_control_border, t.grid_bg, GLYPH);
+        add("recording dot on ribbon", t.recording, t.ribbon, GLYPH);
+        add("recording dot on status bar", t.recording, t.status_bar, GLYPH);
         v
     }
 

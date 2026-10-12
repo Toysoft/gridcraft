@@ -23,6 +23,7 @@ pub mod i18n;
 pub mod icons;
 pub mod keymap;
 pub mod keytips;
+pub mod macro_ui;
 pub mod outline;
 pub mod panes;
 pub mod paper_view;
@@ -240,6 +241,8 @@ pub struct SheetApp {
     pub(crate) shots: control::Shots,
     /// Chart selected on the sheet (id).
     pub selected_chart: Option<u32>,
+    /// Automate › Macros: relative recording, recent macros, a macro's question.
+    pub macros: macro_ui::MacroUi,
     pub started: f64,
 }
 
@@ -279,6 +282,7 @@ impl SheetApp {
             keytips: keytips::KeyTips::default(),
             shots: control::Shots::default(),
             selected_chart: None,
+            macros: macro_ui::MacroUi::default(),
             started: now_ms(),
         }
     }
@@ -975,6 +979,7 @@ impl SheetApp {
             });
         }
         dialogs::show(self, &ctx);
+        macro_ui::question_box(self, &ctx);
         widgets::message_box(self, &ctx);
         widgets::toast(self, &ctx);
         control::issue_screenshots(self, &ctx);
@@ -1017,6 +1022,7 @@ impl SheetApp {
         let enabled = self.editor.is_none()
             && self.dialog.is_none()
             && self.message.is_none()
+            && self.macros.question.is_none()
             && self.name_box.is_none()
             && !ctx.text_edit_focused()
             && self.grid.context_menu.is_none()

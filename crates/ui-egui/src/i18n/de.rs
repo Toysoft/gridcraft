@@ -394,6 +394,14 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Dark" => "Dunkel",
         "Sheet Options|View" => "Anzeige",
         "Print" => "Drucken",
+        "Macros" => "Makros",
+        "Record Macro" => "Makro aufzeichnen",
+        "Stop Recording" => "Aufzeichnung beenden",
+        "Use Relative References" => "Relative Verweise verwenden",
+        "Run\nMacro" => "Makro ausführen",
+        "Macros…" => "Makros…",
+        "Recording" => "Aufzeichnung",
+        "Stop" => "Beenden",
         _ => return None,
     })
 }
