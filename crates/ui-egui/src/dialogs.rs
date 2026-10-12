@@ -671,6 +671,32 @@ impl Dialog {
             "sort" => Dialog::custom("sort", "Sort", json!({"header": true, "levels": [{"column": "A", "order": "asc"}]})),
             "nameManager" => Dialog::custom("nameManager", "Name Manager", json!({})),
             "manageRules" => Dialog::custom("manageRules", "Conditional Formatting Rules Manager", json!({})),
+            "scenarioManager" => Dialog::custom("scenarioManager", "Scenario Manager", json!({})),
+            // Add Scenario, or Edit Scenario with `replace` and the scenario's own fields.
+            "scenarioAdd" => {
+                let text = |k: &str| p(k).as_str().map(str::to_string);
+                let edit = p("replace").as_bool() == Some(true);
+                Dialog::custom(
+                    "scenarioAdd",
+                    if edit { "Edit Scenario" } else { "Add Scenario" },
+                    json!({
+                        "name": text("name").unwrap_or_default(),
+                        "oldName": text("name").unwrap_or_default(),
+                        "changing": text("changing").unwrap_or_else(|| sel.clone()),
+                        "oldChanging": text("changing").unwrap_or_default(),
+                        "comment": text("comment").unwrap_or_default(),
+                        "values": p("values"),
+                        "replace": edit,
+                    }),
+                )
+            }
+            "scenarioSummary" => Dialog::form(
+                "scenarioSummary",
+                "Scenario Summary",
+                "data.scenarioSummary",
+                vec![Text { key: "resultCells", label: "Result cells:" }],
+                json!({"resultCells": p("resultCells").as_str().map(str::to_string).unwrap_or_else(|| sel.clone())}),
+            ),
             "commandSearch" => Dialog::custom("commandSearch", "Search Commands", json!({})),
             "agents" => Dialog::custom("agents", "Agent Control", json!({})),
             "about" => {
@@ -1030,6 +1056,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "formatCells" => 560.0,
         "about" => 660.0,
         "insertFunction" | "commandSearch" | "nameManager" | "manageRules" | "journal" | "agents" | "macros" => 520.0,
+        "scenarioManager" => 460.0,
         "recommendedCharts" => 600.0,
         "analysisToolPak" => 420.0,
         "solver" => 460.0,
@@ -1054,6 +1081,8 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "sort" => sort(app, ui, &mut d, &mut confirm),
                 "nameManager" => name_manager(app, ui, &mut d, &mut open),
                 "manageRules" => manage_rules(app, ui),
+                "scenarioManager" => scenario_manager(app, ui, &mut d, &mut open),
+                "scenarioAdd" => scenario_add(app, ui, &mut d, &mut confirm, &mut open),
                 "recommendedCharts" => recommended_charts(app, ui, &mut d, &mut confirm, &mut open),
                 "selectData" => select_data(app, ui, &mut d, &mut confirm, &mut open),
                 "commandSearch" => command_search(app, ui, &mut d, &mut confirm),
@@ -2235,6 +2264,226 @@ fn manage_rules(app: &mut SheetApp, ui: &mut egui::Ui) {
                 app.run_or_alert("home.manageRules", json!({"delete": i}));
             }
         });
+    }
+}
+
+/// Data › What-If Analysis › Scenario Manager: the active sheet's scenarios, with Show, Add…,
+/// Edit…, Delete and Summary… as in Excel. Everything goes through the `data.scenario*` commands;
+/// the list is read with the (unjournaled) `data.scenarioManager` query.
+fn scenario_manager(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool) {
+    let list = app.session.run("data.scenarioManager", json!({})).unwrap_or(Json::Null);
+    let scenarios = list["scenarios"].as_array().cloned().unwrap_or_default();
+    d.list_index = d.list_index.min(scenarios.len().saturating_sub(1));
+    let selected = scenarios.get(d.list_index).cloned();
+    let field = |s: &Json, k: &str| s.get(k).and_then(Json::as_str).unwrap_or("").to_string();
+    let name = selected.as_ref().map(|s| field(s, "name")).unwrap_or_default();
+    let mut show = false;
+    ui.label("Scenarios:");
+    ui.horizontal_top(|ui| {
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.set_min_size(vec2(280.0, 150.0));
+            egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
+                // One scenario per line, as wide as the list.
+                ui.vertical(|ui| {
+                    ui.set_min_width(280.0);
+                    if scenarios.is_empty() {
+                        ui.label(egui::RichText::new("No Scenarios defined. Choose Add to add scenarios.").italics());
+                    }
+                    for (i, s) in scenarios.iter().enumerate() {
+                        let r = ui.selectable_label(i == d.list_index, field(s, "name"));
+                        if r.clicked() {
+                            d.list_index = i;
+                        }
+                        // Double-clicking a scenario shows it, as in Excel.
+                        if r.double_clicked() {
+                            d.list_index = i;
+                            show = true;
+                        }
+                    }
+                });
+            });
+        });
+        ui.vertical(|ui| {
+            let button = |ui: &mut egui::Ui, enabled: bool, label: &str| ui.add_enabled(enabled, egui::Button::new(label).min_size(vec2(96.0, 0.0))).clicked();
+            if button(ui, selected.is_some(), "Show") {
+                show = true;
+            }
+            if button(ui, true, "Add…") {
+                app.open_dialog("scenarioAdd", json!({}));
+            }
+            if button(ui, selected.is_some(), "Edit…")
+                && let Some(s) = &selected
+            {
+                app.open_dialog(
+                    "scenarioAdd",
+                    json!({"name": field(s, "name"), "changing": field(s, "changing"), "comment": field(s, "comment"), "values": s["values"], "replace": true}),
+                );
+            }
+            if button(ui, selected.is_some(), "Delete") {
+                app.run_or_alert("data.scenarioDelete", json!({"name": name}));
+            }
+            // The report replaces the manager, which Excel closes too.
+            if button(ui, !scenarios.is_empty(), "Summary…") {
+                *open = false;
+                app.open_dialog("scenarioSummary", json!({}));
+            }
+        });
+    });
+    if show {
+        let name = scenarios.get(d.list_index).map(|s| field(s, "name")).unwrap_or_default();
+        app.run_or_alert("data.scenarioShow", json!({"name": name}));
+    }
+    ui.add_space(6.0);
+    egui::Grid::new("scenarioDetails").num_columns(2).spacing(vec2(8.0, 4.0)).show(ui, |ui| {
+        ui.label("Changing cells:");
+        ui.label(selected.as_ref().map(|s| field(s, "changing")).unwrap_or_default());
+        ui.end_row();
+        ui.label("Comment:");
+        ui.label(selected.as_ref().map(|s| field(s, "comment")).unwrap_or_default());
+        ui.end_row();
+    });
+    ui.add_space(8.0);
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        if ui.button(" Close ").clicked() {
+            *open = false;
+        }
+    });
+}
+
+/// The changing cells of `text` (`B2:B4`, `C4,D7`, `$C$4`; a sheet prefix is the engine's to
+/// check), in order, or `None` if a part isn't a reference or there are more than 32.
+fn scenario_cells(text: &str) -> Option<Vec<gridcraft_engine::core::CellRef>> {
+    let mut cells = Vec::new();
+    for part in text.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+        let part = part.rsplit_once('!').map_or(part, |(_, r)| r).replace('$', "");
+        let r = gridcraft_engine::core::RangeRef::parse(&part)?;
+        if u64::from(r.height()) * u64::from(r.width()) > 32 {
+            return None;
+        }
+        for row in r.start.row..=r.end.row {
+            for col in r.start.col..=r.end.col {
+                cells.push(gridcraft_engine::core::CellRef::new(row, col));
+            }
+        }
+    }
+    (!cells.is_empty() && cells.len() <= 32).then_some(cells)
+}
+
+/// A scenario value as the Scenario Values dialog shows it (numbers without a trailing `.0`).
+fn scenario_value_text(v: &Json) -> String {
+    match v {
+        Json::Number(n) => match n.as_f64() {
+            Some(x) if x.fract() == 0.0 && x.abs() < 1e15 => format!("{}", x as i64),
+            Some(x) => format!("{x}"),
+            None => n.to_string(),
+        },
+        Json::Bool(b) => if *b { "TRUE" } else { "FALSE" }.into(),
+        Json::String(s) => s.clone(),
+        _ => String::new(),
+    }
+}
+
+/// Add / Edit Scenario, then Scenario Values, as in Excel: name, changing cells and comment first;
+/// OK asks for a value for each changing cell, prefilled with the scenario's own values (when
+/// editing the same cells) or the cells' current values, and adds the scenario.
+fn scenario_add(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+    let get = |d: &Dialog, k: &str| d.values.get(k).and_then(Json::as_str).unwrap_or("").to_string();
+    if d.tab != "values" {
+        let (mut name, mut changing, mut comment) = (get(d, "name"), get(d, "changing"), get(d, "comment"));
+        egui::Grid::new("scenarioAdd").num_columns(2).spacing(vec2(8.0, 6.0)).show(ui, |ui| {
+            ui.label("Scenario name:");
+            ui.text_edit_singleline(&mut name);
+            ui.end_row();
+            ui.label("Changing cells:");
+            ui.text_edit_singleline(&mut changing);
+            ui.end_row();
+            ui.label("Comment:");
+            ui.add(egui::TextEdit::multiline(&mut comment).desired_rows(3));
+            ui.end_row();
+        });
+        ui.label(egui::RichText::new("Separate changing cells with commas (32 at most).").small());
+        d.values.insert("name".into(), json!(name.clone()));
+        d.values.insert("changing".into(), json!(changing.clone()));
+        d.values.insert("comment".into(), json!(comment));
+        ok_cancel(ui, confirm, open);
+        if !*confirm {
+            return;
+        }
+        // OK moves on to the values; the dialog stays open.
+        *confirm = false;
+        let cells = scenario_cells(&changing);
+        let Some(cells) = cells.filter(|_| !name.trim().is_empty()) else {
+            app.message = Some((d.title.clone(), "Give the scenario a name and its changing cells, e.g. B2:B4 or C4,D7 (32 cells at most).".into()));
+            return;
+        };
+        let own = d.values.get("values").and_then(Json::as_array).cloned().unwrap_or_default();
+        let keep = get(d, "oldChanging") == changing && own.len() == cells.len();
+        let inputs: Vec<String> = cells
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                if keep {
+                    return own.get(i).map(scenario_value_text).unwrap_or_default();
+                }
+                app.session
+                    .active()
+                    .and_then(|doc| {
+                        let sh = doc.wb.active()?;
+                        Some(gridcraft_engine::display::format(&sh.value(*c), "General", &doc.wb).text)
+                    })
+                    .unwrap_or_default()
+            })
+            .collect();
+        d.values.insert(
+            "cells".into(),
+            json!(cells.iter().map(|c| format!("${}${}", gridcraft_engine::core::col_to_letters(c.col), c.row + 1)).collect::<Vec<_>>()),
+        );
+        d.values.insert("inputs".into(), json!(inputs));
+        d.tab = "values".into();
+        d.title = "Scenario Values".into();
+        return;
+    }
+    let cells: Vec<String> =
+        d.values.get("cells").and_then(Json::as_array).map(|a| a.iter().filter_map(Json::as_str).map(str::to_string).collect()).unwrap_or_default();
+    let mut inputs: Vec<String> =
+        d.values.get("inputs").and_then(Json::as_array).map(|a| a.iter().map(scenario_value_text).collect()).unwrap_or_default();
+    inputs.resize(cells.len(), String::new());
+    ui.label("Enter values for each of the changing cells.");
+    egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+        egui::Grid::new("scenarioValues").num_columns(2).spacing(vec2(8.0, 6.0)).show(ui, |ui| {
+            for (i, (cell, input)) in cells.iter().zip(inputs.iter_mut()).enumerate() {
+                ui.label(format!("{}:  {cell}", i + 1));
+                ui.text_edit_singleline(input);
+                ui.end_row();
+            }
+        });
+    });
+    d.values.insert("inputs".into(), json!(inputs.clone()));
+    ok_cancel(ui, confirm, open);
+    if !*confirm {
+        return;
+    }
+    *confirm = false;
+    let name = get(d, "name").trim().to_string();
+    let old = get(d, "oldName");
+    let edit = d.values.get("replace").and_then(Json::as_bool).unwrap_or(false);
+    // Editing under a new name adds the renamed scenario first and only then deletes the old one.
+    let renamed = edit && !old.eq_ignore_ascii_case(&name);
+    let params = json!({
+        "name": name,
+        "changing": cells.iter().map(|c| c.replace('$', "")).collect::<Vec<_>>().join(","),
+        "comment": get(d, "comment"),
+        "values": inputs,
+        "replace": edit && !renamed,
+    });
+    match app.run("data.scenarioAdd", params) {
+        Ok(_) => {
+            if renamed {
+                app.run_or_alert("data.scenarioDelete", json!({"name": old}));
+            }
+            *open = false;
+        }
+        Err(e) => app.message = Some((d.title.clone(), crate::clean_error(&e))),
     }
 }
 
