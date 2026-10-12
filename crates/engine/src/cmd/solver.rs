@@ -59,7 +59,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Solver…",
             ["Data", "Analysis"],
             None,
-            "{objective: \"B10\" (formula cell), goal?: max|min|value (default max), value?: number (for goal value), variables: \"B2:B4,D1\" (≤200 constant cells, same sheet), constraints?: [\"B5 <= 10\", \"B2:B4 >= C2:C4\", \"B2 int\", \"B3 bin\", {lhs: \"B6\", op: \"=\", rhs: 3 | \"C6\"}], nonNegative?: bool (default true: variables without a lower bound get 0), method?: grg|simplex|evolutionary (default grg), populationSize?: 100, mutationRate?: 0.075, randomSeed?: 0 (a fixed seed, so runs repeat), convergence?: 0.0001, generationsWithoutImprovement?: 50, requireBounds?: bool (default true: every variable needs both bounds; false searches within ±100 of the start) (Evolutionary options), keep?: bool (default true; false restores the original values), saveModel?: bool (default true: hidden solver_* names), maxEvaluations?: 20000, integerOptimality?: percent (default 0), saved?: bool (solve the sheet's saved model; other params override), reports?: [answer|sensitivity|limits] (written on new sheets when a solution is found)} → {status: optimal|converged|cannotImprove|iterationLimit|infeasible|unbounded|notLinear, message, objective, values: {cell: value}, original: {cell: value}, model: the model as params, evaluations, changed, reports?: [sheet names]}. No `objective` → {model: the saved model} (the menu opens the dialog).",
+            "{objective: \"B10\" (formula cell), goal?: max|min|value (default max), value?: number (for goal value), variables: \"B2:B4,D1\" (≤200 constant cells, same sheet), constraints?: [\"B5 <= 10\", \"B2:B4 >= C2:C4\", \"B2 int\", \"B3 bin\", {lhs: \"B6\", op: \"=\", rhs: 3 | \"C6\"}], nonNegative?: bool (default true: variables without a lower bound get 0), method?: grg|simplex|evolutionary (default grg), populationSize?: 100, mutationRate?: 0.075, randomSeed?: 0 (a fixed seed, so runs repeat), convergence?: 0.0001, generationsWithoutImprovement?: 50, requireBounds?: bool (default true: every variable needs both bounds; false searches within ±100 of the start) (Evolutionary options), keep?: bool (default true; false restores the original values), saveModel?: bool (default true: hidden solver_* names, with the options), maxEvaluations?: 20000 (at most 200000), integerOptimality?: percent (default 0), saved?: bool (solve the sheet's saved model; other params override), reports?: [answer|sensitivity|limits] (written on new sheets when a solution is found)} → {status: optimal|converged|cannotImprove|iterationLimit|infeasible|unbounded|notLinear, message, objective, values: {cell: value}, original: {cell: value}, model: the model as params, evaluations, changed, reports?: [sheet names]}. No `objective` → {model: the saved model} (the menu opens the dialog).",
             has_doc,
             run
         ),
@@ -77,7 +77,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Save Model",
             [],
             None,
-            "{to: \"H1\" (the first cell, on the model's sheet), model?: data.solver params (default the sheet's saved model)} → {range}. Writes the model down a column as formulas: =MAX(objective), =MIN(objective) or =objective=value; =COUNT(variables); one =AND(relation) per constraint (=AND(x=INT(x)) for integer, =AND((x=0)+(x=1)) for binary), which shows TRUE while it holds; and the options as an array constant {method (1 GRG Nonlinear, 2 Simplex LP, 3 Evolutionary), non-negative (1 yes, 2 no), population size, mutation rate, random seed, require bounds (1 yes, 2 no), convergence, generations without improvement}.",
+            "{to: \"H1\" (the first cell, on the model's sheet), model?: data.solver params (default the sheet's saved model)} → {range}. Writes the model down a column as formulas: =MAX(objective), =MIN(objective) or =objective=value; =COUNT(variables); one =AND(relation) per constraint (=AND(x=INT(x)) for integer, =AND((x=0)+(x=1)) for binary), which shows TRUE while it holds; and the options as an array constant {method (1 GRG Nonlinear, 2 Simplex LP, 3 Evolutionary), non-negative (1 yes, 2 no), population size, mutation rate, random seed, require bounds (1 yes, 2 no), convergence, generations without improvement, maximum evaluations, integer optimality %}.",
             has_doc,
             save_model_cells
         ),
@@ -219,6 +219,10 @@ struct Model {
     non_negative: bool,
     method: Method,
     evo: EvoOptions,
+    /// The evaluation limit (in place of Excel's iterations and time limits).
+    max_evals: u64,
+    /// Integer Optimality, as a fraction.
+    gap: f64,
 }
 
 /// Cells of `"B2:B4,D1"` on one sheet (row-major per area, in order), at most `cap`.
@@ -379,7 +383,10 @@ fn parse_model(s: &Session, p: &Json) -> Result<Model> {
         "evolutionary" | "evo" | "genetic" => Method::Evolutionary,
         m => return Err(bad(CMD, format!("unknown method `{m}` (grg, simplex or evolutionary)"))),
     };
-    Ok(Model { sheet, objective, goal, vars, vars_text, cons, non_negative, method, evo: evo_options(p) })
+    let num = |k: &str| p.get(k).and_then(Json::as_f64).or_else(|| str_param(p, k).and_then(num_text)).filter(|v| v.is_finite());
+    let max_evals = num("maxEvaluations").filter(|v| *v >= 1.0).map_or(DEFAULT_EVALS, |v| (v as u64).min(MAX_EVALS));
+    let gap = num("integerOptimality").map_or(0.0, |v| v.clamp(0.0, 100.0) / 100.0);
+    Ok(Model { sheet, objective, goal, vars, vars_text, cons, non_negative, method, evo: evo_options(p), max_evals, gap })
 }
 
 // ---------------------------------------------------------------- saved model
@@ -445,11 +452,17 @@ fn save_model(wb: &mut Workbook, m: &Model) {
         Method::Evolutionary => "3",
     };
     put("solver_eng".into(), eng.into());
+    // The evaluation limit stands in for the iteration limit, and generations for the time
+    // without improvement.
+    put("solver_itr".into(), m.max_evals.to_string());
+    put("solver_tol".into(), m.gap.to_string());
     if m.method == Method::Evolutionary {
         put("solver_ssz".into(), m.evo.population.to_string());
         put("solver_mrt".into(), m.evo.mutation.to_string());
         put("solver_rsd".into(), m.evo.seed.to_string());
         put("solver_rbv".into(), if m.evo.require_bounds { "1" } else { "2" }.into());
+        put("solver_cvg".into(), m.evo.convergence.to_string());
+        put("solver_mni".into(), m.evo.stall.to_string());
     }
     put("solver_ver".into(), "3".into());
 }
@@ -503,10 +516,20 @@ pub fn saved_model(wb: &Workbook, sheet: usize) -> Option<Json> {
         "nonNegative": get("solver_neg").as_deref().map(str::trim) != Some("2"),
         "method": method,
     });
-    for (name, key) in [("solver_ssz", "populationSize"), ("solver_mrt", "mutationRate"), ("solver_rsd", "randomSeed")] {
+    for (name, key) in [
+        ("solver_ssz", "populationSize"),
+        ("solver_mrt", "mutationRate"),
+        ("solver_rsd", "randomSeed"),
+        ("solver_cvg", "convergence"),
+        ("solver_mni", "generationsWithoutImprovement"),
+        ("solver_itr", "maxEvaluations"),
+    ] {
         if let Some(v) = get(name).and_then(|v| num_text(&v)) {
             model[key] = json!(v);
         }
+    }
+    if let Some(v) = get("solver_tol").and_then(|v| num_text(&v)) {
+        model["integerOptimality"] = json!(v * 100.0);
     }
     if let Some(v) = get("solver_rbv") {
         model["requireBounds"] = json!(v.trim() != "2");
@@ -544,6 +567,8 @@ fn model_params(wb: &Workbook, m: &Model) -> Json {
         "constraints": constraints,
         "nonNegative": m.non_negative,
         "method": method,
+        "maxEvaluations": m.max_evals,
+        "integerOptimality": m.gap * 100.0,
     });
     if m.method == Method::Evolutionary {
         let e = &m.evo;
@@ -592,14 +617,16 @@ fn model_formulas(m: &Model) -> Result<Vec<String>> {
     };
     let yes = |b: bool| if b { 1 } else { 2 };
     rows.push(format!(
-        "={{{eng},{},{},{},{},{},{},{}}}",
+        "={{{eng},{},{},{},{},{},{},{},{},{}}}",
         yes(m.non_negative),
         e.population,
         n(e.mutation),
         e.seed,
         yes(e.require_bounds),
         n(e.convergence),
-        e.stall
+        e.stall,
+        m.max_evals,
+        n(m.gap * 100.0)
     ));
     Ok(rows)
 }
@@ -642,8 +669,15 @@ fn parse_model_formulas(rows: &[String]) -> Result<Json> {
                 _ => "grg",
             });
             model["nonNegative"] = json!(get(1) != Some(2.0));
-            for (k, key) in [(2, "populationSize"), (3, "mutationRate"), (4, "randomSeed"), (6, "convergence"), (7, "generationsWithoutImprovement")]
-            {
+            for (k, key) in [
+                (2, "populationSize"),
+                (3, "mutationRate"),
+                (4, "randomSeed"),
+                (6, "convergence"),
+                (7, "generationsWithoutImprovement"),
+                (8, "maxEvaluations"),
+                (9, "integerOptimality"),
+            ] {
                 if let Some(x) = get(k) {
                     model[key] = json!(x);
                 }
@@ -2559,11 +2593,7 @@ fn report(s: &mut Session, p: &Json) -> Result<Json> {
     };
     let solution = point("values")?;
     let original = if p.get("original").is_some() { point("original")? } else { solution.clone() };
-    let budget = params
-        .get("maxEvaluations")
-        .and_then(Json::as_f64)
-        .filter(|v| v.is_finite() && *v >= 1.0)
-        .map_or(DEFAULT_EVALS, |v| (v as u64).min(MAX_EVALS));
+    let budget = model.max_evals;
     let message = str_param(p, "message").unwrap_or("").chars().take(500).collect();
     let inp = ReportInput { model: &model, prob: &prob, original, solution, message, budget };
     let sheets = write_reports(s, &kinds, &inp)?;
@@ -2593,12 +2623,7 @@ fn run(s: &mut Session, p: &Json) -> Result<Json> {
         return Ok(json!({"model": model}));
     }
     let model = parse_model(s, &params)?;
-    let budget = params
-        .get("maxEvaluations")
-        .and_then(Json::as_f64)
-        .filter(|v| v.is_finite() && *v >= 1.0)
-        .map_or(DEFAULT_EVALS, |v| (v as u64).min(MAX_EVALS));
-    let gap = params.get("integerOptimality").and_then(Json::as_f64).filter(|v| v.is_finite()).map_or(0.0, |v| v.clamp(0.0, 100.0) / 100.0);
+    let (budget, gap) = (model.max_evals, model.gap);
     let keep = bool_param(&params, "keep").unwrap_or(true);
     let save = bool_param(&params, "saveModel").unwrap_or(true);
     let reports = report_kinds(CMD, &params)?;
@@ -3116,7 +3141,7 @@ mod tests {
                 "AND($A$1:$A$2=INT($A$1:$A$2))",
                 "AND(($A$2=0)+($A$2=1))",
                 "AND($A$1>=1)",
-                "{2,1,100,0.075,0,1,0.0001,50}",
+                "{2,1,100,0.075,0,1,0.0001,50,20000,0}",
             ]
         );
         // The constraint cells show whether each constraint holds at the solution (4, 0).
@@ -3168,6 +3193,25 @@ mod tests {
         }
         s.execute("data.solverReset", json!({})).unwrap();
         assert!(s.execute("data.solverSaveModel", json!({"to": "H1"})).is_err(), "no model to save");
+    }
+
+    #[test]
+    fn solver_options_are_saved_with_the_model() {
+        let mut s = s();
+        set(&mut s, &[("B1", "=10*A1+13*A2"), ("B2", "=5*A1+6*A2")]);
+        let p = json!({"objective": "B1", "variables": "A1:A2", "constraints": ["B2 <= 10", "A1:A2 bin"], "method": "evolutionary", "maxEvaluations": "3000", "integerOptimality": 5, "convergence": 0.001, "generationsWithoutImprovement": 20, "mutationRate": "0.1"});
+        let r = s.execute("data.solver", p).unwrap();
+        assert!(r["evaluations"].as_u64().unwrap() <= 3001, "{r}");
+        // The options survive XLSX in the hidden names, as given or as text.
+        let b64 = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap()["base64"].as_str().unwrap().to_string();
+        s.execute("file.open", json!({"name": "o.xlsx", "base64": b64})).unwrap();
+        let m = s.execute("data.solver", json!({})).unwrap()["model"].clone();
+        let f = |k: &str| m[k].as_f64();
+        assert_eq!((f("maxEvaluations"), f("integerOptimality"), f("convergence")), (Some(3000.0), Some(5.0), Some(0.001)), "{m}");
+        assert_eq!((f("generationsWithoutImprovement"), f("mutationRate")), (Some(20.0), Some(0.1)));
+        // Out-of-range options are clamped, not refused.
+        let r = s.execute("data.solver", json!({"saved": true, "maxEvaluations": "1e300", "integerOptimality": -4})).unwrap();
+        assert_eq!((r["model"]["maxEvaluations"].as_f64(), r["model"]["integerOptimality"].as_f64()), (Some(200_000.0), Some(0.0)));
     }
 
     #[test]

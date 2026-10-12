@@ -107,8 +107,8 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 ### 13. Analysis tools: Solver, Analysis ToolPak, Forecast Sheet (F)
 - Solver (`data.solver`, #327) has Simplex LP with integer/binary branch and bound, a local
   nonlinear method (augmented Lagrangian, not GRG), the Evolutionary method, Answer,
-  Sensitivity and Limits reports, and Load/Save Model and Reset All; AllDifferent constraints,
-  the Solver Options dialog and the Population report remain. The Analysis ToolPak
+  Sensitivity and Limits reports, Load/Save Model and Reset All, and Solver Options;
+  AllDifferent constraints and the Population report remain. The Analysis ToolPak
   (`data.analysisToolPak`) has 13 of 19 tools. Forecast Sheet (`data.forecastSheet`) and the
   FORECAST.ETS family are in; the sheet has no Forecast Start (hindcast) option yet. **Estimate:** 12–20 h.
 
