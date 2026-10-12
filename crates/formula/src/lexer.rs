@@ -56,6 +56,7 @@ fn is_word_char(c: char) -> bool {
 /// `[1]Prices!`, `[1]Jan:Dec!` or `[1]!` (before a linked workbook's name) at `i`: the position of
 /// the `!` after a linked workbook's index and unquoted sheet names, and of the `:` between the two
 /// sheets of a sheet range (MS-XLSX `sheet-range = [workbook-index] sheet-name ":" sheet-name`).
+/// As typed, the brackets can hold the workbook's file name instead (`[Source.xlsx]Sheet1!`).
 fn external_sheet_end(chars: &[(usize, char)], i: usize) -> Option<(usize, Option<usize>)> {
     let ch = |k: usize| chars.get(k).map(|c| c.1);
     let word_end = |mut k: usize| {
@@ -65,7 +66,7 @@ fn external_sheet_end(chars: &[(usize, char)], i: usize) -> Option<(usize, Optio
         k
     };
     let mut j = i + 1;
-    while ch(j).is_some_and(|c| c.is_ascii_digit()) {
+    while ch(j).is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '.')) {
         j += 1;
     }
     if j == i + 1 || ch(j) != Some(']') {
@@ -170,7 +171,11 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                 if ch(j) != Some('!') {
                     return Err(LexError { msg: "expected ! after sheet name".into(), pos: pos_of(j) });
                 }
-                let (a, b) = match s.split_once(':') {
+                // A linked workbook's path (`'C:\links\[Source.xlsx]Sheet1'`) can hold a drive's
+                // colon. Sheet names can't hold `\` or `/`, so a sheet range's colon comes after them.
+                let after = s.rfind(['\\', '/']).map_or(0, |k| k + 1);
+                let colon = s.get(after..).and_then(|t| t.find(':')).map(|k| k + after);
+                let (a, b) = match colon.and_then(|k| Some((s.get(..k)?, s.get(k + 1..)?))) {
                     Some((a, b)) => (a.to_string(), Some(b.to_string())),
                     None => (s, None),
                 };

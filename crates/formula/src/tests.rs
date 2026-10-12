@@ -102,6 +102,39 @@ fn linked_workbook_sheet_ranges_round_trip() {
 }
 
 #[test]
+fn another_workbook_by_file_name_or_path_parses() {
+    // Typed references to a workbook that isn't linked yet: the file name in brackets, with or
+    // without its folder. A drive's `C:` isn't the colon of a sheet range.
+    let named = |s: &str| SheetSel::Named(s.into());
+    for (src, sheet, printed) in [
+        ("[Source.xlsx]Sheet1!A1", named("[Source.xlsx]Sheet1"), "[Source.xlsx]Sheet1!A1"),
+        ("'[Source.xlsx]Sheet1'!A1", named("[Source.xlsx]Sheet1"), "[Source.xlsx]Sheet1!A1"),
+        ("'[Source.xlsx]P&L Data'!A1", named("[Source.xlsx]P&L Data"), "'[Source.xlsx]P&L Data'!A1"),
+        (r"'C:\links\[Source.xlsx]Sheet1'!A1", named(r"C:\links\[Source.xlsx]Sheet1"), r"'C:\links\[Source.xlsx]Sheet1'!A1"),
+        (r"SUM('C:\links\[Source.xlsx]Sheet1'!A1:A3)", named(r"C:\links\[Source.xlsx]Sheet1"), r"SUM('C:\links\[Source.xlsx]Sheet1'!A1:A3)"),
+        (r"'C:\links\[Source.xlsx]P&L Data'!A1", named(r"C:\links\[Source.xlsx]P&L Data"), r"'C:\links\[Source.xlsx]P&L Data'!A1"),
+        (
+            r"SUM('C:\links\[Source.xlsx]Jan:Dec'!A1)",
+            SheetSel::Span(r"C:\links\[Source.xlsx]Jan".into(), "Dec".into()),
+            r"SUM('C:\links\[Source.xlsx]Jan:Dec'!A1)",
+        ),
+    ] {
+        let e = parse(src).unwrap_or_else(|e| panic!("{src}: {e}"));
+        let first = match &e {
+            Expr::Call(_, args) => args.first(),
+            r => Some(r),
+        };
+        let Some(Expr::Ref(r)) = first else { panic!("{src}: {e:?}") };
+        assert_eq!(r.sheet, sheet, "{src}");
+        assert_eq!(print(&e), printed, "{src}");
+        assert_eq!(parse(printed).ok(), Some(e), "{src} printed as {printed}");
+    }
+    for (src, name) in [("Source.xlsx!Rate", "Source.xlsx!Rate"), (r"'C:\links\Source.xlsx'!Rate", r"C:\links\Source.xlsx!Rate")] {
+        assert_eq!(parse(src).ok(), Some(Expr::Name(name.into())), "{src}");
+    }
+}
+
+#[test]
 fn spill_operator() {
     for f in ["A1#", "Sheet1!$D$1#", "SUM(B2#)", "'My Sheet'!A1#*2", "ROWS(A1#)+1", "IF(A1,#N/A,#REF!)"] {
         assert_eq!(rt(f), f);

@@ -8,10 +8,11 @@ use crate::ast::*;
 
 /// Whether a sheet name needs quotes in a reference.
 pub fn needs_quotes(name: &str) -> bool {
-    // A sheet in a linked workbook, `[1]Prices`: Excel quotes it only when the sheet name needs it.
+    // A sheet in a linked workbook, `[1]Prices` or `[Source.xlsx]Prices`: Excel quotes it only
+    // when the sheet name needs it.
     if let Some((book, sheet)) = name.strip_prefix('[').and_then(|s| s.split_once(']'))
         && !book.is_empty()
-        && book.bytes().all(|b| b.is_ascii_digit())
+        && book.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '.'))
     {
         return sheet_needs_quotes(sheet);
     }
