@@ -114,7 +114,7 @@ number formats are en-US only. PR #163 (German formulas and numbers) is open. De
 | Korean | ko | menus only | ~12% |
 | Vietnamese | vi | none | 0% |
 
-Other shipped languages: 2 (Russian and German, menus only, ~12%).
+Other shipped languages: 3 (Russian, German and Italian, menus only, ~12%).
 
 ## Upcoming
 
