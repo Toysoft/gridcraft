@@ -2281,15 +2281,53 @@ fn delete_selected_object(app: &mut SheetApp, sh: &Sheet) -> bool {
     true
 }
 
+/// URL schemes a cell hyperlink may open. Anything else (`file:`, `smb:`, app handlers such as
+/// `ms-settings:` or `x-apple.systempreferences:`) could start a program or reach another
+/// computer from a single click in a workbook someone sent, so it is refused.
+const LINK_SCHEMES: &[&str] = &["http", "https", "mailto"];
+
+/// What a click on a hyperlink with this target does.
+#[derive(Debug, PartialEq)]
+enum LinkAction<'a> {
+    /// Open this web or email address with the system's default app.
+    Open(&'a str),
+    /// An external address with this (lowercased) scheme, which is not opened.
+    Refuse(String),
+    /// Go to this place in the workbook (`Sheet2!A1`, a defined name).
+    GoTo(&'a str),
+}
+
+fn link_action(target: &str) -> LinkAction<'_> {
+    let target = target.trim();
+    let lower = target.to_ascii_lowercase();
+    if !(target.contains("://") || lower.starts_with("mailto:")) {
+        return LinkAction::GoTo(target.trim_start_matches('#'));
+    }
+    let scheme = target.split_once(':').map(|(s, _)| s.to_ascii_lowercase()).unwrap_or_default();
+    if LINK_SCHEMES.contains(&scheme.as_str()) { LinkAction::Open(target) } else { LinkAction::Refuse(scheme) }
+}
+
 pub fn follow_link(app: &mut SheetApp, target: &str) {
-    if target.contains("://") || target.starts_with("mailto:") {
-        if let Some(f) = &app.services.open_url {
-            f(target);
+    match link_action(target) {
+        LinkAction::Open(url) => {
+            if let Some(f) = &app.services.open_url {
+                f(url);
+            }
         }
-    } else {
-        let t = target.trim_start_matches('#');
-        let _ = app.session.run("edit.goTo", json!({"reference": t}));
-        app.grid.ensure_visible = true;
+        LinkAction::Refuse(scheme) => {
+            log::warn!("hyperlink not opened: {scheme}: address");
+            app.notice = Some(crate::Notice {
+                text: format!(
+                    "GridCraft didn't open this link: \u{201c}{scheme}:\u{201d} links can start programs or connect to other computers. Only web (http, https) and email links open from a cell."
+                ),
+                kind: crate::NoticeKind::Warning,
+                action: None,
+            });
+        }
+        LinkAction::GoTo(reference) => {
+            let _ = app.session.run("edit.goTo", json!({"reference": reference}));
+            app.grid.ensure_visible = true;
+        }
     }
 }
 
@@ -3052,6 +3090,33 @@ mod selection_fill_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_web_and_email_links_open() {
+        for url in [
+            "https://example.com/a?b=c",
+            "http://example.com",
+            "HTTPS://EXAMPLE.COM",
+            "mailto:someone@example.com",
+            "MailTo:x@y.z",
+            "  https://example.com  ",
+        ] {
+            assert_eq!(link_action(url), LinkAction::Open(url.trim()), "{url}");
+        }
+        for (url, scheme) in [
+            ("file:///Applications/Calculator.app", "file"),
+            ("FILE:///C:/Windows/System32/calc.exe", "file"),
+            ("smb://attacker.example/share", "smb"),
+            ("ms-settings://network", "ms-settings"),
+            ("x-apple.systempreferences://com.apple.preference.security", "x-apple.systempreferences"),
+            ("javascript://%0aalert(1)", "javascript"),
+        ] {
+            assert_eq!(link_action(url), LinkAction::Refuse(scheme.into()), "{url}");
+        }
+        assert_eq!(link_action("#Sheet2!A1"), LinkAction::GoTo("Sheet2!A1"));
+        assert_eq!(link_action("Sheet2!A1:B2"), LinkAction::GoTo("Sheet2!A1:B2"));
+        assert_eq!(link_action("MyName"), LinkAction::GoTo("MyName"));
+    }
 
     #[test]
     fn cell_text_y_moves_monotonically_in_standard_and_tall_rows() {
