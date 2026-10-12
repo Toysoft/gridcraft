@@ -50,7 +50,7 @@ People trust GridCraft with their numbers; a crash loses their work. **This outr
 - Parallel agents: separate `CARGO_TARGET_DIR` per agent; edit only the crates you own; delete your target dir when done.
 
 ## User docs
-User docs live in `docs/user/` and are published at https://getartcraft.com/docs/gridcraft. If a change alters something a user sees or does (UI labels, install, file formats, errors), update the matching page in `docs/user/` in the same PR, or add one. Rules: `docs/user/AGENTS.md`.
+User docs live in `docs/user/` and are published at https://getartcraft.com/docs/gridcraft. If a change alters something a user sees or does (UI labels, install, file formats, errors), update the matching page in `docs/user/` in the same PR, or add one. Rules: `docs/user/AGENTS.md`. Pages describe the latest release. For a change that is not released yet, write that it was added after <version> and is not in a release yet, or update the page when the release ships.
 
 ## Roadmap
 `ROADMAP.md` (committed) is the one-page summary: stage, headline numbers, dimensions, languages, progress log. It follows craftrules `standards/progress-docs.md` and points at the detail in `docs/`: `target-app-parity.md` (authoritative assessment), `gaps.md` (ranked work list: pick from it), `roadmap.md` (current focus, beta gates, milestones), `architecture.md`, and the area checklists `function-parity.md`, `chart-parity.md`, `file-format-parity.md`, `ui-parity.md`, `hardware-parity.md`, `localization-parity.md`. Update the affected docs (and their timestamp lines and revision history) whenever work lands. `cargo xtask parity` regenerates `docs/parity-checklist.md` from `crates/engine/src/catalog.rs`.
