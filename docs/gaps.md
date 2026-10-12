@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (§6: iterative calculation landed) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (§11: ten Indian languages, Indian-script fonts) · **Target:** Microsoft Excel (Microsoft 365)
 
 Every known shortfall against Excel, one entry each, ranked by user impact (what blocks someone
 using GridCraft for real work first). This is the work list: pick from the top, check the open
@@ -96,8 +96,8 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 ## After beta
 
 ### 11. No localization at all (L)
-- Ribbon-only catalog in five languages (#31, #104, #82; ~12% of strings each); dialogs, menus and
-  messages English; en-US function names and separators (#45); German in PR #163. **Estimate:**
+- Ribbon/Backstage catalog in 19 languages, ten of them Indian (~17% of strings each); dialogs,
+  menus and messages English; en-US function names and separators (#45); German in PR #163. **Estimate:**
   100–165 h including #5. [localization-parity.md](localization-parity.md)
 
 ### 12. Get & Transform, external data, data model (F)
@@ -160,6 +160,7 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | §11: ten Indian languages, Indian-script fonts (localization % unchanged pending a re-measure) |
 | 2026-10-11 | minor | §6: iterative calculation for circular references landed (Maximum Iterations, Maximum Change) |
 | 2026-10-11 | minor | §15: trim-reference operators (`A1:.E10`, `A1.:E10`, `A1.:.E10`) parse and evaluate |
 | 2026-10-11 | minor | §4: trendlines (six types, forecast, equation and R²) read, written and drawn |

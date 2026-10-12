@@ -4,18 +4,29 @@
 //! The interface language is a preference ([`crate::UiState::language`]): on first run it defaults
 //! to the system's language ([`Language::system`]), and the View tab switches it by hand.
 //!
-//! CJK fonts stay system-provided: [`crate::theme`] appends available CJK faces to every family so
-//! Japanese, Chinese and Korean labels and workbook text can render without bundling font files.
+//! Script fonts stay system-provided: [`crate::theme`] appends available CJK and Indian-script faces
+//! to every family so Japanese, Chinese, Korean and Indian-language labels and workbook text can
+//! render without bundling font files.
 
 use serde::{Deserialize, Serialize};
 
+mod bn;
 mod cs;
 mod de;
 mod es;
 mod fr;
+mod gu;
+mod hi;
+mod kn;
 mod ko;
+mod ml;
+mod mr;
+mod or;
+mod pa;
 mod pt;
 mod ru;
+mod ta;
+mod te;
 mod zh;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,10 +44,41 @@ pub enum Language {
     De,
     Cs,
     Fr,
+    Hi,
+    Bn,
+    Mr,
+    Te,
+    Ta,
+    Gu,
+    Kn,
+    Ml,
+    Or,
+    Pa,
 }
 
 impl Language {
-    pub const ALL: [Self; 10] = [Self::En, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::PtBr, Self::De, Self::Cs, Self::Fr];
+    pub const ALL: [Self; 20] = [
+        Self::En,
+        Self::Es,
+        Self::Zh,
+        Self::Ja,
+        Self::Ko,
+        Self::Ru,
+        Self::PtBr,
+        Self::De,
+        Self::Cs,
+        Self::Fr,
+        Self::Hi,
+        Self::Bn,
+        Self::Mr,
+        Self::Te,
+        Self::Ta,
+        Self::Gu,
+        Self::Kn,
+        Self::Ml,
+        Self::Or,
+        Self::Pa,
+    ];
 
     /// The language's own name, shown in the switcher.
     pub fn name(self) -> &'static str {
@@ -51,6 +93,16 @@ impl Language {
             Self::De => "Deutsch",
             Self::Cs => "Čeština",
             Self::Fr => "Français",
+            Self::Hi => "हिन्दी",
+            Self::Bn => "বাংলা",
+            Self::Mr => "मराठी",
+            Self::Te => "తెలుగు",
+            Self::Ta => "தமிழ்",
+            Self::Gu => "ગુજરાતી",
+            Self::Kn => "ಕನ್ನಡ",
+            Self::Ml => "മലയാളം",
+            Self::Or => "ଓଡ଼ିଆ",
+            Self::Pa => "ਪੰਜਾਬੀ",
         }
     }
 
@@ -67,6 +119,16 @@ impl Language {
             Self::De => "de",
             Self::Cs => "cs",
             Self::Fr => "fr",
+            Self::Hi => "hi",
+            Self::Bn => "bn",
+            Self::Mr => "mr",
+            Self::Te => "te",
+            Self::Ta => "ta",
+            Self::Gu => "gu",
+            Self::Kn => "kn",
+            Self::Ml => "ml",
+            Self::Or => "or",
+            Self::Pa => "pa",
         }
     }
 
@@ -75,6 +137,11 @@ impl Language {
     }
 
     fn from_tag(tag: &str) -> Option<Self> {
+        // Punjabi in Pakistan is written in Shahmukhi (Arabic script), not the Gurmukhi catalog.
+        let lower = tag.trim().to_ascii_lowercase();
+        if lower.starts_with("pa") && lower.split(['-', '_', '.']).any(|part| part == "arab" || part == "pk") {
+            return None;
+        }
         match tag.trim().split(['-', '_']).next()?.to_ascii_lowercase().as_str() {
             "en" => Some(Self::En),
             "es" => Some(Self::Es),
@@ -86,6 +153,16 @@ impl Language {
             "de" => Some(Self::De),
             "cs" => Some(Self::Cs),
             "fr" => Some(Self::Fr),
+            "hi" => Some(Self::Hi),
+            "bn" => Some(Self::Bn),
+            "mr" => Some(Self::Mr),
+            "te" => Some(Self::Te),
+            "ta" => Some(Self::Ta),
+            "gu" => Some(Self::Gu),
+            "kn" => Some(Self::Kn),
+            "ml" => Some(Self::Ml),
+            "or" => Some(Self::Or),
+            "pa" => Some(Self::Pa),
             _ => None,
         }
     }
@@ -101,6 +178,39 @@ impl Language {
         {
             web_sys::window().and_then(|window| window.navigator().language()).and_then(|tag| Self::from_tag(&tag)).unwrap_or(Self::En)
         }
+    }
+
+    /// The ISO 15924 script of an interface that needs a face egui's bundled fonts lack (CJK, the
+    /// Indian scripts); `None` for Latin, Cyrillic and the other scripts they cover.
+    pub fn script(self) -> Option<&'static str> {
+        Some(match self {
+            Self::Zh => "Hans",
+            Self::Ja => "Jpan",
+            Self::Ko => "Kore",
+            Self::Hi | Self::Mr => "Deva",
+            Self::Bn => "Beng",
+            Self::Pa => "Guru",
+            Self::Gu => "Gujr",
+            Self::Or => "Orya",
+            Self::Ta => "Taml",
+            Self::Te => "Telu",
+            Self::Kn => "Knda",
+            Self::Ml => "Mlym",
+            Self::En | Self::Es | Self::Ru | Self::PtBr | Self::De | Self::Cs | Self::Fr => return None,
+        })
+    }
+
+    /// Whether the interface needs a script face that egui's bundled fonts lack (CJK, Indian
+    /// scripts). The desktop apps find one among the system fonts; the web build only has the
+    /// faces embedded from craft-fonts ([`crate::craft_fonts`]).
+    pub fn needs_script_fonts(self) -> bool {
+        self.script().is_some()
+    }
+
+    /// Whether this build can draw the interface without system fonts: no script face is needed,
+    /// or craft-fonts embedded one. The web build follows the browser's language only then.
+    pub fn renders_without_system_fonts(self) -> bool {
+        self.script().is_none_or(crate::craft_fonts::covers)
     }
 
     pub fn formula_locale(self) -> gridcraft_engine::formula::FormulaLocale {
@@ -123,6 +233,16 @@ impl Language {
             Self::De => de::translate(text),
             Self::Cs => cs::translate(text),
             Self::Fr => fr::translate(text),
+            Self::Hi => hi::translate(text),
+            Self::Bn => bn::translate(text),
+            Self::Mr => mr::translate(text),
+            Self::Te => te::translate(text),
+            Self::Ta => ta::translate(text),
+            Self::Gu => gu::translate(text),
+            Self::Kn => kn::translate(text),
+            Self::Ml => ml::translate(text),
+            Self::Or => or::translate(text),
+            Self::Pa => pa::translate(text),
         };
         translated.unwrap_or_else(|| text.rsplit_once('|').map_or(text, |(_, label)| label))
     }
@@ -587,6 +707,16 @@ mod tests {
             assert!(de::translate(english).is_some_and(|text| !text.is_empty()), "missing German: {english}");
             assert!(cs::translate(english).is_some_and(|text| !text.is_empty()), "missing Czech: {english}");
             assert!(fr::translate(english).is_some_and(|text| !text.is_empty()), "missing French: {english}");
+            assert!(hi::translate(english).is_some_and(|text| !text.is_empty()), "missing Hindi: {english}");
+            assert!(bn::translate(english).is_some_and(|text| !text.is_empty()), "missing Bengali: {english}");
+            assert!(mr::translate(english).is_some_and(|text| !text.is_empty()), "missing Marathi: {english}");
+            assert!(te::translate(english).is_some_and(|text| !text.is_empty()), "missing Telugu: {english}");
+            assert!(ta::translate(english).is_some_and(|text| !text.is_empty()), "missing Tamil: {english}");
+            assert!(gu::translate(english).is_some_and(|text| !text.is_empty()), "missing Gujarati: {english}");
+            assert!(kn::translate(english).is_some_and(|text| !text.is_empty()), "missing Kannada: {english}");
+            assert!(ml::translate(english).is_some_and(|text| !text.is_empty()), "missing Malayalam: {english}");
+            assert!(or::translate(english).is_some_and(|text| !text.is_empty()), "missing Odia: {english}");
+            assert!(pa::translate(english).is_some_and(|text| !text.is_empty()), "missing Punjabi: {english}");
         }
         assert_eq!(Language::Ja.tr("Data"), "データ");
         assert_eq!(Language::Zh.tr("Data"), "数据");
@@ -600,6 +730,11 @@ mod tests {
         assert_eq!(Language::De.tr("Sheet1!A1"), "Sheet1!A1");
         assert_eq!(Language::Fr.tr("Data"), "Données");
         assert_eq!(Language::Fr.tr("Sheet1!A1"), "Sheet1!A1");
+        // fr.rs once had its labels shifted onto the wrong keys (Ruler read "Save As").
+        assert_eq!(Language::Fr.tr("Ruler"), "Règle");
+        assert_eq!(Language::Fr.tr("Save As"), "Enregistrer sous");
+        assert_eq!(Language::Fr.tr("Show formula bar"), "Afficher la barre de formule");
+        assert_eq!(Language::Fr.tr("Insert Cut Cells"), "Insérer les cellules coupées");
         assert_eq!(Language::PtBr.tr("Date"), "Data");
         assert_eq!(Language::PtBr.tr("Sheet1!A1"), "Sheet1!A1");
         assert_eq!(Language::Ja.tr("Sheet1!A1"), "Sheet1!A1");
@@ -610,6 +745,26 @@ mod tests {
         assert_eq!(Language::Cs.tr("Data"), "Data");
         assert_eq!(Language::Cs.tr("Formulas"), "Vzorce");
         assert_eq!(Language::Cs.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Hi.tr("Data"), "डेटा");
+        assert_eq!(Language::Hi.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Bn.tr("Data"), "ডেটা");
+        assert_eq!(Language::Bn.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Mr.tr("Data"), "डेटा");
+        assert_eq!(Language::Mr.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Te.tr("Data"), "డేటా");
+        assert_eq!(Language::Te.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Ta.tr("Data"), "தரவு");
+        assert_eq!(Language::Ta.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Gu.tr("Data"), "ડેટા");
+        assert_eq!(Language::Gu.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Kn.tr("Data"), "ಡೇಟಾ");
+        assert_eq!(Language::Kn.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Ml.tr("Data"), "ഡാറ്റ");
+        assert_eq!(Language::Ml.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Or.tr("Data"), "ଡାଟା");
+        assert_eq!(Language::Or.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Pa.tr("Data"), "ਡਾਟਾ");
+        assert_eq!(Language::Pa.tr("Sheet1!A1"), "Sheet1!A1");
         // A `context|label` key shows only its label in English and splits the translation.
         assert_eq!(Language::En.tr("Page Layout|Orientation"), "Orientation");
         assert_eq!(Language::Ja.tr("Page Layout|Orientation"), "印刷の向き");
@@ -617,6 +772,14 @@ mod tests {
         assert_eq!(Language::Cs.tr("Page Layout|Orientation"), "Orientace");
         assert_eq!(Language::Cs.tr("Orientation"), "Orientace textu");
         assert_eq!(Language::parse("xx"), None);
+        assert!(Language::Hi.needs_script_fonts() && Language::Ja.needs_script_fonts());
+        assert!(!Language::Fr.needs_script_fonts() && !Language::Ru.needs_script_fonts());
+        assert_eq!(Language::Mr.script(), Some("Deva"), "Marathi is written in Devanagari");
+        assert_eq!(Language::Pa.script(), Some("Guru"));
+        assert!(Language::En.renders_without_system_fonts() && Language::Ru.renders_without_system_fonts());
+        for l in Language::ALL.into_iter().filter(|l| l.needs_script_fonts()) {
+            assert_eq!(l.renders_without_system_fonts(), l.script().is_some_and(crate::craft_fonts::covers), "{l:?}");
+        }
     }
 
     #[test]
@@ -654,6 +817,39 @@ mod tests {
         assert_eq!(Language::from_tag("fr-FR"), Some(Language::Fr));
         assert_eq!(Language::from_tag("fr_CA"), Some(Language::Fr));
         assert_eq!(Language::parse("fr"), Some(Language::Fr));
+        assert_eq!(Language::from_tag("hi-IN"), Some(Language::Hi));
+        assert_eq!(Language::from_tag("hi_IN"), Some(Language::Hi));
+        assert_eq!(Language::parse("hi"), Some(Language::Hi));
+        assert_eq!(Language::from_tag("bn-IN"), Some(Language::Bn));
+        assert_eq!(Language::from_tag("bn_BD"), Some(Language::Bn));
+        assert_eq!(Language::parse("bn"), Some(Language::Bn));
+        assert_eq!(Language::from_tag("mr-IN"), Some(Language::Mr));
+        assert_eq!(Language::from_tag("mr_IN"), Some(Language::Mr));
+        assert_eq!(Language::parse("mr"), Some(Language::Mr));
+        assert_eq!(Language::from_tag("te-IN"), Some(Language::Te));
+        assert_eq!(Language::from_tag("te_IN"), Some(Language::Te));
+        assert_eq!(Language::parse("te"), Some(Language::Te));
+        assert_eq!(Language::from_tag("ta-IN"), Some(Language::Ta));
+        assert_eq!(Language::from_tag("ta_LK"), Some(Language::Ta));
+        assert_eq!(Language::parse("ta"), Some(Language::Ta));
+        assert_eq!(Language::from_tag("gu-IN"), Some(Language::Gu));
+        assert_eq!(Language::from_tag("gu_IN"), Some(Language::Gu));
+        assert_eq!(Language::parse("gu"), Some(Language::Gu));
+        assert_eq!(Language::from_tag("kn-IN"), Some(Language::Kn));
+        assert_eq!(Language::from_tag("kn_IN"), Some(Language::Kn));
+        assert_eq!(Language::parse("kn"), Some(Language::Kn));
+        assert_eq!(Language::from_tag("ml-IN"), Some(Language::Ml));
+        assert_eq!(Language::from_tag("ml_IN"), Some(Language::Ml));
+        assert_eq!(Language::parse("ml"), Some(Language::Ml));
+        assert_eq!(Language::from_tag("or-IN"), Some(Language::Or));
+        assert_eq!(Language::from_tag("or_IN"), Some(Language::Or));
+        assert_eq!(Language::parse("or"), Some(Language::Or));
+        assert_eq!(Language::from_tag("pa-IN"), Some(Language::Pa));
+        assert_eq!(Language::from_tag("pa-Guru-IN"), Some(Language::Pa));
+        assert_eq!(Language::parse("pa"), Some(Language::Pa));
+        assert_eq!(Language::from_tag("pa-Arab-PK"), None, "Shahmukhi Punjabi is not the Gurmukhi catalog");
+        assert_eq!(Language::from_tag("pa_PK"), None);
+        assert_eq!(Language::from_tag("pt-PT"), Some(Language::PtBr), "only Punjabi tags are screened");
     }
 
     #[test]
