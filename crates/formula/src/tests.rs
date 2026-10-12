@@ -102,6 +102,17 @@ fn linked_workbook_sheet_ranges_round_trip() {
 }
 
 #[test]
+fn another_workbook_without_a_sheet_is_not_a_cell_reference() {
+    // A cell or range needs a sheet after the workbook: Excel refuses these. A name doesn't.
+    for src in ["[Sheet1]!A1", "'[Source.xlsx]'!A1", "'Q1 [draft]'!A1", r"'C:\links\[Source.xlsx]'!A1:B2", "[1]!A1"] {
+        assert!(parse(src).is_err(), "{src}: {:?}", parse(src));
+    }
+    for (src, name) in [("[1]!Rate", "[1]!Rate"), ("[Source.xlsx]!Rate", "[Source.xlsx]!Rate"), ("Source.xlsx!Rate", "Source.xlsx!Rate")] {
+        assert_eq!(parse(src).ok(), Some(Expr::Name(name.into())), "{src}");
+    }
+}
+
+#[test]
 fn another_workbook_by_file_name_or_path_parses() {
     // Typed references to a workbook that isn't linked yet: the file name in brackets, with or
     // without its folder. A drive's `C:` isn't the colon of a sheet range.
