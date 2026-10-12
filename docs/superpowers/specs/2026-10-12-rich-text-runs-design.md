@@ -147,7 +147,13 @@ pub struct RunFont {        // mirrors Font (style.rs:154) with Options; Eq + Ha
 2. **Round-trip (`tests/roundtrip.rs` pattern, built in code):** rich workbook → `write_xlsx` →
    `read_xlsx` → runs equal (offsets + deltas); golden XML contains `<r><rPr>` with only set
    fields; plain strings still dedupe through the SST. No binary fixtures in the repo (craftrules
-   test-corpora standard); the #774 workbook shapes are rebuilt in code.
+   test-corpora standard); the #774 workbook shapes are rebuilt in code. Include the symbol-font
+   case from
+   [rex4539's report](https://github.com/storytold/gridcraft/issues/774#issuecomment-6131667259):
+   runs `rFont="Wingdings"` (`è`) + `rFont="Calibri"` must round-trip with both `rFont` values
+   preserved. The round-trip assertion is platform-independent; *rendering* the Wingdings glyph
+   additionally requires the font to be installed (system / `craft-fonts`) — the render test
+   asserts the run's family reaches the layout job, not the glyph shape.
 3. **Engine:** `reopen()` keeps runs; editing the cell clears them; undo restores them; a
    structural edit (row insert above) matches comment translation.
 4. **UI:** unit-test the runs→`LayoutJob` builder (segments, merged fonts/colors, invalid-runs
