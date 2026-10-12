@@ -938,12 +938,18 @@ fn cf_rule_xml(cf: &CondFormat, priority: u32, out: &mut Out) -> CfXml {
                 if !*gradient {
                     a.push_str(" gradient=\"0\"");
                 }
-                if border.is_some() {
-                    a.push_str(" border=\"1\"");
-                }
                 // MS-XLSX MUST-exist-iff: each same-as-positive flag is "0" exactly when its
                 // colour element exists; a missing pair is Excel's default (negative fill red,
                 // negative border same as positive), which is what the model's `None` means.
+                // `negativeBorderColor` additionally requires `border="1"` — a negative border
+                // without a border is meaningless — so a negative border colour forces the
+                // border on with an automatic colour. One-way normalisation: the schema cannot
+                // express `border: None, negative_border: Some`, which reads back with
+                // `border: Some(_)`.
+                let border_color = (*border).or_else(|| negative_border.is_some().then_some(Color::Auto));
+                if border_color.is_some() {
+                    a.push_str(" border=\"1\"");
+                }
                 if negative_fill.is_some() {
                     a.push_str(" negativeBarColorSameAsPositive=\"0\"");
                 }
@@ -960,9 +966,12 @@ fn cf_rule_xml(cf: &CondFormat, priority: u32, out: &mut Out) -> CfXml {
                 // elements (MS-XLSX §2.6.30), fillColor mirroring the classic colour (it MUST
                 // exist whenever the rule carries a priority, which ours always do).
                 let _ = write!(b, "<x14:fillColor {col}/>");
-                for (name, c) in
-                    [("borderColor", border), ("negativeFillColor", negative_fill), ("negativeBorderColor", negative_border), ("axisColor", axis)]
-                {
+                for (name, c) in [
+                    ("borderColor", border_color.as_ref()),
+                    ("negativeFillColor", negative_fill.as_ref()),
+                    ("negativeBorderColor", negative_border.as_ref()),
+                    ("axisColor", axis.as_ref()),
+                ] {
                     if let Some(c) = c {
                         let _ = write!(b, "<x14:{name} {}/>", color_attrs(c));
                     }

@@ -991,6 +991,51 @@ fn x14_extensions_round_trip() {
     assert_eq!(back.sheet(0).unwrap().sparklines, wb.sheet(0).unwrap().sparklines);
 }
 
+/// #703: MS-XLSX couples `negativeBorderColor` to `border="1"` (the element MUST exist iff
+/// `negativeBarBorderColorSameAsPositive="0"` *and* `border="1"`). A negative border colour
+/// without a border is not expressible, so writing forces the border on with an automatic
+/// colour — a one-way normalisation: the corner reads back with `border: Some(_)`, its
+/// negative border colour intact.
+#[test]
+fn negative_border_forces_the_x14_border() {
+    let mut wb = Workbook::new();
+    let s = wb.sheet_mut(0).unwrap();
+    s.cond_formats.push(CondFormat {
+        ranges: vec![rr("B2:B10")],
+        rule: CfRule::DataBar {
+            min: CfValueKind::Min,
+            max: CfValueKind::Max,
+            color: Color::Rgb(0x638EC6),
+            gradient: false,
+            show_value: true,
+            border: None,
+            negative_fill: None,
+            negative_border: Some(Color::Rgb(0xFF0000)),
+            axis: None,
+            limits: None,
+        },
+        priority: 1,
+        stop_if_true: false,
+    });
+    let bytes = write_xlsx(&wb).unwrap();
+    let (xml, _) = sheet1_xml(&bytes);
+    assert!(
+        xml.contains(
+            "<x14:dataBar gradient=\"0\" border=\"1\" negativeBarBorderColorSameAsPositive=\"0\" axisPosition=\"none\">\
+<x14:cfvo type=\"autoMin\"/><x14:cfvo type=\"autoMax\"/><x14:fillColor rgb=\"FF638EC6\"/>\
+<x14:borderColor auto=\"1\"/><x14:negativeBorderColor rgb=\"FFFF0000\"/></x14:dataBar>"
+        ),
+        "{xml}"
+    );
+    let (back, rep) = read_xlsx(&bytes).unwrap();
+    assert!(rep.warnings.is_empty(), "{:?}", rep.warnings);
+    let CfRule::DataBar { border, negative_border, .. } = &back.sheet(0).unwrap().cond_formats[0].rule else {
+        panic!("not a data bar: {:?}", back.sheet(0).unwrap().cond_formats[0].rule)
+    };
+    assert!(border.is_some(), "the border was forced on");
+    assert_eq!(*negative_border, Some(Color::Rgb(0xFF0000)), "the negative border colour survives");
+}
+
 /// Files have no `@` operator: Excel writes `@x` as `_xlfn.SINGLE(x)` in a dynamic-array
 /// formula, and reads it back as `@x`.
 #[test]
