@@ -201,3 +201,19 @@ fn czech_interface_retains_its_canonical_formula_fallback() {
     let restored: UiState = serde_json::from_str(&serde_json::to_string(&app.ui).unwrap()).unwrap();
     assert_eq!(restored.language, Language::Cs);
 }
+
+#[test]
+fn italian_interface_retains_its_canonical_formula_fallback() {
+    // The Italian table translates interface labels only: formulas keep canonical English names,
+    // `,` separators and `.` decimals until an Italian formula locale exists.
+    let mut app = app();
+    app.run("app.language.set", json!({"code":"it-IT"})).unwrap();
+    assert_eq!(app.ui.language, Language::It);
+    assert_eq!(app.ui.language.tr("Formulas"), "Formule");
+    assert!(enter(&mut app, "=SUM(1.5,2.25)"));
+    app.begin_edit(None, true);
+    assert_eq!(app.editor.as_ref().unwrap().text, "=SUM(1.5,2.25)");
+    assert!(!enter(&mut app, "=SOMMA(1;2)"));
+    let restored: UiState = serde_json::from_str(&serde_json::to_string(&app.ui).unwrap()).unwrap();
+    assert_eq!(restored.language, Language::It);
+}
