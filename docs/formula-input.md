@@ -10,25 +10,27 @@ preference follows the system language.
 | Deutsch | German |
 | Português (Brasil) | Brazilian Portuguese |
 | Русский | Russian |
+| Italiano | Italian |
 | English, 日本語, 中文, 한국어 | English (Japanese, Chinese and Korean Excel use English function names) |
 | Čeština, Français | English for now: these languages have no function table yet |
 
 ## What changes per language
 
-| | English | Spanish | German | Portuguese (Brazil) | Russian |
-| --- | --- | --- | --- | --- | --- |
-| Example | `SUM`, `IF`, `VLOOKUP` | `SUMA`, `SI`, `BUSCARV` | `SUMME`, `WENN`, `SVERWEIS` | `SOMA`, `SE`, `PROCV` | `СУММ`, `ЕСЛИ`, `ВПР` |
-| Function names translated | — | 424 | 403 | 412 | 459 |
-| Booleans | `TRUE`, `FALSE` | `VERDADERO`, `FALSO` | `WAHR`, `FALSCH` | `VERDADEIRO`, `FALSO` | `ИСТИНА`, `ЛОЖЬ` |
-| Errors (e.g.) | `#VALUE!`, `#N/A` | `#¡VALOR!`, `#N/D` | `#WERT!`, `#NV` | `#VALOR!`, `#N/D` | `#ЗНАЧ!`, `#Н/Д` |
-| Arguments and unions | `,` | `;` | `;` | `;` | `;` |
-| Decimal separator | `.` | `,` | `,` | `,` | `,` |
-| Array columns / rows | `,` / `;` | `\` / `;` | `.` / `;` | `\` / `;` | `;` / `:` |
-| Table specifiers (e.g.) | `#Headers`, `#This Row` | `#Encabezados`, `#Esta fila` | `#Kopfzeilen`, `#Diese Zeile` | `#Cabeçalhos`, `#Esta Linha` | `#Заголовки`, `#Эта строка` |
+| | English | Spanish | German | Portuguese (Brazil) | Russian | Italian |
+| --- | --- | --- | --- | --- | --- | --- |
+| Example | `SUM`, `IF`, `VLOOKUP` | `SUMA`, `SI`, `BUSCARV` | `SUMME`, `WENN`, `SVERWEIS` | `SOMA`, `SE`, `PROCV` | `СУММ`, `ЕСЛИ`, `ВПР` | `SOMMA`, `SE`, `CERCA.VERT` |
+| Function names translated | — | 424 | 403 | 412 | 459 | 455 |
+| Booleans | `TRUE`, `FALSE` | `VERDADERO`, `FALSO` | `WAHR`, `FALSCH` | `VERDADEIRO`, `FALSO` | `ИСТИНА`, `ЛОЖЬ` | `VERO`, `FALSO` |
+| Errors (e.g.) | `#VALUE!`, `#N/A` | `#¡VALOR!`, `#N/D` | `#WERT!`, `#NV` | `#VALOR!`, `#N/D` | `#ЗНАЧ!`, `#Н/Д` | `#VALORE!`, `#N/D` |
+| Arguments and unions | `,` | `;` | `;` | `;` | `;` | `;` |
+| Decimal separator | `.` | `,` | `,` | `,` | `,` | `,` |
+| Array columns / rows | `,` / `;` | `\` / `;` | `.` / `;` | `\` / `;` | `;` / `:` | `\` / `.` |
+| Table specifiers (e.g.) | `#Headers`, `#This Row` | `#Encabezados`, `#Esta fila` | `#Kopfzeilen`, `#Diese Zeile` | `#Cabeçalhos`, `#Esta Linha` | `#Заголовки`, `#Эта строка` | `#Intestazioni`, `#Questa riga` |
 
 For example, `=SI(VERDADERO;SUMA(1,5;2,25);0)` (Spanish), `=WENN(WAHR;SUMME({1.2;3,5.4});#NV)`
-(German) and `=ЕСЛИ(ИСТИНА;СУММ({1;2:3;4});#Н/Д)` (Russian) are stored as
-`IF(TRUE,SUM(1.5,2.25),0)`, `IF(TRUE,SUM({1,2;3.5,4}),#N/A)` and `IF(TRUE,SUM({1,2;3,4}),#N/A)`.
+(German), `=ЕСЛИ(ИСТИНА;СУММ({1;2:3;4});#Н/Д)` (Russian) and `=SE(VERO;SOMMA({1\2.3\4});#N/D)`
+(Italian) are stored as `IF(TRUE,SUM(1.5,2.25),0)`, `IF(TRUE,SUM({1,2;3.5,4}),#N/A)`,
+`IF(TRUE,SUM({1,2;3,4}),#N/A)` and `IF(TRUE,SUM({1,2;3,4}),#N/A)`.
 
 Names, booleans and errors are case-insensitive in any script (`zählenwenn`, `сумм`). Functions
 without a local name keep their English name, and canonical English names, booleans and errors
@@ -62,4 +64,6 @@ sometimes wrong, so an entry needs two agreeing signals on its page (title, desc
 paragraph aligned with the English page, examples); entries marked `reviewed` were decided by
 hand against independent function-name references. Booleans, errors and table specifiers cite
 their sources per item. The tables have not yet been checked against a running localized Excel
-or by native speakers; corrections are one-line edits with a source.
+or by native speakers; corrections are one-line edits with a source. The Italian table was
+written from knowledge of Italian Excel instead (the array separators and the ERRORE.TIPO errors
+cite Microsoft it-it pages; see `input/it.rs`) and has not been observed in Italian Excel either.

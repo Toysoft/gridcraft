@@ -1,6 +1,6 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Italian ribbon catalog added) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Italian ribbon catalog and Italian formulas added) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Per-language status against Excel, which ships its UI in dozens of languages (Windows language
 packs cover 100+), with localized function names, argument separators, number and date formats,
@@ -20,8 +20,8 @@ right-to-left sheets and full complex-script support. Part of
 - **About 2,200 user-visible strings** in all (heuristic source scan: ~1,700 UI and command
   strings plus ~500 function descriptions), so each shipped language covers **~12%** (measured
   count / estimated total).
-- **Formulas follow the interface language in Spanish, German, Brazilian Portuguese and
-  Russian** (#45): function names (403–459 per language), booleans, errors, table specifiers and
+- **Formulas follow the interface language in Spanish, German, Brazilian Portuguese,
+  Russian and Italian** (#45): function names (403–459 per language), booleans, errors, table specifiers and
   separators, at the editor boundary only; files and APIs keep canonical English
   ([formula-input.md](formula-input.md)). The names come from machine-translated Microsoft pages
   (two agreeing signals per entry, sources in `crates/formula/src/input/`) and have no native
@@ -81,6 +81,7 @@ language (none so far) and of localized function names.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Italian formulas (`input/it.rs`): 455 function names, `;` arguments, decimal comma, `\` / `.` array separators, VERO/FALSO, errors and table specifiers; the lexer ends an array row at a row separator that is a word character |
 | 2026-10-12 | minor | Italian (it) ribbon table (`i18n/it.rs`, 381 labels: every key of the reference table, in the names Italian Excel users know); `it` locale tags (it-IT, it-CH, it_IT.UTF-8) resolve to Italian; formulas and number formats stay en-US |
 | 2026-10-11 | minor | Formulas follow the interface language in es, de, pt-BR and ru (names, booleans, errors, table specifiers, separators); infrastructure item 2 partly done |
 | 2026-10-11 | minor | German ribbon catalog (`i18n/de.rs`, 266 labels, ~12%); `de` locale tags (de-DE, de-AT, de-CH…) resolve to German. PR #163 (localized German formulas/numbers) still open |

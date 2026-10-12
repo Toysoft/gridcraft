@@ -202,6 +202,12 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                 push(&mut out, Tok::Struct(inner), j);
                 i = j;
             }
+            // Inside braces the language's row separator ends a row, even where it is a word
+            // character (`.` in it-IT: `{1\2.3\4}`).
+            c if array_depth > 0 && c == locale.array_row_separator() => {
+                push(&mut out, Tok::Semicolon, i + 1);
+                i += 1;
+            }
             '.' if ch(i + 1) == Some(':') => {
                 // Trim reference `A1.:E10` / `A1.:.E10` (the word before stopped at the dot).
                 if ch(i + 2) == Some('.') && starts_range_end(ch(i + 3)) {
@@ -339,7 +345,9 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
             }
             c if is_word_char(c) => {
                 let mut j = i;
-                while ch(j).is_some_and(|c| is_word_char(c) && !(array_depth > 0 && c == locale.array_column_separator())) {
+                while ch(j).is_some_and(|c| {
+                    is_word_char(c) && !(array_depth > 0 && (c == locale.array_column_separator() || c == locale.array_row_separator()))
+                }) {
                     j += 1;
                 }
                 let w: String = chars.get(i..j).map(|s| s.iter().map(|c| c.1).collect()).unwrap_or_default();
@@ -349,13 +357,17 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                 } else if ch(j) == Some(':') && {
                     // Sheet1:Sheet3!A1 — look ahead for word then '!'
                     let mut k = j + 1;
-                    while ch(k).is_some_and(|c| is_word_char(c) && !(array_depth > 0 && c == locale.array_column_separator())) {
+                    while ch(k).is_some_and(|c| {
+                        is_word_char(c) && !(array_depth > 0 && (c == locale.array_column_separator() || c == locale.array_row_separator()))
+                    }) {
                         k += 1;
                     }
                     k > j + 1 && ch(k) == Some('!')
                 } {
                     let mut k = j + 1;
-                    while ch(k).is_some_and(|c| is_word_char(c) && !(array_depth > 0 && c == locale.array_column_separator())) {
+                    while ch(k).is_some_and(|c| {
+                        is_word_char(c) && !(array_depth > 0 && (c == locale.array_column_separator() || c == locale.array_row_separator()))
+                    }) {
                         k += 1;
                     }
                     let w2: String = chars.get(j + 1..k).map(|s| s.iter().map(|c| c.1).collect()).unwrap_or_default();

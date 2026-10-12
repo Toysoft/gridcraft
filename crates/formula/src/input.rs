@@ -11,6 +11,7 @@ use crate::{Expr, ParseError, parser};
 
 mod de;
 mod es;
+mod it;
 mod pt;
 mod ru;
 
@@ -25,6 +26,7 @@ pub enum FormulaLocale {
     De,
     PtBr,
     Ru,
+    It,
 }
 
 /// One formula language's words and separators.
@@ -48,7 +50,7 @@ pub(crate) struct Dialect {
 const TABLE_ITEMS: [&str; 5] = ["#All", "#Data", "#Headers", "#Totals", "#This Row"];
 
 impl FormulaLocale {
-    pub const ALL: [Self; 5] = [Self::En, Self::Es, Self::De, Self::PtBr, Self::Ru];
+    pub const ALL: [Self; 6] = [Self::En, Self::Es, Self::De, Self::PtBr, Self::Ru, Self::It];
 
     fn dialect(self) -> Option<&'static Dialect> {
         match self {
@@ -57,6 +59,7 @@ impl FormulaLocale {
             Self::De => Some(&de::DIALECT),
             Self::PtBr => Some(&pt::DIALECT),
             Self::Ru => Some(&ru::DIALECT),
+            Self::It => Some(&it::DIALECT),
         }
     }
 

@@ -1,9 +1,9 @@
-//! German, Brazilian Portuguese, Russian and the full Spanish table: entry and display syntax.
+//! German, Brazilian Portuguese, Russian, Italian and the full Spanish table: entry and display syntax.
 use gridcraft_core::CellError;
-use gridcraft_formula::FormulaLocale::{self, De, Es, PtBr, Ru};
+use gridcraft_formula::FormulaLocale::{self, De, Es, It, PtBr, Ru};
 use gridcraft_formula::{parse, parse_input, print, print_input};
 
-const LOCALIZED: [FormulaLocale; 4] = [Es, De, PtBr, Ru];
+const LOCALIZED: [FormulaLocale; 5] = [Es, De, PtBr, Ru, It];
 
 fn canonical(src: &str, locale: FormulaLocale) -> String {
     print(&parse_input(src, locale, |_| false).unwrap_or_else(|e| panic!("{locale:?} `{src}`: {e}")))
@@ -28,6 +28,16 @@ fn each_language_spells_formulas_like_its_excel() {
         (Ru, "СУММ(Таблица1[[#Итого];[Сумма]])", "SUM(Таблица1[[#Totals],[Сумма]])"),
         (Es, "CONTAR.SI.CONJUNTO(A1:A3;\">1\")", "COUNTIFS(A1:A3,\">1\")"),
         (Es, "SI.ERROR(1/0;#¡VALOR!)", "IFERROR(1/0,#VALUE!)"),
+        // Italian (see `input/it.rs`): `\` between array columns, `.` between rows.
+        (It, "SE(VERO;CERCA.VERT(A2;D:E;2;FALSO);#N/D)", "IF(TRUE,VLOOKUP(A2,D:E,2,FALSE),#N/A)"),
+        (It, "SOMMA({1\\2.3\\4})+1,5", "SUM({1,2;3,4})+1.5"),
+        (It, "SOMMA({1,5\\2.3\\4,25})", "SUM({1.5,2;3,4.25})"),
+        (It, "CONTA.SE(Tabella1[[#Intestazioni];[a]];\">1,5\")", "COUNTIF(Tabella1[[#Headers],[a]],\">1,5\")"),
+        (It, "SE.ERRORE(1/0;#DIV/0!)+CERCA.X(1;A:A;B:B)", "IFERROR(1/0,#DIV/0!)+XLOOKUP(1,A:A,B:B)"),
+        (It, "RIGHE(Tabella1[#Tutti])+ASS(#VALORE!)", "ROWS(Tabella1[#All])+ABS(#VALUE!)"),
+        (It, "E(VERO;O(FALSO;NON(VERO)))", "AND(TRUE,OR(FALSE,NOT(TRUE)))"),
+        (It, "SE.NON.DISP.(#N/D;MEDIA.PIÙ.SE(A1:A3;B1:B3;\">0\"))", "IFNA(#N/A,AVERAGEIFS(A1:A3,B1:B3,\">0\"))"),
+        (It, "MATR.SOMMA.PRODOTTO(A1:A3;B1:B3)+MAX(1;2)", "SUMPRODUCT(A1:A3,B1:B3)+MAX(1,2)"),
     ] {
         assert_eq!(canonical(local, locale), english, "{locale:?} entry");
         assert_eq!(shown(english, locale), local, "{locale:?} display");
@@ -61,6 +71,8 @@ fn english_names_and_any_letter_case_are_accepted() {
     assert_eq!(canonical("zählenwenn(A1:A3;1)", De), "COUNTIF(A1:A3,1)");
     assert_eq!(canonical("сумм(1;2)+#н/д", Ru), "SUM(1,2)+#N/A");
     assert_eq!(canonical("{истина:ложь}", Ru), "{TRUE;FALSE}");
+    assert_eq!(canonical("somma.più.se(A1:A3;B1:B3;1)+falso+media(1)", It), "SUMIFS(A1:A3,B1:B3,1)+FALSE+AVERAGE(1)");
+    assert_eq!(canonical("{vero.falso}", It), "{TRUE;FALSE}");
     // A local name that is another function's English name means the local function, as in
     // Spanish Excel: DECIMAL is FIXED there, and the base conversion is CONV.DECIMAL.
     assert_eq!(canonical("DECIMAL(1,5;1)", Es), "FIXED(1.5,1)");

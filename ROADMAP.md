@@ -94,7 +94,7 @@ and German (266–268 labels each, ~12% of ~2,200 strings; merged 10-10 in #31, 
 added 10-11), the
 interface follows the system language, and CJK, Thai and Hebrew text falls back to system fonts
 (#38). Dialogs, menus and messages are English. Formulas follow the interface language in
-Spanish, German, Brazilian Portuguese and Russian (function names, booleans, errors, table
+Spanish, German, Brazilian Portuguese, Russian and Italian (function names, booleans, errors, table
 specifiers and separators at the editor; files keep English: [formula-input.md](docs/formula-input.md));
 number formats are en-US only. PR #163 (German formulas and numbers) is open. Detail:
 [localization-parity.md](docs/localization-parity.md).

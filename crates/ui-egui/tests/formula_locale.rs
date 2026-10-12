@@ -223,17 +223,22 @@ fn czech_interface_retains_its_canonical_formula_fallback() {
 }
 
 #[test]
-fn italian_interface_retains_its_canonical_formula_fallback() {
-    // The Italian table translates interface labels only: formulas keep canonical English names,
-    // `,` separators and `.` decimals until an Italian formula locale exists.
+fn italian_interface_enters_and_shows_italian_formulas() {
     let mut app = app();
     app.run("app.language.set", json!({"code":"it-IT"})).unwrap();
     assert_eq!(app.ui.language, Language::It);
     assert_eq!(app.ui.language.tr("Formulas"), "Formule");
-    assert!(enter(&mut app, "=SUM(1.5,2.25)"));
+    assert!(enter(&mut app, "=SE(VERO;SOMMA(1,5;2,25);#N/D)"));
+    assert_eq!(formula(&app), "IF(TRUE,SUM(1.5,2.25),#N/A)");
     app.begin_edit(None, true);
-    assert_eq!(app.editor.as_ref().unwrap().text, "=SUM(1.5,2.25)");
-    assert!(!enter(&mut app, "=SOMMA(1;2)"));
+    assert_eq!(app.editor.as_ref().unwrap().text, "=SE(VERO;SOMMA(1,5;2,25);#N/D)");
+    app.cancel_edit();
+    // Lower-case and accented names match too; English separators are not Italian syntax.
+    assert!(enter(&mut app, "=somma.più.se(A1:A3;B1:B3;\">1\")"));
+    assert_eq!(formula(&app), "SUMIFS(A1:A3,B1:B3,\">1\")");
+    assert!(enter(&mut app, "=SOMMA({1\\2.3\\4})"));
+    assert_eq!(formula(&app), "SUM({1,2;3,4})");
+    assert!(!enter(&mut app, "=SUM(1.5,2.25)"));
     let restored: UiState = serde_json::from_str(&serde_json::to_string(&app.ui).unwrap()).unwrap();
     assert_eq!(restored.language, Language::It);
 }
