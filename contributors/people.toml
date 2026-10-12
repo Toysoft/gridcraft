@@ -61,3 +61,7 @@ sync_github_name = true
 real_name = "James Symes"
 sync_github_name = true
 
+
+[people.alb308]
+real_name = "Alberto Giunta"
+sync_github_name = false
