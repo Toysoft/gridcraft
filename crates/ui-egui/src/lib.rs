@@ -240,6 +240,11 @@ pub struct SheetApp {
     /// Chart selected on the sheet (id).
     pub selected_chart: Option<u32>,
     pub started: f64,
+    /// While closing the window asks about unsaved workbooks: the one the Save Changes? prompt
+    /// is asking about (see [`SheetApp::close_window`]).
+    closing: Option<u64>,
+    /// `app.quit`: the window closes without asking about unsaved changes.
+    pub(crate) quit_without_asking: bool,
 }
 
 impl SheetApp {
@@ -279,6 +284,8 @@ impl SheetApp {
             shots: control::Shots::default(),
             selected_chart: None,
             started: now_ms(),
+            closing: None,
+            quit_without_asking: false,
         }
     }
 
@@ -925,9 +932,60 @@ impl SheetApp {
             }
             self.after_engine();
         }
+        self.close_window(ctx);
         if self.session.active().is_none() {
             self.session.new_workbook();
         }
+    }
+
+    /// Closing the window (its close button, Quit, Alt+F4) asks about each workbook with unsaved
+    /// changes in turn, the active one first, with the Save Changes? prompt File › Close shows:
+    /// Save saves and closes the workbook, Don't Save closes it, and Cancel (or a save that did
+    /// not happen) keeps the window open. The window closes once no workbook has unsaved
+    /// changes. `app.quit` closes it without asking.
+    fn close_window(&mut self, ctx: &egui::Context) {
+        if self.quit_without_asking {
+            return;
+        }
+        if ctx.input(|i| i.viewport().close_requested()) {
+            if self.session.documents().iter().any(|d| d.is_dirty()) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                if self.closing.is_none() {
+                    self.ask_before_closing(ctx);
+                }
+            }
+            return;
+        }
+        let Some(asked) = self.closing else { return };
+        if self.dialog.as_ref().is_some_and(|d| d.name() == "saveChanges") {
+            return;
+        }
+        if self.session.documents().iter().any(|d| d.uid == asked) {
+            // Cancelled, or the save did not happen: the window stays open.
+            self.closing = None;
+        } else {
+            self.ask_before_closing(ctx);
+        }
+    }
+
+    /// Asks about the next workbook with unsaved changes, or closes the window when none is left.
+    fn ask_before_closing(&mut self, ctx: &egui::Context) {
+        let docs = self.session.documents();
+        let active = self.session.active_index();
+        let next = docs.get(active).is_some_and(|d| d.is_dirty()).then_some(active).or_else(|| docs.iter().position(|d| d.is_dirty()));
+        let Some(i) = next else {
+            self.closing = None;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        };
+        if i != active {
+            // A cell draft belongs to the active workbook: the prompt's Save must not commit it
+            // into another one.
+            self.cancel_edit();
+            self.session.set_active(i);
+        }
+        self.closing = self.session.documents().get(i).map(|d| d.uid);
+        self.run_or_alert("file.close", json!({}));
     }
 
     pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {

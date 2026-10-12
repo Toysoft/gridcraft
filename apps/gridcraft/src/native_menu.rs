@@ -202,6 +202,9 @@ impl NativeMenu {
         let menu = Menu::new();
         let app_menu = Submenu::new("GridCraft", true);
         let about = MenuItem::with_id("dialog:about", "About GridCraft", true, None);
+        // Not the predefined Quit: it ends the app without a close request, so unsaved changes
+        // would never be asked about.
+        let quit = MenuItem::with_id("app:quit", "Quit GridCraft", true, Accelerator::from_str("CMD+Q").ok());
         let _ = app_menu.append_items(&[
             &about,
             &PredefinedMenuItem::separator(),
@@ -211,7 +214,7 @@ impl NativeMenu {
             &PredefinedMenuItem::hide_others(None),
             &PredefinedMenuItem::show_all(None),
             &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::quit(None),
+            &quit,
         ]);
         let _ = menu.append(&app_menu);
         let mut theme_items = Vec::new();
@@ -279,7 +282,10 @@ impl NativeMenu {
             if select_theme(app, &id) {
                 continue;
             }
-            if let Some(url) = id.strip_prefix("url:") {
+            if id == "app:quit" {
+                // Closing the window asks about unsaved changes first (`SheetApp::close_window`).
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            } else if let Some(url) = id.strip_prefix("url:") {
                 if let Some(open) = &app.services.open_url {
                     open(url);
                 }
