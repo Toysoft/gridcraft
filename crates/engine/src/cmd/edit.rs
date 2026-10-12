@@ -674,7 +674,7 @@ fn copy_impl(s: &mut Session, p: &Json, cut: bool) -> Result<Json> {
     // The HTML rendering is for the host clipboard (UI); it can reach 4 MB, so agents and
     // scripts get it only when they ask for it.
     let html = if p.get("html").and_then(Json::as_bool) == Some(true) { crate::io::range_html(&wb, sheet, range, &text) } else { None };
-    let clip = Clipboard { wb, sheet, range, cut, doc_uid: d.uid, text: text.clone(), areas, selected };
+    let clip = Clipboard { wb, sheet, range, cut, doc_uid: d.uid, text: text.clone(), areas, selected, trust: d.trust };
     s.clipboard = Some(clip);
     let mut result = json!({"range": range.a1(), "text": text});
     if let Some(html) = html {
@@ -1167,6 +1167,12 @@ fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
         *cx.sel = crate::Selection { active: at, anchor: at, ranges: vec![RangeRef::new(at, end)] };
         Ok(())
     })?;
+    // Formulas, formats (conditional formats hold formulas) and validation from an untrusted file
+    // leave the destination untrusted; plain values, column widths and notes carry nothing active.
+    if !same_doc && !matches!(what, What::Values | What::ValuesAndNumberFormats | What::ColumnWidths | What::Comments) {
+        let d = s.doc_mut()?;
+        d.trust = d.trust.receive(clip.trust);
+    }
     if cut_move {
         s.clipboard = None;
     }
@@ -1210,6 +1216,35 @@ pub(crate) fn rewrite_all_formulas(wb: &mut gridcraft_model::Workbook, target: &
             // Names are workbook-level: unqualified refs don't occur; qualified ones adjust.
             let new = gridcraft_formula::adjust::adjust(expr, "\u{0}", target, e);
             n.formula = gridcraft_formula::print(&new);
+        }
+    }
+    rewrite_cell_links(wb, |host, expr| gridcraft_formula::adjust::adjust(expr, host, target, e));
+}
+
+/// Runs `f` over every reference a floating object holds (a chart's series values, categories
+/// and name, and a form control's linked cell). Every edit that moves references calls it: inserting and deleting lines and cells
+/// and cut-moves (through [`rewrite_all_formulas`]), and renaming and deleting sheets. `f` maps a
+/// reference held by an object on the sheet named `host` to its new form; text that does not
+/// parse is kept.
+pub(crate) fn rewrite_cell_links(wb: &mut gridcraft_model::Workbook, f: impl Fn(&str, gridcraft_formula::Expr) -> gridcraft_formula::Expr) {
+    for si in 0..wb.sheets.len() {
+        let Some(host) = wb.sheets.get(si).filter(|s| !s.charts.is_empty() || !s.controls.is_empty()).map(|s| s.name.clone()) else { continue };
+        let Some(sh) = wb.sheet_mut(si) else { continue };
+        let fix = |text: &str| -> String {
+            match gridcraft_formula::parse(text) {
+                Ok(expr) => gridcraft_formula::print(&f(&host, expr)),
+                Err(_) => text.to_string(),
+            }
+        };
+        for ch in sh.charts.iter_mut() {
+            for se in ch.series.iter_mut() {
+                se.values = fix(&se.values);
+                se.categories = se.categories.as_deref().map(fix);
+                se.name = se.name.as_deref().map(fix);
+            }
+        }
+        for c in sh.controls.iter_mut() {
+            c.link = c.link.as_deref().map(fix);
         }
     }
 }

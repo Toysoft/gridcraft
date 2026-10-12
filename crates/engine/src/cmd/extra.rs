@@ -74,7 +74,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Bring Forward",
             ["Page Layout", "Arrange"],
             None,
-            "{kind: chart|image|shape, id, toFront?: bool}",
+            "{kind: chart|image|shape|slicer|control, id, toFront?: bool}",
             has_doc,
             |s, p| arrange(s, p, true)
         ),
@@ -83,7 +83,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Send Backward",
             ["Page Layout", "Arrange"],
             None,
-            "{kind: chart|image|shape, id, toBack?: bool}",
+            "{kind: chart|image|shape|slicer|control, id, toBack?: bool}",
             has_doc,
             |s, p| arrange(s, p, false)
         ),
@@ -93,7 +93,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Align",
             ["Page Layout", "Arrange"],
             None,
-            "{kind: chart|image|shape, ids: [..], align: left|center|right|top|middle|bottom}",
+            "{kind: chart|image|shape|slicer|control, ids: [..], align: left|center|right|top|middle|bottom}",
             has_doc,
             align
         ),
@@ -583,6 +583,16 @@ fn arrange(s: &mut Session, p: &Json, forward: bool) -> Result<Json> {
                     reorder(&mut sh.images, i, forward, extreme);
                 }
             }
+            "slicer" => {
+                if let Some(i) = sh.slicers.iter().position(|c| c.id == id) {
+                    reorder(&mut sh.slicers, i, forward, extreme);
+                }
+            }
+            "control" => {
+                if let Some(i) = sh.controls.iter().position(|c| c.id == id) {
+                    reorder(&mut sh.controls, i, forward, extreme);
+                }
+            }
             _ => {
                 if let Some(i) = sh.shapes.iter().position(|c| c.id == id) {
                     reorder(&mut sh.shapes, i, forward, extreme);
@@ -606,6 +616,17 @@ fn selection_pane(s: &mut Session, _: &Json) -> Result<Json> {
     for c in &sh.charts {
         v.push(json!({"kind": "chart", "id": c.id, "name": format!("Chart {}", c.id), "title": c.title, "at": c.anchor.cell.a1(), "anchorMode": anchor_mode_name(c.anchor.mode)}));
     }
+    // Slicers paint above the other objects.
+    for c in &sh.slicers {
+        let name = if c.caption.is_empty() { &c.column } else { &c.caption };
+        v.push(json!({"kind": "slicer", "id": c.id, "name": name, "at": c.anchor.cell.a1(), "anchorMode": anchor_mode_name(c.anchor.mode)}));
+    }
+    // Form controls paint above everything else.
+    for c in &sh.controls {
+        v.push(
+            json!({"kind": "control", "id": c.id, "name": c.display_name(), "at": c.anchor.cell.a1(), "anchorMode": anchor_mode_name(c.anchor.mode)}),
+        );
+    }
     Ok(Json::Array(v))
 }
 
@@ -613,6 +634,8 @@ fn anchors_of<'a>(sh: &'a mut Sheet, kind: &str) -> Vec<(u32, &'a mut Anchor)> {
     match kind {
         "chart" => sh.charts.iter_mut().map(|c| (c.id, &mut c.anchor)).collect(),
         "image" => sh.images.iter_mut().map(|c| (c.id, &mut c.anchor)).collect(),
+        "slicer" => sh.slicers.iter_mut().map(|c| (c.id, &mut c.anchor)).collect(),
+        "control" => sh.controls.iter_mut().map(|c| (c.id, &mut c.anchor)).collect(),
         _ => sh.shapes.iter_mut().map(|c| (c.id, &mut c.anchor)).collect(),
     }
 }
@@ -765,6 +788,7 @@ fn new_window(s: &mut Session, _: &Json) -> Result<Json> {
     let d = s.doc()?.clone();
     let mut copy = crate::DocState::new((*d.wb).clone(), d.path.clone(), format!("{}:2", d.display_title()));
     copy.selection = d.selection.clone();
+    copy.trust = d.trust;
     let i = s.add_document(copy);
     Ok(json!({"index": i}))
 }
@@ -972,6 +996,23 @@ fn run_script(s: &mut Session, p: &Json) -> Result<Json> {
         n += 1;
     }
     Ok(json!({"ran": n}))
+}
+
+/// The command steps of the Automate script called `name`, as `automate.runScript` runs them
+/// (steps that run other scripts are left out), or `None` when there is no such script.
+pub(crate) fn script_steps(wb: &Workbook, name: &str) -> Option<Vec<(String, Json)>> {
+    let all = stash_get(wb, SCRIPTS_NAME);
+    let steps = all.get(name)?.as_array()?;
+    Some(
+        steps
+            .iter()
+            .take(100_000)
+            .filter_map(|st| {
+                let id = st["command"].as_str()?;
+                (!id.starts_with("automate.")).then(|| (id.to_string(), st["params"].clone()))
+            })
+            .collect(),
+    )
 }
 
 fn delete_script(s: &mut Session, p: &Json) -> Result<Json> {

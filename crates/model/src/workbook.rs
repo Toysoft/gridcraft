@@ -113,6 +113,10 @@ pub struct Workbook {
     /// separator back (a `;` file stays a `;` file). `None` = not read from CSV: CSV saves use `,`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub csv_delimiter: Option<u8>,
+    /// GridCraft macros (typed command lists, not VBA), in the order the macro list shows them.
+    /// The JSON format keeps them as this field; xlsx keeps them in hidden defined names.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub macros: Vec<crate::macros::Macro>,
     /// Unmodelled file content kept for saving (package root and workbook level). Not in JSON.
     #[serde(skip)]
     pub preserved: Option<Arc<crate::preserved::Preserved>>,
@@ -142,6 +146,7 @@ impl Workbook {
             cell_styles: vec![],
             vba_project: None,
             csv_delimiter: None,
+            macros: vec![],
             preserved: None,
         }
     }
@@ -268,8 +273,11 @@ impl Workbook {
             for c in &s.slicers {
                 m = m.max(c.id);
             }
+            for c in &s.controls {
+                m = m.max(c.id);
+            }
         }
-        m + 1
+        m.saturating_add(1)
     }
 }
 
@@ -300,5 +308,24 @@ mod tests {
         assert!(wb.check_sheet_name("a/b", None).is_err());
         assert!(wb.check_sheet_name(&"x".repeat(32), None).is_err());
         assert!(wb.check_sheet_name("Budget 2026", None).is_ok());
+    }
+
+    #[test]
+    fn object_ids_saturate_instead_of_overflowing() {
+        let mut wb = Workbook::new();
+        let image = |id| crate::Image { id, anchor: Default::default(), data: vec![], mime: String::new(), alt: String::new() };
+        assert_eq!(wb.next_object_id(), 1);
+        if let Some(sh) = wb.sheet_mut(0) {
+            sh.images.push(image(7));
+        }
+        assert_eq!(wb.next_object_id(), 8);
+        if let Some(sh) = wb.sheet_mut(0) {
+            sh.controls.push(crate::FormControl { id: 12, ..Default::default() });
+        }
+        assert_eq!(wb.next_object_id(), 13, "form controls take ids from the same sequence");
+        if let Some(sh) = wb.sheet_mut(0) {
+            sh.images.push(image(u32::MAX));
+        }
+        assert_eq!(wb.next_object_id(), u32::MAX, "an id read from a file at the maximum saturates");
     }
 }
