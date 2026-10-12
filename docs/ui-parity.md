@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (the highlight of a cell being edited stays on the cell, observed against Windows Excel) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (the selection's outline lies on the gridlines, and stays on the cell while it is edited; measured against Windows Excel) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Interaction, controls and feel, against Excel. Part of [target-app-parity.md](target-app-parity.md).
 **UI/UX fidelity: ~55% ready, 50–80 h** (estimated). Ribbon command coverage is measured
@@ -45,6 +45,7 @@ this logic, with one undo step.
 |---|---|
 | Click/drag/Shift/Ctrl selection, multi-area selection | rectangular drag works in one direction only in some cases (#28) |
 | Selection outline glides to a new selection (Excel: "Provide feedback with animation") | done (10-11): 0.12 s, decelerating, with the fill and fill handle; View ▸ Animations (`view.animations`) turns it off. The timing is an estimate, not yet measured against Excel; the system's reduced-motion setting isn't followed yet |
+| Selection outline lies on the gridlines | done (10-12): each side covers the gridline that bounds the selection and reaches outward from it, a whole number of device pixels wide at any display scale, so no gridline shows inside it. Measured in Windows Excel on a display at 150%: the gridline's own pixel and the one outside it, on each side. The weight is unchanged, two points: three pixels at 150%, where Excel's measured two |
 | Fill handle: drag to fill series, double-click to fill down, right-drag menu | fill done (Ctrl+drag swaps copy and series); right-drag menu missing |
 | Drag-move and drag-copy cells (border drag, Ctrl/Option, Shift to insert) | done (M3) |
 | In-cell editing, Enter/Tab movement, Alt/Option+Enter line breaks | done. While typing, the highlight is the selection's own outline and neither moves nor grows (10-12): text that runs past the cell is laid over the cells after it, a whole cell at a time, and clears the lines it runs over, as observed in Windows Excel. Lines added with Alt+Enter go the same way downwards; that direction follows the same rule and is not yet checked against Excel |
@@ -160,6 +161,7 @@ scrollbar bugs 2–4 · pixel/feel pass against observed Excel 7–12.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | The selection's outline lies on the gridlines at any display scale, where it was a pixel past them at the bottom and right |
 | 2026-10-12 | minor | In-cell editing: the highlight stays on the cell and on the gridlines; text that runs past the cell clears the line it crosses instead of stretching the box |
 | 2026-10-11 | minor | AutoFit accounts for table and ordinary filter dropdowns, including low zoom; header text excludes the button area |
 | 2026-10-11 | minor | Outline band for grouped rows and columns, Show / Hide Detail on the Data tab, numpad navigation keys in shortcuts (#373) |

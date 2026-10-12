@@ -5,8 +5,9 @@
 use egui::{Color32, Pos2, Rect, Shape, StrokeKind, pos2};
 use gridcraft_engine::Session;
 use gridcraft_engine::core::CellRef;
+use gridcraft_ui_egui::SheetApp;
+use gridcraft_ui_egui::grid::{Geo, outline_sides};
 use gridcraft_ui_egui::theme::Tokens;
-use gridcraft_ui_egui::{SheetApp, grid::Geo};
 use serde_json::json;
 
 type Harness = egui_kittest::Harness<'static, SheetApp>;
@@ -38,6 +39,11 @@ fn cell(h: &Harness, a1: &str) -> Rect {
     let app = h.state();
     let sheet = app.session.active().unwrap().wb.active().unwrap();
     Geo::new(sheet, app.grid.rect.unwrap(), app.view().scroll).cell_rect(sheet, CellRef::parse(a1).unwrap())
+}
+
+/// The sides of the outline round a cell: left, top, right, bottom.
+fn sides(h: &Harness, a1: &str) -> [Rect; 4] {
+    outline_sides(cell(h, a1), h.ctx.pixels_per_point())
 }
 
 fn typed(h: &mut Harness, text: &str) {
@@ -102,26 +108,6 @@ fn on_top(h: &Harness, at: Pos2) -> Option<Paint> {
     shapes(h, at).into_iter().filter_map(|shape| paints(shape, at)).next_back()
 }
 
-/// Every rectangle outlined in the selection's colour in the last frame.
-fn outlines(h: &Harness) -> Vec<Rect> {
-    let green = Tokens::get(&h.ctx).sel_border;
-    let outlined = |shape: &Shape| match shape {
-        Shape::Rect(r) if r.stroke.width > 0.0 && r.stroke.color == green => Some(r.rect),
-        _ => None,
-    };
-    painted(h).into_iter().filter_map(|(_, shape)| outlined(shape)).collect()
-}
-
-fn same(a: Rect, b: Rect) -> bool {
-    (a.min - b.min).length() < 0.01 && (a.max - b.max).length() < 0.01
-}
-
-/// The middle of each side of the highlight round `cell`: left, top, right, bottom.
-fn sides(cell: Rect) -> [Pos2; 4] {
-    let c = cell.center();
-    [pos2(cell.left() - 0.5, c.y), pos2(c.x, cell.top() - 0.5), pos2(cell.right() + 0.5, c.y), pos2(c.x, cell.bottom() + 0.5)]
-}
-
 /// Whether the cell text `text` has a fill painted over it at `at` in the last frame.
 fn painted_over(h: &Harness, text: &str, at: Pos2) -> bool {
     let shapes = shapes(h, at);
@@ -132,15 +118,24 @@ fn painted_over(h: &Harness, text: &str, at: Pos2) -> bool {
 #[test]
 fn typing_leaves_the_highlight_where_the_selection_outline_was() {
     let mut h = harness(session());
-    let at = cell(&h, "C4");
-    let green = Paint::Line(Tokens::get(&h.ctx).sel_border);
-    let outline = at.expand(0.5);
-    assert!(matches!(outlines(&h)[..], [one] if same(one, outline)), "the selection's outline: {:?}", outlines(&h));
+    let green = Paint::Fill(Tokens::get(&h.ctx).sel_border);
+    let all = sides(&h, "C4");
+    for side in all {
+        assert_eq!(on_top(&h, side.center()), Some(green), "the selection's outline, at {side:?}");
+    }
     typed(&mut h, "Hi");
-    let drawn = outlines(&h);
-    assert!(drawn.len() == 2 && drawn.iter().all(|r| same(*r, outline)), "the editor's highlight is the same line: {drawn:?} vs {outline:?}");
-    for side in sides(at) {
-        assert_eq!(on_top(&h, side), Some(green), "all four sides, at {side:?}");
+    // The editor's highlight is those same four sides…
+    for side in all {
+        assert_eq!(on_top(&h, side.center()), Some(green), "at {side:?}");
+    }
+    // …with nothing of it further out, and the cell's own background just inside.
+    let [left, top, right, bottom] = all;
+    let c = cell(&h, "C4").center();
+    for outside in [pos2(left.left() - 0.5, c.y), pos2(c.x, top.top() - 0.5), pos2(right.right() + 0.5, c.y), pos2(c.x, bottom.bottom() + 0.5)] {
+        assert_ne!(on_top(&h, outside), Some(green), "at {outside:?}");
+    }
+    for inside in [pos2(left.right() + 0.5, c.y), pos2(c.x, top.bottom() + 0.5), pos2(right.left() - 0.5, c.y), pos2(c.x, bottom.top() - 0.5)] {
+        assert_eq!(on_top(&h, inside), Some(Paint::Fill(Color32::WHITE)), "at {inside:?}");
     }
 }
 
@@ -148,21 +143,25 @@ fn typing_leaves_the_highlight_where_the_selection_outline_was() {
 fn text_that_runs_past_the_cell_clears_the_lines_it_crosses_and_the_highlight_does_not_grow() {
     let mut h = harness(session());
     let t = Tokens::get(&h.ctx);
-    let (green, white) = (Paint::Line(t.sel_border), Paint::Fill(Color32::WHITE));
+    let (green, white) = (Paint::Fill(t.sel_border), Paint::Fill(Color32::WHITE));
     let (at, d4) = (cell(&h, "C4"), cell(&h, "D4"));
-    let [left, top, right, bottom] = sides(at);
+    let [left, top, right, bottom] = sides(&h, "C4");
     // The gridline between D4 and E4, and the same line a row up.
     let gridline = pos2(d4.right().round() - 0.5, at.center().y);
     let row_above = pos2(gridline.x, cell(&h, "C3").center().y);
     assert_eq!(on_top(&h, gridline), Some(Paint::Line(t.gridline)));
+    assert_eq!(on_top(&h, right.center()), Some(green));
     typed(&mut h, LONG);
-    // The highlight has not grown: it is still the cell's outline, and nothing else is outlined.
-    let drawn = outlines(&h);
-    assert!(drawn.iter().all(|r| same(*r, at.expand(0.5))), "{drawn:?}");
     // Its right side is cleared where the text runs over it; the other three stay.
-    assert_eq!(on_top(&h, right), Some(white), "the line the text crosses");
+    assert_eq!(on_top(&h, right.center()), Some(white), "the line the text crosses");
     for side in [left, top, bottom] {
-        assert_eq!(on_top(&h, side), Some(green), "at {side:?}");
+        assert_eq!(on_top(&h, side.center()), Some(green), "at {side:?}");
+    }
+    // The highlight has not grown: past the cell there is no top or bottom side.
+    for x in [right.right() + 3.0, d4.center().x, d4.right() + 6.0] {
+        for y in [top.center().y, bottom.center().y] {
+            assert_ne!(on_top(&h, pos2(x, y)), Some(green), "at {x}, {y}");
+        }
     }
     // The gridline under the text is cleared, in this row only.
     assert_eq!(on_top(&h, gridline), Some(white));
@@ -175,7 +174,7 @@ fn text_that_runs_past_the_cell_clears_the_lines_it_crosses_and_the_highlight_do
     h.key_press(egui::Key::Escape);
     h.run_steps(3);
     assert!(h.state().editor.is_none());
-    assert_eq!(on_top(&h, right), Some(green));
+    assert_eq!(on_top(&h, right.center()), Some(green));
     assert_eq!(on_top(&h, gridline), Some(Paint::Line(t.gridline)));
 }
 
@@ -212,16 +211,14 @@ fn lines_added_below_take_whole_rows_and_clear_the_bottom_line() {
     s.execute("cell.set", json!({"cell": "C6", "input": "MMMMMM"})).unwrap();
     let mut h = harness(s);
     let t = Tokens::get(&h.ctx);
-    let (green, white) = (Paint::Line(t.sel_border), Paint::Fill(Color32::WHITE));
-    let (at, c5, c6) = (cell(&h, "C4"), cell(&h, "C5"), cell(&h, "C6"));
-    let [left, top, right, bottom] = sides(at);
+    let (green, white) = (Paint::Fill(t.sel_border), Paint::Fill(Color32::WHITE));
+    let (c5, c6) = (cell(&h, "C5"), cell(&h, "C6"));
+    let [left, top, right, bottom] = sides(&h, "C4");
     h.state_mut().begin_edit(Some("one\ntwo".into()), false);
     h.run_steps(3);
-    let drawn = outlines(&h);
-    assert!(drawn.iter().all(|r| same(*r, at.expand(0.5))), "the highlight is still the cell's: {drawn:?}");
-    assert_eq!(on_top(&h, bottom), Some(white), "the line the second line of text crosses");
+    assert_eq!(on_top(&h, bottom.center()), Some(white), "the line the second line of text crosses");
     for side in [left, top, right] {
-        assert_eq!(on_top(&h, side), Some(green), "at {side:?}");
+        assert_eq!(on_top(&h, side.center()), Some(green), "at {side:?}");
     }
     // Two lines take two rows: C5 is covered and C6 is not, with the gridline between them kept.
     assert!(painted_over(&h, "WWWWWW", pos2(c5.left() + 8.0, c5.center().y)));
