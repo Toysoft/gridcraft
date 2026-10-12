@@ -174,3 +174,77 @@ fn check_exit_codes_and_json() {
     assert_eq!(run(&["check", book_s, "--tolerance", "x"]).status.code(), Some(2));
     assert_eq!(run(&["check", book_s, "--bogus"]).status.code(), Some(2));
 }
+
+/// Send `calls` (tool name, arguments) to `gridcraft-cli mcp <args>`; returns the stdout lines
+/// after `initialize`, one per call, with the exit status.
+fn mcp_session(args: &[&str], calls: &[(&str, serde_json::Value)]) -> (bool, String, Vec<serde_json::Value>) {
+    let mut child = bin().arg("mcp").args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2025-06-18"}}}}"#).unwrap();
+        for (i, (name, arguments)) in calls.iter().enumerate() {
+            let call = serde_json::json!({"jsonrpc": "2.0", "id": i + 2, "method": "tools/call", "params": {"name": name, "arguments": arguments}});
+            writeln!(stdin, "{call}").unwrap();
+        }
+    }
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let replies = stdout.lines().skip(1).map(|l| serde_json::from_str(l).unwrap()).collect();
+    (out.status.success(), String::from_utf8_lossy(&out.stderr).into_owned(), replies)
+}
+
+#[test]
+fn mcp_automation_roots_confine_the_server() {
+    let base = tmpdir("roots");
+    let work = base.join("work");
+    let elsewhere = base.join("elsewhere");
+    std::fs::create_dir_all(&work).unwrap();
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    std::fs::write(work.join("in.csv"), "a,b\n1,2\n").unwrap();
+    std::fs::write(elsewhere.join("secret.csv"), "token,hunter2\n").unwrap();
+    let (work_s, secret) = (work.to_str().unwrap(), elsewhere.join("secret.csv").to_str().unwrap().to_string());
+
+    // Both spellings of the flags; inside works, outside is refused with a readable message.
+    let read_flag = format!("--automation-read-root={work_s}");
+    let calls = [
+        ("open_workbook", serde_json::json!({"path": work.join("in.csv").to_str().unwrap()})),
+        ("open_workbook", serde_json::json!({"path": secret})),
+        ("save_workbook", serde_json::json!({"path": work.join("saved.xlsx").to_str().unwrap()})),
+    ];
+    let (success, stderr, replies) = mcp_session(&[&read_flag, "--automation-write-root", work_s], &calls);
+    assert!(success, "{stderr}");
+    assert!(stderr.contains("files confined"), "{stderr}");
+    assert_eq!(replies[0]["result"]["isError"], false, "{}", replies[0]);
+    assert_eq!(replies[1]["result"]["isError"], true);
+    let message = replies[1]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(message.contains("outside the read root"), "{message}");
+    assert_eq!(replies[2]["result"]["isError"], false, "{}", replies[2]);
+    assert!(work.join("saved.xlsx").exists());
+
+    // A root left out grants none of its access.
+    let (_, _, replies) = mcp_session(&[&read_flag], &calls[2..]);
+    let message = replies[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert_eq!(replies[0]["result"]["isError"], true);
+    assert!(message.contains("write authority is absent"), "{message}");
+}
+
+#[test]
+fn mcp_automation_root_flags_are_checked_up_front() {
+    let base = tmpdir("roots-args");
+    let dir = base.to_str().unwrap();
+    let fails = |args: &[&str], needle: &str| {
+        let mut full = vec!["mcp"];
+        full.extend_from_slice(args);
+        let o = run(&full);
+        assert!(!o.status.success(), "{args:?}");
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        assert!(err.contains(needle), "{args:?}: {err}");
+    };
+    // The flags confine the in-process server, so they cannot be combined with --connect.
+    fails(&["--connect", "7979", "--automation-read-root", dir], "--connect");
+    fails(&["--automation-write-root", dir, "--connect", "7979"], "--connect");
+    fails(&["--automation-read-root", dir, "--automation-read-root", dir], "given twice");
+    fails(&["--automation-read-root"], "needs a value");
+    fails(&["--automation-read-root", base.join("missing").to_str().unwrap()], "cannot open the automation read root");
+    fails(&["--automation-write-root="], "cannot open the automation write root");
+}

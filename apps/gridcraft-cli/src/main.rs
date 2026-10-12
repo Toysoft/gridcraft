@@ -9,13 +9,14 @@
 //! gridcraft-cli run [--in FILE | --sample NAME] [--cmd 'id={json}']... [--script FILE.jsonl] [--out FILE] [--print RANGE] [--quiet]
 //! gridcraft-cli commands [--json] [--search X]
 //! gridcraft-cli functions [--json] [--search X] [--category C]
-//! gridcraft-cli mcp [--connect PORT] [--in FILE | --sample NAME]
+//! gridcraft-cli mcp [--connect PORT] [--in FILE | --sample NAME] [--automation-read-root DIR] [--automation-write-root DIR]
 //! gridcraft-cli send <port> <method> [json]
 //! gridcraft-cli version | --version
 //! ```
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+use std::path::Path;
 use std::process::ExitCode;
 
 /// `println!` that ends the program quietly when stdout is closed (`gridcraft-cli commands |
@@ -46,6 +47,11 @@ const USAGE: &str = "usage:
   gridcraft-cli commands [--json] [--search X]
   gridcraft-cli functions [--json] [--search X] [--category C]
   gridcraft-cli mcp [--connect PORT] [--in FILE | --sample NAME]
+                     [--automation-read-root DIR] [--automation-write-root DIR]
+                     the two roots confine every file the agent's commands read (open, import, pictures)
+                     and write (save, export, PDF) to those folders; a root left out grants none of its
+                     access. They run the in-process server, so they conflict with --connect (a running
+                     app is not confined by them).
   gridcraft-cli send <port> <method> [json]
   gridcraft-cli version";
 
@@ -494,10 +500,26 @@ fn functions(args: &[String]) -> Result<(), String> {
 
 /// `mcp` (headless, in-process engine) or `mcp --connect PORT|HOST:PORT` (drive a running app
 /// started with `gridcraft --control PORT`). JSON-RPC on stdin/stdout; logs on stderr.
+///
+/// `--automation-read-root DIR` / `--automation-write-root DIR` confine the files the agent's
+/// commands read and write, as in the other Craft apps; they imply the in-process server.
 fn mcp(args: &[String]) -> Result<(), String> {
+    use gridcraft_engine::file_access::{self, AutomationRoots};
     use gridcraft_mcp::{Backend, Headless, Remote, Server, control_addr};
-    let a = Args::parse(args, &["connect", "in", "sample"], &[])?;
+    let a = Args::parse(args, &["connect", "in", "sample", "automation-read-root", "automation-write-root"], &[])?;
     a.no_extra(0)?;
+    // A repeated root would silently widen or replace the one the operator meant; refuse it.
+    for flag in ["automation-read-root", "automation-write-root"] {
+        if a.opts.iter().filter(|(n, _)| n == flag).count() > 1 {
+            return Err(format!("--{flag} is given twice: it takes one folder"));
+        }
+    }
+    let roots = AutomationRoots::new(a.opt("automation-read-root").map(Path::new), a.opt("automation-write-root").map(Path::new))?;
+    if roots.is_some() && a.opt("connect").is_some() {
+        return Err("--automation-read-root and --automation-write-root confine the in-process server; a running app is not confined by them, \
+so drop --connect (or use --connect without the roots)"
+            .into());
+    }
     let backend: Box<dyn Backend> = match a.opt("connect") {
         Some(c) => {
             let addr = control_addr(c);
@@ -507,6 +529,7 @@ fn mcp(args: &[String]) -> Result<(), String> {
             )
         }
         None => {
+            // `--in` is the operator's own choice, opened before the roots come into force.
             let session = match (a.opt("in"), a.opt("sample")) {
                 (Some(p), _) => open(p)?,
                 (None, Some(name)) => {
@@ -516,7 +539,15 @@ fn mcp(args: &[String]) -> Result<(), String> {
                 }
                 (None, None) => blank(),
             };
-            Box::new(Headless::with_session(session))
+            let mut headless = Headless::with_session(session);
+            if let Some(roots) = roots {
+                // Every thread of this process, not only the server's: nothing reaches past the roots.
+                file_access::confine_process(roots.clone());
+                let show = |root: Option<&Path>| root.map_or_else(|| "none".to_string(), |r| r.display().to_string());
+                eprintln!("gridcraft-cli: files confined: read root {}, write root {}", show(roots.read_root()), show(roots.write_root()));
+                headless = headless.with_automation_roots(Some(roots));
+            }
+            Box::new(headless)
         }
     };
     eprintln!("gridcraft-cli: MCP server on stdio ({})", backend.describe());
