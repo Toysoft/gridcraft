@@ -4,8 +4,9 @@
 //! The interface language is a preference ([`crate::UiState::language`]): on first run it defaults
 //! to the system's language ([`Language::system`]), and the View tab switches it by hand.
 //!
-//! CJK fonts stay system-provided: [`crate::theme`] appends available CJK faces to every family so
-//! Japanese, Chinese and Korean labels and workbook text can render without bundling font files.
+//! Script fonts stay system-provided: [`crate::theme`] appends available CJK and Indian-script faces
+//! to every family so Japanese, Chinese, Korean and Indian-language labels and workbook text can
+//! render without bundling font files.
 
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +14,7 @@ mod cs;
 mod de;
 mod es;
 mod fr;
+mod hi;
 mod ko;
 mod pt;
 mod ru;
@@ -33,10 +35,11 @@ pub enum Language {
     De,
     Cs,
     Fr,
+    Hi,
 }
 
 impl Language {
-    pub const ALL: [Self; 10] = [Self::En, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::PtBr, Self::De, Self::Cs, Self::Fr];
+    pub const ALL: [Self; 11] = [Self::En, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::PtBr, Self::De, Self::Cs, Self::Fr, Self::Hi];
 
     /// The language's own name, shown in the switcher.
     pub fn name(self) -> &'static str {
@@ -51,6 +54,7 @@ impl Language {
             Self::De => "Deutsch",
             Self::Cs => "Čeština",
             Self::Fr => "Français",
+            Self::Hi => "हिन्दी",
         }
     }
 
@@ -67,6 +71,7 @@ impl Language {
             Self::De => "de",
             Self::Cs => "cs",
             Self::Fr => "fr",
+            Self::Hi => "hi",
         }
     }
 
@@ -86,6 +91,7 @@ impl Language {
             "de" => Some(Self::De),
             "cs" => Some(Self::Cs),
             "fr" => Some(Self::Fr),
+            "hi" => Some(Self::Hi),
             _ => None,
         }
     }
@@ -101,6 +107,12 @@ impl Language {
         {
             web_sys::window().and_then(|window| window.navigator().language()).and_then(|tag| Self::from_tag(&tag)).unwrap_or(Self::En)
         }
+    }
+
+    /// Whether the interface needs a script face that egui's bundled fonts lack (CJK, Indian
+    /// scripts). The desktop apps find one among the system fonts; the web build has none to load.
+    pub fn needs_script_fonts(self) -> bool {
+        matches!(self, Self::Zh | Self::Ja | Self::Ko | Self::Hi)
     }
 
     pub fn formula_locale(self) -> gridcraft_engine::formula::FormulaLocale {
@@ -123,6 +135,7 @@ impl Language {
             Self::De => de::translate(text),
             Self::Cs => cs::translate(text),
             Self::Fr => fr::translate(text),
+            Self::Hi => hi::translate(text),
         };
         translated.unwrap_or_else(|| text.rsplit_once('|').map_or(text, |(_, label)| label))
     }
@@ -587,6 +600,7 @@ mod tests {
             assert!(de::translate(english).is_some_and(|text| !text.is_empty()), "missing German: {english}");
             assert!(cs::translate(english).is_some_and(|text| !text.is_empty()), "missing Czech: {english}");
             assert!(fr::translate(english).is_some_and(|text| !text.is_empty()), "missing French: {english}");
+            assert!(hi::translate(english).is_some_and(|text| !text.is_empty()), "missing Hindi: {english}");
         }
         assert_eq!(Language::Ja.tr("Data"), "データ");
         assert_eq!(Language::Zh.tr("Data"), "数据");
@@ -610,6 +624,8 @@ mod tests {
         assert_eq!(Language::Cs.tr("Data"), "Data");
         assert_eq!(Language::Cs.tr("Formulas"), "Vzorce");
         assert_eq!(Language::Cs.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Hi.tr("Data"), "डेटा");
+        assert_eq!(Language::Hi.tr("Sheet1!A1"), "Sheet1!A1");
         // A `context|label` key shows only its label in English and splits the translation.
         assert_eq!(Language::En.tr("Page Layout|Orientation"), "Orientation");
         assert_eq!(Language::Ja.tr("Page Layout|Orientation"), "印刷の向き");
@@ -617,6 +633,8 @@ mod tests {
         assert_eq!(Language::Cs.tr("Page Layout|Orientation"), "Orientace");
         assert_eq!(Language::Cs.tr("Orientation"), "Orientace textu");
         assert_eq!(Language::parse("xx"), None);
+        assert!(Language::Hi.needs_script_fonts() && Language::Ja.needs_script_fonts());
+        assert!(!Language::Fr.needs_script_fonts() && !Language::Ru.needs_script_fonts());
     }
 
     #[test]
@@ -654,6 +672,9 @@ mod tests {
         assert_eq!(Language::from_tag("fr-FR"), Some(Language::Fr));
         assert_eq!(Language::from_tag("fr_CA"), Some(Language::Fr));
         assert_eq!(Language::parse("fr"), Some(Language::Fr));
+        assert_eq!(Language::from_tag("hi-IN"), Some(Language::Hi));
+        assert_eq!(Language::from_tag("hi_IN"), Some(Language::Hi));
+        assert_eq!(Language::parse("hi"), Some(Language::Hi));
     }
 
     #[test]
