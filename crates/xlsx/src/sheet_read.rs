@@ -15,7 +15,7 @@ use crate::IoError;
 use crate::fmla::from_file;
 use crate::package::Rel;
 use crate::read::Ctx;
-use crate::styles::read_color;
+use crate::styles::{read_color, read_dxf};
 use crate::tables::{col_width_to_px, paper_name, pt_to_px};
 use crate::xml::{self, El};
 
@@ -1002,8 +1002,8 @@ fn read_ext(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
 
 /// x14 conditional-format extensions (Excel 2010): each `x14:cfRule` either refines the classic
 /// rule linked by its GUID (data bars, icon sets) or — with no classic counterpart — stands on
-/// its own (x14-only icon sets like `5Boxes`). Anything unmatched or unmodelled warns once,
-/// honestly.
+/// its own (x14-only icon sets like `5Boxes`, or expression rules with an inline dxf). Anything
+/// unmatched or unmodelled warns once, honestly.
 fn read_x14_conditional_formats(cx: &mut Ctx<'_>, c: &El, sheet: &mut Sheet) {
     let mut skipped = false;
     for cf in c.kids("conditionalFormatting") {
@@ -1011,7 +1011,7 @@ fn read_x14_conditional_formats(cx: &mut Ctx<'_>, c: &El, sheet: &mut Sheet) {
             let id = r.attr("id").unwrap_or("");
             let Some(index) = cx.cf_ext_ids.iter().find(|(sid, _)| sid == id).map(|(_, i)| *i) else {
                 // No classic rule carries this id: an x14-only rule over its `xm:sqref`.
-                skipped |= read_x14_only_rule(cf, r, sheet);
+                skipped |= read_x14_only_rule(cx, cf, r, sheet);
                 continue;
             };
             let Some(rule) = sheet.cond_formats.get_mut(index).map(|f| &mut f.rule) else {
@@ -1032,14 +1032,11 @@ fn read_x14_conditional_formats(cx: &mut Ctx<'_>, c: &El, sheet: &mut Sheet) {
     }
 }
 
-/// An x14 rule with no classic counterpart (an x14-only icon set like `5Boxes`, or a custom mix):
-/// a complete conditional format over the `xm:sqref` of its `x14:conditionalFormatting` parent,
-/// carrying the x14 rule's priority. Returns whether it had to be skipped.
-fn read_x14_only_rule(cf: &El, r: &El, sheet: &mut Sheet) -> bool {
-    let Some(is) = r.child("iconSet") else {
-        return true;
-    };
-    let skipped = unmodelled_icon_set(is);
+/// An x14 rule with no classic counterpart (an x14-only icon set like `5Boxes`, or a standalone
+/// expression rule): a complete conditional format over the `xm:sqref` of its
+/// `x14:conditionalFormatting` parent, carrying the x14 rule's priority. Returns whether it had
+/// to be skipped.
+fn read_x14_only_rule(cx: &Ctx<'_>, cf: &El, r: &El, sheet: &mut Sheet) -> bool {
     // The rule is dropped when any sqref token won't parse: importing the rest would quietly
     // change what the format covers.
     let sq = cf.child("sqref").map(|s| s.text.as_str()).unwrap_or("");
@@ -1047,26 +1044,57 @@ fn read_x14_only_rule(cf: &El, r: &El, sheet: &mut Sheet) -> bool {
     if ranges.is_empty() || ranges.len() != sq.split_whitespace().count() {
         return true;
     }
-    let mut thresholds = Vec::new();
-    for v in is.kids("cfvo") {
-        // A threshold we can't model would leave a hole the icons shift into.
-        let Some(kind) = x14_cfvo(v) else { return true };
-        thresholds.push(kind);
+    if let Some(is) = r.child("iconSet") {
+        let skipped = unmodelled_icon_set(is);
+        let mut thresholds = Vec::new();
+        for v in is.kids("cfvo") {
+            // A threshold we can't model would leave a hole the icons shift into.
+            let Some(kind) = x14_cfvo(v) else { return true };
+            thresholds.push(kind);
+        }
+        let (icons, truncated) = x14_icons(is);
+        sheet.cond_formats.push(CondFormat {
+            ranges,
+            rule: CfRule::IconSet {
+                set: is.attr("iconSet").unwrap_or("3TrafficLights1").to_string(),
+                thresholds,
+                reverse: is.flag("reverse", false),
+                show_value: is.flag("showValue", true),
+                icons,
+            },
+            priority: r.attr_u32("priority").unwrap_or(0),
+            stop_if_true: false,
+        });
+        return skipped || truncated;
     }
-    let (icons, truncated) = x14_icons(is);
+    if r.attr("type") == Some("expression") {
+        return read_x14_only_expression(cx, r, ranges, sheet);
+    }
+    true
+}
+
+/// An x14-only expression rule: an ordinary model expression rule — the formula from `xm:f`
+/// through the usual file conversion, the style from the inline `<x14:dxf>`, whose child shape
+/// matches a styles.xml dxf. A missing dxf is a legal style-less rule; a missing or empty
+/// formula drops the rule. Anything outside the modelled shape warns. Returns whether the rule
+/// had to be skipped.
+fn read_x14_only_expression(cx: &Ctx<'_>, r: &El, ranges: Vec<RangeRef>, sheet: &mut Sheet) -> bool {
+    // Known attributes only: `type`, `priority` and the `id` (unused here — an x14-only rule has
+    // no classic counterpart to link).
+    let mut skipped = r.attrs.iter().any(|(n, _)| !matches!(n.as_str(), "type" | "priority" | "id"));
+    // No formula, no rule: the condition is all an expression rule is.
+    let Some(formula) = r.child("f").map(|f| f.text.trim()).filter(|f| !f.is_empty()) else {
+        return true;
+    };
+    let style = r.child("dxf").map(|d| read_dxf(d, &cx.palette, &cx.num_fmts)).unwrap_or_default();
+    skipped |= r.children.iter().any(|c| !matches!(c.name.as_str(), "f" | "dxf"));
     sheet.cond_formats.push(CondFormat {
         ranges,
-        rule: CfRule::IconSet {
-            set: is.attr("iconSet").unwrap_or("3TrafficLights1").to_string(),
-            thresholds,
-            reverse: is.flag("reverse", false),
-            show_value: is.flag("showValue", true),
-            icons,
-        },
+        rule: CfRule::Expression { formula: from_file(formula), style: Box::new(style) },
         priority: r.attr_u32("priority").unwrap_or(0),
         stop_if_true: false,
     });
-    skipped || truncated
+    skipped
 }
 
 /// Merges an x14 icon set into the classic rule it refines: restated cfvo thresholds and custom

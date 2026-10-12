@@ -1,7 +1,9 @@
 //! Hand-written packages exercising specific reader paths.
 
 use gridcraft_core::{CellError, CellRef, DateSystem, RangeRef, Value};
-use gridcraft_model::{CalcMode, CfRule, CfValueKind, Color, HAlign, IconChoice, PatternType, StyleId, Underline, Visibility};
+use gridcraft_model::{
+    BorderLine, BorderStyle, CalcMode, CfRule, CfValueKind, Color, HAlign, IconChoice, PatternType, StyleId, Underline, Visibility,
+};
 
 use super::minimal;
 use crate::read_xlsx;
@@ -453,6 +455,51 @@ fn x14_only_icon_set_imports() {
     );
     assert!(icons.is_none());
     assert!(!rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
+}
+
+/// An x14-only expression rule (issue #703, real-world shape): no classic counterpart, the
+/// formula in an `xm:f` child, the style in an inline `<x14:dxf>` — bold+italic red font and a
+/// thin red border on all four sides.
+const X14_ONLY_EXPRESSION_SHEET: &str = r#"<sheetData>
+<row r="12"><c r="F12"><v>1</v></c></row>
+</sheetData>
+<extLst><ext xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}">
+<x14:conditionalFormattings><x14:conditionalFormatting xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">
+<x14:cfRule type="expression" priority="505" id="{13B289B8-6F2A-4C1D-9E34-A1B2C3D4E5F6}">
+<xm:f>AND(F12&lt;&gt;"",ISERROR(MATCH(F12,OFFSET(References!$C$15,,,COUNTIF(References!$C$15:$C$251,"&lt;&gt;")),0)))</xm:f>
+<x14:dxf><font><b/><i/><color rgb="FFFF0000"/></font><border><left style="thin"><color rgb="FFFF0000"/></left><right style="thin"><color rgb="FFFF0000"/></right><top style="thin"><color rgb="FFFF0000"/></top><bottom style="thin"><color rgb="FFFF0000"/></bottom></border></x14:dxf>
+</x14:cfRule>
+<xm:sqref>F12:F261</xm:sqref>
+</x14:conditionalFormatting></x14:conditionalFormattings>
+</ext></extLst>"#;
+
+#[test]
+fn x14_only_expression_rule_imports() {
+    let (wb, rep) = read_xlsx(&minimal(X14_ONLY_EXPRESSION_SHEET, &[], "", "")).unwrap();
+    let s = wb.sheet(0).unwrap();
+    assert_eq!(s.cond_formats.len(), 1);
+    let f = &s.cond_formats[0];
+    assert_eq!(f.ranges, vec![RangeRef::parse("F12:F261").unwrap()]);
+    assert_eq!(f.priority, 505);
+    assert!(!f.stop_if_true);
+    let CfRule::Expression { formula, style } = &f.rule else { panic!("not an expression: {:?}", f.rule) };
+    assert_eq!(formula, "AND(F12<>\"\",ISERROR(MATCH(F12,OFFSET(References!$C$15,,,COUNTIF(References!$C$15:$C$251,\"<>\")),0)))");
+    assert!(style.font.bold && style.font.italic);
+    assert_eq!(style.font.color, Color::Rgb(0xFF0000));
+    let thin_red = BorderLine { style: BorderStyle::Thin, color: Color::Rgb(0xFF0000) };
+    assert_eq!((style.borders.left, style.borders.right, style.borders.top, style.borders.bottom), (thin_red, thin_red, thin_red, thin_red));
+    assert!(!rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
+}
+
+#[test]
+fn x14_only_expression_without_formula_warns() {
+    let body = X14_ONLY_EXPRESSION_SHEET.replace(
+        r#"<xm:f>AND(F12&lt;&gt;"",ISERROR(MATCH(F12,OFFSET(References!$C$15,,,COUNTIF(References!$C$15:$C$251,"&lt;&gt;")),0)))</xm:f>"#,
+        "",
+    );
+    let (wb, rep) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
+    assert!(wb.sheet(0).unwrap().cond_formats.is_empty(), "the rule was imported anyway");
+    assert!(rep.warnings.iter().any(|w| w.contains("2010")), "{:?}", rep.warnings);
 }
 
 /// The flat colour children of an x14 data bar: `fillColor` overrides the classic bar colour,
