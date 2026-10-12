@@ -4,7 +4,8 @@
 //!
 //! GROUPBY / PIVOTBY take their aggregation as a function name ("SUM", "AVERAGE"…) or a
 //! SUBTOTAL-style code (1–11): the host resolves eta-reduced lambdas such as `SUM` to the name
-//! text before calling. Custom LAMBDA aggregations are not supported here.
+//! text before calling. A LAMBDA, or another function given by name (PERCENTOF), is applied by
+//! the host through [`groupby_with`] / [`pivotby_with`].
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -732,10 +733,27 @@ fn opt_arr(args: &[Arg], i: usize) -> R<Option<Array>> {
     if has(args, i) { Ok(Some(arr_arg(args, i)?)) } else { Ok(None) }
 }
 
+/// An aggregation the host supplies to [`groupby_with`] / [`pivotby_with`]: given the values of
+/// one group in one value column and the values it is measured against (the whole column for
+/// GROUPBY, the column group for PIVOTBY, as Excel's PERCENTOF sees them), the cell's result.
+pub type Aggregation<'a> = &'a mut dyn FnMut(&[&Value], &[&Value]) -> Value;
+
+/// Whether GROUPBY / PIVOTBY aggregate with the function of this name themselves (`SUM`,
+/// `AVERAGE`…); any other function given by name is applied by the host, like a LAMBDA.
+pub fn is_named_aggregation(name: &str) -> bool {
+    parse_agg(&Value::from(name)).is_ok()
+}
+
 fn groupby(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
+    let f = parse_agg(&arg(args, 2)?.value)?;
+    groupby_with(args, &mut |vs, _| aggregate(f, vs))
+}
+
+/// GROUPBY with the aggregation given by the host (a LAMBDA, or a function given by name such as
+/// PERCENTOF) instead of argument 2, which is ignored.
+pub fn groupby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
     let rf = arr_arg(args, 0)?;
     let vals = arr_arg(args, 1)?;
-    let f = parse_agg(&arg(args, 2)?.value)?;
     let fh = opt_count(args, 3)?;
     let total = opt_count(args, 4)?.unwrap_or(1);
     let sort = opt_count(args, 5)?.unwrap_or(1);
@@ -748,11 +766,13 @@ fn groupby(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
     }
     let sort_in_keys = if sort.unsigned_abs() as usize <= rf.cols { sort } else { 0 };
     let mut ordered = distinct_keys(&keys, sort_in_keys);
-    let agg_row = |rows: &[usize]| -> Vec<Value> {
+    // Each value column in full: what a two-argument aggregation (PERCENTOF) measures against.
+    let all: Vec<Vec<&Value>> = (0..vals.cols).map(|c| p.rows.iter().filter_map(|&r| vals.get(r, c)).collect()).collect();
+    let mut agg_row = |rows: &[usize]| -> Vec<Value> {
         (0..vals.cols)
             .map(|c| {
                 let vs: Vec<&Value> = rows.iter().filter_map(|&r| vals.get(r, c)).collect();
-                aggregate(f, &vs)
+                agg(&vs, all.get(c).map_or(&[], Vec::as_slice))
             })
             .collect()
     };
@@ -799,10 +819,16 @@ fn pivot_dims(header_rows: usize, body_rows: usize, col_keys: usize, value_cols:
 }
 
 fn pivotby(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
+    let f = parse_agg(&arg(args, 3)?.value)?;
+    pivotby_with(args, &mut |vs, _| aggregate(f, vs))
+}
+
+/// PIVOTBY with the aggregation given by the host (a LAMBDA, or a function given by name such as
+/// PERCENTOF) instead of argument 3, which is ignored.
+pub fn pivotby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
     let rf = arr_arg(args, 0)?;
     let cf = arr_arg(args, 1)?;
     let vals = arr_arg(args, 2)?;
-    let f = parse_agg(&arg(args, 3)?.value)?;
     let fh = opt_count(args, 4)?;
     let row_total = opt_count(args, 5)?.unwrap_or(1);
     let row_sort = opt_count(args, 6)?.unwrap_or(1);
@@ -818,12 +844,12 @@ fn pivotby(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
     for ((r, c), &i) in rkeys.iter().zip(ckeys.iter()).zip(p.rows.iter()) {
         cell.entry((row_key(r), row_key(c))).or_default().push(i);
     }
-    let agg = |rows: &[usize], c: usize| -> Value {
+    let mut agg_cell = |rows: &[usize], against: &[&Value], c: usize| -> Value {
         if rows.is_empty() {
-            return Value::Empty;
+            return Value::from("");
         }
         let vs: Vec<&Value> = rows.iter().filter_map(|&r| vals.get(r, c)).collect();
-        aggregate(f, &vs)
+        agg(&vs, against)
     };
     let rows_for = |r: Option<&Vec<Value>>, c: Option<&Vec<Value>>| -> Vec<usize> {
         let rkey = r.map(|k| row_key(k));
@@ -850,10 +876,12 @@ fn pivotby(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
     if height.saturating_mul(width) > MAX_CELLS {
         return Err(CellError::Num);
     }
+    // Excel fills the corner and the row / column combinations without data with empty text.
+    let gap = Value::from("");
     let mut out: Vec<Vec<Value>> = Vec::new();
     // Column header rows: one per column field, plus value names when several value columns.
     for level in 0..cf.cols {
-        let mut line = vec![Value::Empty; lead];
+        let mut line = vec![gap.clone(); lead];
         for c in &cols {
             for _ in 0..vals.cols {
                 line.push(match c {
@@ -866,14 +894,23 @@ fn pivotby(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
         out.push(line);
     }
     if value_row {
-        let mut line: Vec<Value> = if p.show_headers { p.field_headers.iter().take(lead).cloned().collect() } else { vec![Value::Empty; lead] };
+        let mut line: Vec<Value> = if p.show_headers { p.field_headers.iter().take(lead).cloned().collect() } else { vec![gap.clone(); lead] };
         line.resize(lead, Value::Empty);
         for _ in &cols {
             line.extend(p.value_headers.iter().cloned());
         }
         out.push(line);
     }
-    let body_line = |r: Option<&Vec<Value>>| -> Vec<Value> {
+    // What a two-argument aggregation (PERCENTOF) measures each cell against, per output column
+    // and value column: the column group's values, or every value for the total column.
+    let against: Vec<Vec<Vec<&Value>>> = cols
+        .iter()
+        .map(|c| {
+            let rows = rows_for(None, *c);
+            (0..vals.cols).map(|vc| rows.iter().filter_map(|&r| vals.get(r, vc)).collect()).collect()
+        })
+        .collect();
+    let mut body_line = |r: Option<&Vec<Value>>| -> Vec<Value> {
         let mut line: Vec<Value> = match r {
             Some(k) => k.clone(),
             None => {
@@ -882,13 +919,14 @@ fn pivotby(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
                 l
             }
         };
-        for c in &cols {
+        for (ci, c) in cols.iter().enumerate() {
             let rows = match (r, c) {
                 (Some(rk), Some(ck)) => cell.get(&(row_key(rk), row_key(ck))).cloned().unwrap_or_default(),
                 _ => rows_for(r, *c),
             };
             for vc in 0..vals.cols {
-                line.push(agg(&rows, vc));
+                let of = against.get(ci).and_then(|a| a.get(vc)).map_or(&[][..], Vec::as_slice);
+                line.push(agg_cell(&rows, of, vc));
             }
         }
         line
@@ -1246,9 +1284,9 @@ mod tests {
         assert_eq!(
             rows_of(&r),
             vec![
-                vec![Value::Empty, tv("A"), tv("B"), tv("Total")],
+                vec![tv(""), tv("A"), tv("B"), tv("Total")],
                 vec![tv("East"), nv(10.0), nv(5.0), nv(15.0)],
-                vec![tv("North"), nv(1.0), Value::Empty, nv(1.0)],
+                vec![tv("North"), nv(1.0), tv(""), nv(1.0)],
                 vec![tv("West"), nv(20.0), nv(7.0), nv(27.0)],
                 vec![tv("Total"), nv(31.0), nv(12.0), nv(43.0)],
             ]

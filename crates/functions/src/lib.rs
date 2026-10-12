@@ -8,7 +8,8 @@
 //!
 //! Special forms that need references, laziness or hidden-row information (ROW, OFFSET,
 //! INDIRECT, LET, LAMBDA, SUBTOTAL, AGGREGATE, TEXT…) are evaluated by the host; this crate
-//! exports [`aggregate_values`] for SUBTOTAL/AGGREGATE.
+//! exports [`aggregate_values`] for SUBTOTAL/AGGREGATE, and [`groupby_with`] / [`pivotby_with`]
+//! for GROUPBY/PIVOTBY with a LAMBDA aggregation.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
@@ -76,6 +77,7 @@ pub(crate) mod stat;
 pub(crate) mod text;
 pub(crate) mod util;
 
+pub use dynamic::{Aggregation, groupby_with, is_named_aggregation, pivotby_with};
 pub use ets::Timeline;
 pub use stat::{aggregate_values, aggregate_values_k};
 

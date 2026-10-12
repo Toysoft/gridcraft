@@ -777,16 +777,32 @@ impl<'h> Evaluator<'h> {
             }
             "MAP" | "REDUCE" | "SCAN" | "BYROW" | "BYCOL" | "MAKEARRAY" => self.higher_order(name, args),
             "GROUPBY" | "PIVOTBY" => {
-                // The aggregation may be a function given by name (`SUM`): pass it as its name.
                 let i = if name == "GROUPBY" { 2 } else { 3 };
-                match args.get(i).and_then(|a| self.function_by_name(a)) {
-                    Some(f) => {
+                let Some(f) = args.get(i) else { return self.builtin(name, args) };
+                // A function given by name that GROUPBY aggregates with itself (`SUM`): pass it as
+                // its name. Any other (PERCENTOF, CONCAT…) is applied like a LAMBDA.
+                if let Some(n) = self.function_by_name(f) {
+                    if gridcraft_functions::is_named_aggregation(&n) {
                         let mut args = args.to_vec();
                         if let Some(a) = args.get_mut(i) {
-                            *a = Expr::Text(f.into());
+                            *a = Expr::Text(n.into());
                         }
-                        self.builtin(name, &args)
+                        return self.builtin(name, &args);
                     }
+                    let arity = if n == "PERCENTOF" { 2 } else { 1 };
+                    return match self.lambda_arg(Some(f), arity) {
+                        Some(l) => self.group_with_lambda(name, args, i, &l),
+                        None => err(CellError::Value),
+                    };
+                }
+                // A LAMBDA, written in place or held by a LET variable or a defined name.
+                let lambda = match f {
+                    Expr::Call(n, _) if n.eq_ignore_ascii_case("LAMBDA") => self.lambda_arg(Some(f), 1),
+                    Expr::Name(_) => self.lambda_arg(Some(f), 1),
+                    _ => None,
+                };
+                match lambda {
+                    Some(l) => self.group_with_lambda(name, args, i, &l),
                     None => self.builtin(name, args),
                 }
             }
@@ -994,6 +1010,46 @@ impl<'h> Evaluator<'h> {
             Some(Ev::L(l)) => Some(l),
             _ => None,
         }
+    }
+
+    /// GROUPBY / PIVOTBY whose aggregation (argument `i`) is a LAMBDA: it gets one group's values
+    /// in one value column and, with a second parameter, the values they are measured against
+    /// (the whole column for GROUPBY, the column group for PIVOTBY), as Excel passes them to
+    /// PERCENTOF. An array result, even of one value, is `#VALUE!` in its cell, as in Excel.
+    fn group_with_lambda(&mut self, name: &str, args: &[Expr], i: usize, l: &Lambda) -> Ev {
+        let Some(spec) = gridcraft_functions::lookup(name) else { return err(CellError::Name) };
+        if args.len() < spec.min_args || args.len() > spec.max_args || l.params.is_empty() || l.params.len() > 2 {
+            return err(CellError::Value);
+        }
+        let mut evaluated = Vec::with_capacity(args.len());
+        for (k, a) in args.iter().enumerate() {
+            if k == i {
+                evaluated.push(Arg::val(Value::Empty));
+                continue;
+            }
+            let ev = self.eval(a);
+            let from_ref = matches!(ev, Ev::R(_));
+            let value = self.deref(ev);
+            evaluated.push(Arg { value, from_ref });
+        }
+        let column = |vs: &[&Value]| -> Value { Array::column(vs.iter().map(|v| (*v).clone()).collect()).into() };
+        let mut aggregate = |group: &[&Value], against: &[&Value]| -> Value {
+            let mut bound = Vec::with_capacity(2);
+            for (p, vs) in l.params.iter().zip([group, against]) {
+                bound.push((p.clone(), Ev::V(column(vs))));
+            }
+            let r = self.call_lambda_values(l, bound);
+            match self.deref(r) {
+                Value::Array(_) => Value::Error(CellError::Value),
+                v => v,
+            }
+        };
+        let r = if name == "GROUPBY" {
+            gridcraft_functions::groupby_with(&evaluated, &mut aggregate)
+        } else {
+            gridcraft_functions::pivotby_with(&evaluated, &mut aggregate)
+        };
+        Ev::V(r.unwrap_or_else(Value::Error))
     }
 
     fn higher_order(&mut self, name: &str, args: &[Expr]) -> Ev {

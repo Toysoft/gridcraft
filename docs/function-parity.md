@@ -1,6 +1,6 @@
 # Function parity: worksheet functions and formulas
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (USDOLLAR added as a compatibility function; MIRR, COUNTIF and INDIRECT edge cases match Excel 365) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (GROUPBY / PIVOTBY aggregate with a LAMBDA, PERCENTOF or another function by name) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Excel's worksheet functions, category by category, against GridCraft's function library. Part of
 [target-app-parity.md](target-app-parity.md); gaps feed [gaps.md](gaps.md).
@@ -53,7 +53,8 @@ Excel's worksheet functions, category by category, against GridCraft's function 
 By the Excel version that introduced them (working / total): before 2010 346 / 360, 2010
 56 / 56, 2013 49 / 51, 2016 1 / 5, 2019 6 / 6, 2021 11 / 11, 2024 22 / 23, Microsoft 365 5 / 11.
 Dynamic-array and LAMBDA-era functions (FILTER, SORT, UNIQUE, XLOOKUP, VSTACK, TAKE, GROUPBY,
-PIVOTBY, REGEXTEST…) are all present.
+PIVOTBY, REGEXTEST…) are all present. GROUPBY and PIVOTBY take their aggregation as a LAMBDA too, or
+as a function by name beyond their built-in ones (PERCENTOF, CONCAT), as Excel passes them.
 
 ### Scope of what's missing
 
@@ -108,6 +109,7 @@ workbooks; results checked in as data, not Excel files) and fixing what it finds
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | GROUPBY / PIVOTBY: LAMBDA aggregations (group values, plus the column or column group as a second argument) and PERCENTOF / CONCAT by name, checked against Excel |
 | 2026-10-12 | minor | USDOLLAR added as a Compatibility function (not on Microsoft's list, so the counts don't change); MIRR with no positive flow is -1, COUNTIF's bare `"<="` / `">="` skip empty strings, INDIRECT with `a1` = FALSE gives `#REF!` for A1-style text (#738) |
 | 2026-10-11 | minor | TEXT / number formats fixed against Excel-cached results: fraction literals and zero fractions, `0` denominators zero padded, `?` pads the thousands separator, booleans use the text section (226 mismatches → 0 in 352 TEXT cells) |
 | 2026-10-11 | minor | Iterative calculation: circular references iterate up to Maximum Iterations / Maximum Change when enabled |

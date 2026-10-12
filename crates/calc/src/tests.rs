@@ -611,6 +611,64 @@ fn functions_given_by_name() {
     assert_eq!(t.num("J1"), 20.0);
 }
 
+/// GROUPBY / PIVOTBY with a LAMBDA (or PERCENTOF, CONCAT) as the aggregation. Expected values were
+/// observed in Excel (Microsoft 365) for the same inputs.
+#[test]
+fn groupby_and_pivotby_aggregate_with_a_lambda() {
+    let mut t = T::new();
+    for (i, (k, v, w)) in [("a", 1, 10), ("b", 2, 20), ("a", 3, 30)].iter().enumerate() {
+        t.set(&format!("A{}", i + 1), k);
+        t.set(&format!("B{}", i + 1), &v.to_string());
+        t.set(&format!("C{}", i + 1), &w.to_string());
+    }
+    let div = |a: f64, b: f64| a / b;
+    // The group's values.
+    t.set("E1", "=GROUPBY(A1:A3,B1:B3,LAMBDA(x,SUM(x)))");
+    assert_eq!([t.get("E1"), t.get("E2"), t.get("E3")], [Value::from("a"), Value::from("b"), Value::from("Total")]);
+    assert_eq!([t.num("F1"), t.num("F2"), t.num("F3")], [4.0, 2.0, 6.0]);
+    t.set("H1", "=GROUPBY(A1:A3,B1:B3,LAMBDA(x,ROWS(x)))");
+    assert_eq!([t.num("I1"), t.num("I2"), t.num("I3")], [2.0, 1.0, 3.0]);
+    // A second parameter gets every value of the column, as PERCENTOF does.
+    t.set("K1", "=GROUPBY(A1:A3,B1:B3,LAMBDA(x,y,SUM(x)/SUM(y)))");
+    assert_eq!([t.num("L1"), t.num("L2"), t.num("L3")], [div(4.0, 6.0), div(2.0, 6.0), 1.0]);
+    t.set("N1", "=GROUPBY(A1:A3,B1:B3,PERCENTOF)");
+    assert_eq!([t.num("O1"), t.num("O2"), t.num("O3")], [div(4.0, 6.0), div(2.0, 6.0), 1.0]);
+    // Each value column on its own; other functions by name; a lambda held by LET.
+    t.set("Q1", "=GROUPBY(A1:A3,B1:C3,LAMBDA(x,SUM(x)))");
+    assert_eq!([t.num("R1"), t.num("S1"), t.num("R3"), t.num("S3")], [4.0, 40.0, 6.0, 60.0]);
+    t.set("U1", "=GROUPBY(A1:A3,B1:B3,CONCAT)");
+    assert_eq!([t.get("V1"), t.get("V2"), t.get("V3")], [Value::from("13"), Value::from("2"), Value::from("123")]);
+    t.set("X1", "=LET(f,LAMBDA(x,MAX(x)),GROUPBY(A1:A3,B1:B3,f))");
+    assert_eq!([t.num("Y1"), t.num("Y2"), t.num("Y3")], [3.0, 2.0, 3.0]);
+    // An array result is #VALUE! in its cell, an error stays in its cell, and a lambda with more
+    // than two parameters is #VALUE! for the whole formula.
+    t.set("AA1", "=GROUPBY(A1:A3,B1:B3,LAMBDA(x,x))");
+    assert_eq!(
+        [t.get("AB1"), t.get("AB2"), t.get("AB3")],
+        [Value::Error(CellError::Value), Value::Error(CellError::Value), Value::Error(CellError::Value)]
+    );
+    t.set("AD1", "=GROUPBY(A1:A3,B1:B3,LAMBDA(x,1/0))");
+    assert_eq!((t.get("AD1"), t.get("AE1")), (Value::from("a"), Value::Error(CellError::Div0)));
+    t.set("AG1", "=GROUPBY(A1:A3,B1:B3,LAMBDA(x,y,z,1))");
+    assert_eq!(t.get("AG1"), Value::Error(CellError::Value));
+
+    // PIVOTBY: the second parameter gets the cell's column group (every value for the total column).
+    for (i, (r, c, v)) in [("r1", "c1", 1), ("r1", "c2", 2), ("r2", "c1", 3), ("r2", "c1", 4)].iter().enumerate() {
+        t.set(&format!("A{}", i + 11), r);
+        t.set(&format!("B{}", i + 11), c);
+        t.set(&format!("C{}", i + 11), &v.to_string());
+    }
+    t.set("E11", "=PIVOTBY(A11:A14,B11:B14,C11:C14,LAMBDA(x,SUM(x)))");
+    assert_eq!([t.get("F11"), t.get("G11"), t.get("H11")], [Value::from("c1"), Value::from("c2"), Value::from("Total")]);
+    assert_eq!([t.num("F12"), t.num("G12"), t.num("H12"), t.num("F13"), t.num("H13"), t.num("H14")], [1.0, 2.0, 3.0, 7.0, 7.0, 10.0]);
+    // Excel fills the corner and the combination without data (r2, c2) with empty text.
+    assert_eq!((t.get("E11"), t.get("G13")), (Value::from(""), Value::from("")));
+    t.set("E21", "=PIVOTBY(A11:A14,B11:B14,C11:C14,LAMBDA(x,y,SUM(y)))");
+    assert_eq!([t.num("F22"), t.num("G22"), t.num("H22"), t.num("F23"), t.num("H23"), t.num("F24")], [8.0, 2.0, 10.0, 8.0, 10.0, 8.0]);
+    t.set("E31", "=PIVOTBY(A11:A14,B11:B14,C11:C14,PERCENTOF)");
+    assert_eq!([t.num("F32"), t.num("G32"), t.num("H32"), t.num("F33"), t.num("H33"), t.num("F34")], [0.125, 1.0, 0.3, 0.875, 0.7, 1.0]);
+}
+
 #[test]
 fn lambda_argument_count() {
     let mut t = T::new();
