@@ -20,7 +20,7 @@ pub use cell::{Cell, CellPicture, Formula};
 pub use features::*;
 pub use password::PasswordHash;
 pub use preserved::{Preserved, PreservedPart, PreservedRel, PreservedXml};
-pub use runs::{CellRuns, MAX_RUNS_PER_CELL, Run, RunFont};
+pub use runs::{CellRuns, MAX_RUNS_PER_CELL, Run, RunFont, RunFormatError};
 pub use sheet::{DEFAULT_COL_WIDTH, DEFAULT_ROW_HEIGHT, LineIndex, Sheet, SheetViewMode, Visibility};
 pub use store::CellStore;
 pub use style::{

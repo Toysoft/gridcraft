@@ -77,6 +77,27 @@ impl Hash for CellRuns {
     }
 }
 
+/// Error from [`CellRuns::format_range`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunFormatError {
+    /// The result would need more than [`MAX_RUNS_PER_CELL`] runs.
+    Cap,
+}
+
+/// `delta` field-wise over `base`: every `Some` field of `delta` wins, `None` keeps `base`'s.
+fn overlay(base: &RunFont, delta: &RunFont) -> RunFont {
+    RunFont {
+        name: delta.name.clone().or_else(|| base.name.clone()),
+        size: delta.size.or(base.size),
+        bold: delta.bold.or(base.bold),
+        italic: delta.italic.or(base.italic),
+        underline: delta.underline.or(base.underline),
+        strike: delta.strike.or(base.strike),
+        color: delta.color.or(base.color),
+        vert: delta.vert.or(base.vert),
+    }
+}
+
 impl CellRuns {
     /// True when the runs are in order, non-overlapping, on UTF-8 boundaries and concatenate to
     /// exactly `text`. An empty run list is never valid.
@@ -108,6 +129,53 @@ impl CellRuns {
         let start = run.start as usize;
         let end = start.checked_add(run.len as usize)?;
         text.get(start..end)
+    }
+
+    /// Formats byte `range` of the cell's text by overlaying `delta` field-wise on the runs it
+    /// covers, splitting runs that straddle the range edges (the pieces keep the parent font)
+    /// and coalescing neighbours that end up equal. Returns `Ok(None)` when the result is flat —
+    /// an empty list, or one run covering all of `text` with an all-`None` font — and
+    /// [`RunFormatError::Cap`] when the result would exceed [`MAX_RUNS_PER_CELL`]. Never panics:
+    /// pieces are plain byte arithmetic, so a misuse (range off the text or its boundaries)
+    /// just reassembles the runs.
+    pub fn format_range(&self, text: &str, range: std::ops::Range<usize>, delta: &RunFont) -> Result<Option<CellRuns>, RunFormatError> {
+        let mut runs: Vec<Run> = Vec::with_capacity(self.runs.len() + 2);
+        for old in &self.runs {
+            let rs = old.start as usize;
+            let re = rs.saturating_add(old.len as usize);
+            let from = range.start.clamp(rs, re);
+            let to = range.end.clamp(from, re);
+            if from > rs {
+                runs.push(Run { start: old.start, len: (from - rs) as u32, font: old.font.clone() });
+            }
+            if to > from {
+                runs.push(Run { start: from as u32, len: (to - from) as u32, font: overlay(&old.font, delta) });
+            }
+            if re > to {
+                runs.push(Run { start: to as u32, len: (re - to) as u32, font: old.font.clone() });
+            }
+        }
+        let mut coalesced: Vec<Run> = Vec::with_capacity(runs.len());
+        for r in runs {
+            match coalesced.last_mut() {
+                Some(last) if last.font == r.font && last.start as usize + last.len as usize == r.start as usize => {
+                    last.len = last.len.saturating_add(r.len);
+                }
+                _ => coalesced.push(r),
+            }
+        }
+        let flat = match coalesced.as_slice() {
+            [] => true,
+            [one] => one.start == 0 && one.len as usize == text.len() && one.font == RunFont::default(),
+            _ => false,
+        };
+        if flat {
+            return Ok(None);
+        }
+        if coalesced.len() > MAX_RUNS_PER_CELL {
+            return Err(RunFormatError::Cap);
+        }
+        Ok(Some(CellRuns { runs: coalesced }))
     }
 }
 
@@ -180,6 +248,107 @@ mod tests {
     fn merged_inherits_all() {
         let base = Font { name: "Georgia".into(), size: 14.0, bold: true, ..Font::default() };
         assert_eq!(none_font().merged(&base), base);
+    }
+
+    fn run_font(start: u32, len: u32, font: RunFont) -> Run {
+        Run { start, len, font }
+    }
+
+    fn bold_font() -> RunFont {
+        RunFont { bold: Some(true), ..none_font() }
+    }
+
+    fn red_font() -> RunFont {
+        RunFont { color: Some(Color::rgb(255, 0, 0)), ..none_font() }
+    }
+
+    #[test]
+    fn format_overrides_only_given_fields() {
+        // "black red": bold on "black" survives; the red overlay on "red" (bytes 6..9) sets
+        // only `color`.
+        let cr = CellRuns { runs: vec![run_font(0, 5, bold_font()), run(5, 4)] };
+        let out = cr.format_range("black red", 6..9, &red_font()).unwrap();
+        assert_eq!(out, Some(CellRuns { runs: vec![run_font(0, 5, bold_font()), run(5, 1), run_font(6, 3, red_font())] }));
+    }
+
+    #[test]
+    fn format_splits_inside_run() {
+        // "abcdef": colouring bytes 2..4 inside the bold run splits it; both halves and the
+        // covered middle keep the parent's bold.
+        let cr = CellRuns { runs: vec![run_font(0, 6, bold_font())] };
+        let out = cr.format_range("abcdef", 2..4, &red_font()).unwrap();
+        assert_eq!(
+            out,
+            Some(CellRuns {
+                runs: vec![
+                    run_font(0, 2, bold_font()),
+                    run_font(2, 2, RunFont { color: Some(Color::rgb(255, 0, 0)), ..bold_font() }),
+                    run_font(4, 2, bold_font())
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn format_coalesces_neighbors() {
+        // The bold delta over two adjacent bold runs yields a single run.
+        let cr = CellRuns { runs: vec![run_font(0, 2, bold_font()), run_font(2, 2, bold_font())] };
+        let out = cr.format_range("abcd", 0..4, &bold_font()).unwrap();
+        assert_eq!(out, Some(CellRuns { runs: vec![run_font(0, 4, bold_font())] }));
+    }
+
+    #[test]
+    fn format_whole_text_empty_delta_is_flat() {
+        let cr = CellRuns { runs: vec![run(0, 9)] };
+        assert_eq!(cr.format_range("black red", 0..9, &none_font()).unwrap(), None);
+    }
+
+    #[test]
+    fn format_partial_empty_delta_is_noop() {
+        let cr = CellRuns { runs: vec![run_font(0, 2, bold_font()), run(2, 2)] };
+        let out = cr.format_range("abcd", 1..3, &none_font()).unwrap();
+        assert_eq!(out, Some(cr));
+    }
+
+    #[test]
+    fn format_cap_errors() {
+        // 8 192 one-byte runs (at the cap, alternating fonts so they can't coalesce) plus a
+        // two-byte tail run over "a".repeat(8194); splitting the tail would exceed the cap.
+        let mut runs = Vec::with_capacity(MAX_RUNS_PER_CELL + 1);
+        for i in 0..MAX_RUNS_PER_CELL as u32 {
+            runs.push(run_font(i, 1, if i % 2 == 0 { bold_font() } else { none_font() }));
+        }
+        runs.push(run_font(MAX_RUNS_PER_CELL as u32, 2, bold_font()));
+        let cr = CellRuns { runs };
+        let text = "a".repeat(MAX_RUNS_PER_CELL + 2);
+        assert!(cr.valid_for(&text));
+        let out = cr.format_range(&text, (MAX_RUNS_PER_CELL + 1)..(MAX_RUNS_PER_CELL + 2), &red_font());
+        assert_eq!(out, Err(RunFormatError::Cap));
+    }
+
+    #[test]
+    fn format_multibyte_boundaries() {
+        // "é ok è" is 8 bytes: é = 0..2, " ok " = 2..6, è = 6..8; every range stays on the
+        // characters' byte boundaries.
+        let cr = CellRuns { runs: vec![run_font(0, 8, bold_font())] };
+        let out = cr.format_range("é ok è", 2..6, &red_font()).unwrap();
+        assert_eq!(
+            out,
+            Some(CellRuns {
+                runs: vec![
+                    run_font(0, 2, bold_font()),
+                    run_font(2, 4, RunFont { color: Some(Color::rgb(255, 0, 0)), ..bold_font() }),
+                    run_font(6, 2, bold_font())
+                ]
+            })
+        );
+        assert!(out.unwrap().valid_for("é ok è"));
+        let out = cr.format_range("é ok è", 6..8, &red_font()).unwrap();
+        assert_eq!(
+            out,
+            Some(CellRuns { runs: vec![run_font(0, 6, bold_font()), run_font(6, 2, RunFont { color: Some(Color::rgb(255, 0, 0)), ..bold_font() })] })
+        );
+        assert!(out.unwrap().valid_for("é ok è"));
     }
 
     #[test]
