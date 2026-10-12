@@ -133,24 +133,42 @@ fn cell_center(app: &SheetApp, c: CellRef) -> Option<egui::Pos2> {
     Some(geo.screen_cell_rect(sh, c).center())
 }
 
-fn push_click(app: &mut SheetApp, pos: egui::Pos2, button: egui::PointerButton, count: u32, m: egui::Modifiers) {
+/// Most synthetic pointer events a control client may keep queued at once (the queue drains one batch per frame).
+const MAX_QUEUED_POINTER_EVENTS: usize = 10_000;
+
+/// Refuses a request that would push the queued pointer events past [`MAX_QUEUED_POINTER_EVENTS`]; the queue is left unchanged.
+fn pointer_budget(app: &SheetApp, extra: usize) -> Result<(), String> {
+    let queued: usize = app.synthetic.iter().map(Vec::len).sum();
+    if queued.saturating_add(extra) > MAX_QUEUED_POINTER_EVENTS {
+        return Err(format!("too many pointer events (limit {MAX_QUEUED_POINTER_EVENTS} queued at once)"));
+    }
+    Ok(())
+}
+
+fn push_click(app: &mut SheetApp, pos: egui::Pos2, button: egui::PointerButton, count: u32, m: egui::Modifiers) -> Result<(), String> {
+    let count = count.max(1) as usize;
+    pointer_budget(app, count.saturating_mul(2).saturating_add(1))?;
     app.synthetic.push_back(vec![egui::Event::PointerMoved(pos)]);
-    let mut batch = Vec::new();
-    for _ in 0..count.max(1) {
+    let mut batch = Vec::with_capacity(count * 2);
+    for _ in 0..count {
         batch.push(egui::Event::PointerButton { pos, button, pressed: true, modifiers: m });
         batch.push(egui::Event::PointerButton { pos, button, pressed: false, modifiers: m });
     }
     app.synthetic.push_back(batch);
+    Ok(())
 }
 
-fn push_drag(app: &mut SheetApp, a: egui::Pos2, b: egui::Pos2, steps: usize, m: egui::Modifiers) {
+fn push_drag(app: &mut SheetApp, a: egui::Pos2, b: egui::Pos2, steps: usize, m: egui::Modifiers) -> Result<(), String> {
+    let steps = steps.max(1);
+    pointer_budget(app, steps.saturating_add(3))?;
     app.synthetic.push_back(vec![egui::Event::PointerMoved(a)]);
     app.synthetic.push_back(vec![egui::Event::PointerButton { pos: a, button: egui::PointerButton::Primary, pressed: true, modifiers: m }]);
-    for i in 1..=steps.max(1) {
-        let t = i as f32 / steps.max(1) as f32;
+    for i in 1..=steps {
+        let t = i as f32 / steps as f32;
         app.synthetic.push_back(vec![egui::Event::PointerMoved(a + (b - a) * t)]);
     }
     app.synthetic.push_back(vec![egui::Event::PointerButton { pos: b, button: egui::PointerButton::Primary, pressed: false, modifiers: m }]);
+    Ok(())
 }
 
 /// Keeps the commands whose id, label or ribbon path contains `search` (case-insensitive); `None` keeps all.
@@ -312,33 +330,38 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
         }
         "ui.click" => {
             let button = if s("button") == Some("right") { egui::PointerButton::Secondary } else { egui::PointerButton::Primary };
-            push_click(app, egui::pos2(f("x"), f("y")), button, p.get("count").and_then(Json::as_u64).unwrap_or(1) as u32, modifiers(p));
-            ok(Json::Null)
+            let count = p.get("count").and_then(Json::as_u64).unwrap_or(1).min(u64::from(u32::MAX)) as u32;
+            match push_click(app, egui::pos2(f("x"), f("y")), button, count, modifiers(p)) {
+                Ok(()) => ok(Json::Null),
+                Err(e) => err(e),
+            }
         }
         "ui.drag" => {
-            push_drag(
-                app,
-                egui::pos2(f("x"), f("y")),
-                egui::pos2(f("toX"), f("toY")),
-                p.get("steps").and_then(Json::as_u64).unwrap_or(8) as usize,
-                modifiers(p),
-            );
-            ok(Json::Null)
+            let steps = p.get("steps").and_then(Json::as_u64).unwrap_or(8).min(u64::from(u32::MAX)) as usize;
+            match push_drag(app, egui::pos2(f("x"), f("y")), egui::pos2(f("toX"), f("toY")), steps, modifiers(p)) {
+                Ok(()) => ok(Json::Null),
+                Err(e) => err(e),
+            }
         }
         "ui.cell.click" => {
             let Some(c) = s("cell").and_then(CellRef::parse) else { return err("missing `cell`") };
             let Some(pos) = cell_center(app, c) else { return err("no grid yet") };
             let button = if s("button") == Some("right") { egui::PointerButton::Secondary } else { egui::PointerButton::Primary };
-            push_click(app, pos, button, p.get("count").and_then(Json::as_u64).unwrap_or(1) as u32, modifiers(p));
-            ok(json!({"x": pos.x, "y": pos.y}))
+            let count = p.get("count").and_then(Json::as_u64).unwrap_or(1).min(u64::from(u32::MAX)) as u32;
+            match push_click(app, pos, button, count, modifiers(p)) {
+                Ok(()) => ok(json!({"x": pos.x, "y": pos.y})),
+                Err(e) => err(e),
+            }
         }
         "ui.cell.drag" => {
             let (Some(a), Some(b)) = (s("from").and_then(CellRef::parse), s("to").and_then(CellRef::parse)) else {
                 return err("missing `from`/`to`");
             };
             let (Some(pa), Some(pb)) = (cell_center(app, a), cell_center(app, b)) else { return err("no grid yet") };
-            push_drag(app, pa, pb, 8, modifiers(p));
-            ok(Json::Null)
+            match push_drag(app, pa, pb, 8, modifiers(p)) {
+                Ok(()) => ok(Json::Null),
+                Err(e) => err(e),
+            }
         }
         "ui.resize" => {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(f("width").max(400.0), f("height").max(300.0))));
@@ -493,5 +516,32 @@ mod tests {
         assert_eq!(ids(&filter_commands(sample(), Some("font"))), ["home.borders", "home.bold"]);
         assert!(filter_commands(sample(), Some("catalog_no_match_7391")).is_empty());
         assert_eq!(filter_commands(sample(), None).len(), 3);
+    }
+
+    fn test_app() -> SheetApp {
+        let mut session = gridcraft_engine::Session::new();
+        session.new_workbook();
+        SheetApp::new(session, crate::Services::default())
+    }
+
+    #[test]
+    fn oversized_pointer_requests_are_refused_and_leave_the_queue_alone() {
+        let mut app = test_app();
+        let p = egui::pos2(20.0, 20.0);
+        let m = egui::Modifiers::NONE;
+        let btn = egui::PointerButton::Primary;
+        assert!(push_click(&mut app, p, btn, 2, m).is_ok());
+        assert_eq!(app.synthetic.iter().map(Vec::len).sum::<usize>(), 5);
+        assert!(push_click(&mut app, p, btn, u32::MAX, m).is_err());
+        assert!(push_drag(&mut app, p, p, usize::MAX, m).is_err());
+        assert!(push_drag(&mut app, p, p, MAX_QUEUED_POINTER_EVENTS, m).is_err());
+        assert_eq!(app.synthetic.len(), 2);
+        assert_eq!(app.synthetic.iter().map(Vec::len).sum::<usize>(), 5);
+        // Already queued input counts toward the budget.
+        assert!(push_click(&mut app, p, btn, MAX_QUEUED_POINTER_EVENTS / 2, m).is_err());
+        assert_eq!(app.synthetic.len(), 2);
+        // Normal requests still queue in full.
+        assert!(push_drag(&mut app, p, p + egui::vec2(40.0, 40.0), 3, m).is_ok());
+        assert_eq!(app.synthetic.len(), 8);
     }
 }
