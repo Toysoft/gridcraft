@@ -492,6 +492,15 @@ fn fallback_faces(han: HanOrder) -> Vec<(&'static str, Vec<(String, u32)>)> {
         ("sys-cjk-hangul", cjk_hangul()),
         ("sys-thai", thai()),
         ("sys-hebrew", hebrew()),
+        ("sys-devanagari", indic(Indic::Devanagari)),
+        ("sys-bengali", indic(Indic::Bengali)),
+        ("sys-gurmukhi", indic(Indic::Gurmukhi)),
+        ("sys-gujarati", indic(Indic::Gujarati)),
+        ("sys-odia", indic(Indic::Odia)),
+        ("sys-tamil", indic(Indic::Tamil)),
+        ("sys-telugu", indic(Indic::Telugu)),
+        ("sys-kannada", indic(Indic::Kannada)),
+        ("sys-malayalam", indic(Indic::Malayalam)),
         ("sys-symbols", symbols()),
         ("sys-symbols-2", symbols_more()),
     ]
@@ -618,6 +627,84 @@ fn hebrew() -> Vec<(String, u32)> {
         v.push((format!("{d}/NotoSansHebrew-Regular.ttf"), 0));
         v.push((format!("{d}/dejavu/DejaVuSans.ttf"), 0));
         v.push((format!("{d}/freefont/FreeSans.ttf"), 0));
+    }
+    v
+}
+
+/// The Indian scripts with a fallback face. epaint shapes every run with harfrust, so a face with
+/// the script's OpenType tables is all conjuncts and reordered vowel signs need.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Indic {
+    Devanagari,
+    Bengali,
+    Gurmukhi,
+    Gujarati,
+    Odia,
+    Tamil,
+    Telugu,
+    Kannada,
+    Malayalam,
+}
+
+/// Indian-script faces. Windows' Nirmala UI covers all nine scripts (loaded once, see
+/// [`load_fallback`]), with the older per-script faces behind it; macOS ships Kohinoor, Noto and
+/// Sangam MN faces; Linux and the BSDs usually have Noto Sans or Lohit.
+#[cfg(not(target_arch = "wasm32"))]
+fn indic(script: Indic) -> Vec<(String, u32)> {
+    let mac_sys = "/System/Library/Fonts";
+    let mac_sup = "/System/Library/Fonts/Supplemental";
+    let win = std::env::var("WINDIR").map(|w| format!("{w}\\Fonts")).unwrap_or_else(|_| "C:\\Windows\\Fonts".into());
+    // (Windows face, macOS faces with the Regular face's index, Noto name, Lohit directory and file)
+    let (win_face, mac, noto, lohit): (&str, &[(&str, u32)], &str, (&str, &str)) = match script {
+        Indic::Devanagari => (
+            "mangal.ttf",
+            &[("{sys}/Kohinoor.ttc", 0), ("{sup}/Devanagari Sangam MN.ttc", 0), ("{sup}/ITFDevanagari.ttc", 0)],
+            "Devanagari",
+            ("lohit-devanagari", "Lohit-Devanagari"),
+        ),
+        Indic::Bengali => {
+            ("vrinda.ttf", &[("{sys}/KohinoorBangla.ttc", 0), ("{sup}/Bangla Sangam MN.ttc", 0)], "Bengali", ("lohit-bengali", "Lohit-Bengali"))
+        }
+        Indic::Gurmukhi => {
+            ("raavi.ttf", &[("{sup}/Gurmukhi Sangam MN.ttc", 0), ("{sup}/Gurmukhi MN.ttc", 0)], "Gurmukhi", ("lohit-punjabi", "Lohit-Gurmukhi"))
+        }
+        Indic::Gujarati => (
+            "shruti.ttf",
+            &[("{sys}/KohinoorGujarati.ttc", 3), ("{sup}/Gujarati Sangam MN.ttc", 0)],
+            "Gujarati",
+            ("lohit-gujarati", "Lohit-Gujarati"),
+        ),
+        Indic::Odia => ("kalinga.ttf", &[("{sys}/NotoSansOriya.ttc", 0), ("{sup}/Oriya Sangam MN.ttc", 0)], "Oriya", ("lohit-oriya", "Lohit-Odia")),
+        Indic::Tamil => ("latha.ttf", &[("{sup}/Tamil Sangam MN.ttc", 0), ("{sup}/Tamil MN.ttc", 0)], "Tamil", ("lohit-tamil", "Lohit-Tamil")),
+        Indic::Telugu => {
+            ("gautami.ttf", &[("{sys}/KohinoorTelugu.ttc", 0), ("{sup}/Telugu Sangam MN.ttc", 0)], "Telugu", ("lohit-telugu", "Lohit-Telugu"))
+        }
+        Indic::Kannada => {
+            ("tunga.ttf", &[("{sys}/NotoSansKannada.ttc", 3), ("{sup}/Kannada Sangam MN.ttc", 0)], "Kannada", ("lohit-kannada", "Lohit-Kannada"))
+        }
+        Indic::Malayalam => (
+            "kartika.ttf",
+            &[("{sup}/Malayalam Sangam MN.ttc", 0), ("{sup}/Malayalam MN.ttc", 0)],
+            "Malayalam",
+            ("lohit-malayalam", "Lohit-Malayalam"),
+        ),
+    };
+    let mut v: Vec<(String, u32)> = vec![(format!("{win}\\Nirmala.ttc"), 0), (format!("{win}\\Nirmala.ttf"), 0), (format!("{win}\\{win_face}"), 0)];
+    v.extend(mac.iter().map(|(m, index)| (m.replace("{sys}", mac_sys).replace("{sup}", mac_sup), *index)));
+    for d in [
+        "/usr/share/fonts/truetype/noto",
+        "/usr/share/fonts/opentype/noto",
+        "/usr/share/fonts/google-noto",
+        "/usr/share/fonts/noto",
+        "/usr/share/fonts/TTF",
+        "/usr/local/share/fonts/noto",
+    ] {
+        v.push((format!("{d}/NotoSans{noto}-Regular.ttf"), 0));
+    }
+    let (dir, file) = lohit;
+    for d in ["/usr/share/fonts/truetype", "/usr/share/fonts", "/usr/local/share/fonts"] {
+        v.push((format!("{d}/{dir}/{file}.ttf"), 0));
     }
     v
 }
@@ -815,11 +902,45 @@ mod tests {
         let keys = |han| fallback_faces(han).into_iter().map(|(k, _)| k).collect::<Vec<_>>();
         assert_eq!(
             keys(HanOrder::Japanese),
-            ["sys-cjk-han-ja", "sys-cjk-han-zh", "sys-cjk-hangul", "sys-thai", "sys-hebrew", "sys-symbols", "sys-symbols-2"]
+            [
+                "sys-cjk-han-ja",
+                "sys-cjk-han-zh",
+                "sys-cjk-hangul",
+                "sys-thai",
+                "sys-hebrew",
+                "sys-devanagari",
+                "sys-bengali",
+                "sys-gurmukhi",
+                "sys-gujarati",
+                "sys-odia",
+                "sys-tamil",
+                "sys-telugu",
+                "sys-kannada",
+                "sys-malayalam",
+                "sys-symbols",
+                "sys-symbols-2"
+            ]
         );
         assert_eq!(
             keys(HanOrder::Chinese),
-            ["sys-cjk-han-zh", "sys-cjk-han-ja", "sys-cjk-hangul", "sys-thai", "sys-hebrew", "sys-symbols", "sys-symbols-2"]
+            [
+                "sys-cjk-han-zh",
+                "sys-cjk-han-ja",
+                "sys-cjk-hangul",
+                "sys-thai",
+                "sys-hebrew",
+                "sys-devanagari",
+                "sys-bengali",
+                "sys-gurmukhi",
+                "sys-gujarati",
+                "sys-odia",
+                "sys-tamil",
+                "sys-telugu",
+                "sys-kannada",
+                "sys-malayalam",
+                "sys-symbols",
+                "sys-symbols-2"
+            ]
         );
         assert_eq!(HanOrder::of(Language::Ja), HanOrder::Japanese);
         for l in [Language::En, Language::Zh, Language::Ko, Language::Ru, Language::PtBr, Language::De, Language::Cs] {
@@ -844,16 +965,74 @@ mod tests {
     }
 
     #[test]
+    fn indic_text_is_shaped_not_drawn_letter_by_letter() {
+        // epaint shapes each run with harfrust, so with a face in the chain a conjunct is one glyph
+        // and a split vowel sign is drawn on both sides of its consonant. Drawn per character, क्ष
+        // would show three glyphs (क, a visible virama, ष) and கொ two.
+        let ctx = egui::Context::default();
+        ctx.set_fonts(font_definitions());
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_ui| {});
+        out.textures_delta.clear(); // nothing consumes the atlas in a headless test
+        let drawn = |text: &str| {
+            let galley = ctx.fonts_mut(|f| f.layout_no_wrap(text.to_owned(), FontId::proportional(14.0), Color32::BLACK));
+            galley.rows.iter().flat_map(|r| r.glyphs.iter()).filter(|g| g.uv_rect.size.x > 0.0).count()
+        };
+        let has = |script| indic(script).iter().any(|(p, _)| std::path::Path::new(p).exists());
+        if has(Indic::Devanagari) {
+            assert_eq!(drawn("क्ष"), 1, "क + virama + ष forms the conjunct क्ष");
+        }
+        if has(Indic::Tamil) {
+            assert_eq!(drawn("கொ"), 3, "the vowel sign ொ splits around க");
+        }
+    }
+
+    #[test]
+    fn indic_faces_are_regular_weight() {
+        // A family collection's face order is not alphabetical by weight (macOS's Kohinoor Gujarati
+        // starts with Bold, Noto Sans Kannada with Thin), so each candidate names its Regular face.
+        use skrifa::MetadataProvider;
+        let scripts = [
+            Indic::Devanagari,
+            Indic::Bengali,
+            Indic::Gurmukhi,
+            Indic::Gujarati,
+            Indic::Odia,
+            Indic::Tamil,
+            Indic::Telugu,
+            Indic::Kannada,
+            Indic::Malayalam,
+        ];
+        for script in scripts {
+            for (path, index) in indic(script) {
+                let Ok(bytes) = std::fs::read(&path) else { continue };
+                let Ok(font) = skrifa::FontRef::from_index(&bytes, index) else { continue };
+                let weight = font.attributes().weight.value();
+                assert!((350.0..=500.0).contains(&weight), "{script:?}: {path} face {index} has weight {weight}");
+            }
+        }
+    }
+
+    #[test]
     fn fallback_covers_its_script() {
         // Real render check, per script: the proportional family (what cells and the UI use) must
         // resolve a sample string to a real glyph, not the tofu replacement char. Skips a script
         // whose face is absent (a minimal machine) and fails if a face is present but not wired in.
-        let cases: [(&str, Vec<(String, u32)>, &str); 7] = [
+        let cases: [(&str, Vec<(String, u32)>, &str); 16] = [
             ("sys-cjk-han-ja", cjk_han_japanese(), "カテゴリ"),
             ("sys-cjk-han-zh", cjk_han_simplified(), "页面布局 客户端配置"),
             ("sys-cjk-hangul", cjk_hangul(), "한글"),
             ("sys-thai", thai(), "ทดสอบ"),
             ("sys-hebrew", hebrew(), "עברית"),
+            // Indian scripts, each with a conjunct or a vowel sign the shaper has to place.
+            ("sys-devanagari", indic(Indic::Devanagari), "हिन्दी क्षेत्र"),
+            ("sys-bengali", indic(Indic::Bengali), "বাংলা ক্ষেত্র"),
+            ("sys-gurmukhi", indic(Indic::Gurmukhi), "ਪੰਜਾਬੀ"),
+            ("sys-gujarati", indic(Indic::Gujarati), "ગુજરાતી"),
+            ("sys-odia", indic(Indic::Odia), "ଓଡ଼ିଆ"),
+            ("sys-tamil", indic(Indic::Tamil), "தமிழ் கொண்டு"),
+            ("sys-telugu", indic(Indic::Telugu), "తెలుగు"),
+            ("sys-kannada", indic(Indic::Kannada), "ಕನ್ನಡ"),
+            ("sys-malayalam", indic(Indic::Malayalam), "മലയാളം"),
             ("ui", candidates(UI), "Русский"),
             // Czech interface labels: every Czech accented letter, in both cases.
             ("ui", candidates(UI), "Příliš žluťoučký kůň úpěl ďábelské ódy ŘŠČŽÝÁÍÉÚŮĚŤĎŇÓ"),
