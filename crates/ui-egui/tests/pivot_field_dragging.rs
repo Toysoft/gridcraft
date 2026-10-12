@@ -185,6 +185,19 @@ fn dragging_does_not_mutate_until_release_and_same_slot_is_a_noop() {
 }
 
 #[test]
+fn drag_label_has_room_for_an_ordinary_field_caption() {
+    let mut h = harness();
+    let start = button(&h, "Sum of Sales");
+    pointer(&mut h, start, true);
+    h.input_mut().events.push(Event::PointerMoved(start + vec2(20.0, 0.0)));
+    h.step();
+    h.run_steps(2);
+    let label = h.get_by_label("Sum of Sales").rect();
+    assert!(label.height() <= 24.0, "drag label wrapped: {label:?}");
+    pointer(&mut h, start, false);
+}
+
+#[test]
 fn dropping_one_summary_outside_removes_only_that_instance() {
     let mut h = harness();
     h.state_mut().session.execute("pivot.addField", json!({"field":"Sales","area":"values","func":"average","name":"Mean sales"})).unwrap();

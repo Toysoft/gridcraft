@@ -307,6 +307,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 .interactable(false)
                 .show(ui.ctx(), |ui| {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.set_min_width(140.0);
                         ui.label(&drag.field);
                     });
                 });
