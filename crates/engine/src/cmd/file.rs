@@ -30,7 +30,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Automatic Data Conversion",
             [],
             None,
-            "{all?: bool, removeLeadingZeros?: bool, keepFirst15Digits?: bool, longNumberDigits?: 1..15, digitsAroundE?: bool} → the settings (File › Options › Data; for typing, pasting and opening CSV/text files; {} only reports). keepFirst15Digits:false keeps numbers with more than longNumberDigits (default 15, remembered) digits as text; longNumberDigits without keepFirst15Digits also unchecks it; all sets the three checkboxes",
+            "{all?: bool, removeLeadingZeros?: bool, keepFirst15Digits?: bool, longNumberDigits?: 1..15, digitsAroundE?: bool} → the settings (File › Options › Data; for typing, pasting and opening CSV/text files; {} only reports). keepFirst15Digits:false keeps numbers with more than longNumberDigits digits as text (default 11: only what General shows exactly as written converts), remembered; longNumberDigits without keepFirst15Digits also unchecks it; all sets the three checkboxes",
             always,
             data_conversion
         ),
