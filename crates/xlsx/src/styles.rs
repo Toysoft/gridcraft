@@ -6,7 +6,8 @@ use std::fmt::Write as _;
 
 use gridcraft_model::style::Protection;
 use gridcraft_model::{
-    Alignment, BorderLine, BorderStyle, Borders, Color, Fill, Font, HAlign, NumFmt, PatternType, Style, Underline, VAlign, VertAlign, Workbook,
+    Alignment, BorderLine, BorderStyle, Borders, Color, Fill, Font, HAlign, NumFmt, PatternType, RunFont, Style, Underline, VAlign, VertAlign,
+    Workbook,
 };
 
 use crate::tables::{INDEXED, builtin_format, builtin_id};
@@ -90,6 +91,38 @@ pub fn read_font(e: &El, palette: &[u32]) -> Font {
         f.color = Color::Auto;
     }
     f
+}
+
+/// A rich-text run's `<rPr>` as a font delta: a property the element states overrides the cell
+/// style's font, an absent one inherits it (`None`). Like [`read_font`], text 1 (`theme="1"`
+/// with no tint) is read as the automatic colour; a missing `<color>` inherits rather than
+/// forcing automatic.
+// Consumed by the shared-strings reader in the next task (issue #774); tests use it now.
+#[allow(dead_code)]
+pub fn read_run_font(rpr: &El, palette: &[u32]) -> RunFont {
+    RunFont {
+        name: rpr.child("name").or_else(|| rpr.child("rFont")).and_then(|n| n.attr("val")).map(str::to_string),
+        size: rpr.child("sz").and_then(|s| s.attr_f64("val")).map(|sz| sz.clamp(1.0, 409.0) as f32),
+        bold: rpr.child("b").map(|c| c.flag("val", true)),
+        italic: rpr.child("i").map(|c| c.flag("val", true)),
+        strike: rpr.child("strike").map(|c| c.flag("val", true)),
+        underline: rpr.child("u").map(|u| match u.attr("val").unwrap_or("single") {
+            "double" => Underline::Double,
+            "singleAccounting" => Underline::SingleAccounting,
+            "doubleAccounting" => Underline::DoubleAccounting,
+            "none" => Underline::None,
+            _ => Underline::Single,
+        }),
+        color: rpr.child("color").map(|c| {
+            let col = read_color(c, palette);
+            if col == Color::Theme(1, 0) { Color::Auto } else { col }
+        }),
+        vert: rpr.child_val("vertAlign").map(|v| match v {
+            "superscript" => VertAlign::Superscript,
+            "subscript" => VertAlign::Subscript,
+            _ => VertAlign::Baseline,
+        }),
+    }
 }
 
 fn pattern_from(s: &str) -> PatternType {

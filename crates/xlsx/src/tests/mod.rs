@@ -10,6 +10,7 @@ mod passthrough_tests;
 mod pivot_tests;
 mod richdata_tests;
 mod roundtrip;
+mod runs_tests;
 mod smooth_roundtrip;
 mod trendline_roundtrip;
 mod xls_tests;
