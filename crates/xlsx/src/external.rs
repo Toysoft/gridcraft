@@ -82,25 +82,64 @@ fn book(x: &El) -> ExternalBook {
 }
 
 /// The linked file of an `externalLinkPath` target, as Excel shows it:
-/// `file:///C:\links\Source.xlsx` is `C:\links\Source.xlsx`, `file:///Users/me/Source.xlsx` is
-/// `/Users/me/Source.xlsx`, and a relative target (`Source.xlsx`) stays relative to the workbook.
+/// `file:///C:\links\My%20Files\Source.xlsx` is `C:\links\My Files\Source.xlsx`,
+/// `file:///Users/me/Source.xlsx` is `/Users/me/Source.xlsx`, and a relative target
+/// (`Source.xlsx`) stays relative to the workbook.
 fn link_path(target: &str) -> String {
-    match target.strip_prefix("file:///") {
+    let path = match target.strip_prefix("file:///") {
         Some(p) if p.starts_with("\\\\") || p.as_bytes().get(1) == Some(&b':') => p.to_string(),
         Some(p) => format!("/{p}"),
         None => target.to_string(),
+    };
+    decode(&path)
+}
+
+/// [`link_path`] the other way round. Separators and a drive's colon stay as they are; the rest
+/// is percent-encoded where a URI needs it (`My Files` → `My%20Files`).
+fn link_target(path: &str) -> String {
+    let encoded = encode(path);
+    if path.starts_with("\\\\") || path.as_bytes().get(1) == Some(&b':') {
+        format!("file:///{encoded}")
+    } else if path.starts_with('/') {
+        format!("file://{encoded}")
+    } else {
+        encoded.replace('\\', "/")
     }
 }
 
-/// [`link_path`] the other way round.
-fn link_target(path: &str) -> String {
-    if path.starts_with("\\\\") || path.as_bytes().get(1) == Some(&b':') {
-        format!("file:///{path}")
-    } else if path.starts_with('/') {
-        format!("file://{path}")
-    } else {
-        path.replace('\\', "/")
+/// Percent-encodes what a URI path can't hold as it is; non-ASCII characters are written as they
+/// are, as Excel does.
+fn encode(path: &str) -> String {
+    let mut s = String::with_capacity(path.len());
+    for c in path.chars() {
+        if !c.is_ascii() || c.is_ascii_alphanumeric() || "-._~!$&'()+,;=@\\/:".contains(c) {
+            s.push(c);
+        } else {
+            let _ = write!(s, "%{:02X}", c as u32);
+        }
     }
+    s
+}
+
+/// Percent-escapes decoded; the text as written when they don't decode to UTF-8.
+fn decode(path: &str) -> String {
+    let b = path.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while let Some(&c) = b.get(i) {
+        let hex = b.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok()).and_then(|h| u8::from_str_radix(h, 16).ok());
+        match hex {
+            Some(byte) if c == b'%' => {
+                out.push(byte);
+                i += 3;
+            }
+            _ => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| path.to_string())
 }
 
 fn value(c: &El) -> Value {
