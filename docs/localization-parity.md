@@ -1,6 +1,6 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (German ribbon catalog added) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (audit against main: nine translated interface languages, Spanish and French catalogs, Spanish formulas, counts re-measured) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Per-language status against Excel, which ships its UI in dozens of languages (Windows language
 packs cover 100+), with localized function names, argument separators, number and date formats,
@@ -9,25 +9,28 @@ right-to-left sheets and full complex-script support. Part of
 
 ## Where we are (measured from source on `main`, after the 2026-10-10 merges)
 
-- **A first catalog exists, for the ribbon only.** `crates/ui-egui/src/i18n.rs` (merged 10-10 in
-  #31, #104, #82; German added 10-11) adds an interface-language preference that defaults to the
-  system language (closes #20) and a View-tab switcher, with English-keyed lookup tables:
-  Japanese 268 labels, Simplified Chinese, Korean, Russian, Brazilian Portuguese, German and Czech 266
-  each. The tables are used by
-  the ribbon, sheet tabs and widgets (`ribbon.rs`, `tabs.rs`, `widgets.rs`); dialogs, menus,
-  context menus, task panes, status messages, command labels and function descriptions are still
-  English literals. Untranslated labels fall back to English.
+- **A catalog exists for nine languages besides English.** `crates/ui-egui/src/i18n.rs` (`Language::ALL`:
+  en, es, zh, ja, ko, ru, pt-BR, de, cs, fr) adds an interface-language preference that defaults to
+  the system language (#31, closes #20) and a View-tab switcher, with English-keyed lookup tables:
+  Japanese 377 entries (`JAPANESE` in `i18n.rs`) and 381 each for es, zh, ko, ru, pt-BR, de, cs and fr
+  (`crates/ui-egui/src/i18n/*.rs`, counted as `"English" => "translated"` lines). Merged: #31, #104,
+  #82 (ja, zh, ko, ru, pt-BR), #271 (de), #335 (cs), #242 (es), #413 (fr). The tables are used by
+  the ribbon, sheet tabs and widgets (`ribbon.rs`, `tabs.rs`, `widgets.rs`) and by some dialogs
+  (`tr(` calls in `dialogs.rs`); the extent of dialog, menu, context-menu, task-pane, status-message,
+  command-label and function-description coverage has not been re-measured. Untranslated labels
+  fall back to English. More languages (Italian, Turkish, Polish, Arabic, Hebrew, more Portuguese,
+  Russian and Czech strings, dialogs in the interface language: PRs #650, #663, #713, #743, #721, #778, #739, #676, #652, #669) are open, not on main.
 - **About 2,200 user-visible strings** in all (heuristic source scan: ~1,700 UI and command
-  strings plus ~500 function descriptions), so each shipped language covers **~12%** (measured
-  count / estimated total).
+  strings plus ~500 function descriptions), so each shipped language covers about **17%** (381 / ~2,200; measured
+  count over an estimated total).
 - **en-US only formulas and formats.** Function names, `,` argument separator, `.` decimal
-  separator, en-US number and date formats (`crates/numfmt` says "en-US only"). Users ask for
-  localized function names and `;` separators (#45). German with localized numbers and formulas
-  is in PR #163 (open).
+  separator, en-US number and date formats (`crates/numfmt` says "en-US only"). Spanish function names and `;` separators
+  work (#98, closes #45; `FormulaLocale::{En, Es}`); German with localized numbers and formulas
+  (PR #163) was closed without merging.
 - **Script support.** System-font fallback for CJK, Thai and Hebrew landed in #38 (closes #32;
   #142 is still open pending confirmation). There is no complex-text shaping: Arabic and
   Devanagari don't join or reorder, and there is no bidirectional layout. **Sheet Right-to-Left**
-  (`view.rightToLeft`, Page Layout › Sheet Options, XLSX `rightToLeft`) mirrors the grid (#146):
+  (`view.rightToLeft`, Page Layout › Sheet Options, XLSX `rightToLeft`) mirrors the grid (#310, for #146):
   column A and the row headers on the right, the vertical scrollbar on the left; hit-testing,
   arrow keys, editor, popups and floating objects follow; text stays left-to-right inside its box
   (no bidi), and the sheet tabs, horizontal scrollbar and printing/PDF are not mirrored yet. IME input goes
@@ -43,19 +46,20 @@ separators, number/date formats, machine translation with agent review, and scri
 | Language | Code | UI strings translated | Dialogs / tooltips / help | Script support | Native review | Status | Estimate to full |
 |---|---|---|---|---|---|---|---|
 | English | en | ~2,200 / ~2,200 (100%, source) | yes | Latin: yes | yes | full | — |
-| Simplified Chinese (Mandarin) | zh-Hans | 266 (~12%) | no | CJK system-font fallback (#38); IME unverified; PDF can't export | no | menus only | 8–13 h |
-| Spanish | es | 0 (0%) | no | Latin: yes | no | none | 6–10 h |
+| Simplified Chinese (Mandarin) | zh-Hans | 381 (~17%) | no | CJK system-font fallback (#38); IME unverified; PDF can't export | no | menus only | 8–13 h |
+| Spanish | es | 381 (~17%); function names and `;` separators (#98) | no | Latin: yes | no | menus only | 6–10 h |
 | Hindi | hi | 0 (0%) | no | Devanagari: **no shaping** | no | none | 12–18 h |
 | Arabic | ar | 0 (0%) | no | **no shaping, no RTL UI**; Sheet Right-to-Left mirrors the grid (#146) | no | none | 25–35 h |
-| French | fr | 0 (0%) | no | Latin: yes | no | none | 6–10 h |
-| Portuguese | pt-BR | 266 (~12%) | no | Latin: yes | no | menus only | 4–8 h |
+| French | fr | 381 (~17%) | no | Latin: yes | no | menus only | 6–10 h |
+| Portuguese | pt-BR | 381 (~17%) | no | Latin: yes | no | menus only | 4–8 h |
 | Indonesian | id | 0 (0%) | no | Latin: yes | no | none | 5–8 h |
-| Japanese | ja | 268 (~12%) | no | CJK system-font fallback; IME unverified; no furigana display | no | menus only | 8–12 h |
-| German | de | 266 (~12%) | no | Latin: yes | no | menus only | 4–8 h |
-| Korean | ko | 266 (~12%) | no | Hangul via the CJK fallback; IME unverified | no | menus only | 6–10 h |
+| Japanese | ja | 377 (~17%) | no | CJK system-font fallback; IME unverified; no furigana display | no | menus only | 8–12 h |
+| German | de | 381 (~17%) | no | Latin: yes | no | menus only | 4–8 h |
+| Korean | ko | 381 (~17%) | no | Hangul via the CJK fallback; IME unverified | no | menus only | 6–10 h |
+| Czech | cs | 381 (~17%) | no | Latin: yes | no | menus only | not estimated |
 | Vietnamese | vi | 0 (0%) | no | Latin with stacked diacritics: unverified | no | none | 6–10 h |
 
-Other shipped languages: Russian (ru) and German (de), 266 labels each (~12%), menus only.
+Other shipped languages: Russian (ru), 381 entries (~17%), menus only. Estimates in the last column are unchanged from the 2026-10-10 version.
 
 **Total:** catalog work 10–20 h + languages 92–144 h ≈ **100–165 h**. Parallelizes almost fully
 once the catalog covers dialogs and commands. **Needs a human:** native-speaker review of every
@@ -77,6 +81,7 @@ language (none so far) and of localized function names.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Audit against main: re-counted the catalogs (381 entries each, ja 377: about 17% of the ~2,200 estimate, not 12%); recorded Spanish (#242) and French (#413) interface languages and Spanish formulas (#98); #163 was closed unmerged; Czech row added (no estimate); open language PRs listed by number. The ~10% ready and hour estimates are unchanged (not re-scored) |
 | 2026-10-11 | minor | German ribbon catalog (`i18n/de.rs`, 266 labels, ~12%); `de` locale tags (de-DE, de-AT, de-CH…) resolve to German. PR #163 (localized German formulas/numbers) still open |
 | 2026-10-11 | minor | Sheet Right-to-Left mirrors the grid (#146) |
 | 2026-10-11 | minor | Czech (cs) ribbon table: 266 labels (~12%), menus only |

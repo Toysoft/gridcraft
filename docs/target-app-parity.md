@@ -1,6 +1,6 @@
 # Target-app parity: GridCraft vs Microsoft Excel
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (stability: command-sequence fuzzing against undo/redo, XLSX round-trip and full-recalc invariants) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (audit against main: evidence text corrected for merged PRs, function count 513; scores and hours not re-derived) · **Target:** Microsoft Excel (Microsoft 365)
 
 This is the authoritative parity assessment. [`ROADMAP.md`](../ROADMAP.md) summarizes it,
 [`gaps.md`](gaps.md) lists every shortfall, and the area checklists hold the detail:
@@ -53,13 +53,13 @@ long `.xls` track, so about half parallelizes (≈30–50 wall-clock hours with 
   LEFT/LEFTB, LEN/LENB, MID/MIDB, REPLACE/REPLACEB, RIGHT/RIGHTB, SEARCH/SEARCHB, BETA.INV) and
   COPILOT and PY: **523 functions**. Ours: every `f!(…)` spec in `crates/functions/src/*.rs` plus
   `SPECIAL_FUNCTIONS` in `crates/calc/src/eval.rs` (evaluator special forms), minus the test-only
-  `ADD2`: **505**, all of them Excel names.
+  `ADD2`: **513**, all of them Excel names (recounted from source on 2026-10-12).
 - **Ribbon catalog:** `crates/engine/src/catalog.rs` (290 unique ids across 15 tabs) against the
   313 command ids registered in `crates/engine/src/cmd/*.rs`, recomputed from source by script and
   identical to the committed `parity-checklist.md`. The catalog is our own transcription of
   Excel's main ribbon tabs; it leaves out most contextual tabs (Picture Format, Shape Format,
   Header & Footer, Sparkline, Slicer, Timeline), the Developer and Help tabs and sub-menu items, so
-  89% of it is roughly **60–65% of Excel's full command surface** (estimated).
+  the catalog's 94.5% (89% when this estimate was made) is roughly **60–65% of Excel's full command surface** (estimate not re-derived).
 - **Depth and readiness:** source reading (the model types in `crates/model/src/features.rs`,
   readers and writers in `crates/xlsx/src`, the evaluator), 478 `#[test]` functions, and the
   issue tracker: 60 open issues and 50 open PRs on 2026-10-10, 82 issues filed in total.
@@ -79,19 +79,19 @@ performance 8, stability 8, localization 4, hardware 2, platforms 2, ecosystem 2
 
 | Area | Weight | Breadth | Ready | Hours | Evidence |
 |---|---|---|---|---|---|
-| Formula language and calculation | 18 | ~92% | ~72% | 20–30 | A1/R1C1 parser, reference adjustment, dependency-graph recalc, dynamic arrays and `#SPILL!`, `A1#`, LET/LAMBDA and helpers, structured references, names, 3-D references. Open correctness bugs: 15-digit equality (#57), stale spills after structural edits and cleared blockers (#133, #139), 3-D span endpoint deletion (#140), sheet rename and qualified names (#134). Single-threaded |
-| Worksheet functions | 12 | 98.1% (measured) | ~82% | 16–26 | 513 / 523 names, 504 working. Missing: GETPIVOTDATA, IMAGE plus cloud functions. No conformance suite against Excel-computed oracles; edge-case bugs keep surfacing (#137, #138). [function-parity.md](function-parity.md) |
-| Editing, navigation, clipboard, fill | 12 | ~90% | ~70% | 15–25 | Point mode, F4, AutoComplete, Paste Special, AutoFill, Flash Fill, Find/Replace, Go To Special. Bugs: rectangular drag-select (#28), monthly fill (#132), cut across sheets (#128), Insert Copied Cells missing (#21), key tips only on part of the Home tab (#43; #33, #49). [ui-parity.md](ui-parity.md) |
-| Cell formatting, styles, conditional formatting | 10 | ~95% | ~80% | 8–14 | Full number-format language, borders, 47 cell styles, 60 table styles, all CF rule kinds including data bars, colour scales and icon sets. Gaps: font weights beyond regular/bold (#168), system fonts list (#4), themes |
-| Sort, filter, tables, validation, outline | 8 | ~82% | ~70% | 10–16 | Multi-level sort, AutoFilter, Advanced Filter, tables with totals, validation, outline, subtotals, consolidate. Bugs: subtotal header (#131), validation edits (#129), table style panic caught (#130); no slicers on tables |
-| PivotTables | 7 | ~65% | ~45% | 25–40 | Insert/Recommended, field list, three layouts, date grouping, show-values-as, refresh, calculated fields, XLSX round-trip. Missing: slicers, timelines, calculated items, PivotCharts, value/label filters, number grouping, GETPIVOTDATA, data-model pivots. Round-trip never checked in Excel |
-| Charts and sparklines | 8 | ~50% | ~30% | 40–60 | 25 chart kinds, all 2-D. The chart model holds title, legend position, a data-labels flag, gridlines flag and axis titles; no axis scaling, trendlines, error bars, per-point formatting, chart sheets, 3-D, surface, map, Pareto. Several kinds don't survive XLSX round trip (open PRs #158, #161). [chart-parity.md](chart-parity.md) |
-| Page layout, print, PDF | 5 | ~80% | ~55% | 12–20 | Page setup, print titles, breaks, Page Break Preview, headers/footers, PDF export and printing. No true Page Layout view; the PDF writer uses only the 14 standard fonts without embedding (no CJK or other non-Latin text in PDF); web print only exports (#141, #143) |
-| What-if and analysis | 4 | ~50% | ~40% | 22–35 | Goal Seek, Scenario Manager, data tables, Analysis ToolPak (13 of 19 tools, no charts). Missing: Solver, Forecast Sheet, Analyze Data |
-| Get & Transform, external data, data model | 5 | ~15% | ~10% | 60–100 | Import of CSV/TSV, JSON, HTML. No Power Query editor, no From Web, database or folder sources, no connections or refresh, no relationships or data model, no external workbook links (dropped with a warning) |
-| Insert objects | 3 | ~55% | ~45% | 25–40 | Pictures, 8 shape kinds (Excel has ~170), text boxes, own icon set, ink with Ink to Shape, hyperlinks, checkboxes. Missing: SmartArt, WordArt, equations, signature line, objects, 3-D models, screenshot, pictures in cells (PR #105) |
-| Review, comments, protection, collaboration | 4 | ~55% | ~40% | 35–55 | Threaded comments, notes, spelling (system dictionary), thesaurus, sheet and workbook protection, Allow Edit Ranges with Excel-compatible password hashes (#307). Missing: comment navigation, Show Changes, notes-to-comments conversion, accessibility checker, co-authoring, opening password-encrypted files (refused with a message since #17) |
-| Automation | 4 | ~30% | ~20% | 12–20 | Recorded, editable GridCraft scripts (Automate tab). VBA is out of scope by owner decision and is **dropped** when an `.xlsm` is opened (warning shown). No Office Scripts compatibility |
+| Formula language and calculation | 18 | ~92% | ~72% | 20–30 | A1/R1C1 parser, reference adjustment, dependency-graph recalc, dynamic arrays and `#SPILL!`, `A1#`, LET/LAMBDA and helpers, structured references, names, 3-D references. The 10-10 correctness bugs are fixed (15-digit equality #187; stale spills #148, #157; 3-D span deletion #183; qualified names after rename #178), iterative calculation landed (#421). Single-threaded |
+| Worksheet functions | 12 | 98.1% (measured) | ~82% | 16–26 | 513 / 523 names, 504 working. Missing: GETPIVOTDATA (open PR #290), IMAGE, RTD plus cloud and add-in functions. No checked-in conformance suite against Excel-computed oracles (`gridcraft-cli check`, #416, compares the cached values of any Excel-saved file); #137 and #138 are fixed (#155, #159). [function-parity.md](function-parity.md) |
+| Editing, navigation, clipboard, fill | 12 | ~90% | ~70% | 15–25 | Point mode, F4, AutoComplete, Paste Special, AutoFill, Flash Fill, Find/Replace, Go To Special. Fixed since 10-10: monthly fill (#132; #160), cut across sheets (#128; #144), Insert Copied Cells (#21; #288), key tips on every tab (#411, #412). #28 (drag-select) is open; a triage comment says the recording shows a fill-handle drag. [ui-parity.md](ui-parity.md) |
+| Cell formatting, styles, conditional formatting | 10 | ~95% | ~80% | 8–14 | Full number-format language, borders, 47 cell styles, 60 table styles, all CF rule kinds including data bars, colour scales and icon sets. Gaps: font weights beyond regular/bold (#168, open), themes; the system font list is fixed (#9, closes #4) |
+| Sort, filter, tables, validation, outline | 8 | ~82% | ~70% | 10–16 | Multi-level sort, AutoFilter, Advanced Filter, tables with totals, validation, outline, subtotals, consolidate. Open: subtotal header (#131). Fixed: validation edits (#129; #180), table style panic (#130; #179). Table slicers landed (#193) |
+| PivotTables | 7 | ~65% | ~45% | 25–40 | Insert/Recommended, field list, three layouts, date grouping, show-values-as, refresh, calculated fields, XLSX round-trip. Done since 10-10: PivotCharts (#313). Missing: PivotTable slicers (open PR #719), timelines, calculated items, value/label filters, number grouping, GETPIVOTDATA, data-model pivots. Round-trip never checked in Excel |
+| Charts and sparklines | 8 | ~50% | ~30% | 40–60 | 25 chart kinds, all 2-D. The chart model holds title, legend position, a data-labels flag, gridlines flag and axis titles; no axis scaling, error bars, per-point formatting, chart sheets, 3-D, surface, map, Pareto. Trendlines landed (#424) and every kind keeps its type through XLSX (#158, #161). [chart-parity.md](chart-parity.md) |
+| Page layout, print, PDF | 5 | ~80% | ~55% | 12–20 | Page setup, print titles, breaks, Page Break Preview, headers/footers, PDF export and printing. Page Layout view (#334) and first-page / odd-even headers (#404) landed; desktop printing goes through craft-print (#459), web printing through the browser (#209); the PDF writer still uses only the 14 standard fonts without embedding (no CJK or other non-Latin text in PDF) |
+| What-if and analysis | 4 | ~50% | ~40% | 22–35 | Goal Seek, Scenario Manager, data tables, Analysis ToolPak (13 tools, #320), Solver (#327), Forecast Sheet (#325). Missing: Analyze Data, Forecast Start (open PR #786) |
+| Get & Transform, external data, data model | 5 | ~15% | ~10% | 60–100 | Import of CSV/TSV, JSON, HTML. No Power Query editor, no From Web, database or folder sources, no connections or refresh, no relationships or data model, external workbook links are kept unchanged on save (pass-through, #333) but never followed or refreshed |
+| Insert objects | 3 | ~55% | ~45% | 25–40 | Pictures (also inside cells, #105), 9 `ShapeKind` variants (six geometric shapes, text box, icon, ink; Excel has ~170 shapes), text boxes, own icon set, ink with Ink to Shape, hyperlinks, checkboxes. Missing: SmartArt, WordArt (open PR #789), equations, signature line, objects, 3-D models, screenshot |
+| Review, comments, protection, collaboration | 4 | ~55% | ~40% | 35–55 | Threaded comments, notes, spelling (system dictionary), thesaurus, sheet and workbook protection, Allow Edit Ranges with Excel-compatible password hashes (#307), comment navigation and notes-to-comments conversion (#286), password-encrypted files open (#436). Missing: Show Changes, accessibility checker, co-authoring |
+| Automation | 4 | ~30% | ~20% | 12–20 | Recorded, editable GridCraft scripts (Automate tab). VBA projects are kept in `.xlsm` and saved back unchanged, never run (#19); no VBA editor, no Office Scripts compatibility |
 | **Weighted** | 100 | **~75%** | **~59%** | **300–485** | |
 
 ## Dimensions
@@ -99,11 +99,11 @@ performance 8, stability 8, localization 4, hardware 2, platforms 2, ecosystem 2
 | Dimension | Weight | Ready | Hours | Evidence |
 |---|---|---|---|---|
 | Features | 45 | ~59% | 300–485 | Table above |
-| File formats | 15 | ~50% | 80–120 | XLSX read/write is broad but unproven on a real corpus and in Excel; XLSB and ODS are values-only import; no XLS, XML Spreadsheet 2003, SYLK, DIF, PRN; VBA dropped; 100 MB XLSX fails (#175). [file-format-parity.md](file-format-parity.md) |
-| UI/UX fidelity | 12 | ~55% | 50–80 | Excel-style ribbon, galleries, dialogs, formula bar, status bar; 59 commands with shortcuts vs Excel's 200+; key tips on part of the Home tab only; short context menu; single window. [ui-parity.md](ui-parity.md) |
+| File formats | 15 | ~50% | 80–120 | XLSX read/write is broad but unproven on a real corpus and in Excel; XLSB and ODS are values-only import; legacy `.xls` opens partly (#332, read only) and encrypted workbooks open (#436); no XML Spreadsheet 2003, SYLK, DIF, PRN; VBA projects kept, not run (#19); 100 MB XLSX fails (#175). [file-format-parity.md](file-format-parity.md) |
+| UI/UX fidelity | 12 | ~55% | 50–80 | Excel-style ribbon, galleries, dialogs, formula bar, status bar; shortcuts audited against Microsoft's lists (#319, see [ui-parity.md](ui-parity.md)); key tips on every tab (#411, #412); short context menu; single window. [ui-parity.md](ui-parity.md) |
 | Performance | 8 | ~35% | 35–55 | [Performance](#performance) |
-| Stability | 8 | ~60% | 15–25 | Never-crash rules enforced by lint, every command fuzzed with hostile params, random command sequences fuzzed against undo/redo, XLSX round-trip and full-recalc invariants, last-resort guard in `Session::execute`. Field reports: Windows Intel GPU crash (#120), error on close (#117), freeze opening from Finder (#166), screen flashing (#76) |
-| Localization | 4 | ~10% | 100–165 | Ribbon-only catalog in five languages (ja, zh, ko, pt-BR, ru; ~12% of strings each), CJK/Thai/Hebrew font fallback, no shaping or RTL. [localization-parity.md](localization-parity.md) |
+| Stability | 8 | ~60% | 15–25 | Never-crash rules enforced by lint, every command fuzzed with hostile params, random command sequences fuzzed against undo/redo, XLSX round-trip and full-recalc invariants, last-resort guard in `Session::execute`. Field reports fixed: Windows Intel GPU crash (#120; #315), error on close (#117; #316); open: freeze opening from Finder (#166), screen flashing (#76) |
+| Localization | 4 | ~10% | 100–165 | Catalogs in nine languages (es, zh, ja, ko, ru, pt-BR, de, cs, fr; 381 entries each, about 17% of the ~2,200 strings), Spanish formulas (#98), CJK/Thai/Hebrew font fallback, Sheet Right-to-Left mirrors the grid (#310), no shaping or bidi. [localization-parity.md](localization-parity.md) |
 | Hardware | 2 | ~40% | 25–40 | GPU UI via wgpu; single-threaded calc; no pen pressure; one window. [hardware-parity.md](hardware-parity.md) |
 | Platforms | 2 | ~80% | 30–60 | [Platforms](#platforms) |
 | Ecosystem / add-ins | 2 | ~10% | 25–40 | [Ecosystem and AI](#ecosystem-and-ai) |
@@ -127,12 +127,12 @@ functions, co-authoring and admin, specialist hardware, and languages beyond the
 | Area (weekly use) | Weight | Depth | Basis |
 |---|---|---|---|
 | Formula language and calculation | 20 | 72 | Feature-area table |
-| Common worksheet functions | 15 | 85 | Missing functions are niche (ETS, odd-period bonds, cloud); edge bugs in common ones (#137, #138, #57) |
+| Common worksheet functions | 15 | 85 | Missing functions are niche (GETPIVOTDATA, IMAGE, cloud); the edge bugs listed on 10-10 (#137, #138, #57) are fixed |
 | Editing, navigation, clipboard, fill | 15 | 70 | Feature-area table |
 | Cell formatting, styles, conditional formatting | 13 | 80 | Feature-area table |
 | Sort, filter, tables, validation | 10 | 70 | Feature-area table |
 | PivotTables (core: fields, layouts, grouping, refresh) | 8 | 60 | Slicers and calculated fields excluded as less frequent |
-| Charts (column, bar, line, pie, scatter, combo) | 9 | 45 | Common kinds work and survive save; no axis options or trendlines; resize broken (#190) |
+| Charts (column, bar, line, pie, scatter, combo) | 9 | 45 | Common kinds work and survive save; trendlines (#424) and resize (#218) landed; no axis options |
 | Page layout, print, PDF | 5 | 60 | Latin text exports |
 | Comments, notes, protection | 3 | 55 | Feature-area table |
 | Pictures and shapes | 2 | 45 | Feature-area table |
@@ -142,9 +142,9 @@ Discounts for what still stops real work:
 
 | Discount | Factor | Evidence |
 |---|---|---|
-| Interaction fidelity | × 0.90 | 59 command shortcuts vs Excel's 200+; key tips only on part of the Home tab (#43); rectangular selection bug (#28); charts can't be resized (#190); one window (#162); missing horizontal scrollbar report (#176) |
-| Stability on real machines | × 0.92 | Never-crash lints, fuzzed commands and the `Session::execute` guard; but field reports of a startup crash on Intel UHD (#120), an error on close (#117), a freeze opening from Finder (#166) and screen flashing (#76) |
-| File exchange with Excel users | × 0.88 | Excel opening our output is unverified across features; unmodelled parts dropped on save; advanced chart kinds lose their type; 100 MB files fail (#175); `.xls` and encrypted files are refused with a clear message (#17) rather than opened. Harsher than a drawing app's discount because spreadsheets are exchanged constantly |
+| Interaction fidelity | × 0.90 | Shortcut audit done (#319) and key tips on every tab (#411, #412); charts resize (#218); #28 (drag-select) open; one window (#162); the scrollbar report (#176) is closed |
+| Stability on real machines | × 0.92 | Never-crash lints, fuzzed commands and the `Session::execute` guard; field reports of a startup crash on Intel UHD (#120) and an error on close (#117) are fixed (#315, #316); a freeze opening from Finder (#166) and screen flashing (#76) are open |
+| File exchange with Excel users | × 0.88 | Excel opening our output is unverified across features; some unmodelled parts still dropped on save (others kept, #333); chart kinds now survive (#158, #161); 100 MB files fail (#175); `.xls` opens partly (#332) and encrypted workbooks open (#436). Harsher than a drawing app's discount because spreadsheets are exchanged constantly |
 
 **Mainstream practitioner: 69.5 × 0.90 × 0.92 × 0.88 = 50.6 → ~50%** (estimated). Unlike most
 apps it is not higher than the full number: GridCraft's breadth is wide (functions, formatting,
@@ -161,20 +161,20 @@ edge cases are left out, along with everything excluded from the mainstream numb
 |---|---|---|---|
 | Typing data, simple formulas, AutoSum (SUM, AVERAGE, arithmetic) | 20 | 88 | Solid; 15-digit equality (#57) is rare at this level |
 | Basic formatting: fonts, bold, fills, borders, currency/percent/date formats | 15 | 85 | |
-| Copy, paste, fill handle, undo/redo | 15 | 78 | Selection bug (#28), monthly fill (#132) |
+| Copy, paste, fill handle, undo/redo | 15 | 78 | Monthly fill fixed (#132; #160); #28 open |
 | Rows and columns: insert, delete, widths, AutoFit | 10 | 82 | AutoFit fixed (#42, #88) |
 | Sort and filter | 10 | 82 | |
 | Save, Save As, reopen XLSX | 10 | 85 | |
-| A basic chart | 8 | 55 | Created easily; can't be resized (#190) |
-| Print and PDF | 7 | 65 | Desktop works; web PDF gives no file or feedback (#141) |
+| A basic chart | 8 | 55 | Created easily; resizes from the corner handle (#218) |
+| Print and PDF | 7 | 65 | Desktop prints through craft-print (#459); web PDF downloads (#182) |
 | Find and replace | 5 | 85 | |
 | **Average depth** | 100 | **80.2** | |
 
 | Discount | Factor | Evidence |
 |---|---|---|
-| Launch and stability | × 0.92 | Startup crash on some Intel GPUs (#120), "Issue executing" (#59), error on close (#117) |
-| Discoverability and UI clarity | × 0.95 | The Excel-style ribbon is familiar and labelled; system language by default (#31); small gaps (#176 scrollbar, #170 macOS window controls) |
-| Opening files people send them | × 0.90 | Double-clicking a workbook in Finder freezes or errors on macOS (#166, #69; drag-and-drop works; fixes in PRs #164, #167); `.xls` and encrypted files are refused with a message |
+| Launch and stability | × 0.92 | Reported startup crash on Intel GPUs (#120) and error on close (#117) are fixed (#315, #316); "Issue executing" (#59) is closed |
+| Discoverability and UI clarity | × 0.95 | The Excel-style ribbon is familiar and labelled; system language by default (#31); small gaps fixed (#176 scrollbar via #77, #170 macOS window controls via #323) |
+| Opening files people send them | × 0.90 | Opening from Finder was fixed by #164 (closes #69); #166 is still open and #167 was closed unmerged; `.xls` (partly, #332) and encrypted workbooks (#436) open |
 
 **Essentials user: 80.2 × 0.92 × 0.95 × 0.90 = 63.1 → ~63%** (estimated).
 
@@ -205,7 +205,7 @@ Excel recalculates on every core (multi-threaded recalculation), streams large f
 | Edit → recalc, 100k dependents | ~0.4 s (2026-10-07), target < 100 ms | tens of ms | measured on the owner's machine; #66 since made range-formula recalc linear, not re-timed |
 | Grid scrolling | virtualised, O(log n) geometry with custom row heights | smooth | measured in code |
 | Open a ~100 MB XLSX | fails (#175) | opens | user report |
-| Whole-sheet operations | Fill and Remove Duplicates on a whole-sheet selection run out of memory or time (fix in PR #152) | fine | open PR |
+| Whole-sheet operations | Fill and Remove Duplicates on a whole-sheet selection run out of memory or time (fixed in #152) | fine | merged fix |
 
 Work: streaming XLSX reader with shared-string and style dedup, multi-threaded recalc of
 independent chains (native only; WASM stays single-threaded), whole-column reference
@@ -229,7 +229,7 @@ Linux, BSD and RISC-V, where Excel doesn't run.
 
 - **Add-ins:** Excel has Office JavaScript add-ins, COM/XLL add-ins, VBA, Office Scripts and
   Power Automate. GridCraft has its own recorded scripts, plus a control channel, MCP server and
-  CLI that reach every command. VBA is out of scope (owner decision). A plugin or custom-function
+  CLI that reach every command. VBA is not run (projects are kept, #19). A plugin or custom-function
   API (for example LAMBDA libraries and WASM custom functions) is the open-equivalent path: 25–40 h.
 - **AI:** Excel has Copilot, the COPILOT() function, Analyze Data, Python in Excel and Flash
   Fill. GridCraft has Flash Fill and best-in-class agent control (any MCP client can drive every
@@ -241,7 +241,7 @@ Linux, BSD and RISC-V, where Excel doesn't run.
 **Alpha.** All six core workflows in the [alpha gate](roadmap.md#alpha-gate) pass end to end on macOS with save and reopen (two pass with non-blocking fidelity loss). Core workflows exist end to end, but depth, fidelity and file compatibility are rough
 (ready ~50%, inside the 40–75% alpha band). Not beta: the main format, XLSX, has not been proven
 on real-world files or confirmed to open in Excel without repair, large files fail, `.xls` is
-missing and text in several scripts doesn't render. Distance to beta: ~25 points of readiness and
+only partly read (#332) and text in several scripts doesn't render. Distance to beta: ~25 points of readiness and
 ~160–240 h, itemized in [roadmap.md](roadmap.md#beta-gates).
 
 ## Effort and calibration
@@ -277,7 +277,7 @@ The inventory carried over from the 2026-10-07 ROADMAP.md, updated for what land
 - Engine: A1/R1C1 formula parser with reference adjustment, dependency-graph recalculation with
   dynamic arrays (spill + `#SPILL!`), cycle detection, LET/LAMBDA/MAP/REDUCE/SCAN/BYROW/BYCOL/
   MAKEARRAY, structured table references, defined names, INDIRECT/OFFSET/INDEX references,
-  505 worksheet functions (478 at M0) (math, statistics and distributions, text and regex, lookup incl.
+  513 worksheet functions (478 at M0) (math, statistics and distributions, text and regex, lookup incl.
   XLOOKUP/FILTER/SORT/UNIQUE/VSTACK, dates, financial incl. bonds, engineering incl. complex
   numbers and Bessel, database, information).
 - Number formats: Excel's full format-code language (sections, conditions, colours, dates and
@@ -302,8 +302,8 @@ The inventory carried over from the 2026-10-07 ROADMAP.md, updated for what land
   with error alerts, grouping/outline, subtotals.
 - PivotTables: Insert/Recommended PivotTables, field list pane, compact/outline/tabular layouts,
   date grouping, sort, filters, show-values-as, refresh, and XLSX round-trip.
-- Page layout & print: Page Break Preview, print settings, PDF export and printing.
-- What-if: Goal Seek, scenarios, data tables. Spelling (system word list) and thesaurus.
+- Page layout & print: Page Break Preview, Page Layout view, print settings, PDF export and printing.
+- What-if: Goal Seek, scenarios, data tables, Solver, Analysis ToolPak, Forecast Sheet. Spelling (system word list) and thesaurus.
 - Draw: pen, highlighter, eraser, ink strokes and Ink to Shape. Task panes: Comments (threaded
   replies, resolve), Watch Window, Selection, Format Chart.
 - Charts: column, bar, line, area, pie, doughnut, scatter, bubble, radar, histogram, waterfall,
@@ -324,7 +324,7 @@ The inventory carried over from the 2026-10-07 ROADMAP.md, updated for what land
 ## Not measured yet
 
 - Pixel comparison against Excel screenshots (planned; screenshots stay in `plan/excel/`).
-- Function results against Excel-computed oracles (a corpus repo is the planned home).
+- Function results against a checked-in corpus of Excel-computed oracles (a corpus repo is the planned home; `gridcraft-cli check`, #416, is the mechanism).
 - Recalc and open-time benchmarks on fixed workbooks (no `cargo xtask bench` yet).
 - Whether Excel opens our XLSX output without repair, across features.
 
@@ -332,6 +332,7 @@ The inventory carried over from the 2026-10-07 ROADMAP.md, updated for what land
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Audit against main: evidence text corrected for merged PRs #9, #77, #98, #105, #209, #148, #152, #157, #158, #161, #178, #183, #187, #193, #218, #286, #313, #320, #325, #327, #332, #333, #334, #404, #411, #412, #424, #436, #459 (see the PR for the row-by-row list); worksheet functions recounted at 513 / 523; the weighted scores, discount factors and hour ranges were not re-derived and are probably pessimistic in places (owner re-score needed) |
 | 2026-10-11 | minor | Stability: command-sequence fuzz harness (`crates/engine/tests/command_sequence_fuzz.rs`) checks random command sequences against undo/redo, XLSX round-trip, full-recalc and structure invariants; the sequence bugs it found are fixed (no score change) |
 | 2026-10-11 | minor | Password-encrypted workbooks open (#11): Essentials file-opening work 24–36 h |
 | 2026-10-11 | minor | Worksheet functions 505 / 523 (96.6%; 496 working): ODDFPRICE, ODDFYIELD, ODDLPRICE, ODDLYIELD |
