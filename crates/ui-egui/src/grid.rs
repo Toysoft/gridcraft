@@ -983,6 +983,10 @@ pub(crate) fn paint_quadrant(
                 Value::Number(_) => HAlign::Right,
                 Value::Bool(_) | Value::Error(_) => HAlign::Center,
                 _ if numeric => HAlign::Right,
+                // General follows the text's reading order (Excel's "Context"): Arabic or Hebrew
+                // text sits on the right and spills left. A right-to-left sheet is mirrored as a
+                // whole, which already puts it there.
+                _ if rtl && !geo.rtl && crate::bidi::starts_rtl(&text) => HAlign::Right,
                 _ => HAlign::Left,
             },
             h => h,

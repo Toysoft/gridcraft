@@ -65,7 +65,10 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                             for (i, name, color, active) in sheets {
                                 let renaming = app.grid.renaming_tab == Some(i);
                                 let font = if active { theme::ui_bold(13.0) } else { theme::ui_font(13.0) };
-                                let tw = ui.painter().layout_no_wrap(name.clone(), font.clone(), t.text).size().x;
+                                // Laid out by `bidi`: an Arabic or Hebrew sheet name reads right to left.
+                                let ink = if active { t.accent } else { t.text };
+                                let label = ui.painter().layout_job(crate::bidi::layout_job(&name, font.clone(), ink));
+                                let tw = label.size().x;
                                 let w = (tw + 32.0).max(72.0);
                                 let (r, resp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click_and_drag());
                                 let r = r.shrink2(vec2(0.0, 1.0));
@@ -103,7 +106,7 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                                         app.grid.renaming_tab = None;
                                     }
                                 } else {
-                                    ui.painter().text(r.center(), Align2::CENTER_CENTER, &name, font, if active { t.accent } else { t.text });
+                                    ui.painter().galley(Align2::CENTER_CENTER.anchor_size(r.center(), label.size()).min, label, ink);
                                 }
                                 if resp.clicked() {
                                     if app.editor.as_ref().is_some_and(|e| e.can_point()) {

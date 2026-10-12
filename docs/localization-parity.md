@@ -28,9 +28,11 @@ right-to-left sheets and full complex-script support. Part of
   #142 is still open pending confirmation). egui shapes text (harfrust), so Arabic letters join.
   **Cell text is laid out bidirectionally** (Unicode Bidirectional Algorithm, `ui-egui/src/bidi.rs`):
   Arabic and Hebrew read right to left, numbers inside them keep their digit order, and mixed
-  Latin/Arabic lines order their runs correctly, also in wrapped cells. The cell editor, formula
-  bar, sheet tabs, charts and PDF still lay text out left to right (no bidi there yet), and there
-  is no dedicated Arabic fallback font (Windows draws it from Tahoma). **Sheet Right-to-Left**
+  Latin/Arabic lines order their runs correctly, also in wrapped cells; General-aligned text that
+  starts with an Arabic or Hebrew letter sits on the right and spills left (Excel's "Context"
+  reading order). Sheet tabs and the formula bar (when not editing) use the same layout. While
+  editing, the cell editor and formula bar still show text left to right (egui's text editor
+  places the caret that way), as do charts and PDF, and there is no dedicated Arabic fallback font (Windows draws it from Tahoma). **Sheet Right-to-Left**
   (`view.rightToLeft`, Page Layout › Sheet Options, XLSX `rightToLeft`) mirrors the grid (#146):
   column A and the row headers on the right, the vertical scrollbar on the left; hit-testing,
   arrow keys, editor, popups and floating objects follow; General-aligned text stays left-aligned
@@ -50,7 +52,7 @@ separators, number/date formats, machine translation with agent review, and scri
 | Simplified Chinese (Mandarin) | zh-Hans | 266 (~12%) | no | CJK system-font fallback (#38); IME unverified; PDF can't export | no | menus only | 8–13 h |
 | Spanish | es | 0 (0%) | no | Latin: yes | no | none | 6–10 h |
 | Hindi | hi | 0 (0%) | no | Devanagari: shaped by egui, unverified | no | none | 12–18 h |
-| Arabic | ar | 0 (0%) | no | shaped; bidi in cells (editor, formula bar, PDF not yet); **no RTL UI**; Sheet Right-to-Left mirrors the grid (#146) | no | none | 25–35 h |
+| Arabic | ar | 0 (0%) | no | shaped; bidi in cells, sheet tabs and formula bar (not while editing, not in charts or PDF); **no RTL UI**; Sheet Right-to-Left mirrors the grid (#146) | no | none | 25–35 h |
 | French | fr | 377 (~17%) | no | Latin: yes | no | menus only | 4–8 h |
 | Portuguese | pt-BR | 266 (~12%) | no | Latin: yes | no | menus only | 4–8 h |
 | Indonesian | id | 0 (0%) | no | Latin: yes | no | none | 5–8 h |
@@ -82,7 +84,7 @@ language (none so far) and of localized function names.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-12 | minor | French (`i18n/fr.rs`, 377 labels): the backstage, print, header/footer and options block (84 labels) had its translations paired with the wrong keys; retranslated, two missing header/footer labels added, spot-check tests |
-| 2026-10-12 | minor | Bidirectional cell text (UAX #9): Arabic/Hebrew right to left with numbers and Latin runs in place, wrapped cells too; egui already shapes (harfrust) |
+| 2026-10-12 | minor | Bidirectional cell text (UAX #9): Arabic/Hebrew right to left with numbers and Latin runs in place, wrapped cells too; General alignment follows the reading order; sheet tabs and the idle formula bar too; egui already shapes (harfrust) |
 | 2026-10-11 | minor | German ribbon catalog (`i18n/de.rs`, 266 labels, ~12%); `de` locale tags (de-DE, de-AT, de-CH…) resolve to German. PR #163 (localized German formulas/numbers) still open |
 | 2026-10-11 | minor | Sheet Right-to-Left mirrors the grid (#146) |
 | 2026-10-11 | minor | Czech (cs) ribbon table: 266 labels (~12%), menus only |

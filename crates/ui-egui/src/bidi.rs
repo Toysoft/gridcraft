@@ -26,6 +26,13 @@ pub fn has_rtl(s: &str) -> bool {
     s.chars().any(is_rtl_char)
 }
 
+/// Whether `text`'s first line reads right to left: its first strong character (a letter) is
+/// Arabic, Hebrew or another right-to-left script (UAX #9 rules P2–P3).
+pub fn starts_rtl(text: &str) -> bool {
+    let line = text.split('\n').next().unwrap_or("");
+    has_rtl(line) && BidiInfo::new(line, None).paragraphs.first().is_some_and(|p| p.level.is_rtl())
+}
+
 /// A no-wrap egui layout of `text` (lines split on `\n`) in display order.
 pub fn layout_job(text: &str, font: FontId, color: Color32) -> LayoutJob {
     let format = TextFormat::simple(font, color);
@@ -226,6 +233,7 @@ mod tests {
             ("10102-customer-1111 - عبدالرحمن", "10102-customer-1111 - ◌"),
             ("Hello (مرحبا) world", "Hello (◌) world"),
             ("مرحبا (عالم)", "(◌) ◌"),
+            ("الحسابات 2026", "2026 ◌"),
         ];
         // egui's own fonts (no Arabic face: one face, so one shaping run per piece) and the app's
         // cell fonts (Latin and Arabic in different faces where the machine has an Arabic font).
@@ -238,6 +246,17 @@ mod tests {
                 assert_eq!(on_screen(fonts.clone(), family.clone(), text), screen, "{text:?} ({family:?})");
             }
         }
+    }
+
+    #[test]
+    fn paragraph_direction_comes_from_the_first_letter() {
+        assert!(starts_rtl("اسم الحساب"));
+        assert!(starts_rtl("2026 فاتورة")); // digits are weak: the first letter decides
+        assert!(starts_rtl("שלום world"));
+        assert!(!starts_rtl("10102-customer-1111 - عبدالسلام"));
+        assert!(!starts_rtl("Sales"));
+        assert!(!starts_rtl("123"));
+        assert!(!starts_rtl("Total\nالمجموع")); // the first line decides
     }
 
     #[test]

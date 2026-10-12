@@ -102,7 +102,7 @@ Localized German formulas and numbers are in PR #163. Detail: [localization-pari
 | Simplified Chinese | zh-Hans | menus only | ~12% |
 | Spanish | es | none | 0% |
 | Hindi | hi | none | 0% |
-| Arabic | ar | none (cell text shaped and right to left; no RTL UI) | 0% |
+| Arabic | ar | none (cells, sheet tabs and formula bar right to left, not while editing; no RTL UI) | 0% |
 | French | fr | menus only | ~17% |
 | Portuguese | pt-BR | menus only | ~12% |
 | Indonesian | id | none | 0% |
