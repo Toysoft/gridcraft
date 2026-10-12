@@ -2797,3 +2797,20 @@ fn a_decrypted_workbook_never_overwrites_its_encrypted_original() {
 }
 
 mod objects;
+
+#[test]
+fn row_height_that_shows_or_hides_rows_recalculates_subtotal() {
+    // Found by the command-sequence fuzz: Row Height unhid rows without recalculating SUBTOTAL.
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [[1], [2], [4]]})).unwrap();
+    s.execute("cell.set", json!({"cell": "B1", "input": "=SUBTOTAL(109,A1:A3)"})).unwrap();
+    s.execute("home.hideRows", json!({"rows": "2:2"})).unwrap();
+    assert_eq!(v(&s, "B1"), Value::Number(5.0));
+    s.execute("home.rowHeight", json!({"rows": "1:3", "height": 30})).unwrap();
+    assert_eq!(v(&s, "B1"), Value::Number(7.0), "showing row 2 again counts it");
+    s.execute("home.rowHeight", json!({"rows": "3:3", "height": 0})).unwrap();
+    assert_eq!(v(&s, "B1"), Value::Number(3.0), "a height of 0 hides row 3");
+}
+
+mod macros;
+mod seams;

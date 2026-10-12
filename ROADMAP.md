@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~25 points of "ready for real work" and ~160–240 h away
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (floating objects: one selection, eight resize handles, keyboard delete) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (floating objects: one selection, eight resize handles, keyboard delete; macro engine and `macro.*` commands) · **Target:** Microsoft Excel (Microsoft 365)
 
 GridCraft aims at full Microsoft Excel parity, and at being better in places: faster, open (XLSX
 is the native format), fully scriptable by agents (MCP, control channel, CLI), and on the web.
@@ -85,7 +85,7 @@ collaboration, mobile, AI).
 | Get & Transform, external data, data model | ~15% | ~10% | 60–100 | [target-app-parity.md](docs/target-app-parity.md#feature-areas) |
 | Insert objects (pictures, shapes, ink, SmartArt, equations) | ~55% | ~45% | 25–40 | [target-app-parity.md](docs/target-app-parity.md#feature-areas) |
 | Review, comments, protection, collaboration | ~55% | ~40% | 35–55 | [target-app-parity.md](docs/target-app-parity.md#feature-areas) |
-| Automation (recorded scripts; no VBA) | ~30% | ~20% | 12–20 | [target-app-parity.md](docs/target-app-parity.md#feature-areas) |
+| Automation (recorded scripts; typed macros in the engine, no interface yet; no VBA) | ~30% | ~20% | 12–20 | [target-app-parity.md](docs/target-app-parity.md#feature-areas) |
 
 ## Languages
 
@@ -134,6 +134,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 |---|---|
 | 2026-10-11 | Floating objects: charts, pictures, shapes and slicers share one selection with a frame of eight resize handles (each moves only its own edges, also on right-to-left sheets); Delete or Backspace deletes the selected object and Escape drops the selection; slicers follow row and column edits and sorts like the other objects; chart series follow cut-moves and sheet renames and deletes; a copied sheet gives its objects fresh ids; `ui.inspect` reports `selectedObject` and `ui.object.select` selects any object (#190, #213) |
 | 2026-10-11 | UI building blocks: theme tokens with a WCAG contrast test over both themes (icons and reference colours follow dark mode); ribbon scroll arrows and a large split button (Formulas › AutoSum opens its menu); the formula bar grows from one to five lines, then scrolls; a code editor widget with Python and LaTeX colouring |
+| 2026-10-11 | Macro engine ([macros.md](docs/macros.md)): typed, declarative macros saved in the workbook (a JSON field; hidden names in xlsx); declared inputs checked with messages that name the cells; tokens (`Input.col(2)`, `Row`, `Output`, `Name:Total`, `{{…}}` in formulas); one undo step with full rollback; a footprint dry run with ask, fail, overwrite, shift down or shift right; a policy that keeps macros away from files and the app, with approval for macros in opened files; Repeat, If and Stop steps; a debugger; a relative recorder; `macro.*` commands beside the unchanged Automate scripts |
 | 2026-10-11 | Command-sequence fuzzing: random command sequences checked against undo/redo, XLSX round-trip and full recalculation; fixes for the table, legacy-array, spill, AutoSum, Watch Window and sheet-copy bugs it found |
 | 2026-10-11 | Password-protected workbooks open: GridCraft asks for the password and decrypts Agile and Standard encryption (#11) |
 | 2026-10-11 | Text boxes keep their formatting: run size, bold, italic, typeface, text colour and outline, alignment, vertical anchor and "no outline" (#377) |
@@ -180,6 +181,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-11 | minor | UI building blocks; progress log row |
+| 2026-10-11 | minor | Macro engine and `macro.*` commands; catalog 274 → 275 / 291 (View › Macros › Record Macro); progress log row |
 | 2026-10-11 | minor | Password-encrypted workbooks open (#11); progress log row |
 | 2026-10-11 | minor | Forecast Sheet (#322); progress log row |
 | 2026-10-11 | minor | Worksheet functions 505 / 523 (ODD* bond functions); progress log row |
