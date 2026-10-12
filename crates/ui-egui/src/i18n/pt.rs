@@ -394,6 +394,16 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Workbook calculation" => "Cálculo da pasta de trabalho",
         "Enable iterative calculation" => "Habilitar cálculo iterativo",
         "Calculation settings are saved with the workbook." => "As configurações de cálculo são salvas com a pasta de trabalho.",
+        "Macros" => "Macros",
+        "Record Macro" => "Gravar Macro",
+        "Stop Recording" => "Parar Gravação",
+        "Use Relative References" => "Usar Referências Relativas",
+        "Run\nMacro" => "Executar Macro",
+        "Macros…" => "Macros…",
+        "Recording" => "Gravando",
+        "Stop" => "Parar",
+        "New Macro" => "Nova Macro",
+        "Show" => "Mostrar",
         _ => return None,
     })
 }

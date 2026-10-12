@@ -381,6 +381,16 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Workbook calculation" => "Calcul du classeur",
         "Enable iterative calculation" => "Classeur Excel (*.xlsx)",
         "Calculation settings are saved with the workbook." => "Modifier le type de fichier",
+        "Macros" => "Macros",
+        "Record Macro" => "Enregistrer une macro",
+        "Stop Recording" => "Arrêter l’enregistrement",
+        "Use Relative References" => "Utiliser les références relatives",
+        "Run\nMacro" => "Exécuter la macro",
+        "Macros…" => "Macros…",
+        "Recording" => "Enregistrement",
+        "Stop" => "Arrêter",
+        "New Macro" => "Nouvelle macro",
+        "Show" => "Afficher",
         _ => return None,
     })
 }
