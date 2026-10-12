@@ -960,6 +960,11 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "— VBA project (preserved, not run)" => "— проект VBA (сохраняется, не выполняется)",
         "— {steps} steps" => "— шагов: {steps}",
         "€ Euro" => "€ евро",
+        "Tab|Insert" => "Вставка",
+        "AutoSave" => "Автосохранение",
+        "AutoSave: save after every change (workbooks saved to a file)" => {
+            "Автосохранение: сохранять после каждого изменения (для книг, сохранённых в файл)"
+        }
         _ => return None,
     })
 }

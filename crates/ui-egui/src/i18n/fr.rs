@@ -381,6 +381,8 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Workbook calculation" => "Calcul du classeur",
         "Enable iterative calculation" => "Classeur Excel (*.xlsx)",
         "Calculation settings are saved with the workbook." => "Modifier le type de fichier",
+        "Different First Page" => "Première page différente",
+        "Different Odd & Even Pages" => "Pages paires et impaires différentes",
         _ => return None,
     })
 }
