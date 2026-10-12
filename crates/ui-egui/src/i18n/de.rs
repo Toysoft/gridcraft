@@ -394,6 +394,100 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Dark" => "Dunkel",
         "Sheet Options|View" => "Anzeige",
         "Print" => "Drucken",
+        "Running Python…" => "Python wird ausgeführt…",
+        "Stop" => "Beenden",
+        "Stop the Python cells that are running (Esc)" => "Laufende Python-Zellen beenden (Esc)",
+        "Output as Python Object" => "Ausgabe als Python-Objekt",
+        "Output as Cell Values" => "Ausgabe als Zellwerte",
+        "Show Preview Card" => "Vorschaukarte anzeigen",
+        "Convert to Normal Cell" => "In normale Zelle umwandeln",
+        "No result yet" => "Noch kein Ergebnis",
+        "Insert\nPython" => "Python\neinfügen",
+        "Insert Python" => "Python einfügen",
+        "Insert Python (Ctrl+Alt+Shift+P)" => "Python einfügen (Strg+Alt+Umschalt+P)",
+        "Python Cell" => "Python-Zelle",
+        "Insert xl() Reference" => "xl()-Bezug einfügen",
+        "Initialization…" => "Initialisierung…",
+        "Python in GridCraft" => "Python in GridCraft",
+        "Reset" => "Zurücksetzen",
+        "Reset Runtime" => "Laufzeit zurücksetzen",
+        "Reset Runtime: start Python afresh and run every Python cell again" => {
+            "Laufzeit zurücksetzen: Python neu starten und alle Python-Zellen erneut ausführen"
+        }
+        "Reset and Clear Diagnostics" => "Zurücksetzen und Diagnose löschen",
+        "Stop (Esc)" => "Beenden (Esc)",
+        "Diagnostics" => "Diagnose",
+        "Python Diagnostics: every run, its output and errors" => "Python-Diagnose: jede Ausführung mit Ausgabe und Fehlern",
+        "Python" => "Python",
+        "This sheet" => "Dieses Blatt",
+        "Errors only" => "Nur Fehler",
+        "Options…" => "Optionen…",
+        "Python Options: which Python runs cells, and the time limit" => "Python-Optionen: welches Python die Zellen ausführt, und das Zeitlimit",
+        "Python Options…" => "Python-Optionen…",
+        "No Python runs yet." => "Noch keine Python-Ausführungen.",
+        "Initialization" => "Initialisierung",
+        "OK" => "OK",
+        "Cancel" => "Abbrechen",
+        "Error" => "Fehler",
+        "Time limit" => "Zeitlimit",
+        "Memory limit" => "Speicherlimit",
+        "Stopped" => "Beendet",
+        "Turned off" => "Ausgeschaltet",
+        "Cycle" => "Zyklus",
+        "Output" => "Ausgabe",
+        "Errors" => "Fehler (Ausgabe)",
+        "Show Diagnostics" => "Diagnose anzeigen",
+        "Python cells are turned off for this workbook." => "Python-Zellen sind für diese Arbeitsmappe ausgeschaltet.",
+        "Python cells run with your Python at {path}, with full access to your files and network. Enable only for workbooks you trust." => {
+            "Python-Zellen laufen mit Ihrem Python unter {path}, mit vollem Zugriff auf Ihre Dateien und das Netzwerk. Nur für vertrauenswürdige Arbeitsmappen aktivieren."
+        }
+        "Python runs in a sandbox with no file or network access." => "Python läuft in einer Sandbox ohne Datei- oder Netzwerkzugriff.",
+        "Enable Python" => "Python aktivieren",
+        "Dismiss this message" => "Diese Meldung schließen",
+        "Version" => "Version",
+        "Program" => "Programm",
+        "Found in" => "Gefunden in",
+        "not installed" => "nicht installiert",
+        "Python interpreter" => "Python-Interpreter",
+        "Detect Again" => "Erneut suchen",
+        "Look for Python again (after installing Python or a package)" => {
+            "Erneut nach Python suchen (nach der Installation von Python oder einem Paket)"
+        }
+        "Time limit per cell" => "Zeitlimit pro Zelle",
+        "Not used ({count})" => "Nicht verwendet ({count})",
+        "This code runs first, before any Python cell, each time Python starts. Put imports and shared definitions here." => {
+            "Dieser Code wird bei jedem Start von Python vor allen Python-Zellen ausgeführt. Legen Sie hier Importe und gemeinsame Definitionen ab."
+        }
+        "Py: built-in" => "Py: integriert",
+        "Py: off" => "Py: aus",
+        "Run Python cell" => "Python-Zelle ausführen",
+        "Stop Python" => "Python beenden",
+        "Re-run Python cell" => "Python-Zelle erneut ausführen",
+        "Run Python cell: Python is turned off for this workbook. Choose Enable Python in the message bar to run it" => {
+            "Python-Zelle ausführen: Python ist für diese Arbeitsmappe ausgeschaltet. Wählen Sie in der Meldungsleiste „Python aktivieren“, um sie auszuführen"
+        }
+        "Python cell. Click to turn Python off for this cell (Enter then makes it a normal cell; undo brings the code back)" => {
+            "Python-Zelle. Klicken Sie, um Python für diese Zelle auszuschalten (die Eingabetaste macht sie dann zu einer normalen Zelle; Rückgängig stellt den Code wieder her)"
+        }
+        "Open in Python editor" => "Im Python-Editor öffnen",
+        "Open Python Editor" => "Python-Editor öffnen",
+        "Python Editor" => "Python-Editor",
+        "Run" => "Ausführen",
+        "Re-run" => "Erneut ausführen",
+        "Insert xl() Reference: click or drag on the sheet to insert a reference (F2 turns it on or off)" => {
+            "xl()-Bezug einfügen: Klicken oder ziehen Sie auf dem Blatt, um einen Bezug einzufügen (F2 schaltet es ein oder aus)"
+        }
+        "Select a Python cell" => "Wählen Sie eine Python-Zelle aus",
+        "Insert Python Here" => "Python hier einfügen",
+        "Make the selected cell a Python cell and write its code here" => {
+            "Die ausgewählte Zelle zu einer Python-Zelle machen und ihren Code hier schreiben"
+        }
+        "Running…" => "Wird ausgeführt…",
+        "Not run yet. Ctrl+Enter (Cmd+Enter on macOS) commits the code and runs it." => {
+            "Noch nicht ausgeführt. Strg+Eingabe (Cmd+Eingabe unter macOS) übernimmt den Code und führt ihn aus."
+        }
+        "Result" => "Ergebnis",
+        "Go to the line" => "Zur Zeile wechseln",
         _ => return None,
     })
 }
