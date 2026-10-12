@@ -35,11 +35,12 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 
 ### 3. Some unmodelled XLSX content is dropped on save (FF)
 - **Missing:** slicers and their caches, timelines, the data model, query tables attached to
-  tables, unmodelled `extLst` entries (x14 data bar settings and icon sets among them), chart
-  details. Pass-through (#330) keeps custom XML, external links, connections, sheet query tables,
-  printer settings, form and ActiveX controls, OLE objects and sheet backgrounds; Excel 2010
-  conditional formats (cross-sheet rules) are read and written; never checked in Excel (repair
-  prompts unknown).
+  tables, unmodelled `extLst` entries (among them x14 data bar settings beyond a solid fill,
+  icon sets, colour scales and the text rules containsText, notContainsText, beginsWith and
+  endsWith), chart details. Pass-through (#330) keeps custom XML, external links, connections,
+  sheet query tables, printer settings, form and ActiveX controls, OLE objects and sheet
+  backgrounds; the other Excel 2010 conditional format rules (cross-sheet rules among them) are
+  read and written; never checked in Excel (repair prompts unknown).
 - **Evidence:** `crates/xlsx/src/passthrough.rs` (what is kept, and why the rest isn't).
 - **Impact:** open-edit-save still simplifies workbooks with slicers, timelines or Power Pivot.
 - **Estimate:** 6–10 h. [file-format-parity.md](file-format-parity.md)

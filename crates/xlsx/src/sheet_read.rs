@@ -680,10 +680,14 @@ fn cf_rule(cx: &Ctx<'_>, r: &El, ty: &str, formulas: Vec<String>, style: Box<Sty
     })
 }
 
-/// `x14:conditionalFormattings`: rules Excel 2010+ keeps out of the main section, chiefly those
-/// whose formulas refer to other sheets. They carry `xm:f` formulas, an inline `x14:dxf` and
-/// priorities shared with the main-section rules. A rule whose `id` a main-section data bar links
-/// to (`cfRule/extLst/ext/x14:id`) only adds settings to that bar: its solid fill is kept.
+/// `x14:conditionalFormattings` (MS-XLSX 2.4.6): rules kept out of the main section, such as
+/// those whose formulas refer to other sheets in the one LibreOffice-saved file seen. They carry
+/// `xm:f` formulas, an inline `x14:dxf` and priorities shared with the main-section rules.
+/// Read: cellIs, expression, (not)containsBlanks, (not)containsErrors, duplicate/unique values,
+/// top10, aboveAverage and timePeriod. The x14 extension a main-section data bar links to by
+/// `x14:id` adds no rule, only that bar's solid fill (its other settings are skipped with a
+/// warning). Skipped with a warning (and so lost on save): other data bars, icon sets, colour
+/// scales and the text rules containsText, notContainsText, beginsWith and endsWith.
 fn read_x14_cf(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
     for cf in e.kids("conditionalFormatting") {
         let ranges = parse_sqref(cf.child("sqref").map(|s| s.text.as_str()));

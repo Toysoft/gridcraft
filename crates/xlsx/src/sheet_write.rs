@@ -366,8 +366,9 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
             *p = rank as u32 + 1;
         }
     }
-    // Rules referring to other sheets go to the Excel 2010 extension: Excel rejects such
-    // references in the main section. A solid data bar is in both: the extension holds its fill.
+    // Rules referring to other sheets go to the Excel 2010 extension, as the one such file seen
+    // (saved by LibreOffice) places them; where Excel itself puts them is unverified.
+    // A solid data bar is in both sections: the extension holds its fill.
     let mut x14_cf = String::new();
     for (i, cf) in sheet.cond_formats.iter().enumerate() {
         if cf.ranges.is_empty() {
@@ -906,18 +907,23 @@ fn cf_rule_xml(cf: &CondFormat, priority: u32, out: &mut Out) -> String {
     }
 }
 
-/// Whether formula `f` refers to a sheet other than `own` (or to a 3-D span of sheets).
-fn refers_to_other_sheet(f: &str, own: &str) -> bool {
-    let Ok(e) = gridcraft_formula::parse(f.trim_start_matches('=')) else { return false };
-    e.references().iter().any(|r| match &r.sheet {
-        gridcraft_formula::SheetSel::Current => false,
+/// Whether formula `f` refers to a sheet other than `own`, and whether it refers to a 3-D span of
+/// sheets.
+fn sheet_refs(f: &str, own: &str) -> (bool, bool) {
+    let Ok(e) = gridcraft_formula::parse(f.trim_start_matches('=')) else { return (false, false) };
+    let refs = e.references();
+    let other = refs.iter().any(|r| match &r.sheet {
         gridcraft_formula::SheetSel::Named(n) => !n.chars().flat_map(char::to_lowercase).eq(own.chars().flat_map(char::to_lowercase)),
-        gridcraft_formula::SheetSel::Span(..) => true,
-    })
+        _ => false,
+    });
+    let span = refs.iter().any(|r| matches!(r.sheet, gridcraft_formula::SheetSel::Span(..)));
+    (other, span)
 }
 
 /// The Excel 2010 form (`x14:cfRule`, `xm:f` formulas, inline `x14:dxf`) of a cell-value or
-/// formula rule that refers to other sheets; `None` for rules that belong in the main section.
+/// formula rule that refers to another sheet; `None` for rules that belong in the main section.
+/// MS-XLSX 2.6.27 (CT_CfRule) forbids 3-D spans (`sheet-range-reference`) in `xm:f`, so a rule
+/// with one stays in the main section.
 fn x14_cf_rule_xml(cf: &CondFormat, own: &str, priority: u32, out: &mut Out) -> Option<String> {
     let (ty, extra, formulas, style): (&str, String, Vec<&str>, &Style) = match &cf.rule {
         CfRule::CellIs { op, a, b, style } => {
@@ -926,7 +932,8 @@ fn x14_cf_rule_xml(cf: &CondFormat, own: &str, priority: u32, out: &mut Out) -> 
         CfRule::Expression { formula, style } => ("expression", String::new(), vec![formula.as_str()], style),
         _ => return None,
     };
-    if !formulas.iter().any(|f| refers_to_other_sheet(f, own)) {
+    let refs: Vec<(bool, bool)> = formulas.iter().map(|f| sheet_refs(f, own)).collect();
+    if !refs.iter().any(|&(other, _)| other) || refs.iter().any(|&(_, span)| span) {
         return None;
     }
     out.x14_cf_rules += 1;

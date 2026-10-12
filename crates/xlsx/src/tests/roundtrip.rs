@@ -870,10 +870,10 @@ const X14_CF_SHEET: &str = r#"<sheetData/>
     <x14:conditionalFormatting xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main"><x14:cfRule type="iconSet" priority="4" id="{00000000-0000-0000-0000-000000000003}"><x14:iconSet iconSet="3Stars"><x14:cfvo type="percent"><xm:f>0</xm:f></x14:cfvo><x14:cfvo type="percent"><xm:f>33</xm:f></x14:cfvo><x14:cfvo type="percent"><xm:f>67</xm:f></x14:cfvo></x14:iconSet></x14:cfRule><xm:sqref>D1:D3</xm:sqref></x14:conditionalFormatting>
   </x14:conditionalFormattings></ext></extLst>"#;
 
-/// Excel 2010 keeps rules whose formulas refer to other sheets in the `x14:conditionalFormattings`
-/// extension, with `xm:f` formulas and an inline `x14:dxf`; their priorities interleave with the
-/// main section's. A data bar's linked extension doesn't add a second rule; it supplies the
-/// bar's solid fill.
+/// Rules in the `x14:conditionalFormattings` extension (such as those referring to other sheets)
+/// carry `xm:f` formulas and an inline `x14:dxf`; their priorities interleave with the main
+/// section's. A data bar's linked extension adds no rule, only the bar's solid fill (its other
+/// settings are skipped with a warning); x14 icon sets are skipped with a warning.
 #[test]
 fn x14_conditional_formats_are_read() {
     let (wb, rep) = read_xlsx(&super::minimal(X14_CF_SHEET, &[], "", "")).unwrap();
@@ -909,9 +909,10 @@ fn x14_conditional_formats_are_read() {
     assert_eq!(rep.warnings.iter().filter(|w| w.contains("conditional format")).count(), 2, "{:?}", rep.warnings);
 }
 
-/// A rule referring to another sheet is written in the x14 extension (Excel rejects such
-/// references in the main section), ahead of the sparklines in the one `extLst`; other rules
-/// stay in the main section.
+/// A rule referring to another sheet is written in the x14 extension (as the LibreOffice-saved
+/// file that motivated this places it), ahead of the sparklines in the one `extLst`; other rules
+/// stay in the main section, and so does a rule with a 3-D span, which MS-XLSX 2.6.27 forbids in
+/// `xm:f`.
 #[test]
 fn cross_sheet_rules_are_written_in_the_x14_extension() {
     let mut wb = Workbook::new();
@@ -921,7 +922,8 @@ fn cross_sheet_rules_are_written_in_the_x14_extension() {
     let rules = [
         (CfRule::Expression { formula: "E1>Sheet1!$B$1".into(), style: Box::new(grey.clone()) }, false),
         (CfRule::CellIs { op: CfOperator::Equal, a: "'Vehicle Range'!$A$8".into(), b: None, style: Box::new(grey.clone()) }, true),
-        (CfRule::CellIs { op: CfOperator::Greater, a: "5".into(), b: None, style: Box::new(grey) }, false),
+        (CfRule::CellIs { op: CfOperator::Greater, a: "5".into(), b: None, style: Box::new(grey.clone()) }, false),
+        (CfRule::Expression { formula: "SUM('Sheet1:Vehicle Range'!$A$1)>0".into(), style: Box::new(grey) }, false),
     ];
     for (i, (rule, stop_if_true)) in rules.into_iter().enumerate() {
         s.cond_formats.push(CondFormat { ranges: vec![rr("E:E")], rule, priority: i as u32 + 1, stop_if_true });
@@ -930,9 +932,11 @@ fn cross_sheet_rules_are_written_in_the_x14_extension() {
     let bytes = write_xlsx(&wb).unwrap();
     let (xml, _) = sheet1_xml(&bytes);
     let (main, ext) = xml.split_once("<extLst>").unwrap();
-    assert_eq!(main.matches("<cfRule ").count(), 2, "{main}");
-    assert!(!main.contains("Vehicle Range"), "{main}");
+    assert_eq!(main.matches("<cfRule ").count(), 3, "{main}");
+    assert!(!main.contains("$A$8"), "{main}");
     assert!(main.contains("<formula>E1&gt;Sheet1!$B$1</formula>"), "{main}");
+    assert!(main.contains("<formula>SUM('Sheet1:Vehicle Range'!$A$1)&gt;0</formula>"), "{main}");
+    assert_eq!(ext.matches("<x14:cfRule ").count(), 1, "{ext}");
     assert_eq!(ext.matches("<extLst>").count(), 0, "one extLst: {ext}");
     let cf = ext.find("{78C0D931-6437-407d-A8EE-F0AAD7539E65}").unwrap();
     assert!(cf < ext.find("{05C60535-1F16-4fd2-B633-F4F36F0B64E0}").unwrap(), "conditional formats before sparklines: {ext}");
