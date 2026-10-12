@@ -5,10 +5,11 @@ use gridcraft_engine::model::{HAlign, Style, VAlign};
 use serde_json::json;
 
 use crate::SheetApp;
-use crate::icons::{self, Icon};
+use crate::function_library;
+use crate::icons::{self, FnGlyph, Icon};
 use crate::keytips::keytip_table;
-use crate::theme::{self, Tokens};
-use crate::widgets::{big_button, color_palette, icon_button, small_button, split_button, toggle_button};
+use crate::theme::{self, Cat, Tokens};
+use crate::widgets::{big_button, big_split_button, color_palette, icon_button, small_button, small_button_accent, split_button, toggle_button};
 
 pub const TABS: &[&str] = &["Home", "Insert", "Draw", "Page Layout", "Formulas", "Data", "Review", "View", "Automate"];
 
@@ -58,7 +59,7 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
             ui.painter().rect_filled(r, 8.0, if on { t.accent } else { Color32::TRANSPARENT });
             ui.painter().rect_stroke(r, 8.0, Stroke::new(1.0, if on { t.accent } else { t.text_dim }), StrokeKind::Inside);
             let knob = if on { pos2(r.right() - 8.0, r.center().y) } else { pos2(r.left() + 8.0, r.center().y) };
-            ui.painter().circle_filled(knob, 5.0, if on { Color32::WHITE } else { t.text_dim });
+            ui.painter().circle_filled(knob, 5.0, if on { t.on_accent } else { t.text_dim });
             if resp.on_hover_text("AutoSave: save after every change (workbooks saved to a file)").clicked() {
                 app.grid.toggle_autosave();
             }
@@ -227,28 +228,107 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             ui.painter().rect_stroke(card, 10.0, Stroke::new(1.0, t.ribbon_border), StrokeKind::Inside);
             let inner = card.shrink2(vec2(10.0, 6.0));
             ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
-                egui::ScrollArea::horizontal().scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
-                        match app.ui.ribbon_tab.as_str() {
-                            "Home" => home(app, ui),
-                            "Insert" => insert(app, ui),
-                            "Draw" => draw(app, ui),
-                            "Page Layout" => page_layout(app, ui),
-                            "Formulas" => formulas(app, ui),
-                            "Data" => data(app, ui),
-                            "Review" => review(app, ui),
-                            "View" => view(app, ui),
-                            "Automate" => automate(app, ui),
-                            "Table Design" => table_design(app, ui),
-                            "Chart Design" => chart_design(app, ui),
-                            crate::paper_view::TAB => crate::paper_view::ribbon_tab(app, ui),
-                            _ => home(app, ui),
-                        }
+                let scroll = egui::ScrollArea::horizontal()
+                    .id_salt("ribbon_scroll")
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
+                            match app.ui.ribbon_tab.as_str() {
+                                "Home" => home(app, ui),
+                                "Insert" => insert(app, ui),
+                                "Draw" => draw(app, ui),
+                                "Page Layout" => page_layout(app, ui),
+                                "Formulas" => formulas(app, ui),
+                                "Data" => data(app, ui),
+                                "Review" => review(app, ui),
+                                "View" => view(app, ui),
+                                "Automate" => automate(app, ui),
+                                "Table Design" => table_design(app, ui),
+                                "Chart Design" => chart_design(app, ui),
+                                crate::paper_view::TAB => crate::paper_view::ribbon_tab(app, ui),
+                                _ => home(app, ui),
+                            }
+                        });
                     });
-                });
+                scroll_arrows(ui, &t, scroll);
             });
         });
+}
+
+/// How much of the active tab's groups the ribbon card shows, recorded each frame for the scroll
+/// arrows and for tests.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RibbonOverflow {
+    /// Width of all the tab's groups.
+    pub content: f32,
+    /// Width of the card's content area.
+    pub visible: f32,
+    /// How far the groups are scrolled.
+    pub offset: f32,
+    /// Height of the tallest group (a column of small buttons) and of the content area.
+    pub content_height: f32,
+    pub visible_height: f32,
+}
+
+impl RibbonOverflow {
+    fn id() -> egui::Id {
+        egui::Id::new("ribbon_overflow")
+    }
+
+    /// Last frame's overflow.
+    pub fn get(ctx: &egui::Context) -> RibbonOverflow {
+        ctx.data(|d| d.get_temp(Self::id())).unwrap_or_default()
+    }
+
+    /// Whether the groups are wider than the card.
+    pub fn overflows(&self) -> bool {
+        self.content > self.visible + 0.5
+    }
+}
+
+/// When the tab's groups are wider than the card, arrows at its edges scroll them (the mouse wheel
+/// over the card still does too).
+fn scroll_arrows(ui: &mut Ui, t: &Tokens, mut scroll: egui::scroll_area::ScrollAreaOutput<()>) {
+    let inner = scroll.inner_rect;
+    let max = (scroll.content_size.x - inner.width()).max(0.0);
+    let overflow = RibbonOverflow {
+        content: scroll.content_size.x,
+        visible: inner.width(),
+        offset: scroll.state.offset.x,
+        content_height: scroll.content_size.y,
+        visible_height: inner.height(),
+    };
+    ui.ctx().data_mut(|d| d.insert_temp(RibbonOverflow::id(), overflow));
+    if !overflow.overflows() {
+        return;
+    }
+    let step = (inner.width() * 0.6).max(60.0);
+    let mut target = None;
+    for (left, show) in [(true, overflow.offset > 0.5), (false, overflow.offset < max - 0.5)] {
+        if !show {
+            continue;
+        }
+        let r = if left {
+            Rect::from_min_size(inner.left_top(), vec2(18.0, inner.height()))
+        } else {
+            Rect::from_min_size(pos2(inner.right() - 18.0, inner.top()), vec2(18.0, inner.height()))
+        };
+        let resp = ui.interact(r, ui.id().with(("ribbon_scroll_arrow", left)), Sense::click());
+        ui.painter().rect_filled(r, 4.0, if resp.hovered() { t.hover } else { t.ribbon });
+        ui.painter().rect_stroke(r, 4.0, Stroke::new(1.0, t.ribbon_border), StrokeKind::Inside);
+        icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(14.0, 14.0)), if left { Icon::Left } else { Icon::Right }, t.text);
+        let name = if left { "Scroll ribbon left" } else { "Scroll ribbon right" };
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name));
+        if resp.on_hover_text(crate::i18n::current(ui.ctx()).tr(name)).clicked() {
+            target = Some(if left { overflow.offset - step } else { overflow.offset + step });
+        }
+    }
+    if let Some(x) = target {
+        scroll.state.offset.x = x.clamp(0.0, max);
+        scroll.state.store(ui.ctx(), scroll.id);
+        ui.ctx().request_repaint();
+    }
 }
 
 /// The File tab opens the Backstage view (New, Open, Info, Save As, Print, Export, Options…), like
@@ -950,17 +1030,7 @@ fn home(app: &mut SheetApp, ui: &mut Ui) {
             if s {
                 act(app, "formulas.autoSum", json!({}));
             }
-            egui::Popup::menu(&sa).show(|ui| {
-                for f in ["SUM", "AVERAGE", "COUNT", "MAX", "MIN"] {
-                    if ui.button(f).clicked() {
-                        act(app, "formulas.autoSum", json!({"function": f}));
-                    }
-                }
-                ui.separator();
-                if ui.button("More Functions…").clicked() {
-                    app.open_dialog("insertFunction", json!({}));
-                }
-            });
+            egui::Popup::menu(&sa).show(|ui| function_library::auto_sum_menu(app, ui));
         });
         let fill = small_button(ui, Icon::FillDown, "", "Fill", true);
         for sequence in keytip_table::group_extension(
@@ -1232,7 +1302,7 @@ fn table_gallery(app: &mut SheetApp, ui: &mut Ui, cmd: &str) {
                 let (r, resp) = ui.allocate_exact_size(vec2(54.0, 38.0), Sense::click());
                 paint_table_swatch(ui, r, &wb, &name);
                 if resp.hovered() {
-                    ui.painter().rect_stroke(r.expand(1.5), 2.0, Stroke::new(2.0, Color32::from_rgb(0xE8, 0x7D, 0x2B)), StrokeKind::Outside);
+                    ui.painter().rect_stroke(r.expand(1.5), 2.0, Stroke::new(2.0, Tokens::get(ui.ctx()).cat(Cat::Orange)), StrokeKind::Outside);
                 }
                 if resp.on_hover_text(&name).clicked() {
                     act(app, cmd, json!({"style": name}));
@@ -1250,7 +1320,8 @@ fn paint_table_swatch(ui: &Ui, r: Rect, wb: &gridcraft_engine::model::Workbook, 
     let lk = gridcraft_engine::tables::look(style);
     let res = |c: Option<gridcraft_engine::model::Color>| c.and_then(|c| c.resolve(&wb.theme)).map(theme::color32);
     let p = ui.painter();
-    p.rect_filled(r, 0.0, Color32::WHITE);
+    let t = Tokens::get(ui.ctx());
+    p.rect_filled(r, 0.0, t.grid_bg);
     let rows = 5;
     let rh = r.height() / rows as f32;
     for i in 0..rows {
@@ -1270,14 +1341,15 @@ fn paint_table_swatch(ui: &Ui, r: Rect, wb: &gridcraft_engine::model::Workbook, 
         }
         for k in 0..3 {
             let x = rr.left() + 4.0 + k as f32 * (r.width() - 8.0) / 3.0;
-            let col = if i == 0 { res(Some(lk.header_font)).unwrap_or(Color32::BLACK) } else { Color32::from_gray(120) };
+            let col = if i == 0 { res(Some(lk.header_font)).unwrap_or(t.cell_text) } else { t.sheet_control_border };
             p.line_segment([pos2(x, rr.center().y), pos2(x + 10.0, rr.center().y)], Stroke::new(1.0, col));
         }
     }
-    p.rect_stroke(r, 0.0, Stroke::new(1.0, Color32::from_gray(210)), StrokeKind::Inside);
+    p.rect_stroke(r, 0.0, Stroke::new(1.0, t.separator), StrokeKind::Inside);
 }
 
 fn cell_style_gallery(app: &mut SheetApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
     ui.set_width(520.0);
     let Some(wb) = app.session.active().map(|d| d.wb.clone()) else { return };
     let groups: &[(&str, &[&str])] = &[
@@ -1327,17 +1399,17 @@ fn cell_style_gallery(app: &mut SheetApp, ui: &mut Ui) {
                     .resolve(&wb.theme)
                     .filter(|_| st.fill.pattern != gridcraft_engine::model::PatternType::None)
                     .map(theme::color32)
-                    .unwrap_or(Color32::WHITE);
+                    .unwrap_or(t.grid_bg);
                 ui.painter().rect_filled(r, 0.0, fill);
-                ui.painter().rect_stroke(r, 0.0, Stroke::new(1.0, Color32::from_gray(210)), StrokeKind::Inside);
+                ui.painter().rect_stroke(r, 0.0, Stroke::new(1.0, t.separator), StrokeKind::Inside);
                 if !st.borders.bottom.is_none() {
-                    let c = st.borders.bottom.color.resolve(&wb.theme).map(theme::color32).unwrap_or(Color32::BLACK);
+                    let c = st.borders.bottom.color.resolve(&wb.theme).map(theme::color32).unwrap_or(t.cell_text);
                     ui.painter().line_segment(
                         [r.left_bottom() + vec2(0.0, -1.5), r.right_bottom() + vec2(0.0, -1.5)],
                         Stroke::new(st.borders.bottom.style.width(), c),
                     );
                 }
-                let col = st.font.color.resolve(&wb.theme).map(theme::color32).unwrap_or(Color32::BLACK);
+                let col = st.font.color.resolve(&wb.theme).map(theme::color32).unwrap_or(t.cell_text);
                 let fam = theme::cell_family(&st.font.name, st.font.bold, st.font.italic);
                 ui.painter().text(
                     r.left_center() + vec2(4.0, 0.0),
@@ -1347,7 +1419,7 @@ fn cell_style_gallery(app: &mut SheetApp, ui: &mut Ui) {
                     col,
                 );
                 if resp.hovered() {
-                    ui.painter().rect_stroke(r.expand(1.5), 2.0, Stroke::new(2.0, Color32::from_rgb(0xE8, 0x7D, 0x2B)), StrokeKind::Outside);
+                    ui.painter().rect_stroke(r.expand(1.5), 2.0, Stroke::new(2.0, Tokens::get(ui.ctx()).cat(Cat::Orange)), StrokeKind::Outside);
                 }
                 if resp.clicked() {
                     act(app, "home.cellStyle", json!({"name": n}));
@@ -1733,47 +1805,78 @@ fn page_layout(app: &mut SheetApp, ui: &mut Ui) {
     }
 }
 
+/// What a Function Library button's menu lists.
+#[derive(Clone, Copy, Debug)]
+enum LibraryMenu {
+    Recent,
+    Category(&'static str),
+    More,
+}
+
+/// One Function Library category button: its label, its menu, the glyph and colour of its book,
+/// and the control id its keytip sequence targets in `keytips.json`.
+struct LibraryItem {
+    label: &'static str,
+    menu: LibraryMenu,
+    book: (FnGlyph, Cat),
+    keytip: &'static str,
+}
+
+impl LibraryItem {
+    const fn new(label: &'static str, menu: LibraryMenu, book: (FnGlyph, Cat), keytip: &'static str) -> LibraryItem {
+        LibraryItem { label, menu, book, keytip }
+    }
+}
+
+/// The Function Library categories after AutoSum, column by column (three rows each). Every
+/// category has its own colour.
+const LIBRARY: [LibraryItem; 8] = [
+    LibraryItem::new("Recently Used", LibraryMenu::Recent, (FnGlyph::Star, Cat::Amber), "formulas.recentlyUsed"),
+    LibraryItem::new("Financial", LibraryMenu::Category("Financial"), (FnGlyph::Coins, Cat::Green), "formulas.financial"),
+    LibraryItem::new("Logical", LibraryMenu::Category("Logical"), (FnGlyph::Question, Cat::Purple), "formulas.logical"),
+    LibraryItem::new("Text", LibraryMenu::Category("Text"), (FnGlyph::Letter, Cat::Blue), "formulas.text"),
+    LibraryItem::new("Date & Time", LibraryMenu::Category("DateTime"), (FnGlyph::Clock, Cat::Orange), "formulas.dateTime"),
+    LibraryItem::new("Lookup & Reference", LibraryMenu::Category("Lookup"), (FnGlyph::Magnifier, Cat::Teal), "formulas.lookup"),
+    LibraryItem::new("Math & Trig", LibraryMenu::Category("MathTrig"), (FnGlyph::Theta, Cat::Red), "formulas.mathTrig"),
+    LibraryItem::new("More Functions", LibraryMenu::More, (FnGlyph::Dots, Cat::Slate), "formulas.moreFunctions"),
+];
+
+/// One Function Library category button: a book in the category's colour that opens the
+/// category's menu.
+fn library_button(app: &mut SheetApp, ui: &mut Ui, item: &LibraryItem) {
+    let (glyph, cat) = item.book;
+    let accent = Some(Tokens::get(ui.ctx()).cat(cat));
+    let anchor = small_button_accent(ui, Icon::FnBook(glyph), accent, item.label, item.label, true);
+    control_keytip(app, ui, &anchor, item.keytip);
+    let forced = invoke(app, item.keytip);
+    egui::Popup::menu(&anchor).open_memory(popup_command(forced, anchor.clicked())).show(|ui| match item.menu {
+        LibraryMenu::Recent => function_library::recent_menu(app, ui),
+        LibraryMenu::Category(id) => function_library::category_menu(app, ui, id),
+        LibraryMenu::More => function_library::more_menu(app, ui),
+    });
+}
+
 fn formulas(app: &mut SheetApp, ui: &mut Ui) {
     let __k = big_button(ui, Icon::Function, "Insert\nFunction", "Insert Function (⇧F3)", false);
     control_keytip(app, ui, &__k, "dialog:insertFunction");
     if __k.clicked() {
         app.open_dialog("insertFunction", json!({}));
     }
-    let s = big_button(ui, Icon::Sum, "AutoSum", "AutoSum", true);
-    control_keytip(app, ui, &s, "formulas.autoSum");
-    if s.clicked() {
+    // Function Library: AutoSum as a big split button, then the categories in columns of three
+    // labelled small buttons, as Excel lays the group out when the window is not wide enough for
+    // a big button per category.
+    let (sum, sum_arrow) = big_split_button(ui, Icon::Sum, "AutoSum", "AutoSum (⌘⇧T)");
+    control_keytip(app, ui, &sum_arrow, "formulas.autoSum");
+    if sum.clicked() {
         act(app, "formulas.autoSum", json!({}));
     }
-    for (label, cat, cid) in [
-        ("Financial", "Financial", "formulas.financial"),
-        ("Logical", "Logical", "formulas.logical"),
-        ("Text", "Text", "formulas.text"),
-        ("Date &\nTime", "DateTime", "formulas.dateTime"),
-        ("Lookup &\nReference", "Lookup", "formulas.lookup"),
-        ("Math &\nTrig", "MathTrig", "formulas.mathTrig"),
-        ("More\nFunctions", "Statistical", "formulas.moreFunctions"),
-    ] {
-        let r = big_button(ui, Icon::Book, label, label, true);
-        control_keytip(app, ui, &r, cid);
-        let forced_c = invoke(app, cid);
-        egui::Popup::menu(&r).open_memory(popup_command(forced_c, r.clicked())).show(|ui| {
-            ui.set_max_height(420.0);
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for f in gridcraft_engine::cmd::formulas::function_list() {
-                    if f["category"].as_str() == Some(cat)
-                        && let Some(n) = f["name"].as_str()
-                    {
-                        let locale = app.ui.language.formula_locale();
-                        let name =
-                            app.session.active().map(|d| crate::formula_locale::completion_name(n, locale, &d.wb, d.wb.active_sheet)).unwrap_or(n);
-                        let desc = crate::formula_locale::description(n, locale).unwrap_or_default();
-                        if ui.button(name).on_hover_text(desc).clicked() {
-                            app.run_or_alert("formulas.insertFunction", json!({"name": n}));
-                            ui.close();
-                        }
-                    }
-                }
-            });
+    let forced = invoke(app, "formulas.autoSum");
+    egui::Popup::menu(&sum_arrow).open_memory(popup_command(forced, sum_arrow.clicked())).show(|ui| function_library::auto_sum_menu(app, ui));
+    for column in LIBRARY.chunks(3) {
+        ui.vertical(|ui| {
+            for item in column {
+                library_button(app, ui, item);
+            }
         });
     }
     sep(ui);
@@ -2106,6 +2209,7 @@ fn view(app: &mut SheetApp, ui: &mut Ui) {
     let lang = app.ui.language;
     let page_layout =
         app.session.active().and_then(|d| d.wb.active().map(|s| s.view == gridcraft_engine::model::SheetViewMode::PageLayout)).unwrap_or(false);
+    // Show: two columns of two, as the card holds three rows.
     ui.vertical(|ui| {
         // Rulers exist only in Page Layout view.
         let mut ruler = !app.session.hide_ruler;
@@ -2114,17 +2218,19 @@ fn view(app: &mut SheetApp, ui: &mut Ui) {
         if ruler_resp.changed() {
             act(app, "view.ruler", json!({"on": ruler}));
         }
-        let mut fb = app.session.prefs.formula_bar;
-        let resp = ui.checkbox(&mut fb, lang.tr("Formula Bar"));
-        control_keytip(app, ui, &resp, "view.formulaBar");
-        if resp.changed() || invoke(app, "view.formulaBar") {
-            act(app, "view.formulaBar", json!({"on": !fb}));
-        }
         let mut g = s.0;
         let resp = ui.checkbox(&mut g, lang.tr("Gridlines"));
         control_keytip(app, ui, &resp, "view.gridlines");
         if resp.changed() {
             act(app, "view.gridlines", json!({"on": g}));
+        }
+    });
+    ui.vertical(|ui| {
+        let mut fb = app.session.prefs.formula_bar;
+        let resp = ui.checkbox(&mut fb, lang.tr("Formula Bar"));
+        control_keytip(app, ui, &resp, "view.formulaBar");
+        if resp.changed() || invoke(app, "view.formulaBar") {
+            act(app, "view.formulaBar", json!({"on": !fb}));
         }
         let mut h = s.1;
         let resp = ui.checkbox(&mut h, lang.tr("Headings"));
@@ -2465,11 +2571,6 @@ pub fn shortcut(app: &mut SheetApp, key: Key, m: Modifiers) {
     }
 }
 
-#[allow(dead_code)]
-fn unused(_: &Tokens, _: Icon) {
-    let _ = icons::GREEN;
-}
-
 #[cfg(test)]
 mod title_bar_tests {
     use super::*;
@@ -2480,5 +2581,23 @@ mod title_bar_tests {
         let margin = (MAC_TITLE_BAR - MAC_LIGHT) / 2.0;
         let lights_end = MAC_LIGHTS_LEFT + 2.0 * MAC_LIGHT_PITCH + MAC_LIGHT;
         assert_eq!(MAC_CONTENT_LEFT - lights_end, margin);
+    }
+}
+
+#[cfg(test)]
+mod function_library_tests {
+    use super::*;
+
+    #[test]
+    fn every_function_library_book_has_its_own_glyph_and_colour() {
+        let books: Vec<(FnGlyph, Cat)> = LIBRARY.iter().map(|i| i.book).collect();
+        assert_eq!(books.len(), 8, "every category is a coloured book");
+        for (i, (glyph, cat)) in books.iter().enumerate() {
+            assert!(books.iter().skip(i + 1).all(|(g, c)| g != glyph && c != cat), "{glyph:?} / {cat:?} is used twice");
+        }
+        assert!(matches!(LIBRARY.first().map(|i| i.menu), Some(LibraryMenu::Recent)));
+        for item in &LIBRARY {
+            assert!(!keytip_table::sequences_for(item.keytip).is_empty(), "{} has a keytip sequence", item.label);
+        }
     }
 }

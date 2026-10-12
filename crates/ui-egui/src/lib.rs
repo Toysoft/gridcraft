@@ -10,6 +10,7 @@ pub mod backstage;
 mod border_preview;
 mod cell_pictures;
 pub mod chartview;
+pub mod code_editor;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
@@ -17,6 +18,7 @@ pub mod editor;
 pub mod fonts;
 pub mod formula_bar;
 mod formula_locale;
+pub mod function_library;
 pub mod grid;
 pub mod i18n;
 pub mod icons;
@@ -57,6 +59,10 @@ pub struct UiState {
     /// Motion in the UI: the selection outline glides to a new selection (View ▸ Animations).
     pub animations: bool,
     pub recent: Vec<String>,
+    /// Formulas › Recently Used and the Insert Function dialog's Most Recently Used category,
+    /// newest first (at most [`function_library::RECENT_MAX`]).
+    #[serde(deserialize_with = "function_library::lenient_recent")]
+    pub recent_functions: Vec<String>,
     /// One-shot keytip request for a ribbon control: set when a keytip action resolves to
     /// [`keytips::Action::Control`], consumed (and cleared) by the control's render site.
     #[serde(skip)]
@@ -99,6 +105,7 @@ impl Default for UiState {
             status_bar: true,
             animations: true,
             recent: vec![],
+            recent_functions: function_library::default_recent(),
             keytip_invoke: None,
             language: i18n::Language::En,
             interface_scale: 100,
@@ -240,10 +247,13 @@ pub struct SheetApp {
     /// Chart selected on the sheet (id).
     pub selected_chart: Option<u32>,
     pub started: f64,
+    /// How much of the session's journal Recently Used has read (see [`function_library::harvest`]).
+    pub(crate) journal_seen: usize,
 }
 
 impl SheetApp {
     pub fn new(session: Session, services: Services) -> SheetApp {
+        let journal_seen = session.journal.len();
         SheetApp {
             session,
             ui: UiState::default(),
@@ -279,6 +289,7 @@ impl SheetApp {
             shots: control::Shots::default(),
             selected_chart: None,
             started: now_ms(),
+            journal_seen,
         }
     }
 
@@ -902,6 +913,8 @@ impl SheetApp {
             ctx.request_repaint();
         }
         control::poll(self, ctx);
+        // Formulas entered since the last frame, from any source, feed Recently Used.
+        function_library::harvest(self);
         // Files read asynchronously (web file picker, dropped files).
         let arrived: Vec<(String, Vec<u8>)> = self
             .services
