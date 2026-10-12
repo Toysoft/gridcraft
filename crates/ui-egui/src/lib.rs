@@ -18,6 +18,7 @@ pub mod editor;
 pub mod fonts;
 pub mod formula_bar;
 mod formula_locale;
+pub mod function_library;
 pub mod grid;
 pub mod i18n;
 pub mod icons;
@@ -58,6 +59,10 @@ pub struct UiState {
     /// Motion in the UI: the selection outline glides to a new selection (View ▸ Animations).
     pub animations: bool,
     pub recent: Vec<String>,
+    /// Formulas › Recently Used and the Insert Function dialog's Most Recently Used category,
+    /// newest first (at most [`function_library::RECENT_MAX`]).
+    #[serde(deserialize_with = "function_library::lenient_recent")]
+    pub recent_functions: Vec<String>,
     /// One-shot keytip request for a ribbon control: set when a keytip action resolves to
     /// [`keytips::Action::Control`], consumed (and cleared) by the control's render site.
     #[serde(skip)]
@@ -100,6 +105,7 @@ impl Default for UiState {
             status_bar: true,
             animations: true,
             recent: vec![],
+            recent_functions: function_library::default_recent(),
             keytip_invoke: None,
             language: i18n::Language::En,
             interface_scale: 100,
