@@ -945,14 +945,18 @@ fn row_height(s: &mut Session, p: &Json) -> Result<Json> {
     edit(s, |cx| {
         let si = cx.sheet_index();
         let sh = cx.sheet_mut(si)?;
+        let mut shown_or_hidden = false;
         for (a, b) in lines {
             for r in a..=b.min(a.saturating_add(1_048_575)) {
                 let e = sh.rows.entry(r).or_default();
+                shown_or_hidden |= e.hidden != (h == 0.0);
                 e.size = Some(h as f32);
                 e.hidden = h == 0.0;
                 e.custom = true;
             }
         }
+        // A height of 0 hides rows and any other height shows them; SUBTOTAL(10x) depends on that.
+        cx.structural |= shown_or_hidden;
         Ok(Json::Null)
     })
 }
