@@ -600,6 +600,12 @@ mod tests {
         assert_eq!(Language::De.tr("Sheet1!A1"), "Sheet1!A1");
         assert_eq!(Language::Fr.tr("Data"), "Données");
         assert_eq!(Language::Fr.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Fr.tr("Save"), "Enregistrer");
+        assert_eq!(Language::Fr.tr("Header"), "En-tête");
+        assert_eq!(Language::Fr.tr("Solver"), "Solveur");
+        assert_eq!(Language::Fr.tr("Show Detail"), "Afficher le détail");
+        assert_eq!(Language::Fr.tr("Checkbox"), "Case à cocher");
+        assert_eq!(Language::Fr.tr("Different First Page"), "Première page différente");
         assert_eq!(Language::PtBr.tr("Date"), "Data");
         assert_eq!(Language::PtBr.tr("Sheet1!A1"), "Sheet1!A1");
         assert_eq!(Language::Ja.tr("Sheet1!A1"), "Sheet1!A1");
