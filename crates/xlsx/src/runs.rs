@@ -27,6 +27,22 @@ impl Si {
     }
 }
 
+/// Spends `n` units of the workbook run budget when they all fit: `true` with the budget
+/// reduced by `n`, `false` with it untouched. The one place the cliff is enforced, so
+/// parse-time charging (each `<si>` built once) and attachment-time charging (each cell a
+/// shared item's runs are stored for) cannot drift apart.
+pub fn runs_fits(budget: &mut u64, n: usize) -> bool {
+    // usize → u64 never fails on supported platforms; u64::MAX never fits a real budget.
+    let n = u64::try_from(n).unwrap_or(u64::MAX);
+    match budget.checked_sub(n) {
+        Some(left) => {
+            *budget = left;
+            true
+        }
+        None => false,
+    }
+}
+
 /// Assembles the parsed run parts, enforcing the caps. Never an error: hostile input loses its
 /// runs and keeps its text.
 fn cell_runs(text: &str, parts: &[crate::xml::SiRun<'_>], palette: &[u32], budget: &mut u64) -> Option<CellRuns> {
@@ -34,8 +50,7 @@ fn cell_runs(text: &str, parts: &[crate::xml::SiRun<'_>], palette: &[u32], budge
     if parts.is_empty() || !parts.iter().any(|p| p.rpr.is_some()) {
         return None;
     }
-    let n = parts.len() as u64;
-    if parts.len() > MAX_RUNS_PER_CELL || *budget < n {
+    if parts.len() > MAX_RUNS_PER_CELL {
         return None;
     }
     let runs: Vec<Run> = parts
@@ -50,9 +65,9 @@ fn cell_runs(text: &str, parts: &[crate::xml::SiRun<'_>], palette: &[u32], budge
         })
         .collect();
     let cr = CellRuns { runs };
-    if !cr.valid_for(text) {
+    // The budget only shrinks by runs actually kept.
+    if !cr.valid_for(text) || !runs_fits(budget, cr.runs.len()) {
         return None;
     }
-    *budget -= n;
     Some(cr)
 }

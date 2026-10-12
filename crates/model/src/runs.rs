@@ -13,7 +13,7 @@ use crate::style::{Color, Font, Underline, VertAlign};
 pub const MAX_RUNS_PER_CELL: usize = 8_192;
 
 /// A font delta: `None` fields inherit the cell style's font via [`RunFont::merged`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RunFont {
     pub name: Option<String>,
     pub size: Option<f32>,

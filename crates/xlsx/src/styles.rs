@@ -507,16 +507,10 @@ pub fn run_rpr_xml(rf: &RunFont) -> String {
 }
 
 /// True when the delta states at least one property: a run with everything unset inherits the
-/// cell's font completely, so like Excel it is written without an `<rPr>`.
-fn run_font_set(rf: &RunFont) -> bool {
-    rf.name.is_some()
-        || rf.size.is_some()
-        || rf.bold.is_some()
-        || rf.italic.is_some()
-        || rf.underline.is_some()
-        || rf.strike.is_some()
-        || rf.color.is_some()
-        || rf.vert.is_some()
+/// cell's font completely, so like Excel it is written without an `<rPr>`. Default-equality
+/// rather than a field list, so a future `RunFont` field cannot be silently missed.
+pub(crate) fn run_font_set(rf: &RunFont) -> bool {
+    rf != &RunFont::default()
 }
 
 /// The rich-text runs of a shared-string item: `<r><rPr>…</rPr><t>slice</t></r>` per run, in

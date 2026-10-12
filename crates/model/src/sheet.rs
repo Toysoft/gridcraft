@@ -219,6 +219,8 @@ impl Sheet {
     /// Pictures retain a scalar fallback for calculation and unsupported consumers.
     pub fn set_picture(&mut self, c: CellRef, picture: Arc<CellPicture>) {
         let style = self.style_id(c);
+        // The #VALUE! fallback replaces the cell's text, so any runs describing it are stale.
+        self.cell_runs.remove(&c);
         self.cells.set(c, Cell { value: Value::Error(gridcraft_core::CellError::Value), formula: None, style });
         self.cell_pictures.insert(c, picture);
     }
@@ -447,6 +449,11 @@ mod tests {
         s.cell_runs.insert(a1, five_byte_runs());
         s.remove_cell(a1);
         assert!(!s.cell_runs.contains_key(&a1), "remove_cell must drop the runs entry");
+        // set_picture replaces the text with the #VALUE! fallback: its runs are stale too.
+        s.set_value(a1, Value::text("hello"));
+        s.cell_runs.insert(a1, five_byte_runs());
+        s.set_picture(a1, Arc::new(CellPicture { data: vec![1, 2, 3], mime: "image/png".into(), alt: String::new() }));
+        assert!(!s.cell_runs.contains_key(&a1), "set_picture must drop the runs entry");
     }
 
     #[test]

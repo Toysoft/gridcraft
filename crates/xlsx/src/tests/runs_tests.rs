@@ -9,8 +9,8 @@ use gridcraft_model::{Cell, CellRuns, Color, MAX_RUNS_PER_CELL, Run, RunFont, Sh
 
 use super::minimal;
 use crate::read_xlsx;
-use crate::runs::Si;
-use crate::styles::read_run_font;
+use crate::runs::{Si, runs_fits};
+use crate::styles::{read_run_font, run_font_set};
 use crate::tables::INDEXED;
 use crate::write_xlsx;
 use crate::xml::{El, parse, si_parts};
@@ -152,6 +152,27 @@ fn runs_without_rpr_dropped() {
     assert_eq!(budget, 1 << 20);
 }
 
+/// The cliff [`runs_fits`] enforces for both parse-time and attachment-time charging: it
+/// spends only when everything fits, and never touches the budget otherwise (issue #774).
+#[test]
+fn runs_fits_charges_at_the_cliff() {
+    // Exact fit: charged, down to zero.
+    let mut b = 3u64;
+    assert!(runs_fits(&mut b, 3));
+    assert_eq!(b, 0);
+    // One over: refused, budget untouched.
+    let mut b = 3u64;
+    assert!(!runs_fits(&mut b, 4));
+    assert_eq!(b, 3);
+    // Zero always fits and charges nothing, even from an exhausted budget.
+    let mut b = 0u64;
+    assert!(runs_fits(&mut b, 0));
+    assert_eq!(b, 0);
+    // An exhausted budget refuses anything more.
+    assert!(!runs_fits(&mut b, 1));
+    assert_eq!(b, 0);
+}
+
 #[test]
 fn run_font_delta_fields() {
     // Absent properties stay None (inherit); present ones override.
@@ -187,6 +208,15 @@ fn run_font_delta_fields() {
     let cr = runs.expect("runs parse");
     assert_eq!(cr.runs[1].font, none_font());
     assert_eq!(cr.runs[0].font.bold, Some(true));
+}
+
+/// `run_font_set` compares against the default instead of listing fields, so a future
+/// `RunFont` property cannot be silently missed: everything-unset inherits and is not-set;
+/// any single field makes it set (issue #774).
+#[test]
+fn run_font_set_default_is_not_set() {
+    assert!(!run_font_set(&RunFont::default()));
+    assert!(run_font_set(&RunFont { bold: Some(true), ..RunFont::default() }));
 }
 
 // Reading packages: runs attach to shared and inline string cells (issue #774).
@@ -243,6 +273,32 @@ fn read_attaches_shared_runs() {
     assert_eq!(a4.runs[0].font.size, Some(14.0));
     assert_eq!(a4.runs[1].font.color, Some(Color::Rgb(0xFF0000)));
     assert!(!rep.warnings.iter().any(|w| w.contains("shared strings")), "{:?}", rep.warnings);
+}
+
+/// Per-attachment budget charging must not change ordinary files: five cells sharing one rich
+/// item each attach their own copy far under the workbook budget, and every cell still reads
+/// its plain text (regression guard for issue #774).
+#[test]
+fn shared_runs_attach_per_reference() {
+    let sst = concat!(
+        r#"<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="5" uniqueCount="1">"#,
+        r#"<si><r><rPr><b/></rPr><t>bold </t></r><r><rPr><color rgb="FFFF0000"/></rPr><t>red</t></r></si>"#,
+        r#"</sst>"#,
+    );
+    let body = concat!(
+        r#"<sheetData>"#,
+        r#"<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>0</v></c><c r="C1" t="s"><v>0</v></c></row>"#,
+        r#"<row r="2"><c r="A2" t="s"><v>0</v></c><c r="B2" t="s"><v>0</v></c></row>"#,
+        r#"</sheetData>"#,
+    );
+    let (wb, rep) = read_xlsx(&sst_package(sst, body)).unwrap();
+    let s = wb.sheet(0).unwrap();
+    assert_eq!(s.cell_runs.len(), 5, "every reference attaches its own runs");
+    for a in ["A1", "B1", "C1", "A2", "B2"] {
+        assert_eq!(s.value(at(a)), Value::text("bold red"), "{a}");
+        assert!(s.cell_runs.get(&at(a)).is_some_and(|cr| cr.valid_for("bold red")), "{a}");
+    }
+    assert!(!rep.warnings.iter().any(|w| w.contains("shared strings")), "no warning storm: {:?}", rep.warnings);
 }
 
 /// An inline string with rich runs gets an entry; the plain `<is><t>` form does not.

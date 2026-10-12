@@ -398,7 +398,11 @@ fn read_cell(cx: &mut Ctx<'_>, sheet: &mut Sheet, st: &mut RowState, c: &El, pos
         "s" => match v.and_then(|v| v.trim().parse::<usize>().ok()) {
             Some(i) => match cx.sst.get(i) {
                 Some(si) => {
-                    runs = si.runs.clone();
+                    // Parse-time charging bounds building each item once; this per-reference
+                    // charge bounds total *stored* runs, so one rich item referenced by a
+                    // huge number of cells stops attaching at the budget and they keep their
+                    // plain text (issue #774).
+                    runs = si.runs.as_ref().filter(|cr| runs::runs_fits(&mut cx.run_budget, cr.runs.len())).cloned();
                     Value::Text(si.text.clone())
                 }
                 None => {
