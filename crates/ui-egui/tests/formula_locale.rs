@@ -201,3 +201,29 @@ fn czech_interface_retains_its_canonical_formula_fallback() {
     let restored: UiState = serde_json::from_str(&serde_json::to_string(&app.ui).unwrap()).unwrap();
     assert_eq!(restored.language, Language::Cs);
 }
+
+#[test]
+fn italian_language_controls_entry_display_persistence_and_formula_roundtrip() {
+    let mut app = app();
+    app.run("app.language.set", json!({"language":"it"})).unwrap();
+    assert_eq!(app.ui.language, Language::It);
+    assert_eq!(app.ui.language.tr("Home"), "Home");
+    assert_eq!(app.ui.language.tr("Formulas"), "Formule");
+    assert_eq!(app.ui.language.tr("Data"), "Dati");
+    assert_eq!(app.ui.language.tr("Paste"), "Incolla");
+    assert_eq!(app.ui.language.tr("Wrap Text"), "Testo a capo");
+
+    // Italian formula entry: SE, VERO, SOMMA, semicolons for arguments, comma for decimal
+    assert!(enter(&mut app, "=SE(VERO;SOMMA(1,5;2,25);0)"));
+    assert_eq!(formula(&app), "IF(TRUE,SUM(1.5,2.25),0)");
+
+    // Editor roundtrip
+    app.begin_edit(None, true);
+    assert_eq!(app.editor.as_ref().unwrap().text, "=SE(VERO;SOMMA(1,5;2,25);0)");
+    assert!(app.commit_edit(0, 0, false, false));
+    assert_eq!(formula(&app), "IF(TRUE,SUM(1.5,2.25),0)");
+
+    let restored: UiState = serde_json::from_str(&serde_json::to_string(&app.ui).unwrap()).unwrap();
+    assert_eq!(restored.language, Language::It);
+}
+

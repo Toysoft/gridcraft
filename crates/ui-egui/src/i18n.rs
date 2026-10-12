@@ -13,6 +13,7 @@ mod cs;
 mod de;
 mod es;
 mod fr;
+mod it;
 mod ko;
 mod pt;
 mod ru;
@@ -33,10 +34,11 @@ pub enum Language {
     De,
     Cs,
     Fr,
+    It,
 }
 
 impl Language {
-    pub const ALL: [Self; 10] = [Self::En, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::PtBr, Self::De, Self::Cs, Self::Fr];
+    pub const ALL: [Self; 11] = [Self::En, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::PtBr, Self::De, Self::Cs, Self::Fr, Self::It];
 
     /// The language's own name, shown in the switcher.
     pub fn name(self) -> &'static str {
@@ -51,6 +53,7 @@ impl Language {
             Self::De => "Deutsch",
             Self::Cs => "Čeština",
             Self::Fr => "Français",
+            Self::It => "Italiano",
         }
     }
 
@@ -67,6 +70,7 @@ impl Language {
             Self::De => "de",
             Self::Cs => "cs",
             Self::Fr => "fr",
+            Self::It => "it",
         }
     }
 
@@ -86,6 +90,7 @@ impl Language {
             "de" => Some(Self::De),
             "cs" => Some(Self::Cs),
             "fr" => Some(Self::Fr),
+            "it" => Some(Self::It),
             _ => None,
         }
     }
@@ -104,7 +109,13 @@ impl Language {
     }
 
     pub fn formula_locale(self) -> gridcraft_engine::formula::FormulaLocale {
-        if self == Self::Es { gridcraft_engine::formula::FormulaLocale::Es } else { gridcraft_engine::formula::FormulaLocale::En }
+        if self == Self::Es {
+            gridcraft_engine::formula::FormulaLocale::Es
+        } else if self == Self::It {
+            gridcraft_engine::formula::FormulaLocale::It
+        } else {
+            gridcraft_engine::formula::FormulaLocale::En
+        }
     }
 
     /// Translates an interface label; untranslated labels fall back to English.
@@ -123,6 +134,7 @@ impl Language {
             Self::De => de::translate(text),
             Self::Cs => cs::translate(text),
             Self::Fr => fr::translate(text),
+            Self::It => it::translate(text),
         };
         translated.unwrap_or_else(|| text.rsplit_once('|').map_or(text, |(_, label)| label))
     }

@@ -67,10 +67,28 @@ const SPANISH_HELP: &[(&str, &str, &str)] = &[
     ("FALSE", "FALSO()", "Devuelve el valor lógico FALSO."),
 ];
 
+const ITALIAN_HELP: &[(&str, &str, &str)] = &[
+    ("SUM", "SOMMA(num1; [num2]; ...)", "Somma i numeri."),
+    ("AVERAGE", "MEDIA(num1; [num2]; ...)", "Restituisce la media aritmetica degli argomenti."),
+    ("IF", "SE(test; se_vero; [se_falso])", "Specifica un test logico da eseguire."),
+    ("COUNT", "CONTA.NUMERI(val1; [val2]; ...)", "Conta il numero di celle contenenti numeri."),
+    ("SUMIF", "SOMMA.SE(intervallo; criterio; [intervallo_somma])", "Somma le celle specificate da una determinata condizione."),
+    ("COUNTIF", "CONTA.SE(intervallo; criterio)", "Conta il numero di celle che soddisfano il criterio."),
+    ("VLOOKUP", "CERCA.VERT(valore; tabella; indice; [intervallo])", "Cerca un valore nella prima colonna a sinistra di una tabella."),
+    ("TODAY", "OGGI()", "Restituisce la data corrente."),
+    ("TRUE", "VERO()", "Restituisce il valore logico VERO."),
+    ("FALSE", "FALSO()", "Restituisce il valore logico FALSO."),
+];
+
 pub(crate) fn signature(name: &str, locale: FormulaLocale) -> Option<String> {
     let canonical = locale.canonical_name(name);
     if locale == FormulaLocale::Es
         && let Some((_, signature, _)) = SPANISH_HELP.iter().find(|(name, ..)| *name == canonical)
+    {
+        return Some((*signature).into());
+    }
+    if locale == FormulaLocale::It
+        && let Some((_, signature, _)) = ITALIAN_HELP.iter().find(|(name, ..)| *name == canonical)
     {
         return Some((*signature).into());
     }
@@ -81,6 +99,11 @@ pub(crate) fn description(name: &str, locale: FormulaLocale) -> Option<String> {
     let canonical = locale.canonical_name(name);
     if locale == FormulaLocale::Es
         && let Some((_, _, description)) = SPANISH_HELP.iter().find(|(name, ..)| *name == canonical)
+    {
+        return Some((*description).into());
+    }
+    if locale == FormulaLocale::It
+        && let Some((_, _, description)) = ITALIAN_HELP.iter().find(|(name, ..)| *name == canonical)
     {
         return Some((*description).into());
     }
