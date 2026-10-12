@@ -1365,12 +1365,18 @@ fn add_cf(s: &mut Session, p: &Json) -> Result<Json> {
             color: super::format::color_param(rule.get("color")).unwrap_or(Color::rgb(0x63, 0x8E, 0xC6)),
             gradient: rule.get("gradient").and_then(Json::as_bool).unwrap_or(true),
             show_value: true,
+            border: None,
+            negative_fill: None,
+            negative_border: None,
+            axis: None,
+            limits: None,
         },
         "iconSet" => CfRule::IconSet {
             set: g("set").unwrap_or_else(|| "3TrafficLights1".into()),
             thresholds: vec![],
             reverse: rule.get("reverse").and_then(Json::as_bool).unwrap_or(false),
             show_value: true,
+            icons: None,
         },
         other => return Err(bad("home.conditionalFormat", format!("unknown rule type `{other}`"))),
     };

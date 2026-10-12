@@ -816,7 +816,7 @@ fn cf_rule_xml(cf: &CondFormat, priority: u32, out: &mut Out) -> String {
             cfvo_xml(max),
             if *color == Color::Auto { "rgb=\"FF638EC6\"".to_string() } else { color_attrs(color) }
         ),
-        CfRule::IconSet { set, thresholds, reverse, show_value } => {
+        CfRule::IconSet { set, thresholds, reverse, show_value, .. } => {
             let mut b = format!("<iconSet iconSet=\"{}\"", esc_attr(set));
             if *reverse {
                 b.push_str(" reverse=\"1\"");

@@ -238,7 +238,7 @@ impl CfCache {
                     }
                     None
                 }
-                CfRule::DataBar { min, max, color, gradient, show_value } => {
+                CfRule::DataBar { min, max, color, gradient, show_value, .. } => {
                     if let Some(n) = v.as_f64() {
                         let lo = threshold(wb, sheet, c, &st, min);
                         let hi = threshold(wb, sheet, c, &st, max);
@@ -256,7 +256,7 @@ impl CfCache {
                     }
                     None
                 }
-                CfRule::IconSet { set, thresholds, reverse, show_value } => {
+                CfRule::IconSet { set, thresholds, reverse, show_value, .. } => {
                     if let Some(n) = v.as_f64() {
                         let k = icon_count(set);
                         // One threshold per icon, the first being the lower bound (as in the file);

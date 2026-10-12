@@ -633,6 +633,11 @@ fn read_cf(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
                     color: db.child("color").map(|c| read_color(c, &cx.palette)).unwrap_or_default(),
                     gradient: true,
                     show_value: db.flag("showValue", true),
+                    border: None,
+                    negative_fill: None,
+                    negative_border: None,
+                    axis: None,
+                    limits: None,
                 }
             }
             "iconSet" => {
@@ -642,6 +647,7 @@ fn read_cf(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
                     thresholds: cfvos(is),
                     reverse: is.flag("reverse", false),
                     show_value: is.flag("showValue", true),
+                    icons: None,
                 }
             }
             other => {

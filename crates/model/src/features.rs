@@ -191,6 +191,23 @@ pub enum CfRule {
         color: Color,
         gradient: bool,
         show_value: bool,
+        /// Border around each bar (`x14:border`); `None` = no border.
+        #[serde(default)]
+        border: Option<Color>,
+        /// Fill of negative bars (`x14:negativeFillColor`); `None` = same as `color`.
+        #[serde(default)]
+        negative_fill: Option<Color>,
+        /// Border of negative bars (`x14:negativeBorderColor`); `None` = no border.
+        #[serde(default)]
+        negative_border: Option<Color>,
+        /// Colour of the axis between negative and positive bars (`x14:axisColor`); `None` =
+        /// automatic.
+        #[serde(default)]
+        axis: Option<Color>,
+        /// Bar length limits `(minLength, maxLength)` in percent 0–100 (`x14:minLength` /
+        /// `x14:maxLength`); `None` = Excel's default 10/90 (readers and writers own the default).
+        #[serde(default)]
+        limits: Option<(u8, u8)>,
     },
     /// Icon set name (`3Arrows`, `3TrafficLights1`, `4Rating`, `5Quarters`…).
     IconSet {
@@ -198,7 +215,19 @@ pub enum CfRule {
         thresholds: Vec<CfValueKind>,
         reverse: bool,
         show_value: bool,
+        /// Custom icon per position (`x14:cfIcon`), e.g. a triangle in an arrows set;
+        /// `None` = the set's own icons.
+        #[serde(default)]
+        icons: Option<Vec<IconChoice>>,
     },
+}
+
+/// One icon of an x14 icon set's custom per-position choice: icon `id` (0-based) picked from
+/// icon set `set` (which may differ from the rule's set).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct IconChoice {
+    pub set: String,
+    pub id: u8,
 }
 
 /// Number of icons in an icon set (`3Arrows` → 3, `5Quarters` → 5), always 3 to 5.
@@ -219,6 +248,64 @@ pub struct CondFormat {
     pub rule: CfRule,
     pub priority: u32,
     pub stop_if_true: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// JSON saved before the x14 extension fields existed must still deserialize, with the new
+    /// fields defaulting (`None`).
+    #[test]
+    fn old_json_databar_and_iconset_deserialize_with_default_extensions() {
+        let old = r#"{"DataBar":{"min":"Min","max":"Max","color":{"Rgb":10066329},"gradient":true,"show_value":true}}"#;
+        let CfRule::DataBar { border, negative_fill, negative_border, axis, limits, .. } = serde_json::from_str::<CfRule>(old).unwrap() else {
+            panic!("not a data bar")
+        };
+        assert!(border.is_none() && negative_fill.is_none() && negative_border.is_none() && axis.is_none() && limits.is_none());
+
+        let old = r#"{"IconSet":{"set":"3Arrows","thresholds":["Min","Max"],"reverse":false,"show_value":true}}"#;
+        let CfRule::IconSet { icons, .. } = serde_json::from_str::<CfRule>(old).unwrap() else { panic!("not an icon set") };
+        assert!(icons.is_none());
+    }
+
+    #[test]
+    fn databar_and_iconset_round_trip_with_extensions() {
+        let rules = [
+            CfRule::DataBar {
+                min: CfValueKind::Min,
+                max: CfValueKind::Max,
+                color: Color::Rgb(0x638EC6),
+                gradient: false,
+                show_value: false,
+                border: Some(Color::Rgb(0xFF0000)),
+                negative_fill: Some(Color::Theme(9, -99)),
+                negative_border: Some(Color::Auto),
+                axis: Some(Color::Rgb(0x00FF00)),
+                limits: Some((10, 90)),
+            },
+            CfRule::IconSet {
+                set: "3Arrows".into(),
+                thresholds: default_icon_thresholds("3Arrows"),
+                reverse: false,
+                show_value: true,
+                icons: Some(vec![IconChoice { set: "3Triangles".into(), id: 2 }, IconChoice { set: String::new(), id: 0 }]),
+            },
+        ];
+        for rule in &rules {
+            let json = serde_json::to_string(rule).unwrap();
+            assert_eq!(&serde_json::from_str::<CfRule>(&json).unwrap(), rule);
+        }
+    }
+
+    #[test]
+    fn icon_choice_round_trips() {
+        let c = IconChoice { set: "3Triangles".into(), id: 2 };
+        assert_eq!(
+            serde_json::to_value(&c).unwrap(),
+            serde_json::to_value(serde_json::from_str::<IconChoice>(&serde_json::to_string(&c).unwrap()).unwrap()).unwrap()
+        );
+    }
 }
 
 // ---------------------------------------------------------------- data validation

@@ -152,12 +152,18 @@ fn sample() -> Workbook {
             color: Color::Rgb(0x638EC6),
             gradient: true,
             show_value: false,
+            border: None,
+            negative_fill: None,
+            negative_border: None,
+            axis: None,
+            limits: None,
         },
         CfRule::IconSet {
             set: "3Arrows".into(),
             thresholds: vec![CfValueKind::Percent(0.0), CfValueKind::Percent(33.0), CfValueKind::Percent(67.0)],
             reverse: true,
             show_value: false,
+            icons: None,
         },
     ];
     for (i, rule) in cfs.into_iter().enumerate() {
@@ -809,7 +815,7 @@ fn icon_sets_always_write_one_cfvo_per_icon() {
     {
         s.cond_formats.push(CondFormat {
             ranges: vec![rr(&format!("A{}", i + 1))],
-            rule: CfRule::IconSet { set: set.into(), thresholds, reverse: false, show_value: true },
+            rule: CfRule::IconSet { set: set.into(), thresholds, reverse: false, show_value: true, icons: None },
             priority: i as u32 + 1,
             stop_if_true: false,
         });
