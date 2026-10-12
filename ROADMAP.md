@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~25 points of "ready for real work" and ~160–240 h away
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (password-encrypted workbooks open, #11) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (Python in cells, user interface) · **Target:** Microsoft Excel (Microsoft 365)
 
 GridCraft aims at full Microsoft Excel parity, and at being better in places: faster, open (XLSX
 is the native format), fully scriptable by agents (MCP, control channel, CLI), and on the web.
@@ -21,7 +21,7 @@ This page is the summary. The detail is in:
 
 | Number | Value | Kind |
 |---|---|---|
-| **Feature breadth** (weighted) | **~75%** | estimated, anchored on two measurements: ribbon catalog 274 / 290 (94.5%), worksheet functions 513 / 523 (98.1%; 504 working, 96.4%) |
+| **Feature breadth** (weighted) | **~75%** | estimated, anchored on two measurements: ribbon catalog 278 / 294 (94.6%), worksheet functions 513 / 523 (98.1%; 504 working, 96.4%) |
 | **Ready for real work** | **~50%** | estimated from written weights (51.6); [target-app-parity.md](docs/target-app-parity.md) |
 | **Mainstream practitioner** | **~50%** | estimated: typical analyst/finance user, weekly features, × 0.90 interaction × 0.92 stability × 0.88 file exchange; [method](docs/target-app-parity.md#mainstream-practitioner) |
 | **Essentials user** | **~63%** | estimated: core features only, × 0.92 launch/stability × 0.95 clarity × 0.90 opening sent files; [method](docs/target-app-parity.md#essentials-user) |
@@ -132,6 +132,11 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
+| 2026-10-12 | Python in cells (user interface): Python mode in the formula bar (=PY then Tab or Enter, Ctrl+Alt+Shift+P or Formulas › Insert Python; Enter adds an indented line, Ctrl+Enter or Cmd+Enter commits, Esc cancels), Python colours, `xl()` pointing and reference outlines, the PY badge and a Run / Stop / Re-run button; PY tags, stale cells and preview cards on the grid; background runs with `#BUSY!`, Stop in the status bar and Esc; a Formulas › Python group (Insert Python, Reset, Diagnostics) that folds into one button when the tab is too wide; the Python Diagnostics pane, Initialization and Python Options dialogs, the Enable Python bar for workbooks from files, a status-bar note of which Python runs cells; `python.run`, `python.clearDiagnostics`, `ui.pane`, and `engine.execute {wait}` on the control channel |
+| 2026-10-12 | Python import-aware time limits (engine): on CPython, time spent importing modules not loaded yet does not count against a cell's time limit, up to `importSeconds` (60 s by default), with `Extend` heartbeats that move the parent's deadline; a stop mid-import names the module and replaces the worker; a cell stopped mid-import or on its first run on a new worker runs once more on a fresh one before it is refused; numpy and pandas load before a worker reports ready; installs end with a warm-up import and uv installs compile bytecode |
+| 2026-10-12 | Python packages (engine): GridCraft keeps one Python environment of its own, made from the CPython it found with uv or venv in the app's data folder (`GRIDCRAFT_PYTHON_ENV` or `python.options {environment}` move it), and `python.install` installs packages only after the exact list is approved, into the person's own venv or conda environment when that runs cells and otherwise into GridCraft's, never into a system Python; requirements are checked strictly (names, extras and versions only, at most 32); installs use uv or pip with `--only-binary` from an argument list in the background with a 10-minute deadline, `python.stop` cancels them, failures say why, and every outcome is a Diagnostics row and an app log record; cells run again on the new environment; workbooks declare their packages (`python.packages`, kept in xlsx); `python.environment` creates, lists and deletes the environment |
+| 2026-10-12 | Python in cells (engine and files; no editing UI yet): cells run on the user's CPython 3.11 or newer, so pandas and numpy work, or on a built-in sandboxed Python (Monty), always in a worker process that is killed at the time limit or above 512 MB; `xl()` reads cells, ranges, names, tables and other sheets; cells run in row-major order when their code or inputs change, arrays spill, results feed formulas; `#PYTHON!`, `#BUSY!`, `#TIMEOUT!`, `#BLOCKED!`; workbooks opened from files run nothing until `python.enable`; `python.*` commands; xlsx stores `PY("…",0|1)` with cached values |
+| 2026-10-11 | UI building blocks: theme tokens with a WCAG contrast test over both themes (icons and reference colours follow dark mode); ribbon scroll arrows and a large split button (Formulas › AutoSum opens its menu); the formula bar grows from one to five lines, then scrolls; a code editor widget with Python and LaTeX colouring |
 | 2026-10-11 | Command-sequence fuzzing: random command sequences checked against undo/redo, XLSX round-trip and full recalculation; fixes for the table, legacy-array, spill, AutoSum, Watch Window and sheet-copy bugs it found |
 | 2026-10-11 | Password-protected workbooks open: GridCraft asks for the password and decrypts Agile and Standard encryption (#11) |
 | 2026-10-11 | Text boxes keep their formatting: run size, bold, italic, typeface, text colour and outline, alignment, vertical anchor and "no outline" (#377) |
@@ -177,6 +182,11 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Python in cells (user interface); progress log row |
+| 2026-10-12 | minor | Python import-aware time limits; progress log row |
+| 2026-10-12 | minor | Python package installs; progress log row |
+| 2026-10-12 | minor | Python in cells (engine); catalog 274 → 278 / 294; progress log row |
+| 2026-10-11 | minor | UI building blocks; progress log row |
 | 2026-10-11 | minor | Password-encrypted workbooks open (#11); progress log row |
 | 2026-10-11 | minor | Forecast Sheet (#322); progress log row |
 | 2026-10-11 | minor | Worksheet functions 505 / 523 (ODD* bond functions); progress log row |
