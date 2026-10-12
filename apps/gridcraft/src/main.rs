@@ -129,6 +129,11 @@ fn save_prefs(app: &SheetApp) {
     }
 }
 
+fn validate_open_path(path: &str) -> Result<(), String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read `{path}`: {e}"))?;
+    gridcraft_engine::io::open_bytes(path, &bytes).map(|_| ()).map_err(|e| e.to_string())
+}
+
 fn services() -> Services {
     // Keep the owner alive: X11/Wayland serve clipboard data from this handle.
     let clipboard: Rc<RefCell<Option<arboard::Clipboard>>> = Rc::default();
@@ -164,6 +169,16 @@ fn services() -> Services {
                 .add_filter("Pictures (PNG, JPEG)", &["png", "jpg", "jpeg"])
                 .pick_file()
                 .and_then(|p| p.to_str().map(str::to_string))
+        })),
+        open_in_new_window: Some(Box::new(|path: &str| {
+            validate_open_path(path)?;
+            let executable = std::env::current_exe().map_err(|e| format!("cannot locate GridCraft executable: {e}"))?;
+            std::process::Command::new(executable)
+                .env_remove("GRIDCRAFT_CONTROL_PORT")
+                .arg(path)
+                .spawn()
+                .map(|_| ())
+                .map_err(|e| format!("cannot open workbook in a new window: {e}"))
         })),
         pick_save: Some(Box::new(|suggested: &str| {
             let path = std::path::Path::new(suggested);
@@ -421,5 +436,17 @@ mod print_tests {
             assert_eq!(std::fs::metadata(&c).unwrap().permissions().mode() & 0o077, 0, "only the user can read it");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn rejects_malformed_workbook_before_launching_a_window() {
+        let path = std::env::temp_dir().join(format!("gridcraft-invalid-{}.xlsx", std::process::id()));
+        std::fs::write(&path, b"not an xlsx workbook").expect("write test file");
+        let result = super::validate_open_path(path.to_str().unwrap_or_default());
+        let _ = std::fs::remove_file(path);
+        assert!(result.is_err());
     }
 }
