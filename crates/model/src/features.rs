@@ -424,6 +424,10 @@ pub struct Series {
     /// Trendlines fitted to this series (Excel allows several per series).
     #[serde(default)]
     pub trendlines: Vec<Trendline>,
+    /// Number format of literal values (an array constant, such as a PivotChart's cached
+    /// points). Values that reference cells use the cells' format instead.
+    #[serde(default)]
+    pub number_format: Option<String>,
 }
 
 /// Regression a trendline fits (`c:trendlineType`).

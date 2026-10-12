@@ -236,7 +236,10 @@ pub fn resolve(wb: &Workbook, sheet: usize, chart: &Chart) -> ChartData {
             secondary: s.secondary,
             smooth: s.smooth,
             trendlines,
-            number_format: ref_format(wb, sheet, &s.values),
+            number_format: match &s.number_format {
+                Some(code) if s.values.trim_start().starts_with('{') => code.clone(),
+                _ => ref_format(wb, sheet, &s.values),
+            },
         });
     }
     let n = series.iter().map(|s| s.values.len()).max().unwrap_or(0);

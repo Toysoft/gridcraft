@@ -72,18 +72,111 @@ fn data_ref(e: Option<&El>) -> Option<String> {
     // Literal values become an array constant.
     for k in ["numLit", "strLit"] {
         if let Some(l) = e.child(k) {
-            let pts: Vec<String> = l
-                .kids("pt")
-                .filter_map(|p| p.child("v"))
-                .map(|v| if k == "numLit" { v.text.trim().to_string() } else { format!("\"{}\"", v.text.replace('"', "\"\"")) })
-                .collect();
-            return Some(format!("{{{}}}", pts.join(",")));
+            return points_literal(l, l, k == "numLit").map(|(_, lit)| lit);
         }
     }
     None
 }
 
-fn read_series(s: &El) -> Series {
+/// Cells a series reference covers: `Sheet!$A$1:$A$9`, or a union `(Sheet!$A$1:$A$3,Sheet!$A$5)`.
+fn ref_cells(f: &str) -> Option<u64> {
+    let f = f.trim();
+    let inner = f.strip_prefix('(').and_then(|x| x.strip_suffix(')')).unwrap_or(f);
+    let mut parts = Vec::new();
+    let (mut quoted, mut start) = (false, 0);
+    for (i, c) in inner.char_indices() {
+        match c {
+            '\'' => quoted = !quoted,
+            ',' if !quoted => {
+                parts.push(inner.get(start..i)?);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(inner.get(start..)?);
+    let mut total = 0u64;
+    for p in parts {
+        let addr = p.rsplit_once('!').map_or(p, |(_, a)| a).trim();
+        let r = gridcraft_core::RangeRef::parse(addr)?;
+        total = total.checked_add(u64::from(r.width()) * u64::from(r.height()))?;
+    }
+    Some(total)
+}
+
+/// Most cached points a PivotChart series keeps (the chart renderer's own cap).
+const MAX_CACHED_POINTS: u64 = 100_000;
+
+/// The points of a cache or literal (`c` holds `ptCount`, `pts` the `<c:pt>`s) as an array
+/// constant, with the point count. Missing points become `#N/A` (numbers) or `""` (text) so
+/// positions line up. Without a `ptCount`, the highest index sets the count.
+fn points_literal(c: &El, pts: &El, numeric: bool) -> Option<(u64, String)> {
+    let idx = |p: &El| p.attr("idx").and_then(|v| v.trim().parse::<usize>().ok());
+    let count = match c.child_val("ptCount") {
+        Some(v) => v.trim().parse::<u64>().ok()?,
+        None => pts.kids("pt").filter_map(idx).max().map_or(0, |m| m as u64 + 1),
+    };
+    if !(1..=MAX_CACHED_POINTS).contains(&count) {
+        return None;
+    }
+    let mut vals: Vec<Option<&str>> = vec![None; usize::try_from(count).ok()?];
+    for p in pts.kids("pt") {
+        if let (Some(slot), Some(v)) = (idx(p).and_then(|i| vals.get_mut(i)), p.child("v")) {
+            *slot = Some(v.text.as_str());
+        }
+    }
+    let items: Vec<String> = vals
+        .iter()
+        .map(|v| match (v, numeric) {
+            (Some(t), true) => t.trim().parse::<f64>().ok().filter(|n| n.is_finite()).map_or_else(|| "#N/A".to_string(), num),
+            (None, true) => "#N/A".to_string(),
+            (Some(t), false) => format!("\"{}\"", t.replace('"', "\"\"")),
+            (None, false) => "\"\"".to_string(),
+        })
+        .collect();
+    Some((count, format!("{{{}}}", items.join(","))))
+}
+
+/// The points cached under a series reference: `numCache`, `strCache`, or the innermost level
+/// of a `multiLvlStrCache`.
+fn cache_literal(r: &El) -> Option<(u64, String)> {
+    if let Some(c) = r.child("numCache") {
+        points_literal(c, c, true)
+    } else if let Some(c) = r.child("strCache") {
+        points_literal(c, c, false)
+    } else {
+        let c = r.child("multiLvlStrCache")?;
+        points_literal(c, c.child("lvl")?, false)
+    }
+}
+
+/// A PivotChart's `<c:f>` formulas only approximate its PivotTable: often just the table's corner
+/// cell, or a block that takes in the grand total row. Excel draws the chart from the PivotTable,
+/// and the cached points are what it shows. When a series' categories or values don't cover their
+/// cached points, the series plots the cached points (and its cached name) instead; refreshing
+/// the PivotTable rebinds the chart to live cells.
+fn use_pivot_cache(s: &El, ser: &mut Series) {
+    let cached = |tag: &str, f: Option<&str>| -> Option<String> {
+        let e = s.child(tag)?;
+        let r = ["numRef", "strRef", "multiLvlStrRef"].iter().find_map(|k| e.child(k))?;
+        let (count, lit) = cache_literal(r)?;
+        (f.and_then(ref_cells) != Some(count)).then_some(lit)
+    };
+    let categories = cached("cat", ser.categories.as_deref());
+    let values = cached("val", Some(ser.values.as_str()));
+    if categories.is_none() && values.is_none() {
+        return;
+    }
+    ser.categories = categories.or(ser.categories.take());
+    if let Some(v) = values {
+        ser.values = v;
+    }
+    if let Some(name) = s.path(&["tx", "strRef", "strCache", "pt", "v"]) {
+        ser.name = Some(format!("\"{}\"", name.text.replace('"', "\"\"")));
+    }
+}
+
+fn read_series(s: &El, pivot: bool) -> Series {
     let name = s.child("tx").and_then(|tx| {
         if let Some(f) = tx.path(&["strRef", "f"]) {
             let t = f.text.trim();
@@ -98,7 +191,7 @@ fn read_series(s: &El) -> Series {
         .and_then(dml_color)
         .or_else(|| sp.and_then(|p| p.path(&["ln", "solidFill"])).and_then(dml_color))
         .or_else(|| s.path(&["marker", "spPr", "solidFill"]).and_then(dml_color));
-    Series {
+    let mut ser = Series {
         name,
         categories: data_ref(s.child("cat")).or_else(|| data_ref(s.child("xVal"))),
         values: data_ref(s.child("val")).or_else(|| data_ref(s.child("yVal"))).unwrap_or_default(),
@@ -108,7 +201,22 @@ fn read_series(s: &El) -> Series {
         kind: None,
         smooth: bool_val(s, "smooth"),
         trendlines: s.kids("trendline").filter_map(read_trendline).collect(),
+        number_format: None,
+    };
+    if pivot {
+        use_pivot_cache(s, &mut ser);
     }
+    // Literal values (a `numLit`, or the cached points above) keep the format code saved with them.
+    if ser.values.starts_with('{') {
+        let v = s.child("val").or_else(|| s.child("yVal"));
+        ser.number_format = v
+            .and_then(|v| v.child("numLit").or_else(|| v.path(&["numRef", "numCache"])))
+            .and_then(|c| c.child("formatCode"))
+            .map(|c| c.text.trim())
+            .filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("General"))
+            .map(str::to_string);
+    }
+    ser
 }
 
 const DASHES: [(LineDash, &str); 11] = [
@@ -189,10 +297,11 @@ pub fn read_chart(root: &El) -> Option<Chart> {
     let groups: Vec<(&El, ChartKind)> = plot.children.iter().filter_map(|g| group_kind(g).map(|k| (g, k))).collect();
     let (first, first_kind) = *groups.first()?;
     let first_axes = axis_ids(first);
+    let pivot = root.path(&["pivotSource", "name"]).map(|n| n.text.trim().to_string()).filter(|n| !n.is_empty());
     let mut series = vec![];
     for (gi, (g, k)) in groups.iter().enumerate() {
         for s in g.kids("ser") {
-            let mut ser = read_series(s);
+            let mut ser = read_series(s, pivot.is_some());
             if gi > 0 {
                 ser.kind = Some(*k);
                 ser.secondary = axis_ids(g) != first_axes;
@@ -226,7 +335,12 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         id: 0,
         kind,
         anchor: Default::default(),
-        title: chart.child("title").and_then(rich_title),
+        // No `<c:title>`: an automatic title (a lone series' name), unless the file deleted it.
+        title: match chart.child("title") {
+            Some(t) => rich_title(t),
+            None if bool_val(chart, "autoTitleDeleted") => Some(String::new()),
+            None => None,
+        },
         series,
         legend,
         data_labels,
@@ -236,7 +350,7 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         y_title: y_ax.and_then(|a| a.child("title")).and_then(rich_title),
         source: None,
         by_rows: false,
-        pivot: root.path(&["pivotSource", "name"]).map(|n| n.text.trim().to_string()).filter(|n| !n.is_empty()),
+        pivot,
     })
 }
 
@@ -306,16 +420,35 @@ fn is_ref(f: &str) -> bool {
     matches!(gridcraft_formula::parse(f), Ok(Expr::Ref(_)))
 }
 
-fn num_data(tag: &str, f: Option<&str>, wb: &Workbook, si: usize) -> String {
+/// The items of an array constant (`{1,"a";#N/A,2}`), row-major; nothing for anything else.
+fn array_items(f: &str) -> Vec<Expr> {
+    match gridcraft_formula::parse(f) {
+        Ok(Expr::Array(rows)) => rows.into_iter().flatten().collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// `fmt` is the format code saved with literal values (`numLit`); references save their cells'.
+fn num_data(tag: &str, f: Option<&str>, fmt: Option<&str>, wb: &Workbook, si: usize) -> String {
     let f = f.unwrap_or("").trim();
     if f.is_empty() {
         return format!("<c:{tag}><c:numLit><c:ptCount val=\"0\"/></c:numLit></c:{tag}>");
     }
     if f.starts_with('{') {
-        let vals: Vec<&str> = f.trim_matches(|c| c == '{' || c == '}').split([',', ';']).collect();
-        let mut s = format!("<c:{tag}><c:numLit><c:formatCode>General</c:formatCode><c:ptCount val=\"{}\"/>", vals.len());
-        for (i, v) in vals.iter().enumerate() {
-            if let Ok(n) = v.trim().parse::<f64>() {
+        let items = array_items(f);
+        let fmt = esc(fmt.unwrap_or("General"));
+        let mut s = format!("<c:{tag}><c:numLit><c:formatCode>{fmt}</c:formatCode><c:ptCount val=\"{}\"/>", items.len());
+        for (i, e) in items.iter().enumerate() {
+            let n = match e {
+                Expr::Number(n) => Some(*n),
+                Expr::Unary(gridcraft_formula::UnOp::Neg, x) => match **x {
+                    Expr::Number(n) => Some(-n),
+                    _ => None,
+                },
+                _ => None,
+            };
+            // Anything else (`#N/A`, text) is a gap: its index is left out.
+            if let Some(n) = n {
                 let _ = write!(s, "<c:pt idx=\"{i}\"><c:v>{}</c:v></c:pt>", num(n));
             }
         }
@@ -441,11 +574,11 @@ fn series_xml(s: &Series, idx: usize, g: G, wb: &Workbook, si: usize) -> String 
     match g {
         G::Scatter { .. } | G::Bubble => {
             if let Some(c) = &s.categories {
-                x.push_str(&num_data("xVal", Some(c), wb, si));
+                x.push_str(&num_data("xVal", Some(c), None, wb, si));
             }
-            x.push_str(&num_data("yVal", Some(&s.values), wb, si));
+            x.push_str(&num_data("yVal", Some(&s.values), s.number_format.as_deref(), wb, si));
             if g == G::Bubble {
-                x.push_str(&num_data("bubbleSize", s.bubble_sizes.as_deref().or(Some(&s.values)), wb, si));
+                x.push_str(&num_data("bubbleSize", s.bubble_sizes.as_deref().or(Some(&s.values)), None, wb, si));
                 x.push_str("<c:bubble3D val=\"0\"/>");
             } else {
                 let _ = write!(x, "<c:smooth val=\"{}\"/>", s.smooth as u8);
@@ -455,7 +588,7 @@ fn series_xml(s: &Series, idx: usize, g: G, wb: &Workbook, si: usize) -> String 
             if let Some(c) = &s.categories {
                 x.push_str(&str_data("cat", c, wb, si));
             }
-            x.push_str(&num_data("val", Some(&s.values), wb, si));
+            x.push_str(&num_data("val", Some(&s.values), s.number_format.as_deref(), wb, si));
             if matches!(g, G::Line { .. }) {
                 let _ = write!(x, "<c:smooth val=\"{}\"/>", s.smooth as u8);
             }
@@ -623,12 +756,14 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart) -> String {
         let _ = write!(s, "<c:pivotSource><c:name>{}</c:name><c:fmtId val=\"0\"/></c:pivotSource>", esc(link));
     }
     s.push_str("<c:chart>");
+    // `None` is the automatic title; an empty title is one that was turned off.
     match &ch.title {
         Some(t) if !t.is_empty() => {
             s.push_str(&title_xml(t));
             s.push_str("<c:autoTitleDeleted val=\"0\"/>");
         }
-        _ => s.push_str("<c:autoTitleDeleted val=\"1\"/>"),
+        Some(_) => s.push_str("<c:autoTitleDeleted val=\"1\"/>"),
+        None => s.push_str("<c:autoTitleDeleted val=\"0\"/>"),
     }
     s.push_str("<c:plotArea><c:layout/>");
     let all: Vec<(usize, &Series)> = ch.series.iter().enumerate().collect();

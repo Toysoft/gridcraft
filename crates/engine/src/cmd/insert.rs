@@ -605,6 +605,7 @@ pub fn series_from_range(sh: &Sheet, r: RangeRef, by_rows: bool) -> Vec<Series> 
                 kind: None,
                 smooth: false,
                 trendlines: Vec::new(),
+                number_format: None,
             });
         }
     } else {
@@ -620,6 +621,7 @@ pub fn series_from_range(sh: &Sheet, r: RangeRef, by_rows: bool) -> Vec<Series> 
                 kind: None,
                 smooth: false,
                 trendlines: Vec::new(),
+                number_format: None,
             });
         }
     }

@@ -229,6 +229,8 @@ fn resolve_from_workbook() {
             kind: None,
             smooth: false,
             trendlines: Vec::new(),
+            // References use their cells' format, whatever the series says.
+            number_format: Some("0%".into()),
         },
         Series {
             name: None,
@@ -240,6 +242,7 @@ fn resolve_from_workbook() {
             kind: None,
             smooth: false,
             trendlines: Vec::new(),
+            number_format: None,
         },
         Series {
             name: Some("Literal".into()),
@@ -251,6 +254,7 @@ fn resolve_from_workbook() {
             kind: None,
             smooth: false,
             trendlines: Vec::new(),
+            number_format: Some("0.0%".into()),
         },
     ];
     let d = resolve(&wb, 0, &c);
@@ -270,6 +274,7 @@ fn resolve_from_workbook() {
     assert!(s1.secondary);
     assert_eq!(d.series[2].name, "Literal");
     assert_eq!(d.series[2].values.len(), 4);
+    assert_eq!(d.series[2].number_format, "0.0%");
 
     // Default categories.
     c.series.remove(0);
@@ -289,6 +294,7 @@ fn resolve_from_workbook() {
             kind: None,
             smooth: false,
             trendlines: Vec::new(),
+            number_format: None,
         },
         Series {
             name: None,
@@ -300,6 +306,7 @@ fn resolve_from_workbook() {
             kind: None,
             smooth: false,
             trendlines: Vec::new(),
+            number_format: None,
         },
     ];
     let d = resolve(&wb, 0, &c);
@@ -316,6 +323,7 @@ fn resolve_from_workbook() {
         kind: None,
         smooth: false,
         trendlines: Vec::new(),
+        number_format: None,
     }];
     let d = resolve(&wb, 0, &c);
     assert_eq!(d.series[0].x.as_ref().map(|x| x.len()), Some(3));
@@ -333,6 +341,7 @@ fn resolve_from_workbook() {
         kind: None,
         smooth: false,
         trendlines: Vec::new(),
+        number_format: None,
     }];
     let d = resolve(&wb, 7, &c);
     assert_eq!(d.series.len(), 1);
@@ -1003,6 +1012,7 @@ fn pie_points_follow_workbook_theme() {
         kind: None,
         smooth: false,
         trendlines: Vec::new(),
+        number_format: None,
     }];
     let d = resolve(&wb, 0, &c);
     let expected = vec![series_color(&wb.theme, 0), series_color(&wb.theme, 1)];
