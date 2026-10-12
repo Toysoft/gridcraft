@@ -535,6 +535,120 @@ fn grouped_objects_import_as_groups_through_nested_group_transforms() {
     assert!(close(bo.child_offset, (1333500, 952500)) && close(bo.child_extent, (3886200, 2857500)), "{:?}", (bo.child_offset, bo.child_extent));
 }
 
+/// A package whose one sheet has the drawing part `drawing`.
+fn with_drawing(drawing: &str) -> Vec<u8> {
+    let srels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>"#;
+    minimal(r#"<sheetData/><drawing r:id="rId1"/>"#, &[("xl/worksheets/_rels/sheet1.xml.rels", srels), ("xl/drawings/drawing1.xml", drawing)], "", "")
+}
+
+/// The box of the shape with text `text`.
+fn shape_box(s: &gridcraft_model::Sheet, text: &str) -> (f64, f64, f64, f64) {
+    let id = s.shapes.iter().find(|sh| sh.text == text).unwrap().id;
+    let r = s.drawing_rect(DrawingRef::Shape(id)).unwrap();
+    (r.x, r.y, r.w, r.h)
+}
+
+fn near_box(a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)) -> bool {
+    (a.0 - b.0).abs() < 0.01 && (a.1 - b.1).abs() < 0.01 && (a.2 - b.2).abs() < 0.01 && (a.3 - b.3).abs() < 0.01
+}
+
+#[test]
+fn a_group_of_horizontal_lines_maps_each_axis_on_its_own() {
+    // The anchor at B2 is 200 px wide and 0 high. The group's child box is 3810000 EMUs wide
+    // (200 px: 1 px per 19050 EMUs) and 0 high, and starts at chOff, not at the group's off.
+    let line = |name: &str, x: i64| {
+        format!(
+            r#"<xdr:cxnSp macro=""><xdr:nvCxnSpPr><xdr:cNvPr id="3" name="L"/><xdr:cNvCxnSpPr/></xdr:nvCxnSpPr><xdr:spPr><a:xfrm><a:off x="{x}" y="476250"/><a:ext cx="1905000" cy="0"/></a:xfrm><a:prstGeom prst="line"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:p><a:r><a:t>{name}</a:t></a:r></a:p></xdr:txBody></xdr:cxnSp>"#
+        )
+    };
+    let drawing = format!(
+        r#"<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+      <xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>4</xdr:col><xdr:colOff>76200</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+        <xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id="2" name="Lines"/><xdr:cNvGrpSpPr/></xdr:nvGrpSpPr>
+          <xdr:grpSpPr><a:xfrm><a:off x="609600" y="190500"/><a:ext cx="1905000" cy="0"/><a:chOff x="952500" y="476250"/><a:chExt cx="3810000" cy="0"/></a:xfrm></xdr:grpSpPr>
+          {}{}
+        </xdr:grpSp><xdr:clientData/></xdr:twoCellAnchor>
+    </xdr:wsDr>"#,
+        line("first", 952500),
+        line("second", 2857500)
+    );
+    let (wb, _) = read_xlsx(&with_drawing(&drawing)).unwrap();
+    let s = wb.sheet(0).unwrap();
+    assert!(near_box(shape_box(s, "first"), (64.0, 20.0, 100.0, 0.0)), "{:?}", shape_box(s, "first"));
+    assert!(near_box(shape_box(s, "second"), (164.0, 20.0, 100.0, 0.0)), "{:?}", shape_box(s, "second"));
+
+    let (back, _) = read_xlsx(&crate::write_xlsx(&wb).unwrap()).unwrap();
+    let b = back.sheet(0).unwrap();
+    assert_eq!(b.groups.len(), 1);
+    assert!(near_box(shape_box(b, "first"), shape_box(s, "first")), "{:?}", shape_box(b, "first"));
+    assert!(near_box(shape_box(b, "second"), shape_box(s, "second")), "{:?}", shape_box(b, "second"));
+}
+
+#[test]
+fn a_flipped_group_mirrors_its_members_and_keeps_its_transform() {
+    // The anchor spans B2:F12 (x 64, y 20, 256 × 200 px) and the group maps its child box 1:1.
+    // It is flipped horizontally (and rotated a quarter turn, which isn't laid out): its members
+    // are mirrored about the group's box. The nested group isn't flipped itself, but everything
+    // in it is mirrored with the outer group.
+    let rect = |name: &str, x: i64, y: i64, cx: i64, cy: i64| {
+        format!(
+            r#"<xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="3" name="R"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:p><a:r><a:t>{name}</a:t></a:r></a:p></xdr:txBody></xdr:sp>"#
+        )
+    };
+    let drawing = format!(
+        r#"<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+      <xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>5</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>11</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+        <xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id="2" name="Flipped"/><xdr:cNvGrpSpPr/></xdr:nvGrpSpPr>
+          <xdr:grpSpPr><a:xfrm rot="5400000" flipH="1"><a:off x="0" y="0"/><a:ext cx="2438400" cy="1905000"/><a:chOff x="0" y="0"/><a:chExt cx="2438400" cy="1905000"/></a:xfrm></xdr:grpSpPr>
+          {}{}
+          <xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id="4" name="Inner"/><xdr:cNvGrpSpPr/></xdr:nvGrpSpPr>
+            <xdr:grpSpPr><a:xfrm><a:off x="952500" y="1428750"/><a:ext cx="952500" cy="476250"/><a:chOff x="0" y="0"/><a:chExt cx="952500" cy="476250"/></a:xfrm></xdr:grpSpPr>
+            {}
+          </xdr:grpSp>
+        </xdr:grpSp><xdr:clientData/></xdr:twoCellAnchor>
+    </xdr:wsDr>"#,
+        rect("A", 0, 0, 476250, 381000),
+        rect("B", 1866900, 952500, 571500, 190500),
+        rect("C", 0, 0, 285750, 476250)
+    );
+    let (wb, rep) = read_xlsx(&with_drawing(&drawing)).unwrap();
+    let s = wb.sheet(0).unwrap();
+    // A at the left end and B at the right end swap ends; C keeps its place in the mirrored
+    // nested group (x 120..220), mirrored too.
+    assert!(near_box(shape_box(s, "A"), (270.0, 20.0, 50.0, 40.0)), "{:?}", shape_box(s, "A"));
+    assert!(near_box(shape_box(s, "B"), (64.0, 120.0, 60.0, 20.0)), "{:?}", shape_box(s, "B"));
+    assert!(near_box(shape_box(s, "C"), (190.0, 170.0, 30.0, 50.0)), "{:?}", shape_box(s, "C"));
+    // The rotation and the unmirrored content are reported, not silently dropped.
+    assert_eq!(rep.warnings.iter().filter(|w| w.contains("group")).count(), 2, "{:?}", rep.warnings);
+    let outer = s.groups.iter().find(|g| g.name == "Flipped").unwrap();
+    assert_eq!((outer.flip, outer.rotation), ((true, false), 5400000));
+
+    // Saved with its transform, and with the members in the file's child coordinates.
+    let saved = crate::write_xlsx(&wb).unwrap();
+    let mut pkg = crate::package::Package::open(&saved).unwrap();
+    let x = pkg.read_xml("xl/drawings/drawing1.xml").unwrap().unwrap();
+    let g = x.children[0].child("grpSp").unwrap();
+    let xf = g.path(&["grpSpPr", "xfrm"]).unwrap();
+    assert_eq!((xf.attr("rot"), xf.flag("flipH", false), xf.flag("flipV", false)), (Some("5400000"), true, false));
+    let off = |name: &str| {
+        let sp = g.kids("sp").find(|sp| sp.path(&["txBody", "p", "r", "t"]).is_some_and(|t| t.text == name)).unwrap();
+        let o = sp.path(&["spPr", "xfrm", "off"]).unwrap();
+        (o.attr_i64("x").unwrap(), o.attr_i64("y").unwrap())
+    };
+    let close = |(a, b): (i64, i64), (c, d): (i64, i64)| (a - c).abs() <= 2 && (b - d).abs() <= 2;
+    assert!(close(off("A"), (0, 0)), "{:?}", off("A"));
+    assert!(close(off("B"), (1866900, 952500)), "{:?}", off("B"));
+
+    // Reopened: the same places and the same transform.
+    let (back, _) = read_xlsx(&saved).unwrap();
+    let b = back.sheet(0).unwrap();
+    for name in ["A", "B", "C"] {
+        assert!(near_box(shape_box(b, name), shape_box(s, name)), "{name}: {:?}", shape_box(b, name));
+    }
+    let bo = b.groups.iter().find(|g| g.name == "Flipped").unwrap();
+    assert_eq!((bo.flip, bo.rotation), ((true, false), 5400000));
+}
+
 #[test]
 fn drawing_with_chartex_in_alternate_content() {
     let drawing = r#"<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">

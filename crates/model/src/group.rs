@@ -35,8 +35,20 @@ pub struct DrawingGroup {
     /// The child box (`a:chOff`/`a:chExt`, EMUs) that `anchor`'s box maps onto.
     pub child_offset: (i64, i64),
     pub child_extent: (i64, i64),
+    /// The group's flips (`a:xfrm flipH`/`flipV`). Members are stored where they appear on the
+    /// sheet, mirrored about the group's box on these axes (their own content isn't mirrored).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub flip: (bool, bool),
+    /// The group's rotation (`a:xfrm rot`, 60000ths of a degree), kept for saving. Members are
+    /// laid out without it.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub rotation: i64,
     /// Members, back to front (nested groups by [`DrawingRef::Group`]).
     pub members: Vec<DrawingRef>,
+}
+
+fn is_default<T: Default + PartialEq>(v: &T) -> bool {
+    *v == T::default()
 }
 
 /// A floating object's box on the sheet, in points from the sheet's top-left corner.
@@ -105,18 +117,11 @@ impl Sheet {
     }
 
     /// [`Sheet::drawing_rect`] with the boxes of charts, pictures and shapes from `leaf` (a
-    /// writer skipping some objects measures groups by the ones it keeps).
+    /// writer skipping some objects measures groups by the ones it keeps). Each nested group is
+    /// visited once, so a group listing another (or itself) twice costs no more.
     pub fn drawing_rect_with(&self, r: DrawingRef, leaf: &dyn Fn(DrawingRef) -> Option<ObjectRect>) -> Option<ObjectRect> {
-        self.rect_at_depth(r, leaf, 0)
-    }
-
-    fn rect_at_depth(&self, r: DrawingRef, leaf: &dyn Fn(DrawingRef) -> Option<ObjectRect>, depth: usize) -> Option<ObjectRect> {
         let DrawingRef::Group(id) = r else { return leaf(r) };
-        if depth >= MAX_GROUP_DEPTH {
-            return None;
-        }
-        let g = self.drawing_group(id)?;
-        g.members.iter().filter_map(|m| self.rect_at_depth(*m, leaf, depth + 1)).reduce(ObjectRect::union)
+        self.group_contents(id).into_iter().filter(|m| !matches!(m, DrawingRef::Group(_))).filter_map(leaf).reduce(ObjectRect::union)
     }
 
     /// A group's anchor: the box around its members, in the group's anchor mode.
@@ -247,6 +252,8 @@ mod tests {
             anchor,
             child_offset: (0, 0),
             child_extent: (1, 1),
+            flip: (false, false),
+            rotation: 0,
             members: vec![DrawingRef::Shape(3), DrawingRef::Shape(2)],
         });
         let anchor = sh.rect_anchor(ObjectRect { x: 100.0, y: 50.0, w: 120.0, h: 50.0 }, AnchorMode::MoveOnly);
@@ -256,6 +263,8 @@ mod tests {
             anchor,
             child_offset: (0, 0),
             child_extent: (1, 1),
+            flip: (false, false),
+            rotation: 0,
             members: vec![DrawingRef::Shape(1), DrawingRef::Group(5)],
         });
         sh
@@ -291,5 +300,23 @@ mod tests {
         assert_eq!(sh.group_contents(4).len(), 5);
         sh.delete_group(4);
         assert!(sh.shapes.is_empty() && sh.groups.is_empty());
+    }
+
+    #[test]
+    fn a_group_listing_itself_twice_is_measured_once() {
+        // Branching on every repeat would measure the shape about 2^64 times and never return.
+        let mut sh = sheet_with_nested_group();
+        if let Some(g) = sh.groups.iter_mut().find(|g| g.id == 5) {
+            g.members = vec![DrawingRef::Shape(3), DrawingRef::Group(5), DrawingRef::Group(5)];
+        }
+        let calls = std::cell::Cell::new(0);
+        let leaf = |r| {
+            calls.set(calls.get() + 1);
+            assert!(calls.get() < 100, "the group's members were measured over and over");
+            sh.object_anchor(r).map(|a| sh.anchor_rect(&a))
+        };
+        let r = sh.drawing_rect_with(DrawingRef::Group(4), &leaf).unwrap_or_default();
+        assert_eq!((r.x, r.y, r.w, r.h), (100.0, 50.0, 70.0, 30.0));
+        assert_eq!(sh.group_anchor(5).map(|a| sh.anchor_rect(&a).w), Some(20.0));
     }
 }

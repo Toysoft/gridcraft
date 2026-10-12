@@ -126,12 +126,14 @@ fn mime_for(name: &str) -> &'static str {
     }
 }
 
-/// Where a drawing object goes: the model anchor pictures, charts and shapes take, and the pixel
-/// box a group lays its children out in.
+/// Where a drawing object goes: the model anchor pictures, charts and shapes take, the pixel box
+/// a group lays its children out in, and the enclosing space's scale (pixels per EMU) and flips.
 #[derive(Clone, Copy)]
 struct Place {
     anchor: Anchor,
     rect: ObjectRect,
+    scale: (f64, f64),
+    flip: (bool, bool),
 }
 
 /// An object's own transform (`a:xfrm`) inside a group: frames carry it directly, groups in
@@ -151,42 +153,56 @@ fn xfrm_pair(xf: Option<&El>, name: &str, a: &str, b: &str) -> Option<(f64, f64)
     Some((e.attr_i64(a).unwrap_or(0) as f64, e.attr_i64(b).unwrap_or(0) as f64))
 }
 
-/// The linear map from a group's child coordinate space (EMUs) onto its on-sheet box: the child
-/// box `chOff`/`chExt` of the group's `a:xfrm` fills `rect`. Without a usable child extent the
-/// group's own `off`/`ext` stand in for it, and failing that EMUs map to pixels at 1:1 scale.
+/// The flips (`flipH`, `flipV`) of an `a:xfrm`.
+fn xfrm_flip(xf: Option<&El>) -> (bool, bool) {
+    xf.map_or((false, false), |x| (x.flag("flipH", false), x.flag("flipV", false)))
+}
+
+/// The map from a group's child coordinate space (EMUs) onto its on-sheet box: the child box
+/// `chOff`/`chExt` of the group's `a:xfrm` fills `rect`, each axis on its own. An axis without a
+/// usable child extent takes its scale from the group's `ext`, and failing that (a group of
+/// horizontal or vertical lines) from the enclosing space. Children are mirrored about `rect` on
+/// the axes the group or an enclosing group flips (ECMA-376 §20.1.7.5).
 struct GroupMap {
     rect: ObjectRect,
     origin: (f64, f64),
     scale: (f64, f64),
+    flip: (bool, bool),
 }
 
 impl GroupMap {
-    fn new(xf: Option<&El>, rect: ObjectRect) -> GroupMap {
-        let off = xfrm_pair(xf, "off", "x", "y");
+    fn new(xf: Option<&El>, place: Place) -> GroupMap {
+        let rect = place.rect;
         let ext = xfrm_pair(xf, "ext", "cx", "cy");
         let ch_ext = xfrm_pair(xf, "chExt", "cx", "cy");
-        let usable = |s: Option<(f64, f64)>| s.filter(|(cx, cy)| *cx > 0.0 && *cy > 0.0);
-        let (origin, span) = match usable(ch_ext) {
-            Some(span) => (xfrm_pair(xf, "chOff", "x", "y").or(off).unwrap_or((0.0, 0.0)), Some(span)),
-            None => (off.unwrap_or((0.0, 0.0)), usable(ext)),
+        let origin = xfrm_pair(xf, "chOff", "x", "y").or_else(|| xfrm_pair(xf, "off", "x", "y")).unwrap_or((0.0, 0.0));
+        let axis = |len: f64, ch: Option<f64>, ext: Option<f64>, parent: f64| match (ch, ext) {
+            (Some(c), _) if c > 0.0 && len > 0.0 => len / c,
+            (_, Some(e)) if e > 0.0 => len / e,
+            _ => parent,
         };
-        let axis = |len: f64, span: Option<f64>| match span {
-            Some(s) if len > 0.0 => len / s,
-            _ => 1.0 / EMU_PER_PX,
-        };
-        let scale = (axis(rect.w, span.map(|s| s.0)), axis(rect.h, span.map(|s| s.1)));
-        GroupMap { rect, origin, scale }
+        let scale =
+            (axis(rect.w, ch_ext.map(|s| s.0), ext.map(|s| s.0), place.scale.0), axis(rect.h, ch_ext.map(|s| s.1), ext.map(|s| s.1), place.scale.1));
+        let own = xfrm_flip(xf);
+        GroupMap { rect, origin, scale, flip: (place.flip.0 != own.0, place.flip.1 != own.1) }
     }
 
     /// The on-sheet box of a child with transform `xf`; a child without one fills the group.
     fn child(&self, xf: Option<&El>) -> ObjectRect {
         let (Some(off), Some(ext)) = (xfrm_pair(xf, "off", "x", "y"), xfrm_pair(xf, "ext", "cx", "cy")) else { return self.rect };
-        ObjectRect {
+        let mut r = ObjectRect {
             x: self.rect.x + (off.0 - self.origin.0) * self.scale.0,
             y: self.rect.y + (off.1 - self.origin.1) * self.scale.1,
             w: ext.0.max(0.0) * self.scale.0,
             h: ext.1.max(0.0) * self.scale.1,
+        };
+        if self.flip.0 {
+            r.x = 2.0 * self.rect.x + self.rect.w - r.x - r.w;
         }
+        if self.flip.1 {
+            r.y = 2.0 * self.rect.y + self.rect.h - r.y - r.h;
+        }
+        r
     }
 
     /// The child box (offset and extent, EMUs) that the group's on-sheet box maps onto.
@@ -218,7 +234,8 @@ pub fn read_drawing(cx: &mut Ctx<'_>, part: &str, sheet: &mut Sheet) -> Result<(
     let rels = cx.pkg.rels(part)?;
     for a in &x.children {
         let Some(anchor) = read_anchor(a, sheet) else { continue };
-        let place = Place { anchor, rect: sheet.anchor_rect(&anchor) };
+        let px = 1.0 / EMU_PER_PX;
+        let place = Place { anchor, rect: sheet.anchor_rect(&anchor), scale: (px, px), flip: (false, false) };
         for obj in drawing_objects(&a.children) {
             read_object(cx, &rels, sheet, obj, place, 0)?;
         }
@@ -287,11 +304,12 @@ fn read_object(cx: &mut Ctx<'_>, rels: &[Rel], sheet: &mut Sheet, obj: &El, plac
                 return Ok(None);
             }
             let id = cx.next_object_id();
-            let map = GroupMap::new(obj_xfrm(obj), place.rect);
+            let xf = obj_xfrm(obj);
+            let map = GroupMap::new(xf, place);
             let mut members = Vec::new();
             for child in drawing_objects(&obj.children) {
                 let rect = map.child(obj_xfrm(child));
-                let place = Place { anchor: sheet.rect_anchor(rect, anchor.mode), rect };
+                let place = Place { anchor: sheet.rect_anchor(rect, anchor.mode), rect, scale: map.scale, flip: map.flip };
                 members.extend(read_object(cx, rels, sheet, child, place, depth + 1)?);
             }
             if members.is_empty() {
@@ -299,7 +317,15 @@ fn read_object(cx: &mut Ctx<'_>, rels: &[Rel], sheet: &mut Sheet, obj: &El, plac
             }
             let name = obj.path(&["nvGrpSpPr", "cNvPr"]).and_then(|c| c.attr("name")).unwrap_or("").to_string();
             let (child_offset, child_extent) = map.child_box();
-            sheet.groups.push(DrawingGroup { id, name, anchor, child_offset, child_extent, members });
+            let flip = xfrm_flip(xf);
+            let rotation = xf.and_then(|x| x.attr_i64("rot")).unwrap_or(0);
+            if rotation % 21_600_000 != 0 {
+                cx.warn("a rotated group was laid out without its rotation");
+            }
+            if flip.0 || flip.1 {
+                cx.warn("a flipped group was laid out mirrored, but its pictures and shapes aren't drawn mirrored");
+            }
+            sheet.groups.push(DrawingGroup { id, name, anchor, child_offset, child_extent, flip, rotation, members });
             Ok(Some(DrawingRef::Group(id)))
         }
         _ => Ok(None),
@@ -447,9 +473,11 @@ impl Obj<'_> {
     }
 }
 
-/// How a group's members are written: the linear map from sheet pixels into the group's child
-/// coordinate space (EMUs).
+/// How a group's members are written: mirrored about the group's box `b` on the flipped axes,
+/// then the linear map from sheet pixels into the group's child coordinate space (EMUs).
 struct ChildSpace {
+    b: ObjectRect,
+    flip: (bool, bool),
     origin_px: (f64, f64),
     origin_emu: (f64, f64),
     /// EMUs per pixel on each axis.
@@ -457,25 +485,29 @@ struct ChildSpace {
 }
 
 impl ChildSpace {
-    /// The child space of group `g`, now spanning `b` and written at `off` in its parent's space.
-    /// The space the group was opened (or last moved) with is kept: its anchor box maps onto its
-    /// child box. A group without extent on an axis gets the space readers fall back to, its
-    /// own offset at 1:1.
-    fn new(sheet: &Sheet, g: &DrawingGroup, b: ObjectRect, off: (i64, i64)) -> ChildSpace {
-        if b.w <= 0.0 || b.h <= 0.0 {
-            return ChildSpace { origin_px: (b.x, b.y), origin_emu: (off.0 as f64, off.1 as f64), factor: (EMU_PER_PX, EMU_PER_PX) };
-        }
+    /// The child space of group `g`, now spanning `b` and written at `off` in its parent's space,
+    /// with members mirrored on the axes in `flip` (the group's and its parents' flips). The
+    /// space the group was opened (or last moved) with is kept: its anchor box maps onto its
+    /// child box. An axis without extent gets the group's own offset at 1:1.
+    fn new(sheet: &Sheet, g: &DrawingGroup, b: ObjectRect, off: (i64, i64), flip: (bool, bool)) -> ChildSpace {
         let r0 = sheet.anchor_rect(&g.anchor);
-        let axis = |len: f64, span: i64| if len > 0.0 && span > 0 { span as f64 / len } else { EMU_PER_PX };
-        ChildSpace {
-            origin_px: (r0.x, r0.y),
-            origin_emu: (g.child_offset.0 as f64, g.child_offset.1 as f64),
-            factor: (axis(r0.w, g.child_extent.0), axis(r0.h, g.child_extent.1)),
-        }
+        // Per axis: (sheet origin, child origin, EMUs per pixel).
+        let axis = |start: f64, len: f64, start0: f64, len0: f64, ch_off: i64, span: i64, off: i64| {
+            if len > 0.0 && len0 > 0.0 && span > 0 { (start0, ch_off as f64, span as f64 / len0) } else { (start, off as f64, EMU_PER_PX) }
+        };
+        let (x0, ex, fx) = axis(b.x, b.w, r0.x, r0.w, g.child_offset.0, g.child_extent.0, off.0);
+        let (y0, ey, fy) = axis(b.y, b.h, r0.y, r0.h, g.child_offset.1, g.child_extent.1, off.1);
+        ChildSpace { b, flip, origin_px: (x0, y0), origin_emu: (ex, ey), factor: (fx, fy) }
     }
 
     /// The offset and extent (EMUs) of a member with sheet box `r`.
-    fn place(&self, r: ObjectRect) -> ((i64, i64), (i64, i64)) {
+    fn place(&self, mut r: ObjectRect) -> ((i64, i64), (i64, i64)) {
+        if self.flip.0 {
+            r.x = 2.0 * self.b.x + self.b.w - r.x - r.w;
+        }
+        if self.flip.1 {
+            r.y = 2.0 * self.b.y + self.b.h - r.y - r.h;
+        }
         let e = |v: f64| if v.is_finite() { v.round().clamp(-1e15, 1e15) as i64 } else { 0 };
         (
             (e(self.origin_emu.0 + (r.x - self.origin_px.0) * self.factor.0), e(self.origin_emu.1 + (r.y - self.origin_px.1) * self.factor.1)),
@@ -512,20 +544,31 @@ impl DrawingOut<'_> {
     }
 
     /// A `grpSp` for group `id` spanning `b`, at `off`/`ext` in its parent's space, with its
-    /// members back to front in its own child space.
-    fn group(&mut self, id: u32, b: ObjectRect, off: (i64, i64), ext: (i64, i64), depth: usize) {
+    /// members back to front in its own child space. `flip` is the axes enclosing groups flip.
+    fn group(&mut self, id: u32, b: ObjectRect, off: (i64, i64), ext: (i64, i64), flip: (bool, bool), depth: usize) {
         let sheet = self.sheet;
         let Some(g) = sheet.drawing_group(id) else { return };
         if depth >= MAX_GROUP_DEPTH || !self.groups_done.insert(id) {
             return;
         }
-        let space = ChildSpace::new(sheet, g, b, off);
+        let flip = (flip.0 != g.flip.0, flip.1 != g.flip.1);
+        let space = ChildSpace::new(sheet, g, b, off, flip);
         let (ch_off, ch_ext) = space.place(b);
         let cid = self.take_id();
         let name = if g.name.is_empty() { format!("Group {}", cid - 1) } else { g.name.clone() };
+        let mut attrs = String::new();
+        if g.rotation != 0 {
+            let _ = write!(attrs, " rot=\"{}\"", g.rotation);
+        }
+        if g.flip.0 {
+            attrs.push_str(" flipH=\"1\"");
+        }
+        if g.flip.1 {
+            attrs.push_str(" flipV=\"1\"");
+        }
         let _ = write!(
             self.s,
-            "<xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id=\"{cid}\" name=\"{}\"/><xdr:cNvGrpSpPr/></xdr:nvGrpSpPr><xdr:grpSpPr><a:xfrm><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/><a:chOff x=\"{}\" y=\"{}\"/><a:chExt cx=\"{}\" cy=\"{}\"/></a:xfrm></xdr:grpSpPr>",
+            "<xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id=\"{cid}\" name=\"{}\"/><xdr:cNvGrpSpPr/></xdr:nvGrpSpPr><xdr:grpSpPr><a:xfrm{attrs}><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/><a:chOff x=\"{}\" y=\"{}\"/><a:chExt cx=\"{}\" cy=\"{}\"/></a:xfrm></xdr:grpSpPr>",
             esc_attr(&name),
             off.0,
             off.1,
@@ -540,7 +583,7 @@ impl DrawingOut<'_> {
             let Some(r) = self.rect(*m) else { continue };
             let (moff, mext) = space.place(r);
             match m {
-                DrawingRef::Group(n) => self.group(*n, r, moff, mext, depth + 1),
+                DrawingRef::Group(n) => self.group(*n, r, moff, mext, flip, depth + 1),
                 leaf => {
                     let Some(&i) = self.index.get(leaf) else { continue };
                     let (Some(o), Some(false)) = (self.objs.get(i), self.done.get(i).copied()) else { continue };
@@ -583,7 +626,7 @@ pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
         {
             let (open, close) = anchor_open(sheet, &sheet.rect_anchor(b, g.anchor.mode));
             out.s.push_str(&open);
-            out.group(gid, b, (emu(b.x), emu(b.y)), (emu(b.w), emu(b.h)), 0);
+            out.group(gid, b, (emu(b.x), emu(b.y)), (emu(b.w), emu(b.h)), (false, false), 0);
             out.s.push_str("<xdr:clientData/>");
             out.s.push_str(close);
         }

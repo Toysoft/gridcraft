@@ -2641,8 +2641,16 @@ fn object_commands_on_a_grouped_member_act_on_the_group() {
         let outer = inner + 1;
         let sh = wb.sheet_mut(0).unwrap();
         let (aa, ba) = (sh.images[0].anchor, sh.images[1].anchor);
-        let group =
-            |id, name: &str, anchor, members| DrawingGroup { id, name: name.into(), anchor, child_offset: (0, 0), child_extent: (100, 100), members };
+        let group = |id, name: &str, anchor, members| DrawingGroup {
+            id,
+            name: name.into(),
+            anchor,
+            child_offset: (0, 0),
+            child_extent: (100, 100),
+            flip: (false, false),
+            rotation: 0,
+            members,
+        };
         sh.groups.push(group(inner, "Inner", ba, vec![DrawingRef::Image(b)]));
         sh.groups.push(group(outer, "Outer", aa, vec![DrawingRef::Image(a), DrawingRef::Group(inner)]));
         (outer, inner)

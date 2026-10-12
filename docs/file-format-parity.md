@@ -85,7 +85,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-13 | minor | XLSX: grouped pictures, charts and shapes (`grpSp`, nested too) are imported at their group-transformed positions (they were dropped) and kept as groups: saved back as one anchor holding the `grpSp` with its members in order, in its child coordinate space; moving or deleting a member acts on the whole group. Unsupported members (SmartArt, OLE) are dropped with their own warning |
+| 2026-10-13 | minor | XLSX: grouped pictures, charts and shapes (`grpSp`, nested too) are imported at their group-transformed positions (they were dropped) and kept as groups: saved back as one anchor holding the `grpSp` with its members in order, in its child coordinate space; moving or deleting a member acts on the whole group. Unsupported members (SmartArt, OLE) are dropped with their own warning. A flipped group's members are placed mirrored but not drawn mirrored, and a rotated group is laid out without its rotation; both are reported on open, and the group's `rot`/`flipH`/`flipV` are kept on save |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |
 | 2026-10-12 | trivial | CSV and TSV export is capped at 512 MiB and refuses a larger used range with an error (#528) |
 | 2026-10-12 | minor | `.xls` import reads the calculation settings (CalcMode, CalcIter, CalcCount, CalcDelta, CalcPrecision), so circular models calculate instead of showing `#CIRC!` (#724) |
