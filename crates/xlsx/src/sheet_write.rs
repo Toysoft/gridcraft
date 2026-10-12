@@ -11,12 +11,16 @@ use gridcraft_model::{
 
 use crate::drawing::{Obj, image_content_type, image_ext};
 use crate::fmla::text_to_file;
-use crate::styles::{color_attrs, dxf_id};
+use crate::styles::{color_attrs, dxf_id, dxf_xml};
 use crate::tables::{paper_id, px_to_col_width, px_to_pt};
 use crate::write::{
     CT_CHART, CT_COMMENTS, CT_DRAWING, CT_TABLE, CT_THREADED_COMMENTS, NS_MAIN, NS_REL, NS_THREADED, Out, REL_THREADED_COMMENT, Rels, XML_DECL,
+    x14_cf_rule_guid,
 };
 use crate::xml::{encode_xstring, esc, esc_attr, num};
+
+/// The worksheet extension holding Excel 2010 conditional formats.
+const EXT_X14_CF: &str = "{78C0D931-6437-407d-A8EE-F0AAD7539E65}";
 
 fn sqref(ranges: &[RangeRef]) -> String {
     ranges.iter().map(|r| r.a1()).collect::<Vec<_>>().join(" ")
@@ -362,16 +366,29 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
             *p = rank as u32 + 1;
         }
     }
+    // Rules referring to other sheets go to the Excel 2010 extension: Excel rejects such
+    // references in the main section. A solid data bar is in both: the extension holds its fill.
+    let mut x14_cf = String::new();
     for (i, cf) in sheet.cond_formats.iter().enumerate() {
         if cf.ranges.is_empty() {
             continue;
         }
-        let _ = write!(
-            s,
-            "<conditionalFormatting sqref=\"{}\">{}</conditionalFormatting>",
-            sqref(&cf.ranges),
-            cf_rule_xml(cf, prio.get(i).copied().unwrap_or(1), out)
-        );
+        let priority = prio.get(i).copied().unwrap_or(1);
+        let x14 = match x14_cf_rule_xml(cf, &sheet.name, priority, out) {
+            Some(rule) => Some(rule),
+            None => {
+                let _ =
+                    write!(s, "<conditionalFormatting sqref=\"{}\">{}</conditionalFormatting>", sqref(&cf.ranges), cf_rule_xml(cf, priority, out));
+                solid_bar_x14(cf, priority)
+            }
+        };
+        if let Some(rule) = x14 {
+            let _ = write!(
+                x14_cf,
+                "<x14:conditionalFormatting xmlns:xm=\"{XM_NS}\">{rule}<xm:sqref>{}</xm:sqref></x14:conditionalFormatting>",
+                sqref(&cf.ranges)
+            );
+        }
     }
     let vals: Vec<&Validation> = sheet.validations.iter().filter(|v| !v.ranges.is_empty()).collect();
     if !vals.is_empty() {
@@ -576,30 +593,12 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
         }
         let _ = write!(s, "<tableParts count=\"{}\">{parts}</tableParts>", tables.len());
     }
-    // Excel 2010 extensions: solid data bars, then sparklines.
-    let solid_bars: Vec<(&CondFormat, u32)> = sheet
-        .cond_formats
-        .iter()
-        .enumerate()
-        .filter(|(_, cf)| !cf.ranges.is_empty() && matches!(cf.rule, CfRule::DataBar { gradient: false, .. }))
-        .map(|(i, cf)| (cf, prio.get(i).copied().unwrap_or(1)))
-        .collect();
-    if !solid_bars.is_empty() || !sheet.sparklines.is_empty() {
+    // Excel 2010 extensions: conditional formats, then sparklines.
+    if !x14_cf.is_empty() || !sheet.sparklines.is_empty() {
         s.push_str("<extLst>");
     }
-    if !solid_bars.is_empty() {
-        let _ = write!(
-            s,
-            "<ext uri=\"{{78C0D931-6437-407d-A8A1-0F90B4350D7D}}\" xmlns:x14=\"{X14_NS}\" xmlns:xm=\"{XM_NS}\"><x14:conditionalFormattings>"
-        );
-        for (cf, p) in &solid_bars {
-            if let CfRule::DataBar { min, max, .. } = &cf.rule {
-                let (id, lo, hi) = (solid_bar_id(*p), x14_cfvo(min), x14_cfvo(max));
-                let _ = write!(s, "<x14:conditionalFormatting><x14:cfRule type=\"dataBar\" id=\"{id}\"><x14:dataBar gradient=\"0\">{lo}{hi}");
-                let _ = write!(s, "</x14:dataBar></x14:cfRule><xm:sqref>{}</xm:sqref></x14:conditionalFormatting>", sqref(&cf.ranges));
-            }
-        }
-        s.push_str("</x14:conditionalFormattings></ext>");
+    if !x14_cf.is_empty() {
+        let _ = write!(s, "<ext uri=\"{EXT_X14_CF}\" xmlns:x14=\"{X14_NS}\"><x14:conditionalFormattings>{x14_cf}</x14:conditionalFormattings></ext>");
     }
     if !sheet.sparklines.is_empty() {
         let _ = write!(s, "<ext uri=\"{{05C60535-1F16-4fd2-B633-F4F36F0B64E0}}\" xmlns:x14=\"{X14_NS}\"><x14:sparklineGroups xmlns:xm=\"{XM_NS}\">");
@@ -622,7 +621,7 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
         }
         s.push_str("</x14:sparklineGroups></ext>");
     }
-    if !solid_bars.is_empty() || !sheet.sparklines.is_empty() {
+    if !x14_cf.is_empty() || !sheet.sparklines.is_empty() {
         s.push_str("</extLst>");
     }
     s.push_str("</worksheet>");
@@ -756,6 +755,13 @@ fn solid_bar_id(priority: u32) -> String {
 fn solid_bar_ext(priority: u32) -> String {
     let id = solid_bar_id(priority);
     format!("<extLst><ext uri=\"{{B025F937-C7B1-47D3-B67F-A62EFF666E3E}}\" xmlns:x14=\"{X14_NS}\"><x14:id>{id}</x14:id></ext></extLst>")
+}
+
+/// The x14 rule a solid data bar's `cfRule` links to (it holds the fill); `None` for other rules.
+fn solid_bar_x14(cf: &CondFormat, priority: u32) -> Option<String> {
+    let CfRule::DataBar { min, max, gradient: false, .. } = &cf.rule else { return None };
+    let (id, lo, hi) = (solid_bar_id(priority), x14_cfvo(min), x14_cfvo(max));
+    Some(format!("<x14:cfRule type=\"dataBar\" id=\"{id}\"><x14:dataBar gradient=\"0\">{lo}{hi}</x14:dataBar></x14:cfRule>"))
 }
 
 /// An x14 `cfvo`: unlike the 2006 one it has no `val` attribute, the value is an `xm:f` child.
@@ -898,6 +904,43 @@ fn cf_rule_xml(cf: &CondFormat, priority: u32, out: &mut Out) -> String {
             format!("<cfRule type=\"iconSet\" priority=\"{priority}\"{stop}>{b}</cfRule>")
         }
     }
+}
+
+/// Whether formula `f` refers to a sheet other than `own` (or to a 3-D span of sheets).
+fn refers_to_other_sheet(f: &str, own: &str) -> bool {
+    let Ok(e) = gridcraft_formula::parse(f.trim_start_matches('=')) else { return false };
+    e.references().iter().any(|r| match &r.sheet {
+        gridcraft_formula::SheetSel::Current => false,
+        gridcraft_formula::SheetSel::Named(n) => !n.chars().flat_map(char::to_lowercase).eq(own.chars().flat_map(char::to_lowercase)),
+        gridcraft_formula::SheetSel::Span(..) => true,
+    })
+}
+
+/// The Excel 2010 form (`x14:cfRule`, `xm:f` formulas, inline `x14:dxf`) of a cell-value or
+/// formula rule that refers to other sheets; `None` for rules that belong in the main section.
+fn x14_cf_rule_xml(cf: &CondFormat, own: &str, priority: u32, out: &mut Out) -> Option<String> {
+    let (ty, extra, formulas, style): (&str, String, Vec<&str>, &Style) = match &cf.rule {
+        CfRule::CellIs { op, a, b, style } => {
+            ("cellIs", format!(" operator=\"{}\"", cf_op_name(*op)), std::iter::once(a.as_str()).chain(b.as_deref()).collect(), style)
+        }
+        CfRule::Expression { formula, style } => ("expression", String::new(), vec![formula.as_str()], style),
+        _ => return None,
+    };
+    if !formulas.iter().any(|f| refers_to_other_sheet(f, own)) {
+        return None;
+    }
+    out.x14_cf_rules += 1;
+    let mut s = format!(
+        "<x14:cfRule type=\"{ty}\" priority=\"{priority}\"{}{extra} id=\"{}\">",
+        if cf.stop_if_true { " stopIfTrue=\"1\"" } else { "" },
+        x14_cf_rule_guid(out.x14_cf_rules)
+    );
+    for f in formulas {
+        let _ = write!(s, "<xm:f>{}</xm:f>", esc(&text_to_file(f)));
+    }
+    s.push_str(&dxf_xml("x14:dxf", style, &mut out.num_fmts));
+    s.push_str("</x14:cfRule>");
+    Some(s)
 }
 
 fn validation_formula(f: &str) -> String {
