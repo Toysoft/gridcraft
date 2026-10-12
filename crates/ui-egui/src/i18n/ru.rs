@@ -401,6 +401,23 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Show Preview Card" => "Показать карточку предпросмотра",
         "Convert to Normal Cell" => "Преобразовать в обычную ячейку",
         "No result yet" => "Результата пока нет",
+        "Insert\nPython" => "Вставить\nPython",
+        "Insert Python" => "Вставить Python",
+        "Insert Python (Ctrl+Alt+Shift+P)" => "Вставить Python (Ctrl+Alt+Shift+P)",
+        "Python Cell" => "Ячейка Python",
+        "Insert xl() Reference" => "Вставить ссылку xl()",
+        "Initialization…" => "Инициализация…",
+        "Python in GridCraft" => "Python в GridCraft",
+        "Reset" => "Сброс",
+        "Reset Runtime" => "Сбросить среду выполнения",
+        "Reset Runtime: start Python afresh and run every Python cell again" => {
+            "Сбросить среду выполнения: запустить Python заново и снова выполнить все ячейки Python"
+        }
+        "Reset and Clear Diagnostics" => "Сбросить и очистить диагностику",
+        "Stop (Esc)" => "Остановить (Esc)",
+        "Diagnostics" => "Диагностика",
+        "Python Diagnostics: every run, its output and errors" => "Диагностика Python: все запуски, их вывод и ошибки",
+        "Python" => "Python",
         _ => return None,
     })
 }

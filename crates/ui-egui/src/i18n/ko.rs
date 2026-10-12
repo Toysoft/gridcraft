@@ -401,6 +401,23 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Show Preview Card" => "미리 보기 카드 표시",
         "Convert to Normal Cell" => "일반 셀로 변환",
         "No result yet" => "아직 결과가 없습니다",
+        "Insert\nPython" => "Python\n삽입",
+        "Insert Python" => "Python 삽입",
+        "Insert Python (Ctrl+Alt+Shift+P)" => "Python 삽입(Ctrl+Alt+Shift+P)",
+        "Python Cell" => "Python 셀",
+        "Insert xl() Reference" => "xl() 참조 삽입",
+        "Initialization…" => "초기화…",
+        "Python in GridCraft" => "GridCraft의 Python",
+        "Reset" => "다시 설정",
+        "Reset Runtime" => "런타임 다시 설정",
+        "Reset Runtime: start Python afresh and run every Python cell again" => {
+            "런타임 다시 설정: Python을 새로 시작하고 모든 Python 셀을 다시 실행합니다"
+        }
+        "Reset and Clear Diagnostics" => "다시 설정하고 진단 지우기",
+        "Stop (Esc)" => "중지(Esc)",
+        "Diagnostics" => "진단",
+        "Python Diagnostics: every run, its output and errors" => "Python 진단: 모든 실행과 그 출력 및 오류",
+        "Python" => "Python",
         _ => return None,
     })
 }

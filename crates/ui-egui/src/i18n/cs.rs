@@ -399,6 +399,23 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Show Preview Card" => "Zobrazit kartu náhledu",
         "Convert to Normal Cell" => "Převést na normální buňku",
         "No result yet" => "Zatím žádný výsledek",
+        "Insert\nPython" => "Vložit\nPython",
+        "Insert Python" => "Vložit Python",
+        "Insert Python (Ctrl+Alt+Shift+P)" => "Vložit Python (Ctrl+Alt+Shift+P)",
+        "Python Cell" => "Buňka Pythonu",
+        "Insert xl() Reference" => "Vložit odkaz xl()",
+        "Initialization…" => "Inicializace…",
+        "Python in GridCraft" => "Python v GridCraftu",
+        "Reset" => "Obnovit",
+        "Reset Runtime" => "Obnovit běhové prostředí",
+        "Reset Runtime: start Python afresh and run every Python cell again" => {
+            "Obnovit běhové prostředí: spustit Python znovu a znovu spustit všechny buňky Pythonu"
+        }
+        "Reset and Clear Diagnostics" => "Obnovit a vymazat diagnostiku",
+        "Stop (Esc)" => "Zastavit (Esc)",
+        "Diagnostics" => "Diagnostika",
+        "Python Diagnostics: every run, its output and errors" => "Diagnostika Pythonu: každé spuštění, jeho výstup a chyby",
+        "Python" => "Python",
         _ => return None,
     })
 }

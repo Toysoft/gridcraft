@@ -573,6 +573,24 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Show Preview Card", "プレビュー カードを表示"),
     ("Convert to Normal Cell", "通常のセルに変換"),
     ("No result yet", "まだ結果がありません"),
+    ("Insert\nPython", "Python の\n挿入"),
+    ("Insert Python", "Python の挿入"),
+    ("Insert Python (Ctrl+Alt+Shift+P)", "Python の挿入 (Ctrl+Alt+Shift+P)"),
+    ("Python Cell", "Python セル"),
+    ("Insert xl() Reference", "xl() 参照の挿入"),
+    ("Initialization…", "初期化…"),
+    ("Python in GridCraft", "GridCraft の Python"),
+    ("Reset", "リセット"),
+    ("Reset Runtime", "ランタイムのリセット"),
+    (
+        "Reset Runtime: start Python afresh and run every Python cell again",
+        "ランタイムのリセット: Python を新しく起動し、すべての Python セルを再実行します",
+    ),
+    ("Reset and Clear Diagnostics", "リセットして診断をクリア"),
+    ("Stop (Esc)", "停止 (Esc)"),
+    ("Diagnostics", "診断"),
+    ("Python Diagnostics: every run, its output and errors", "Python の診断: すべての実行とその出力およびエラー"),
+    ("Python", "Python"),
 ];
 
 #[cfg(test)]
