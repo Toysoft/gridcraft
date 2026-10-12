@@ -718,6 +718,11 @@ mod tests {
         assert_eq!(Language::De.tr("Sheet1!A1"), "Sheet1!A1");
         assert_eq!(Language::Fr.tr("Data"), "Données");
         assert_eq!(Language::Fr.tr("Sheet1!A1"), "Sheet1!A1");
+        // fr.rs once had its labels shifted onto the wrong keys (Ruler read "Save As").
+        assert_eq!(Language::Fr.tr("Ruler"), "Règle");
+        assert_eq!(Language::Fr.tr("Save As"), "Enregistrer sous");
+        assert_eq!(Language::Fr.tr("Show formula bar"), "Afficher la barre de formule");
+        assert_eq!(Language::Fr.tr("Insert Cut Cells"), "Insérer les cellules coupées");
         assert_eq!(Language::PtBr.tr("Date"), "Data");
         assert_eq!(Language::PtBr.tr("Sheet1!A1"), "Sheet1!A1");
         assert_eq!(Language::Ja.tr("Sheet1!A1"), "Sheet1!A1");
