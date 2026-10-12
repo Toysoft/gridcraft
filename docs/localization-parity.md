@@ -55,7 +55,8 @@ separators, number/date formats, machine translation with agent review, and scri
 | Korean | ko | 266 (~12%) | no | Hangul via the CJK fallback; IME unverified | no | menus only | 6–10 h |
 | Vietnamese | vi | 0 (0%) | no | Latin with stacked diacritics: unverified | no | none | 6–10 h |
 
-Other shipped languages: Russian (ru) and German (de), 266 labels each (~12%), menus only.
+Other shipped languages: Russian (ru) and German (de), 266 labels each (~12%), and Italian (it), all
+377 ribbon and Backstage labels (~17%), menus only.
 
 **Total:** catalog work 10–20 h + languages 92–144 h ≈ **100–165 h**. Parallelizes almost fully
 once the catalog covers dialogs and commands. **Needs a human:** native-speaker review of every
