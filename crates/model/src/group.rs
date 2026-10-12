@@ -30,7 +30,8 @@ pub struct DrawingGroup {
     pub name: String,
     /// The group's box on the sheet when it was laid out (opened, or last moved or sized as a
     /// whole). With `child_offset`/`child_extent` it fixes the group's child coordinate space;
-    /// its current box is [`Sheet::drawing_rect`] of the group, the box around its members.
+    /// its current box is [`Sheet::drawing_rect`] of the group, the box around its members. A
+    /// rotated group is saved with this box, as it turns about the box's centre.
     pub anchor: Anchor,
     /// The child box (`a:chOff`/`a:chExt`, EMUs) that `anchor`'s box maps onto.
     pub child_offset: (i64, i64),
@@ -43,6 +44,12 @@ pub struct DrawingGroup {
     /// laid out without it.
     #[serde(default, skip_serializing_if = "is_default")]
     pub rotation: i64,
+    /// The rotations (`a:xfrm rot`) of the charts, pictures and shapes in the group that have
+    /// one, kept for saving. They are drawn unrotated: in their own box, or, turned about a
+    /// quarter (45°–135° or 225°–315°), in that box swapped about its centre, as Excel measures
+    /// them when it sizes a group.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub member_rotations: Vec<(DrawingRef, i64)>,
     /// Members, back to front (nested groups by [`DrawingRef::Group`]).
     pub members: Vec<DrawingRef>,
 }
@@ -254,6 +261,7 @@ mod tests {
             child_extent: (1, 1),
             flip: (false, false),
             rotation: 0,
+            member_rotations: Vec::new(),
             members: vec![DrawingRef::Shape(3), DrawingRef::Shape(2)],
         });
         let anchor = sh.rect_anchor(ObjectRect { x: 100.0, y: 50.0, w: 120.0, h: 50.0 }, AnchorMode::MoveOnly);
@@ -265,6 +273,7 @@ mod tests {
             child_extent: (1, 1),
             flip: (false, false),
             rotation: 0,
+            member_rotations: Vec::new(),
             members: vec![DrawingRef::Shape(1), DrawingRef::Group(5)],
         });
         sh

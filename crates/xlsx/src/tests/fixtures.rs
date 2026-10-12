@@ -649,6 +649,123 @@ fn a_flipped_group_mirrors_its_members_and_keeps_its_transform() {
     assert_eq!((bo.flip, bo.rotation), ((true, false), 5400000));
 }
 
+/// The `a:xfrm` point or size `name` (`off`/`chOff` with `x`/`y`, `ext`/`chExt` with `cx`/`cy`).
+fn xfrm_at(xf: &crate::xml::El, name: &str) -> (i64, i64) {
+    let (a, b) = if name.ends_with("xt") { ("cx", "cy") } else { ("x", "y") };
+    let e = xf.child(name).unwrap();
+    (e.attr_i64(a).unwrap(), e.attr_i64(b).unwrap())
+}
+
+fn close_emu((a, b): (i64, i64), (c, d): (i64, i64)) -> bool {
+    (a - c).abs() <= 2 && (b - d).abs() <= 2
+}
+
+/// The `xdr:sp` with text `text` in `g`.
+fn sp_named<'a>(g: &'a crate::xml::El, text: &str) -> &'a crate::xml::El {
+    g.kids("sp").find(|sp| sp.path(&["txBody", "p", "r", "t"]).is_some_and(|t| t.text == text)).unwrap()
+}
+
+#[test]
+fn a_rotated_group_keeps_its_box_when_a_member_is_dropped() {
+    // A group turned a quarter over B2:F12 (x 64, y 20, 256 × 200 px), its child box mapped 1:1,
+    // holds a SmartArt frame in its left half (dropped) and rectangle A in its right half. It
+    // turns about the centre of its own box, so saving it with the box around A alone would
+    // move A in Excel: the group's box and child box are kept.
+    let drawing = r#"<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+      <xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>5</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>11</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+        <xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id="2" name="Turned"/><xdr:cNvGrpSpPr/></xdr:nvGrpSpPr>
+          <xdr:grpSpPr><a:xfrm rot="5400000"><a:off x="609600" y="190500"/><a:ext cx="2438400" cy="1905000"/><a:chOff x="0" y="0"/><a:chExt cx="2438400" cy="1905000"/></a:xfrm></xdr:grpSpPr>
+          <xdr:graphicFrame><xdr:nvGraphicFramePr><xdr:cNvPr id="3" name="D"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="1219200" cy="1905000"/></xdr:xfrm>
+            <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" r:dm="rId9"/></a:graphicData></a:graphic></xdr:graphicFrame>
+          <xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="4" name="R"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="1219200" y="0"/><a:ext cx="1219200" cy="952500"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:p><a:r><a:t>A</a:t></a:r></a:p></xdr:txBody></xdr:sp>
+        </xdr:grpSp><xdr:clientData/></xdr:twoCellAnchor>
+    </xdr:wsDr>"#;
+    let (mut wb, _) = read_xlsx(&with_drawing(drawing)).unwrap();
+    let saved_group = |wb: &gridcraft_model::Workbook| {
+        let saved = crate::write_xlsx(wb).unwrap();
+        let mut pkg = crate::package::Package::open(&saved).unwrap();
+        let x = pkg.read_xml("xl/drawings/drawing1.xml").unwrap().unwrap();
+        let anchor = x.children[0].clone();
+        let g = anchor.child("grpSp").unwrap().clone();
+        let xf = g.path(&["grpSpPr", "xfrm"]).unwrap().clone();
+        assert_eq!(xf.attr("rot"), Some("5400000"));
+        let a = xfrm_at(sp_named(&g, "A").path(&["spPr", "xfrm"]).unwrap(), "off");
+        let from = anchor.child("from").unwrap().clone();
+        let num = |n: &str| from.child(n).unwrap().text.parse::<i64>().unwrap();
+        (
+            (num("col"), num("colOff"), num("row"), num("rowOff")),
+            xfrm_at(&xf, "off"),
+            xfrm_at(&xf, "ext"),
+            xfrm_at(&xf, "chOff"),
+            xfrm_at(&xf, "chExt"),
+            a,
+        )
+    };
+    let (from, off, ext, ch_off, ch_ext, a) = saved_group(&wb);
+    assert_eq!(from, (1, 0, 1, 0));
+    assert!(close_emu(off, (609600, 190500)) && close_emu(ext, (2438400, 1905000)), "{off:?} {ext:?}");
+    assert!(close_emu(ch_off, (0, 0)) && close_emu(ch_ext, (2438400, 1905000)), "{ch_off:?} {ch_ext:?}");
+    assert!(close_emu(a, (1219200, 0)), "{a:?}");
+
+    // Moved a column to the right, the group's box moves with it; its child box stays.
+    let s = wb.sheet_mut(0).unwrap();
+    let gid = s.groups[0].id;
+    let r = s.drawing_rect(DrawingRef::Group(gid)).unwrap();
+    s.transform_group(gid, r, gridcraft_model::ObjectRect { x: r.x + 64.0, ..r });
+    let (from, off, ext, ch_off, ch_ext, a) = saved_group(&wb);
+    assert_eq!(from, (2, 0, 1, 0));
+    assert!(close_emu(off, (1219200, 190500)) && close_emu(ext, (2438400, 1905000)), "{off:?} {ext:?}");
+    assert!(close_emu(ch_off, (0, 0)) && close_emu(ch_ext, (2438400, 1905000)), "{ch_off:?} {ch_ext:?}");
+    assert!(close_emu(a, (1219200, 0)), "{a:?}");
+}
+
+#[test]
+fn a_member_turned_a_quarter_is_placed_at_its_turned_box_and_keeps_its_rotation() {
+    // The anchor starts 16 px into column A (152400 EMUs) at row 2 and is 256 × 200 px; the
+    // group maps its child box 1:1. Text box T is turned 270°: its own box starts left of the
+    // group (and of column A), but Excel sizes the group by its turned box, which is inside.
+    let drawing = r#"<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+      <xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>152400</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>4</xdr:col><xdr:colOff>152400</xdr:colOff><xdr:row>11</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+        <xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id="2" name="Labelled"/><xdr:cNvGrpSpPr/></xdr:nvGrpSpPr>
+          <xdr:grpSpPr><a:xfrm><a:off x="152400" y="190500"/><a:ext cx="2438400" cy="1905000"/><a:chOff x="152400" y="190500"/><a:chExt cx="2438400" cy="1905000"/></a:xfrm></xdr:grpSpPr>
+          <xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="3" name="R"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="152400" y="190500"/><a:ext cx="2438400" cy="1905000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:p><a:r><a:t>R</a:t></a:r></a:p></xdr:txBody></xdr:sp>
+          <xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="4" name="T"/><xdr:cNvSpPr txBox="1"/></xdr:nvSpPr><xdr:spPr><a:xfrm rot="16200000"><a:off x="-304800" y="762000"/><a:ext cx="1381125" cy="257175"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:p><a:r><a:t>T</a:t></a:r></a:p></xdr:txBody></xdr:sp>
+        </xdr:grpSp><xdr:clientData/></xdr:twoCellAnchor>
+    </xdr:wsDr>"#;
+    let (wb, rep) = read_xlsx(&with_drawing(drawing)).unwrap();
+    let s = wb.sheet(0).unwrap();
+    // T's turned box: child x -304800 + (1381125 - 257175) / 2 = 257175 (27 px), 27 × 145 px.
+    assert!(near_box(shape_box(s, "T"), (27.0, 21.0, 27.0, 145.0)), "{:?}", shape_box(s, "T"));
+    assert_eq!(
+        rep.warnings.iter().filter(|w| w.contains("rotated")).collect::<Vec<_>>(),
+        vec!["a rotated picture or shape in a group is drawn without its rotation"]
+    );
+    let t = s.shapes.iter().find(|sh| sh.text == "T").unwrap().id;
+    assert_eq!(s.groups[0].member_rotations, vec![(DrawingRef::Shape(t), 16200000)]);
+
+    // Saved: the group keeps its anchor, box and child box, and T its own box and rotation.
+    let saved = crate::write_xlsx(&wb).unwrap();
+    let mut pkg = crate::package::Package::open(&saved).unwrap();
+    let x = pkg.read_xml("xl/drawings/drawing1.xml").unwrap().unwrap();
+    let from = x.children[0].child("from").unwrap();
+    let num = |n: &str| from.child(n).unwrap().text.parse::<i64>().unwrap();
+    assert_eq!((num("col"), num("colOff"), num("row"), num("rowOff")), (0, 152400, 1, 0));
+    let g = x.children[0].child("grpSp").unwrap();
+    let xf = g.path(&["grpSpPr", "xfrm"]).unwrap();
+    assert!(close_emu(xfrm_at(xf, "off"), (152400, 190500)) && close_emu(xfrm_at(xf, "ext"), (2438400, 1905000)), "{:?}", xfrm_at(xf, "off"));
+    assert!(close_emu(xfrm_at(xf, "chOff"), (152400, 190500)) && close_emu(xfrm_at(xf, "chExt"), (2438400, 1905000)), "{:?}", xfrm_at(xf, "chOff"));
+    let txf = sp_named(g, "T").path(&["spPr", "xfrm"]).unwrap();
+    assert_eq!(txf.attr("rot"), Some("16200000"));
+    assert!(close_emu(xfrm_at(txf, "off"), (-304800, 762000)) && close_emu(xfrm_at(txf, "ext"), (1381125, 257175)), "{:?}", xfrm_at(txf, "off"));
+
+    // Reopened: T in the same place, with its rotation.
+    let (back, _) = read_xlsx(&saved).unwrap();
+    let b = back.sheet(0).unwrap();
+    assert!(near_box(shape_box(b, "T"), shape_box(s, "T")), "{:?}", shape_box(b, "T"));
+    let bt = b.shapes.iter().find(|sh| sh.text == "T").unwrap().id;
+    assert_eq!(b.groups[0].member_rotations, vec![(DrawingRef::Shape(bt), 16200000)]);
+}
+
 #[test]
 fn drawing_with_chartex_in_alternate_content() {
     let drawing = r#"<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">

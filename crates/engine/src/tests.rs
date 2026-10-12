@@ -2649,6 +2649,7 @@ fn object_commands_on_a_grouped_member_act_on_the_group() {
             child_extent: (100, 100),
             flip: (false, false),
             rotation: 0,
+            member_rotations: Vec::new(),
             members,
         };
         sh.groups.push(group(inner, "Inner", ba, vec![DrawingRef::Image(b)]));
@@ -2689,6 +2690,20 @@ fn object_commands_on_a_grouped_member_act_on_the_group() {
     let sh = s.doc().unwrap().wb.active().unwrap();
     assert_eq!((sh.images.len(), sh.groups.len()), (3, 2));
     assert_eq!(sh.outer_group(DrawingRef::Group(inner)), Some(outer));
+    // The groups' own boxes (kept on save for a rotated group) follow inserted rows and columns
+    // with their members.
+    s.execute("object.setAnchorMode", json!({"kind": "group", "id": outer, "mode": "moveOnly"})).unwrap();
+    let cells = |s: &Session| {
+        let sh = s.doc().unwrap().wb.active().unwrap();
+        let group = |id| sh.drawing_group(id).unwrap().anchor.cell;
+        (group(outer), group(inner), image_cell(s, a).unwrap(), image_cell(s, b).unwrap())
+    };
+    let before = cells(&s);
+    s.execute("home.insertRows", json!({"rows": "1:1"})).unwrap();
+    s.execute("home.insertColumns", json!({"cols": "A:A"})).unwrap();
+    let after = cells(&s);
+    let down_right = |c: CellRef| CellRef::new(c.row + 1, c.col + 1);
+    assert_eq!(after, (down_right(before.0), down_right(before.1), down_right(before.2), down_right(before.3)));
 }
 
 /// A sort moves only objects anchored inside the sorted block on both axes: a picture beside
