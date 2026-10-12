@@ -1104,6 +1104,8 @@ pub fn lay_python_spill(wb: &mut Workbook, sheet: usize, anchor: CellRef) -> Vec
     }
     let Some(result) = sh.cells.get(anchor).and_then(|c| c.py.as_ref()).and_then(|p| p.result_value()) else { return changed };
     let value = match result {
+        // A malformed or oversized array (only a crafted file can hold one) can't spill.
+        Value::Array(arr) if arr.rows.checked_mul(arr.cols).is_none_or(|n| n != arr.data.len() || n > 1_000_000) => Value::Error(CellError::Spill),
         Value::Array(arr) if arr.rows > 1 || arr.cols > 1 => {
             let end = CellRef::new(
                 anchor.row.saturating_add((arr.rows as u32).saturating_sub(1)),
