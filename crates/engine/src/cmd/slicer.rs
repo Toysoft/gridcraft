@@ -125,15 +125,16 @@ fn set_pivot_selection(wb: &mut Workbook, pivots: &[(usize, usize)], field: &str
 }
 
 /// The selection after clicking `value` among `all`: a single click shows only that value (or,
-/// on the sole selected value, clears the filter); `multi` toggles it. Everything selected is the
-/// same as no filter.
+/// on the sole selected value, clears the filter); `multi` toggles it, except that the last
+/// selected value stays selected, as in Excel. Everything selected is the same as no filter.
 fn next_selection(current: Option<Vec<String>>, all: &[String], value: &str, multi: bool) -> Option<Vec<String>> {
     if multi {
         let mut set: Vec<String> = current.unwrap_or_else(|| all.to_vec());
         match set.iter().position(|x| x.eq_ignore_ascii_case(value)) {
-            Some(pos) => {
+            Some(pos) if set.len() > 1 => {
                 set.remove(pos);
             }
+            Some(_) => {}
             None => set.push(value.to_string()),
         }
         if set.len() == all.len() && all.iter().all(|a| set.iter().any(|x| x.eq_ignore_ascii_case(a))) { None } else { Some(set) }

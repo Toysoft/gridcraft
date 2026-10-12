@@ -16,7 +16,7 @@
 
 use std::fmt::Write as _;
 
-use gridcraft_model::{Anchor, PivotFilter, PivotSort, Sheet, Slicer, SlicerCrossFilter, SlicerPivot, SlicerSource, Workbook};
+use gridcraft_model::{Anchor, PivotFilter, PivotSort, PivotTable, Sheet, Slicer, SlicerCrossFilter, SlicerPivot, SlicerSource, Workbook};
 
 use crate::package::Rel;
 use crate::read::Ctx;
@@ -269,9 +269,8 @@ struct Planned {
     /// Unique slicer cache name (also a workbook defined name).
     cache: String,
     field: String,
-    /// The PivotTable written as its connection (sheet, index). Every PivotTable gets its own
-    /// cache when written, and a slicer's PivotTables must share one, so only the first is kept.
-    pivot: (usize, usize),
+    /// The connected PivotTables written (sheet, index), which share one pivot cache.
+    pivots: Vec<(usize, usize)>,
 }
 
 /// A slicer on the sheet being written: its index in the sheet's slicers, name and cache name.
@@ -285,11 +284,15 @@ pub struct SheetSlicer {
 #[derive(Default)]
 pub struct SlicerWriter {
     planned: Vec<Planned>,
+    /// PivotTables (sheet, index) written with one pivot cache: those the same slicers connect.
+    groups: Vec<Vec<(usize, usize)>>,
     parts: u32,
 }
 
 impl SlicerWriter {
-    /// Plans the PivotTable slicers whose PivotTable can be written.
+    /// Plans the PivotTable slicers whose PivotTables can be written. A slicer's PivotTables must
+    /// share a pivot cache; where they can't (different sources or date grouping), the slicer
+    /// keeps only its first PivotTable.
     pub fn new(wb: &Workbook) -> SlicerWriter {
         let mut planned: Vec<Planned> = Vec::new();
         let mut names: Vec<String> = Vec::new();
@@ -297,32 +300,51 @@ impl SlicerWriter {
         for (si, sheet) in wb.sheets.iter().enumerate() {
             for (i, sl) in sheet.slicers.iter().enumerate() {
                 let SlicerSource::Pivot { pivots, field, .. } = &sl.source else { continue };
-                let pivot = pivots.iter().find_map(|p| {
-                    let psi = wb.sheet_index(&p.sheet)?;
-                    let pi = wb.sheet(psi)?.pivots.iter().position(|t| t.name.eq_ignore_ascii_case(&p.name))?;
-                    let pt = wb.sheet(psi)?.pivots.get(pi)?;
-                    crate::pivot::slicer_field_ok(wb, pt, psi, field).then_some((psi, pi))
-                });
-                let Some(pivot) = pivot else { continue };
+                let mut targets: Vec<(usize, usize)> = Vec::new();
+                for p in pivots {
+                    let Some(psi) = wb.sheet_index(&p.sheet) else { continue };
+                    let Some(sh) = wb.sheet(psi) else { continue };
+                    let Some(pi) = sh.pivots.iter().position(|t| t.name.eq_ignore_ascii_case(&p.name)) else { continue };
+                    let ok = sh.pivots.get(pi).is_some_and(|pt| crate::pivot::slicer_field_ok(wb, pt, psi, field));
+                    if ok && !targets.contains(&(psi, pi)) {
+                        targets.push((psi, pi));
+                    }
+                }
+                if targets.is_empty() {
+                    continue;
+                }
                 let base = [sl.name.trim(), sl.caption.trim(), field.trim()].into_iter().find(|n| !n.is_empty()).unwrap_or("Slicer");
                 let name = unique(base, " ", &mut names);
                 let clean: String = field.chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' }).collect();
                 let cache = unique(&format!("Slicer_{clean}"), "", &mut caches);
-                planned.push(Planned { sheet: si, slicer: i, name, cache, field: field.clone(), pivot });
+                planned.push(Planned { sheet: si, slicer: i, name, cache, field: field.clone(), pivots: targets });
             }
         }
-        SlicerWriter { planned, parts: 0 }
+        let mut groups = merge_groups(&planned);
+        let mut split = false;
+        for g in groups.iter().filter(|g| g.len() > 1) {
+            if !crate::pivot::can_share(wb, g, &group_fields(&planned, g)) {
+                for p in planned.iter_mut().filter(|p| p.pivots.iter().any(|x| g.contains(x))) {
+                    p.pivots.truncate(1);
+                }
+                split = true;
+            }
+        }
+        if split {
+            groups = merge_groups(&planned);
+        }
+        SlicerWriter { planned, groups, parts: 0 }
     }
 
-    /// Fields of the PivotTable `pi` on sheet `si` that slicers filter.
+    /// The PivotTables written with the same pivot cache as PivotTable `pi` on sheet `si`
+    /// (itself included), when slicers connect it.
+    pub fn cache_group(&self, si: usize, pi: usize) -> Option<Vec<(usize, usize)>> {
+        self.groups.iter().find(|g| g.contains(&(si, pi))).cloned()
+    }
+
+    /// Fields that slicers filter in the pivot cache of PivotTable `pi` on sheet `si`.
     pub fn fields_for(&self, si: usize, pi: usize) -> Vec<String> {
-        let mut v: Vec<String> = Vec::new();
-        for p in self.planned.iter().filter(|p| p.pivot == (si, pi)) {
-            if !v.iter().any(|f| f.eq_ignore_ascii_case(&p.field)) {
-                v.push(p.field.clone());
-            }
-        }
-        v
+        self.groups.iter().find(|g| g.contains(&(si, pi))).map(|g| group_fields(&self.planned, g)).unwrap_or_default()
     }
 
     /// The slicers to write on sheet `si`.
@@ -384,32 +406,41 @@ impl SlicerWriter {
     pub fn finish(self, wb: &Workbook, pivots: &crate::pivot::PivotWriter, out: &mut Out, wb_rels: &mut Rels) -> String {
         let mut list = String::new();
         for (k, p) in self.planned.iter().enumerate() {
-            let (psi, pi) = p.pivot;
-            let (Some(info), Some(pt)) = (pivots.slicer_info(psi, pi), wb.sheet(psi).and_then(|s| s.pivots.get(pi))) else { continue };
+            // The connected PivotTables that were written, with their (shared) cache's data.
+            let written: Vec<((usize, usize), &PivotTable, &crate::pivot::PivotSlicerInfo)> =
+                p.pivots.iter().filter_map(|&(psi, pi)| Some(((psi, pi), wb.sheet(psi)?.pivots.get(pi)?, pivots.slicer_info(psi, pi)?))).collect();
+            let Some(&(_, pt, info)) = written.first() else { continue };
             let Some(sl) = wb.sheet(p.sheet).and_then(|s| s.slicers.get(p.slicer)) else { continue };
             let SlicerSource::Pivot { sort, cross_filter, show_missing, .. } = &sl.source else { continue };
-            let labels: &[String] = info.fields.iter().find(|(n, _)| n.eq_ignore_ascii_case(&p.field)).map(|(_, l)| l.as_slice()).unwrap_or(&[]);
+            let field = info.fields.iter().find(|f| f.name.eq_ignore_ascii_case(&p.field));
+            let labels: &[String] = field.map(|f| f.labels.as_slice()).unwrap_or(&[]);
             let sel = pt.filters.iter().find(|f| f.source_col.eq_ignore_ascii_case(&p.field)).and_then(|f| f.selected.as_deref());
             let mut on: Vec<bool> = labels.iter().map(|l| sel.is_none_or(|s| s.iter().any(|x| x.eq_ignore_ascii_case(l)))).collect();
             if !on.contains(&true) {
                 on.iter_mut().for_each(|o| *o = true);
             }
+            // Date groups are in date order already; other items sort by value.
             let mut order: Vec<usize> = (0..labels.len()).collect();
-            match sort {
-                PivotSort::Asc => order.sort_by(|a, b| cmp_label(&labels[*a], &labels[*b])),
-                PivotSort::Desc => order.sort_by(|a, b| cmp_label(&labels[*b], &labels[*a])),
-                PivotSort::None => {}
+            match (sort, field.is_some_and(|f| f.grouped)) {
+                (PivotSort::Asc, false) => order.sort_by(|a, b| cmp_label(&labels[*a], &labels[*b])),
+                (PivotSort::Desc, false) => order.sort_by(|a, b| cmp_label(&labels[*b], &labels[*a])),
+                (PivotSort::Desc, true) => order.reverse(),
+                (PivotSort::Asc | PivotSort::None, true) | (PivotSort::None, false) => {}
             }
-            let pname = if pt.name.trim().is_empty() { format!("PivotTable{}", pi + 1) } else { pt.name.clone() };
             let mut x = format!(
-                "{XML_DECL}<slicerCacheDefinition xmlns=\"{NS_X14}\" xmlns:mc=\"{NS_MC}\" mc:Ignorable=\"x\" xmlns:x=\"{}\" name=\"{}\" sourceName=\"{}\"><pivotTables><pivotTable tabId=\"{}\" name=\"{}\"/></pivotTables><data><tabular pivotCacheId=\"{}\"",
+                "{XML_DECL}<slicerCacheDefinition xmlns=\"{NS_X14}\" xmlns:mc=\"{NS_MC}\" mc:Ignorable=\"x\" xmlns:x=\"{}\" name=\"{}\" sourceName=\"{}\"><pivotTables>",
                 crate::write::NS_MAIN,
                 esc_attr(&p.cache),
                 esc_attr(&p.field),
-                psi + 1,
-                esc_attr(&pname),
-                info.cache_id
             );
+            for &((psi, pi), t, i) in &written {
+                if i.cache_id != info.cache_id {
+                    continue;
+                }
+                let pname = if t.name.trim().is_empty() { format!("PivotTable{}", pi + 1) } else { t.name.clone() };
+                let _ = write!(x, "<pivotTable tabId=\"{}\" name=\"{}\"/>", psi + 1, esc_attr(&pname));
+            }
+            let _ = write!(x, "</pivotTables><data><tabular pivotCacheId=\"{}\"", info.cache_id);
             if *sort == PivotSort::Desc {
                 x.push_str(" sortOrder=\"descending\"");
             }
@@ -436,6 +467,35 @@ impl SlicerWriter {
         }
         format!("<ext uri=\"{EXT_WB_SLICER_CACHES}\" xmlns:x14=\"{NS_X14}\"><x14:slicerCaches>{list}</x14:slicerCaches></ext>")
     }
+}
+
+/// The PivotTables (sheet, index) that must share a pivot cache: each slicer's, merged where
+/// slicers have a PivotTable in common.
+fn merge_groups(planned: &[Planned]) -> Vec<Vec<(usize, usize)>> {
+    let mut groups: Vec<Vec<(usize, usize)>> = Vec::new();
+    for p in planned {
+        let mut g = p.pivots.clone();
+        let (overlap, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut groups).into_iter().partition(|o| o.iter().any(|x| g.contains(x)));
+        groups = rest;
+        for x in overlap.into_iter().flatten() {
+            if !g.contains(&x) {
+                g.push(x);
+            }
+        }
+        groups.push(g);
+    }
+    groups
+}
+
+/// The fields that the slicers on the PivotTables `group` filter.
+fn group_fields(planned: &[Planned], group: &[(usize, usize)]) -> Vec<String> {
+    let mut v: Vec<String> = Vec::new();
+    for p in planned.iter().filter(|p| p.pivots.iter().any(|x| group.contains(x))) {
+        if !v.iter().any(|f| f.eq_ignore_ascii_case(&p.field)) {
+            v.push(p.field.clone());
+        }
+    }
+    v
 }
 
 /// `base`, or `base{sep}2`, `base{sep}3`… if taken (case-insensitively); records the result.

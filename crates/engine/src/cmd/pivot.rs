@@ -2310,17 +2310,17 @@ mod tests {
         s.execute("pivot.addField", json!({"field": "Sub", "area": "columns"})).unwrap();
     }
 
-    #[test]
-    fn pivot_slicer_selects_items_of_its_pivot_tables() {
+    /// A slicer on `field` of the PivotTables `pivots` (names on the active sheet).
+    fn add_pivot_slicer(s: &mut Session, id: u32, field: &str, pivots: &[&str]) {
         use gridcraft_model::{Anchor, PivotSort, Slicer, SlicerCrossFilter, SlicerPivot, SlicerSource};
-        let mut s = sales();
-        s.execute("insert.pivotTable", json!({})).unwrap();
-        s.execute("pivot.addField", json!({"field": "Region", "area": "rows"})).unwrap();
-        s.execute("pivot.addField", json!({"field": "Sales", "area": "values"})).unwrap();
-        let slicer = |id: u32, field: &str, pivots: Vec<SlicerPivot>| Slicer {
+        let d = s.doc_mut().unwrap();
+        let si = d.wb.active_sheet;
+        let sheet = d.wb.sheets[si].name.clone();
+        let sh = std::sync::Arc::make_mut(&mut d.wb).sheet_mut(si).unwrap();
+        sh.slicers.push(Slicer {
             id,
             source: SlicerSource::Pivot {
-                pivots,
+                pivots: pivots.iter().map(|n| SlicerPivot { sheet: sheet.clone(), name: n.to_string() }).collect(),
                 field: field.into(),
                 sort: PivotSort::Asc,
                 cross_filter: SlicerCrossFilter::default(),
@@ -2332,24 +2332,27 @@ mod tests {
             name: String::new(),
             style: String::new(),
             row_height: None,
-        };
-        {
-            let d = s.doc_mut().unwrap();
-            let si = d.wb.active_sheet;
-            let sheet = d.wb.sheets[si].name.clone();
-            let sh = std::sync::Arc::make_mut(&mut d.wb).sheet_mut(si).unwrap();
-            let target = vec![SlicerPivot { sheet: sheet.clone(), name: "PivotTable1".into() }];
-            sh.slicers.push(slicer(1, "Region", target.clone()));
-            sh.slicers.push(slicer(2, "Product", target));
-            // A slicer whose PivotTable is gone shows no tiles and ignores clicks.
-            sh.slicers.push(slicer(3, "Region", vec![SlicerPivot { sheet, name: "Missing".into() }]));
-        }
-        let tiles = |s: &Session, id: u32| {
-            let d = s.doc().unwrap();
-            let sh = d.wb.active().unwrap();
-            let sl = sh.slicers.iter().find(|x| x.id == id).unwrap();
-            crate::cmd::slicer::slicer_items(&d.wb, d.wb.active_sheet, sl).into_iter().map(|t| (t.label, t.selected)).collect::<Vec<_>>()
-        };
+        });
+    }
+
+    /// The slicer's tiles as (label, selected).
+    fn slicer_tiles(s: &Session, id: u32) -> Vec<(String, bool)> {
+        let d = s.doc().unwrap();
+        let sl = d.wb.active().unwrap().slicers.iter().find(|x| x.id == id).unwrap();
+        crate::cmd::slicer::slicer_items(&d.wb, d.wb.active_sheet, sl).into_iter().map(|t| (t.label, t.selected)).collect()
+    }
+
+    #[test]
+    fn pivot_slicer_selects_items_of_its_pivot_tables() {
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({})).unwrap();
+        s.execute("pivot.addField", json!({"field": "Region", "area": "rows"})).unwrap();
+        s.execute("pivot.addField", json!({"field": "Sales", "area": "values"})).unwrap();
+        add_pivot_slicer(&mut s, 1, "Region", &["PivotTable1"]);
+        add_pivot_slicer(&mut s, 2, "Product", &["PivotTable1"]);
+        // A slicer whose PivotTable is gone shows no tiles and ignores clicks.
+        add_pivot_slicer(&mut s, 3, "Region", &["Missing"]);
+        let tiles = slicer_tiles;
         assert_eq!(tiles(&s, 1), vec![("East".into(), true), ("North".into(), true), ("West".into(), true)]);
         assert!(tiles(&s, 3).is_empty());
         assert!(s.execute("slicer.toggle", json!({"slicer": 3, "value": "East"})).is_err());
@@ -2377,5 +2380,43 @@ mod tests {
         assert_eq!(tiles(&s, 2), vec![("Apples".into(), true), ("Pears".into(), true), ("Plums".into(), false)]);
         s.execute("slicer.selectAll", json!({"slicer": 2})).unwrap();
         assert!(pt(&s).filters.is_empty());
+    }
+
+    #[test]
+    fn pivot_slicer_on_grouped_dates_shows_the_groups() {
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({})).unwrap();
+        s.execute("pivot.addField", json!({"field": "Date", "area": "rows"})).unwrap();
+        s.execute("pivot.addField", json!({"field": "Sales", "area": "values"})).unwrap();
+        s.execute("pivot.group", json!({"field": "Date", "by": "quarters"})).unwrap();
+        add_pivot_slicer(&mut s, 1, "Date", &["PivotTable1"]);
+        let quarters = |on: [bool; 4]| ["Qtr1", "Qtr2", "Qtr3", "Qtr4"].into_iter().zip(on).map(|(q, o)| (q.to_string(), o)).collect::<Vec<_>>();
+        assert_eq!(slicer_tiles(&s, 1), quarters([true; 4]));
+        // The PivotTable's filter selects groups, and the tiles show it.
+        s.execute("pivot.filter", json!({"field": "Date", "selected": ["Qtr1"]})).unwrap();
+        assert_eq!(slicer_tiles(&s, 1), quarters([true, false, false, false]));
+        // Clicking a tile filters the PivotTable to that group.
+        s.execute("slicer.toggle", json!({"slicer": 1, "value": "Qtr3"})).unwrap();
+        assert_eq!(slicer_tiles(&s, 1), quarters([false, false, true, false]));
+        assert_eq!(text(&s, "A4"), "Qtr3");
+        assert_eq!(val(&s, "B4"), Value::Number(195.0));
+        assert_eq!(text(&s, "A5"), "Grand Total");
+    }
+
+    #[test]
+    fn pivot_slicer_keeps_one_item_selected() {
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({})).unwrap();
+        s.execute("pivot.addField", json!({"field": "Region", "area": "rows"})).unwrap();
+        s.execute("pivot.addField", json!({"field": "Sales", "area": "values"})).unwrap();
+        add_pivot_slicer(&mut s, 1, "Region", &["PivotTable1"]);
+        for r in ["East", "North", "West"] {
+            s.execute("slicer.toggle", json!({"slicer": 1, "value": r, "multi": true})).unwrap();
+        }
+        // Ctrl-clicking the last selected item leaves it selected, as in Excel.
+        assert_eq!(slicer_tiles(&s, 1), vec![("East".into(), false), ("North".into(), false), ("West".into(), true)]);
+        let f = pt(&s).filters.into_iter().find(|f| f.source_col == "Region").unwrap();
+        assert_eq!(f.selected, Some(vec!["West".to_string()]));
+        assert!(find_row(&s, "West").is_some());
     }
 }

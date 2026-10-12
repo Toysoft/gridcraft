@@ -321,7 +321,8 @@ pub struct SlicerTile {
 
 /// The items of `field` in `pt`'s source as slicer tiles: selection from the PivotTable's filter
 /// on the field, in `sort` order (`None`: source order), and with `cross` the items without data
-/// last or marked as Excel does.
+/// last or marked as Excel does. A date-grouped field's tiles are its groups (`Qtr1`, `Jan`…),
+/// the items its filter selects.
 pub fn slicer_tiles(wb: &Workbook, pt: &PivotTable, sheet: usize, field: &str, sort: PivotSort, cross: SlicerCrossFilter) -> Vec<SlicerTile> {
     let Ok(src) = read_source(wb, &pt.source, sheet) else { return vec![] };
     let Some(col) = src.col(field) else { return vec![] };
@@ -336,10 +337,11 @@ pub fn slicer_tiles(wb: &Workbook, pt: &PivotTable, sheet: usize, field: &str, s
         .filter(|f| !f.source_col.eq_ignore_ascii_case(field))
         .filter_map(|f| Some((src.col(&f.source_col)?, f.selected.as_deref()?, group_of(&f.source_col))))
         .collect();
+    let group = group_of(field);
     let mut fi = FieldItems::default();
     let mut data: Vec<bool> = Vec::new();
     for (i, r) in src.rows.iter().enumerate() {
-        let k = fi.intern(wb, r.get(col).unwrap_or(&Value::Empty), PivotDateGroup::None, fmt_of(col), i) as usize;
+        let k = fi.intern(wb, r.get(col).unwrap_or(&Value::Empty), group, fmt_of(col), i) as usize;
         if data.len() <= k {
             data.resize(k + 1, false);
         }
@@ -371,7 +373,7 @@ pub fn slicer_tiles(wb: &Workbook, pt: &PivotTable, sheet: usize, field: &str, s
                 Value::Number(n) => gridcraft_core::number_to_text(*n),
                 _ => it.label.clone(),
             };
-            let selected = own.is_none_or(|sel| selects(sel, &it.value, &it.label, PivotDateGroup::None));
+            let selected = own.is_none_or(|sel| selects(sel, &it.value, &it.label, group));
             SlicerTile { label: it.label, key, selected, has_data: has_data || cross == SlicerCrossFilter::None }
         })
         .collect()

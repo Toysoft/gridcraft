@@ -657,6 +657,101 @@ fn pivot_slicer_round_trips() {
     assert_eq!(again.sheet(1).unwrap().slicers, b.slicers);
 }
 
+/// A slicer on Product connected to "Sales by Region" and a second PivotTable on the same source
+/// that doesn't show Product (so its selection there is a hidden filter).
+#[test]
+fn pivot_slicer_keeps_every_connected_pivot_table() {
+    let mut wb = slicer_workbook();
+    let report = wb.sheet_mut(1).unwrap();
+    report.pivots.push(PivotTable {
+        id: 4,
+        name: "Units by Region".into(),
+        source: "Data!$A$1:$F$9".into(),
+        anchor: at("AF1"),
+        rows: vec![field("Region")],
+        values: vec![PivotValue { source_col: "Units".into(), func: PivotFunc::Sum, name: "Sum of Units".into(), ..PivotValue::default() }],
+        filters: vec![PivotFilter { source_col: "Product".into(), selected: Some(vec!["A".into(), "C".into()]), hidden: true }],
+        ..PivotTable::default()
+    });
+    if let SlicerSource::Pivot { pivots, .. } = &mut report.slicers[0].source {
+        pivots.push(SlicerPivot { sheet: "Report".into(), name: "Units by Region".into() });
+    }
+    let bytes = write_xlsx(&wb).unwrap();
+    let parts = unzip(&bytes);
+    let text = |k: &str| String::from_utf8(parts.get(k).unwrap_or_else(|| panic!("missing {k}")).clone()).unwrap();
+    let cache = text("xl/slicerCaches/slicerCache1.xml");
+    assert!(cache.contains("name=\"Sales by Region\"") && cache.contains("name=\"Units by Region\""), "{cache}");
+    // The connected PivotTables share one pivot cache, as Excel requires.
+    let cache_id = |name: &str| {
+        let t = parts
+            .keys()
+            .filter(|k| k.starts_with("xl/pivotTables/pivotTable"))
+            .map(|k| text(k))
+            .find(|t| t.contains(&format!("name=\"{name}\"")))
+            .unwrap();
+        t.split("cacheId=\"").nth(1).and_then(|s| s.split('"').next()).unwrap().to_string()
+    };
+    assert_eq!(cache_id("Sales by Region"), cache_id("Units by Region"));
+
+    let (back, report) = read_xlsx(&bytes).unwrap();
+    assert!(report.warnings.iter().all(|w| !w.contains("slicer")), "{:?}", report.warnings);
+    let (a, b) = (wb.sheet(1).unwrap(), back.sheet(1).unwrap());
+    assert_eq!(b.slicers.len(), 1);
+    assert_eq!(b.slicers[0].source, a.slicers[0].source);
+    for name in ["Sales by Region", "Units by Region", "Trend", "PivotTable3"] {
+        let pa = a.pivots.iter().find(|p| p.name == name).unwrap();
+        let pb = b.pivots.iter().find(|p| p.name == name).unwrap();
+        assert_eq!((&pa.rows, &pa.columns, &pa.filters), (&pb.rows, &pb.columns, &pb.filters), "{name}");
+    }
+}
+
+/// A slicer on a date field grouped by quarters lists the groups, in date order.
+#[test]
+fn pivot_slicer_on_grouped_dates_writes_the_groups() {
+    let mut wb = workbook();
+    let report = wb.sheet_mut(1).unwrap();
+    report.pivots.push(PivotTable {
+        id: 4,
+        name: "By Quarter".into(),
+        source: "Data!$A$1:$F$9".into(),
+        anchor: at("AF1"),
+        rows: vec![PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Quarters, ..PivotField::default() }],
+        values: vec![PivotValue { source_col: "Sales".into(), func: PivotFunc::Sum, name: "Sum of Sales".into(), ..PivotValue::default() }],
+        filters: vec![PivotFilter { source_col: "Date".into(), selected: Some(vec!["Qtr2".into()]), hidden: false }],
+        ..PivotTable::default()
+    });
+    report.slicers.push(Slicer {
+        id: 1,
+        source: SlicerSource::Pivot {
+            pivots: vec![SlicerPivot { sheet: "Report".into(), name: "By Quarter".into() }],
+            field: "Date".into(),
+            sort: PivotSort::Asc,
+            cross_filter: SlicerCrossFilter::ShowItemsWithDataAtTop,
+            show_missing: true,
+        },
+        caption: "Date".into(),
+        anchor: Anchor { cell: at("AJ1"), dx: 0.0, dy: 0.0, width: 180.0, height: 240.0, mode: AnchorMode::default() },
+        columns: 1,
+        name: "Date".into(),
+        style: String::new(),
+        row_height: None,
+    });
+    let bytes = write_xlsx(&wb).unwrap();
+    let parts = unzip(&bytes);
+    let cache = String::from_utf8(parts["xl/slicerCaches/slicerCache1.xml"].clone()).unwrap();
+    // Items: <start, Qtr1..Qtr4, >end, listed in that order, with only Qtr2 selected.
+    let items = cache.split("<items").nth(1).unwrap();
+    let xs: Vec<&str> = items.split("<i x=\"").skip(1).map(|s| s.split('"').next().unwrap()).collect();
+    assert_eq!(xs, ["0", "1", "2", "3", "4", "5"], "{cache}");
+    assert!(items.contains("<i x=\"2\" s=\"1\"/>") && items.matches("s=\"1\"").count() == 1, "{cache}");
+
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    let b = back.sheet(1).unwrap();
+    assert_eq!(b.slicers[0].source, wb.sheet(1).unwrap().slicers[0].source);
+    let pb = b.pivots.iter().find(|p| p.name == "By Quarter").unwrap();
+    assert_eq!(pb.filters, vec![PivotFilter { source_col: "Date".into(), selected: Some(vec!["Qtr2".into()]), hidden: false }]);
+}
+
 #[test]
 fn hostile_slicer_parts_warn_not_panic() {
     let bytes = write_xlsx(&slicer_workbook()).unwrap();
