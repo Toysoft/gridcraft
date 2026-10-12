@@ -1,6 +1,6 @@
 //! Title bar (Quick Access Toolbar), ribbon tabs and ribbon groups, and keyboard shortcuts.
 
-use egui::{Align2, Color32, Key, Modifiers, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Align2, Color32, Key, Modifiers, Order, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use gridcraft_engine::model::{HAlign, Style, VAlign};
 use serde_json::json;
 
@@ -430,11 +430,19 @@ fn group_plan_active_id() -> egui::Id {
     egui::Id::new("ribbon_group_plan_active")
 }
 
+/// Where the name of the group whose collapsed dropdown is open lives (None = none open; only one
+/// at a time, as in Excel). The dropdown is an [`egui::Area`], not a `Popup`: egui keeps a single
+/// popup slot per viewport, so a `Popup`-based group popup would be replaced — and then abandoned
+/// — by the first control inside it that opens a popup of its own (a font combo, a split menu).
+fn group_dropdown_open_id() -> egui::Id {
+    egui::Id::new("ribbon_group_dropdown_open")
+}
+
 /// Draws one ribbon group: a separator before it (none before the row's first group, as in Excel),
 /// then either its body, or — when the tab's plan at [`group_plan_id`] names it — a launcher
-/// button whose popup re-runs the body. Under an id salt derived from `name`, either way, so the
-/// group's widget temp-state (combo drafts, popup memory) survives the move. Records the width it
-/// took and the launcher size for this frame.
+/// button whose dropdown re-runs the body. Under an id salt derived from `name`, either way, so
+/// the group's widget temp-state (combo drafts, popup memory) survives the move. Records the
+/// width it took and the launcher size for this frame.
 pub(crate) fn group(ui: &mut Ui, name: &str, hero: Icon, body: impl FnOnce(&mut Ui)) {
     let collapsed = ui.ctx().data(|d| d.get_temp::<Vec<String>>(group_plan_active_id())).is_some_and(|plan| plan.iter().any(|g| g == name));
     if ui.cursor().min.x > ui.max_rect().left() + 0.5 {
@@ -443,9 +451,47 @@ pub(crate) fn group(ui: &mut Ui, name: &str, hero: Icon, body: impl FnOnce(&mut 
     let start = ui.cursor().min.x;
     let launcher = if collapsed {
         let r = launcher_button(ui, hero, name);
-        egui::Popup::menu(&r).show(|ui| {
-            ui.horizontal(|ui| ui.push_id(("ribbon_group", name), |ui| body(ui)));
+        let dropdown_id = egui::Id::new(("ribbon_group_dropdown", name));
+        let shared: Option<String> = ui.ctx().data(|d| d.get_temp(group_dropdown_open_id())).unwrap_or_default();
+        let was_open = shared.as_deref() == Some(name);
+        let mut open = was_open;
+        if r.clicked() {
+            open = !open;
+        } else if was_open {
+            // Menu-style dismissal (the Area cousin of the grid's `popup_dismissed`): a click on
+            // the world behind us, Escape, a lost window, or the launcher scrolling out of the
+            // card. A click on a floating layer must NOT dismiss — our own dropdown is Tooltip,
+            // and nested control popups (combos, split menus) open on Foreground.
+            let clicked_outside = ui.input(|i| i.pointer.any_click())
+                && ui
+                    .input(|i| i.pointer.interact_pos())
+                    .is_none_or(|pos| ui.ctx().layer_id_at(pos).is_none_or(|l| matches!(l.order, Order::Background | Order::Middle)));
+            let escape_pressed = ui.input(|i| i.key_pressed(Key::Escape));
+            // Not inside `input`: it write-locks the context, and `is_any_open` read-locks it.
+            let escape = ui.input(|i| !i.focused) || (escape_pressed && !egui::Popup::is_any_open(ui.ctx()));
+            let scrolled_away = !ui.clip_rect().intersects(r.rect);
+            if clicked_outside || escape || scrolled_away {
+                open = false;
+            }
+        }
+        ui.ctx().data_mut(|d| {
+            let current: Option<String> = d.get_temp(group_dropdown_open_id()).unwrap_or_default();
+            if open {
+                d.insert_temp(group_dropdown_open_id(), Some(name.to_owned()));
+            } else if current.as_deref() == Some(name) {
+                d.insert_temp::<Option<String>>(group_dropdown_open_id(), None);
+            }
         });
+        if open {
+            egui::Area::new(dropdown_id).order(Order::Tooltip).fixed_pos(r.rect.left_bottom() + vec2(0.0, 2.0)).constrain(true).show(
+                ui.ctx(),
+                |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.horizontal(|ui| ui.push_id(("ribbon_group", name), |ui| body(ui)));
+                    });
+                },
+            );
+        }
         r.rect.width()
     } else {
         ui.push_id(("ribbon_group", name), |ui| body(ui));

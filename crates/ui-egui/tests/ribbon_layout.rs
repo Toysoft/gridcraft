@@ -137,6 +137,41 @@ fn collapsed_group_opens_popup_and_runs_its_command() {
 }
 
 #[test]
+fn collapsed_group_dropdown_survives_nested_control_popups() {
+    let mut h = app_at(1600.0, "Home");
+    h.ctx.data_mut(|d| d.insert_temp(gridcraft_ui_egui::ribbon::group_plan_id("Home"), vec!["Font".to_string()]));
+    h.run_steps(1);
+    h.get_by_label("Font").click();
+    h.run_steps(2);
+    // The Font combo inside the dropdown opens a popup of its own.
+    h.get_by_label("Calibri").click();
+    h.run_steps(2);
+    assert!(h.query_by_label("Bold (⌘B)").is_some(), "group dropdown still open next to the nested popup");
+    h.get_by_label("Arial").click(); // a row of the nested font list
+    h.run_steps(2);
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.fontName"), "nested popup row runs its command");
+    assert!(h.query_by_label("Bold (⌘B)").is_some(), "dropdown still open after the nested pick");
+    // A click on the sheet outside closes the dropdown.
+    h.hover_at(egui::pos2(800.0, 400.0));
+    for pressed in [true, false] {
+        h.input_mut().events.push(egui::Event::PointerButton {
+            pos: egui::pos2(800.0, 400.0),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        });
+    }
+    h.run_steps(1);
+    assert!(h.query_by_label("Bold (⌘B)").is_none(), "click outside closes the dropdown");
+    // Escape closes a freshly opened dropdown.
+    h.get_by_label("Font").click();
+    h.run_steps(2);
+    h.key_press(egui::Key::Escape);
+    h.run_steps(1);
+    assert!(h.query_by_label("Bold (⌘B)").is_none(), "Escape closes the dropdown");
+}
+
+#[test]
 fn formulas_autosum_runs_on_the_icon_and_opens_its_menu_on_the_label() {
     let mut h = app_at(1600.0, "Formulas");
     h.get_by_label("AutoSum").click();
