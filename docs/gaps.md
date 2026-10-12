@@ -105,8 +105,8 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
   data model (`data.fromWeb`, `data.relationships` missing). **Estimate:** 60–100 h.
 
 ### 13. Analysis tools: Solver, Analysis ToolPak, Forecast Sheet (F)
-- `data.solver` missing. Analysis ToolPak (`data.analysisToolPak`, #312) has 16 of Excel's 19
-  tools; Fourier Analysis, Random Number Generation, Sampling and the tools' charts remain.
+- `data.solver` missing. Analysis ToolPak (`data.analysisToolPak`, #312) has 17 of Excel's 19
+  tools; Random Number Generation, Sampling and the tools' charts remain.
   Forecast Sheet (`data.forecastSheet`) and the FORECAST.ETS family are in; the sheet has no
   Forecast Start (hindcast) option yet. **Estimate:** 15–25 h.
 
