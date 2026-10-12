@@ -104,6 +104,8 @@ pub struct GridState {
     pub hf_start: bool,
     /// The grid geometry of the last frame (hit-testing for agents and tests).
     pub geo: Option<Geo>,
+    /// What the macro step editor shows on the grid (Check, debugging).
+    pub macro_overlay: Option<crate::macro_editor::MacroOverlay>,
 }
 
 impl GridState {
@@ -2780,6 +2782,9 @@ pub(crate) fn paint_overlays(
         egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), egui::Id::new("link_tip"), egui::PopupAnchor::Pointer).show(|ui| {
             ui.label(tip);
         });
+    }
+    if let Some(o) = &app.grid.macro_overlay {
+        crate::macro_editor::paint_overlay(p, geo, sh, o);
     }
     // Trace precedents / dependents arrows.
     if let Some(trace) = app.grid.trace.clone()

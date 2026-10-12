@@ -136,7 +136,8 @@ text, so AltGr symbols (e.g. `~` on a German layout) never trigger a shortcut.
 Format Cells, Insert Function/Formula Builder, Find and Replace, Go To and Go To Special, Sort,
 Name Manager, Data Validation, Paste Special, Conditional Formatting manager, Page Setup, Goal
 Seek, Scenario Manager, Data Analysis, Forecast Sheet, Macros (macros, Automate scripts and a
-note on a VBA project; Run, Delete, Options) and Record Macro and others exist. Missing or partial: Options,
+note on a VBA project; Run, Step Into, Edit, Create, Delete, Options), Record Macro, the macro step
+editor (Excel's VBA editor has no counterpart here) and others exist. Missing or partial: Options,
 Solver, Power Query editor, Insert Object, Equation editor, Protect/Allow Edit Ranges,
 Workbook Links, Accessibility checker.
 
@@ -163,6 +164,7 @@ scrollbar bugs 2–4 · pixel/feel pass against observed Excel 7–12.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Macro step editor: step list with breakpoints, drag to reorder and a command picker, an inspector with reference boxes, a debug bar and grid overlays |
 | 2026-10-11 | minor | Automate › Macros group (Record Macro, Use Relative References, Run Macro), recording status in the status bar, Macros dialog with macros beside scripts, Record Macro dialog, Ctrl+Shift+letter macro shortcuts; View › Macros keytips open the dialogs |
 | 2026-10-11 | minor | Formula bar grows from one to five lines then scrolls; in-cell editor capped at five lines; code editor widget (Python and LaTeX colouring, Tab indent, Enter keeps indentation) |
 | 2026-10-11 | minor | Ribbon: scroll arrows on a tab wider than the window, Formulas › AutoSum as a split button with its function menu, View › Show in two columns so Headings is no longer cut off |

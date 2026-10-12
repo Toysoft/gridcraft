@@ -573,6 +573,8 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Macros…", "マクロ…"),
     ("Recording", "記録中"),
     ("Stop", "停止"),
+    ("New Macro", "新しいマクロ"),
+    ("Show", "表示"),
 ];
 
 #[cfg(test)]
