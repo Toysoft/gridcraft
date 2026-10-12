@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Python in cells: package installs) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Python in cells: package installs and import-aware time limits) · **Target:** Microsoft Excel (Microsoft 365)
 
 How GridCraft is built today. Rules for contributors are in [`AGENTS.md`](../AGENTS.md).
 
@@ -85,8 +85,9 @@ it like any other cell. Code is written with `python.set`, never by typing `=PY(
   application that is not Rust.
 - **Protocol** (`python/protocol.rs`). One JSON object per line. The parent sends `Init`, `Run`,
   `XlValue` and `Reset`; the worker answers `Ready`, `Xl` (a request for cell values) and `Done`
-  (value, printed output, error and line, time). Worker frames start with a marker, so stray
-  output is never taken for a frame. Values travel as `gridcraft_core::Value`.
+  (value, printed output, error and line, time), and the CPython shim also sends `Extend` while
+  it imports a module not loaded yet (see time limits below). Worker frames start with a marker,
+  so stray output is never taken for a frame. Values travel as `gridcraft_core::Value`.
 - **Built-in and CPython.** Monty has no ambient access: file, environment and network
   operations suspend to the worker, which refuses them. It lacks most of the standard library and
   every third-party package, so a cell that imports one, or uses a construct Monty's compiler does
@@ -109,6 +110,18 @@ it like any other cell. Code is written with `python.set`, never by typing `=PY(
   an argument list, on a thread with a 10-minute deadline; `python.stop` cancels it. When it
   succeeds, the search runs again and every workbook's Python cells run again. Workbooks declare
   the packages they need with `python.packages` (kept in hidden names, so they travel in xlsx).
+- **Time limits and imports.** On CPython, time spent importing modules not loaded yet does not
+  count against a cell's time limit, up to `python.options {importSeconds}` (60 s by default):
+  the shim wraps `builtins.__import__`, checks the run's time less its import time every 50 ms,
+  and sends `Extend {id, ms, module}` heartbeats so the parent moves its own deadline by the same
+  amount (never past the allowance); the parent's kill stays the backstop. A worker loads numpy
+  and pandas, when installed, before it reports ready, and its start-up is not counted as the
+  first cell's time. A time limit that interrupts an import replaces the worker, since a package
+  may be half loaded. A cell stopped at its time limit mid-import, or on its first run on a new
+  worker, runs once more on a fresh worker (a `retried` row in Diagnostics) before the crash-loop
+  guard refuses it. Each install ends by importing what it installed once under a 120 s deadline
+  (a warm-up, so the first import in a cell is fast; a failure there is a warning, not a failed
+  install), and uv installs compile bytecode.
 - **Runtime** (`engine/python.rs`). After every top-level command that changed a workbook,
   `Session::execute` compares the workbook before and after and runs the Python cells whose code
   changed or whose `xl()` references read changed cells, and every Python cell after the first of
@@ -152,6 +165,7 @@ rpm, tarball), FreeBSD, and web (WASM; WebGPU or WebGL2; no Python cells). Relea
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Python in cells: import-aware time limits (`Extend` heartbeats, `importSeconds`, one retry, install warm-up) |
 | 2026-10-12 | minor | Python in cells: GridCraft's own Python environment and package installs the person approves |
 | 2026-10-12 | minor | Python in cells: the `python` crate (L1), worker processes, protocol, built-in and CPython backends, the engine runtime, the trust gate, files and the web build |
 | 2026-10-11 | minor | Engine building blocks for multi-command actions: undo groups, recording buffer, document trust, chunked hidden-name storage |

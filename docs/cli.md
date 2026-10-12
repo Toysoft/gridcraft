@@ -77,7 +77,8 @@ gridcraft-cli run \
 
 A workbook opened with `--in` came from a file, so its Python cells keep their saved values and
 new code shows `#BLOCKED!` until a `python.enable` step. `python.options` shows which Python runs
-cells. The binary also serves as the built-in Python's worker process (`--python-worker`, started by
+cells and sets the time limits: `timeoutSeconds` for one cell (5 by default) and, on CPython,
+`importSeconds` (60 by default), the time importing modules not loaded yet may take beyond it. The binary also serves as the built-in Python's worker process (`--python-worker`, started by
 GridCraft itself, not meant to be run by hand).
 
 ### Packages
