@@ -39,7 +39,10 @@ pub fn toggle_button(ui: &mut Ui, icon: Icon, on: bool, tip: &str) -> Response {
         ui.painter().rect_filled(rect, 4.0, t.hover);
     }
     icons::paint(ui.painter(), Rect::from_center_size(rect.center(), vec2(16.0, 16.0)), icon, t.text);
-    resp.on_hover_text(tr(ui, tip))
+    let name = tr(ui, tip);
+    let enabled = ui.is_enabled();
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, on, name));
+    resp.on_hover_text(name)
 }
 
 /// Large ribbon button: 32px icon over a one- or two-line label.
@@ -56,6 +59,26 @@ pub fn big_button(ui: &mut Ui, icon: Icon, label: &str, tip: &str, dropdown: boo
     icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.center().x, rect.top() + 21.0), vec2(30.0, 30.0)), icon, t.text);
     paint_big_label(ui, rect, &lines, dropdown);
     resp.on_hover_text(tr(ui, tip))
+}
+
+/// The button a collapsed ribbon group renders: like [`big_button`] but without the dropdown
+/// arrow, its accessible name is the group's translated name so tests and assistive technology
+/// find it where the group's label used to be.
+pub fn launcher_button(ui: &mut Ui, icon: Icon, label: &str) -> Response {
+    let t = Tokens::get(ui.ctx());
+    let label = tr(ui, label);
+    let (lines, w) = big_label(ui, label, false);
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 72.0), Sense::click());
+    if resp.is_pointer_button_down_on() {
+        ui.painter().rect_filled(rect, 5.0, t.pressed);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(rect, 5.0, t.hover);
+    }
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.center().x, rect.top() + 21.0), vec2(30.0, 30.0)), icon, t.text);
+    paint_big_label(ui, rect, &lines, false);
+    let enabled = ui.is_enabled();
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    resp.on_hover_text(label.to_owned())
 }
 
 /// The width a [`big_button`] needs for `label` (translated, no dropdown arrow), measured like

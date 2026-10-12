@@ -103,6 +103,8 @@ pub enum Icon {
     Freeze,
     Zoom,
     Gridlines,
+    /// A collapsed ribbon group with no large button of its own (its launcher's fallback hero).
+    Grid,
     Theme,
     Margins,
     Orient,
@@ -485,6 +487,12 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, c: Color32, pal: &Palette) {
             g.stroke(&[(10.0, 2.5), (10.0, 13.5)], c);
             g.stroke(&[(2.0, 6.2), (14.0, 6.2)], c);
             g.stroke(&[(2.0, 9.8), (14.0, 9.8)], c);
+        }
+        Icon::Grid => {
+            g.rect(2.5, 2.5, 11.0, 11.0, None, Some(c));
+            g.stroke(&[(8.0, 2.5), (8.0, 13.5)], c);
+            g.stroke(&[(2.5, 8.0), (13.5, 8.0)], c);
+            g.rect(3.5, 3.5, 3.5, 3.5, Some(blue), None);
         }
         Icon::PageLayout | Icon::Paper => {
             g.rect(3.5, 1.5, 9.0, 13.0, None, Some(c));

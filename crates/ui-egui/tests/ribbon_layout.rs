@@ -119,6 +119,24 @@ fn big_split_button_separates_the_default_action_from_the_menu() {
 }
 
 #[test]
+fn collapsed_group_opens_popup_and_runs_its_command() {
+    let mut h = app_at(1600.0, "Home");
+    h.ctx.data_mut(|d| d.insert_temp(gridcraft_ui_egui::ribbon::group_plan_id("Home"), vec!["Font".to_string()]));
+    h.run_steps(1);
+    let launcher = h.get_by_label("Font"); // accessible name from launcher_button
+    let hidden = h.query_by_label("Bold (⌘B)").is_none(); // toggle_button's accessible name
+    assert!(hidden, "body hidden while collapsed");
+    launcher.click();
+    h.run_steps(2);
+    h.get_by_label("Bold (⌘B)").click(); // toggle_button paints its icon; queried by its accessible name
+    h.run_steps(2);
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.bold"), "control inside the popup runs");
+    h.get_by_label("Font").click(); // second click closes; command not duplicated
+    h.run_steps(1);
+    assert_eq!(h.state().session.journal.iter().filter(|(id, _)| id == "home.bold").count(), 1);
+}
+
+#[test]
 fn formulas_autosum_runs_on_the_icon_and_opens_its_menu_on_the_label() {
     let mut h = app_at(1600.0, "Formulas");
     h.get_by_label("AutoSum").click();

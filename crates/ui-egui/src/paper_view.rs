@@ -603,7 +603,7 @@ pub fn ribbon_tab(app: &mut SheetApp, ui: &mut egui::Ui) {
     let (sheet_name, file) =
         app.session.active().map(|d| (d.wb.sheet(e.sheet).map(|s| s.name.clone()).unwrap_or_default(), d.display_title())).unwrap_or_default();
     // Header & Footer
-    group(ui, "Header & Footer", |ui| {
+    group(ui, "Header & Footer", Icon::Header, |ui| {
         // Header & Footer presets (shown with sample values, as the result will read).
         for (label, part) in [("Header", false), ("Footer", true)] {
             let r = big_button(ui, if part { Icon::Footer } else { Icon::Header }, label, label, true);
@@ -629,7 +629,7 @@ pub fn ribbon_tab(app: &mut SheetApp, ui: &mut egui::Ui) {
         }
     });
     // Header & Footer Elements
-    group(ui, "Header & Footer Elements", |ui| {
+    group(ui, "Header & Footer Elements", Icon::PageNumber, |ui| {
         for (icon, label, tip, field) in [
             (Icon::PageNumber, "Page\nNumber", "Page Number", "&[Page]"),
             (Icon::PageCount, "Number\nof Pages", "Number of Pages", "&[Pages]"),
@@ -645,7 +645,7 @@ pub fn ribbon_tab(app: &mut SheetApp, ui: &mut egui::Ui) {
         }
     });
     // Navigation
-    group(ui, "Navigation", |ui| {
+    group(ui, "Navigation", Icon::Header, |ui| {
         if big_button(ui, Icon::Header, "Go to\nHeader", "Go to Header", false).clicked() && footer {
             go_to(app, false);
         }
@@ -654,7 +654,7 @@ pub fn ribbon_tab(app: &mut SheetApp, ui: &mut egui::Ui) {
         }
     });
     // Options
-    group(ui, "Options", |ui| {
+    group(ui, "Options", Icon::Grid, |ui| {
         let (first, odd_even) = app
             .session
             .active()
