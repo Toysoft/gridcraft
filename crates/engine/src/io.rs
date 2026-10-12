@@ -174,8 +174,31 @@ pub fn save_bytes(wb: &Workbook, path: &str) -> Result<Vec<u8>> {
 /// Save As CSV/Text writes "the text and values as they are displayed in cells" with "all
 /// characters in each cell" (Microsoft Support, *Excel formatting and features that are not
 /// transferred to other file formats*): number formats applied, never column-width `#####`.
+/// One departure from Excel: a General number keeps its digits ([`csv_general_number`]), so a
+/// 12-digit part code read from a CSV is not saved back as `1.24412E+11`.
 fn csv(wb: &Workbook, sh: &Sheet, delimiter: u8) -> Vec<u8> {
-    gridcraft_xlsx::write_csv(sh, delimiter, |c| crate::display::value_text(wb, sh, c))
+    gridcraft_xlsx::write_csv(sh, delimiter, |c| {
+        let shown = crate::display::value_text(wb, sh, c);
+        match sh.value(c) {
+            gridcraft_core::Value::Number(n) if wb.styles.get(sh.style_id(c)).num_fmt.as_str() == "General" => csv_general_number(n, shown),
+            _ => shown,
+        }
+    })
+}
+
+/// A General-format number as CSV writes it: the displayed text when that already reads back as
+/// the same number, otherwise the number to Excel's 15 significant digits in plain notation
+/// (General shows at most 11 characters, which turns long numbers into lossy `1.24412E+11`).
+/// Magnitudes plain notation would spell out with long runs of zeros keep the displayed text.
+fn csv_general_number(n: f64, shown: String) -> String {
+    if shown.parse::<f64>().is_ok_and(|s| s == n) || !n.is_finite() || !(1e-5..1e15).contains(&n.abs()) {
+        return shown;
+    }
+    // Round to 15 significant digits, then print the shortest text for that value.
+    match format!("{n:.14e}").parse::<f64>() {
+        Ok(r) if r != 0.0 => format!("{r}"),
+        _ => shown,
+    }
 }
 
 fn esc(s: &str) -> String {
@@ -477,6 +500,22 @@ mod tests {
         let tabs = "a\tb\r\n1\t2\r\n";
         let (wb, _) = open_bytes("tabs.csv", tabs.as_bytes()).unwrap();
         assert_eq!(String::from_utf8(save_bytes(&wb, "tabs.csv").unwrap()).unwrap(), tabs);
+    }
+
+    #[test]
+    fn csv_general_numbers_keep_their_digits() {
+        let n = |v: f64, shown: &str| csv_general_number(v, shown.to_string());
+        // General shows these in 11 characters; the file gets every digit back.
+        assert_eq!(n(124412140710.0, "1.24412E+11"), "124412140710");
+        assert_eq!(n(-124412140710.0, "-1.24412E+11"), "-124412140710");
+        assert_eq!(n(1234567.891234, "1234567.891"), "1234567.891234");
+        // Display already exact: unchanged. Binary noise past 15 digits is not written.
+        assert_eq!(n(42.5, "42.5"), "42.5");
+        assert_eq!(n(0.1 + 0.2, "0.3"), "0.3");
+        // Very large or tiny magnitudes keep General's scientific text.
+        assert_eq!(n(1e20, "1E+20"), "1E+20");
+        assert_eq!(n(1.5e-9, "1.5E-09"), "1.5E-09");
+        assert_eq!(n(f64::NAN, "#NUM!"), "#NUM!");
     }
 
     #[test]
