@@ -577,3 +577,24 @@ fn user_defined_function_prefix_round_trips() {
         assert_eq!(cell.child("f").unwrap().text, f, "written {a}");
     }
 }
+
+#[test]
+fn scenarios_as_excel_writes_them() {
+    // The shape Excel (Microsoft 365) writes after Data › What-If Analysis › Scenario Manager, with
+    // a scenario that lost its changing cells and an out-of-range index.
+    let body = r#"<sheetData><row r="4"><c r="C4" t="inlineStr"><is><t>Base</t></is></c></row></sheetData>
+        <scenarios current="0" show="7" sqref="C28:C32 E1"><scenario name="Base" locked="1" count="1" user="Analyst" comment="Base case"><inputCells r="C4" val="Base"/></scenario><scenario name="Bull" count="2" hidden="1"><inputCells r="C4" val="Bull"/><inputCells r="D4" val="0.085"/></scenario><scenario name="Empty" count="0"/></scenarios>"#;
+    let (wb, _) = read_xlsx(&minimal(body, &[], "", "")).unwrap();
+    let sc = &wb.sheet(0).unwrap().scenarios;
+    assert_eq!(sc.list.len(), 2, "a scenario without changing cells is dropped");
+    let base = &sc.list[0];
+    assert_eq!(
+        (base.name.as_str(), base.comment.as_str(), base.user.as_str(), base.locked, base.hidden),
+        ("Base", "Base case", "Analyst", true, false)
+    );
+    assert_eq!(base.inputs, vec![(at("C4"), "Base".to_string())]);
+    assert_eq!(sc.list[1].inputs, vec![(at("C4"), "Bull".to_string()), (at("D4"), "0.085".to_string())]);
+    assert!(sc.list[1].hidden && !sc.list[1].locked);
+    assert_eq!((sc.current, sc.shown), (Some(0), None));
+    assert_eq!(sc.result_cells, vec![RangeRef::parse("C28:C32").unwrap(), RangeRef::parse("E1").unwrap()]);
+}

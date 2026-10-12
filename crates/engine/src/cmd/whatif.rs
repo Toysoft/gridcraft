@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 use gridcraft_calc::Calc;
 use gridcraft_core::{CellRef, RangeRef, Value};
-use gridcraft_model::{CalcMode, Cell, DefinedName, Sheet, StyleId, Workbook};
+use gridcraft_model::{CalcMode, Cell, Sheet, StyleId, Workbook};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
@@ -340,11 +340,14 @@ fn goal_seek(s: &mut Session, p: &Json) -> Result<Json> {
 
 // ---------------------------------------------------------------- scenarios
 
-/// Hidden workbook-scope name holding the scenarios as a quoted JSON string.
-pub(crate) const SCENARIO_NAME: &str = "_sc_scenarios";
-const MAX_SCENARIO_CELLS: usize = 32;
-const MAX_SCENARIOS: usize = 1000;
+/// Scenarios live on their sheets (`Sheet::scenarios`, XLSX `<scenarios>`, as in Excel). Before
+/// that GridCraft kept them in this hidden workbook name as a quoted JSON string: it is still read,
+/// and removed once the scenarios are next stored.
+pub(crate) const LEGACY_SCENARIO_NAME: &str = "_sc_scenarios";
+const MAX_SCENARIO_CELLS: usize = gridcraft_model::Scenarios::MAX_INPUTS;
+const MAX_SCENARIOS: usize = gridcraft_model::Scenarios::MAX_SCENARIOS;
 
+/// A scenario as the commands see it: its sheet, its changing cells (`"B2,B3"`) and their values.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Scenario {
     pub name: String,
@@ -355,9 +358,51 @@ pub(crate) struct Scenario {
     pub comment: String,
 }
 
+/// Every scenario of the workbook, sheet by sheet, then any still in the legacy name.
 pub(crate) fn load_scenarios(wb: &Workbook) -> Vec<Scenario> {
-    let Some(n) = wb.names.iter().find(|n| n.scope.is_none() && n.name.eq_ignore_ascii_case(SCENARIO_NAME)) else { return vec![] };
-    serde_json::from_str(&string_literals(&n.formula)).unwrap_or_default()
+    let mut list: Vec<Scenario> = wb
+        .sheets
+        .iter()
+        .flat_map(|sh| {
+            sh.scenarios.list.iter().map(move |x| Scenario {
+                name: x.name.clone(),
+                sheet: sh.name.clone(),
+                changing: x.inputs.iter().map(|(c, _)| c.a1()).collect::<Vec<_>>().join(","),
+                values: x.inputs.iter().map(|(_, v)| input_json(v)).collect(),
+                comment: x.comment.clone(),
+            })
+        })
+        .collect();
+    if let Some(n) = wb.names.iter().find(|n| n.scope.is_none() && n.name.eq_ignore_ascii_case(LEGACY_SCENARIO_NAME)) {
+        let legacy: Vec<Scenario> = serde_json::from_str(&string_literals(&n.formula)).unwrap_or_default();
+        for sc in legacy {
+            if !list.iter().any(|x| x.name.eq_ignore_ascii_case(&sc.name) && x.sheet.eq_ignore_ascii_case(&sc.sheet)) {
+                list.push(sc);
+            }
+        }
+    }
+    list.truncate(MAX_SCENARIOS);
+    list
+}
+
+/// A changing cell's value as the file keeps it (what would be typed) to the commands' JSON.
+fn input_json(v: &str) -> Json {
+    if v.eq_ignore_ascii_case("TRUE") || v.eq_ignore_ascii_case("FALSE") {
+        return Json::Bool(v.eq_ignore_ascii_case("TRUE"));
+    }
+    match v.trim().parse::<f64>() {
+        Ok(n) if n.is_finite() && !v.trim().is_empty() => json!(n),
+        _ => Json::String(v.to_string()),
+    }
+}
+
+/// The other way: numbers without a trailing `.0`, as Excel writes them.
+fn json_input(v: &Json) -> String {
+    match v.as_f64() {
+        Some(n) if n.fract() == 0.0 && n.abs() < 1e15 => format!("{}", n as i64),
+        Some(n) => format!("{n}"),
+        None => super::edit::json_to_input(v),
+    }
 }
 
 /// Concatenates the string literals of a `"a"&"b""c"` formula.
@@ -386,26 +431,48 @@ fn string_literals(f: &str) -> String {
     out
 }
 
+/// Writes `list` back to the sheets' scenarios (a scenario whose sheet is gone is dropped) and
+/// removes the legacy name. Who added a scenario and its protection flags are kept from the stored
+/// scenario of the same name; new ones are locked, as Excel's Prevent changes default.
 fn store_scenarios(wb: &mut Workbook, list: &[Scenario]) {
-    wb.names.retain(|n| !(n.scope.is_none() && n.name.eq_ignore_ascii_case(SCENARIO_NAME)));
-    if list.is_empty() {
-        return;
+    wb.names.retain(|n| !(n.scope.is_none() && n.name.eq_ignore_ascii_case(LEGACY_SCENARIO_NAME)));
+    for sheet in wb.sheets.iter_mut() {
+        let old = &sheet.scenarios;
+        let stored: Vec<gridcraft_model::Scenario> = list
+            .iter()
+            .filter(|x| x.sheet.eq_ignore_ascii_case(&sheet.name))
+            .map(|x| {
+                let cells = x.changing.split(',').filter_map(|t| CellRef::parse(&t.trim().replace('$', "")));
+                let inputs = cells.zip(x.values.iter()).map(|(c, v)| (c, json_input(v))).take(MAX_SCENARIO_CELLS).collect();
+                let prev = old.list.iter().find(|p| p.name.eq_ignore_ascii_case(&x.name));
+                gridcraft_model::Scenario {
+                    name: x.name.clone(),
+                    inputs,
+                    comment: x.comment.clone(),
+                    user: prev.map(|p| p.user.clone()).unwrap_or_default(),
+                    locked: prev.is_none_or(|p| p.locked),
+                    hidden: prev.is_some_and(|p| p.hidden),
+                }
+            })
+            .collect();
+        if stored == old.list {
+            continue;
+        }
+        let sc = &mut std::sync::Arc::make_mut(sheet).scenarios;
+        if stored.is_empty() {
+            *sc = gridcraft_model::Scenarios::default();
+            continue;
+        }
+        let len = stored.len();
+        sc.list = stored;
+        sc.current = sc.current.filter(|&i| i < len);
+        sc.shown = sc.shown.filter(|&i| i < len);
     }
-    let text = serde_json::to_string(list).unwrap_or_else(|_| "[]".into());
-    wb.names.push(DefinedName {
-        name: SCENARIO_NAME.into(),
-        scope: None,
-        // Excel caps string literals at 255 characters: store `"…"&"…"` chunks.
-        formula: text
-            .chars()
-            .collect::<Vec<char>>()
-            .chunks(250)
-            .map(|c| format!("\"{}\"", c.iter().collect::<String>().replace('"', "\"\"")))
-            .collect::<Vec<_>>()
-            .join("&"),
-        comment: "GridCraft Scenario Manager data".into(),
-        hidden: true,
-    });
+}
+
+/// The position of the scenario `name` among its sheet's scenarios.
+fn index_on_sheet(sheet: &Sheet, name: &str) -> Option<usize> {
+    sheet.scenarios.list.iter().position(|x| x.name.eq_ignore_ascii_case(name))
 }
 
 fn scenario_json(sc: &Scenario) -> Json {
@@ -498,6 +565,14 @@ fn scenario_show(s: &mut Session, p: &Json) -> Result<Json> {
                 }
             }
             cx.touch(si, *c);
+        }
+        // Remembered as the shown and selected scenario (`<scenarios show current>`); scenarios
+        // still in the legacy name move to their sheets.
+        store_scenarios(&mut cx.wb, &list);
+        if let Some(k) = cx.wb.sheet(si).and_then(|sh| index_on_sheet(sh, &sc.name)) {
+            let sh = cx.sheet_mut(si)?;
+            sh.scenarios.current = Some(k);
+            sh.scenarios.shown = Some(k);
         }
         Ok(())
     })?;
@@ -614,6 +689,12 @@ fn scenario_summary(s: &mut Session, p: &Json) -> Result<Json> {
         );
         sheet.cols.insert(1, gridcraft_model::LineInfo { size: Some(110.0), ..Default::default() });
         sheet.cols.insert(2, gridcraft_model::LineInfo { size: Some(100.0), ..Default::default() });
+        // The scenarios' sheet remembers the result cells for the next report (`<scenarios sqref>`).
+        let all = load_scenarios(&cx.wb);
+        store_scenarios(&mut cx.wb, &all);
+        if !results.is_empty() {
+            cx.sheet_mut(si)?.scenarios.result_cells = results.iter().map(|c| RangeRef::cell(*c)).collect();
+        }
         cx.wb.sheets.push(std::sync::Arc::new(sheet));
         cx.structural = true;
         Ok(cx.wb.sheets.len() - 1)
@@ -1120,7 +1201,7 @@ fn consolidate(s: &mut Session, p: &Json) -> Result<Json> {
 
 #[cfg(test)]
 mod tests {
-    use gridcraft_core::{CellRef, Value};
+    use gridcraft_core::{CellRef, RangeRef, Value};
     use serde_json::json;
 
     use crate::Session;
@@ -1215,21 +1296,25 @@ mod tests {
         assert_eq!(n(&s, "B10"), 300.0);
         s.execute("data.scenarioShow", json!({"name": "Base"})).unwrap();
         assert_eq!(n(&s, "B10"), 200.0);
-        // Stored in a hidden workbook name.
+        // Stored on the sheet, as Excel keeps them; Base was shown last.
         let d = s.doc().unwrap();
-        assert!(d.wb.names.iter().any(|n| n.name == super::SCENARIO_NAME && n.hidden));
-        assert_eq!(super::load_scenarios(&d.wb).len(), 2);
-        // Long data is split into 250-character literals and survives an xlsx round trip.
+        let sc = &d.wb.active().unwrap().scenarios;
+        assert!(d.wb.names.iter().all(|n| n.name != super::LEGACY_SCENARIO_NAME));
+        assert_eq!(sc.list[1].inputs, vec![(CellRef::parse("B2").unwrap(), "100".to_string()), (CellRef::parse("B3").unwrap(), "3".to_string())]);
+        assert!(sc.list.iter().all(|x| x.locked));
+        assert_eq!((sc.current, sc.shown), (Some(0), Some(0)));
+        // A long comment survives an xlsx round trip (`<scenarios>` in the sheet).
         s.execute("data.scenarioAdd", json!({"name": "Long", "changing": "B2", "values": [1], "comment": "x".repeat(600)})).unwrap();
-        let f = s.doc().unwrap().wb.names.iter().find(|n| n.name == super::SCENARIO_NAME).unwrap().formula.clone();
-        assert!(f.matches("\"&\"").count() >= 2, "{f}");
         let b64 = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap()["base64"].as_str().unwrap().to_string();
         s.execute("file.open", json!({"name": "sc.xlsx", "base64": b64})).unwrap();
         let l = s.execute("data.scenarioManager", json!({})).unwrap();
         assert_eq!(l["scenarios"].as_array().unwrap().len(), 3, "{l}");
+        assert_eq!(l["scenarios"][1]["values"], json!([100.0, 3.0]));
         assert_eq!(l["scenarios"][2]["comment"].as_str().unwrap().len(), 600);
         s.execute("data.scenarioDelete", json!({"name": "Long"})).unwrap();
         let r = s.execute("data.scenarioSummary", json!({"resultCells": "B10"})).unwrap();
+        let first = &s.doc().unwrap().wb.sheets[0];
+        assert_eq!(first.scenarios.result_cells, vec![RangeRef::parse("B10").unwrap()]);
         assert_eq!(r["sheet"], "Scenario Summary");
         assert_eq!(s.doc().unwrap().wb.active().unwrap().name, "Scenario Summary");
         assert_eq!(v(&s, "'Scenario Summary'!D3"), Value::from("Base"));
@@ -1242,8 +1327,32 @@ mod tests {
         s.execute("data.scenarioDelete", json!({"name": "Best"})).unwrap();
         assert_eq!(s.execute("data.scenarioManager", json!({})).unwrap()["scenarios"].as_array().unwrap().len(), 1);
         s.execute("data.scenarioDelete", json!({"name": "Base"})).unwrap();
-        assert!(s.doc().unwrap().wb.names.iter().all(|n| n.name != super::SCENARIO_NAME));
+        assert!(s.doc().unwrap().wb.sheets[0].scenarios.is_empty());
         assert!(s.execute("data.scenarioSummary", json!({})).is_err());
+    }
+
+    #[test]
+    fn scenarios_from_older_gridcraft_files_move_to_their_sheet() {
+        // GridCraft used to keep scenarios in a hidden name holding a quoted JSON string.
+        let mut s = s();
+        s.execute("range.setValues", json!({"range": "B2", "values": [[10], [20]]})).unwrap();
+        let json = r#"[{"name":"Old","sheet":"Sheet1","changing":"B2,B3","values":[5,"x"],"comment":"kept"}]"#;
+        let legacy = gridcraft_model::DefinedName {
+            name: super::LEGACY_SCENARIO_NAME.into(),
+            scope: None,
+            formula: format!("\"{}\"", json.replace('"', "\"\"")),
+            comment: String::new(),
+            hidden: true,
+        };
+        std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb).names.push(legacy);
+        let l = s.execute("data.scenarioManager", json!({})).unwrap();
+        assert_eq!(l["scenarios"][0]["comment"], "kept", "{l}");
+        // Showing it (or any change) moves it to the sheet and drops the name.
+        s.execute("data.scenarioShow", json!({"name": "Old"})).unwrap();
+        assert_eq!((n(&s, "B2"), v(&s, "B3")), (5.0, Value::from("x")));
+        let d = s.doc().unwrap();
+        assert!(d.wb.names.iter().all(|n| n.name != super::LEGACY_SCENARIO_NAME));
+        assert_eq!(d.wb.sheets[0].scenarios.list[0].inputs[1], (CellRef::parse("B3").unwrap(), "x".to_string()));
     }
 
     #[test]

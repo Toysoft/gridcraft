@@ -8,8 +8,8 @@ use gridcraft_core::{CellError, CellRef, DateSystem, MAX_COLS, MAX_ROWS, RangeRe
 use gridcraft_formula::Expr;
 use gridcraft_model::{
     AutoFilter, Cell, CfOperator, CfRule, CfValueKind, Comment, CondFormat, EditRange, ErrorStyle, FilterCriterion, Formula, Hyperlink, LineInfo,
-    Orientation, PasswordHash, Sheet, SheetProtection, Sparkline, SparklineKind, Table, TableColumn, TotalsFn, Validation, ValidationKind,
-    XmlColumnPr,
+    Orientation, PasswordHash, Scenario, Scenarios, Sheet, SheetProtection, Sparkline, SparklineKind, Table, TableColumn, TotalsFn, Validation,
+    ValidationKind, XmlColumnPr,
 };
 
 use crate::IoError;
@@ -196,6 +196,7 @@ pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<Sheet, IoE
             }
             "extLst" => read_ext(cx, e, &mut sheet),
             "protectedRanges" => read_protected_ranges(e, &mut sheet),
+            "scenarios" => sheet.scenarios = read_scenarios(e),
             _ => {}
         }
     }
@@ -263,6 +264,35 @@ fn read_protected_ranges(e: &El, sheet: &mut Sheet) {
         let title = p.attr("name").unwrap_or("").to_string();
         sheet.edit_ranges.push(EditRange { title, ranges, password, security_descriptor: p.attr("securityDescriptor").map(str::to_string) });
     }
+}
+
+/// What-If scenarios (`<scenarios>`): each with its changing cells and the values as text.
+/// Hostile files are bounded by Excel's own limits.
+fn read_scenarios(e: &El) -> Scenarios {
+    let mut out = Scenarios::default();
+    for sc in e.kids("scenario").take(Scenarios::MAX_SCENARIOS) {
+        let inputs: Vec<(CellRef, String)> = sc
+            .kids("inputCells")
+            .filter_map(|c| Some((CellRef::parse(c.attr("r")?)?, c.attr("val").unwrap_or("").to_string())))
+            .take(Scenarios::MAX_INPUTS)
+            .collect();
+        if inputs.is_empty() {
+            continue;
+        }
+        out.list.push(Scenario {
+            name: sc.attr("name").unwrap_or("").to_string(),
+            inputs,
+            comment: sc.attr("comment").unwrap_or("").to_string(),
+            user: sc.attr("user").unwrap_or("").to_string(),
+            locked: sc.flag("locked", false),
+            hidden: sc.flag("hidden", false),
+        });
+    }
+    let index = |k: &str| e.attr_u32(k).map(|n| n as usize).filter(|&n| n < out.list.len());
+    out.current = index("current");
+    out.shown = index("show");
+    out.result_cells = e.attr("sqref").unwrap_or("").split_whitespace().filter_map(RangeRef::parse).take(255).collect();
+    out
 }
 
 fn read_views(e: &El, sheet: &mut Sheet) {

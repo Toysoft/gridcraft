@@ -204,6 +204,29 @@ fn sample() -> Workbook {
             security_descriptor: None,
         },
     ];
+    s.scenarios = Scenarios {
+        list: vec![
+            Scenario {
+                name: "Best <case> & co".into(),
+                inputs: vec![(at("B2"), "0.085".into()), (at("B3"), "Bull \"run\"".into())],
+                comment: "Created by Test\non 2026-10-12".into(),
+                user: "Test".into(),
+                locked: true,
+                hidden: false,
+            },
+            Scenario {
+                name: "Worst".into(),
+                inputs: vec![(at("B2"), "-1".into())],
+                comment: String::new(),
+                user: String::new(),
+                locked: false,
+                hidden: true,
+            },
+        ],
+        current: Some(1),
+        shown: Some(0),
+        result_cells: vec![rr("C10:C12"), rr("E4")],
+    };
     s.hyperlinks.insert(at("A2"), Hyperlink { target: "https://example.com/?a=1&b=2".into(), tooltip: Some("go".into()), external: true });
     s.hyperlinks.insert(at("A3"), Hyperlink { target: "'Data & Stuff'!B2".into(), tooltip: None, external: false });
     s.hyperlinks.insert(at("A4"), Hyperlink { target: "mailto:me@example.com".into(), tooltip: None, external: true });
@@ -506,6 +529,7 @@ fn full_roundtrip() {
     assert_eq!(b.autofilter, a.autofilter);
     assert_eq!(b.protection, a.protection);
     assert_eq!(b.edit_ranges, a.edit_ranges);
+    assert_eq!(b.scenarios, a.scenarios);
     assert_eq!(b.print, a.print);
     let mut sp = a.sparklines.clone();
     sp[0].source = "'Data & Stuff'!B2:B3".into();
@@ -617,6 +641,13 @@ fn package_structure() {
             let target = crate::package::resolve(dir, r.attr("Target").unwrap());
             assert!(names.contains(&target), "{n}: dangling {target}");
         }
+    }
+    // <scenarios> sits after <protectedRanges> and before the elements the schema puts later.
+    let sheet = &texts["xl/worksheets/sheet1.xml"];
+    let scenarios = sheet.find("<scenarios").expect("scenarios written");
+    assert!(sheet.find("<protectedRanges").is_some_and(|p| p < scenarios));
+    for later in ["<autoFilter", "<mergeCells", "<conditionalFormatting", "<dataValidations", "<hyperlinks", "<pageMargins"] {
+        assert!(sheet.find(later).is_none_or(|p| scenarios < p), "{later} before <scenarios>");
     }
     // Newer functions carry the _xlfn. prefix in the file.
     assert!(texts["xl/worksheets/sheet1.xml"].contains("_xlfn.XLOOKUP("));

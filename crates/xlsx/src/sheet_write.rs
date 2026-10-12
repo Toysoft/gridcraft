@@ -339,6 +339,7 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
         s.push_str("/>");
     }
     s.push_str(&protected_ranges_xml(sheet));
+    s.push_str(&scenarios_xml(sheet));
     // autoFilter (a sheet filter overlapping a table would be invalid).
     if let Some(af) = &sheet.autofilter
         && !sheet.tables.iter().any(|t| t.range.intersects(&af.range))
@@ -1258,6 +1259,49 @@ fn protected_ranges_xml(sheet: &Sheet) -> String {
         s.push_str("/>");
     }
     if s.is_empty() { s } else { format!("<protectedRanges>{s}</protectedRanges>") }
+}
+
+/// What-If scenarios: `<scenarios>` (after `protectedRanges`, before `autoFilter`).
+fn scenarios_xml(sheet: &Sheet) -> String {
+    let sc = &sheet.scenarios;
+    let list: Vec<_> = sc.list.iter().filter(|x| !x.inputs.is_empty()).collect();
+    if list.is_empty() {
+        return String::new();
+    }
+    let mut s = String::from("<scenarios");
+    for (attr, i) in [("current", sc.current), ("show", sc.shown)] {
+        if let Some(i) = i.filter(|&i| i < list.len()) {
+            let _ = write!(s, " {attr}=\"{i}\"");
+        }
+    }
+    if !sc.result_cells.is_empty() {
+        let sqref: Vec<String> = sc.result_cells.iter().map(|r| r.a1()).collect();
+        let _ = write!(s, " sqref=\"{}\"", sqref.join(" "));
+    }
+    s.push('>');
+    for x in list {
+        let _ = write!(s, "<scenario name=\"{}\"", esc_attr(&x.name));
+        if x.locked {
+            s.push_str(" locked=\"1\"");
+        }
+        if x.hidden {
+            s.push_str(" hidden=\"1\"");
+        }
+        let _ = write!(s, " count=\"{}\"", x.inputs.len());
+        if !x.user.is_empty() {
+            let _ = write!(s, " user=\"{}\"", esc_attr(&x.user));
+        }
+        if !x.comment.is_empty() {
+            let _ = write!(s, " comment=\"{}\"", esc_attr(&x.comment));
+        }
+        s.push('>');
+        for (c, v) in &x.inputs {
+            let _ = write!(s, "<inputCells r=\"{}\" val=\"{}\"/>", c.a1(), esc_attr(v));
+        }
+        s.push_str("</scenario>");
+    }
+    s.push_str("</scenarios>");
+    s
 }
 
 /// Legacy VML shapes Excel uses to display notes.

@@ -851,6 +851,51 @@ impl EditRange {
     }
 }
 
+/// Data › What-If Analysis › Scenario Manager: a named set of values for changing cells on its
+/// sheet (XLSX `<scenario>`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Scenario {
+    pub name: String,
+    /// The changing cells and their values as the file holds them: what would be typed into the
+    /// cell (a number in `.` notation, `TRUE`, or text).
+    pub inputs: Vec<(CellRef, String)>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub comment: String,
+    /// Who added or last changed it, as Excel records it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub user: String,
+    /// Prevent changes / Hide: effective while the sheet is protected.
+    #[serde(default)]
+    pub locked: bool,
+    #[serde(default)]
+    pub hidden: bool,
+}
+
+/// A sheet's scenarios and the Scenario Manager's state (XLSX `<scenarios>`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Scenarios {
+    pub list: Vec<Scenario>,
+    /// The scenario selected in the manager (0-based).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current: Option<usize>,
+    /// The scenario last shown (0-based).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shown: Option<usize>,
+    /// The result cells of the last summary report.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub result_cells: Vec<RangeRef>,
+}
+
+impl Scenarios {
+    /// Excel's limits: changing cells per scenario, and a bound on hostile files.
+    pub const MAX_INPUTS: usize = 32;
+    pub const MAX_SCENARIOS: usize = 1000;
+
+    pub fn is_empty(&self) -> bool {
+        self.list.is_empty()
+    }
+}
+
 /// The non-cryptographic password hash older GridCraft versions stored for sheet protection
 /// (only verified now, see [`SheetProtection::legacy_password_hash`]).
 pub fn password_hash(pw: &str) -> u64 {
