@@ -391,6 +391,92 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "More\nFunctions" => "Další\nfunkce",
         "Sheet Options|View" => "Zobrazit",
         "Print" => "Tisknout",
+        "Running Python…" => "Probíhá Python…",
+        "Stop" => "Zastavit",
+        "Stop the Python cells that are running (Esc)" => "Zastavit spuštěné buňky Pythonu (Esc)",
+        "Output as Python Object" => "Výstup jako objekt Pythonu",
+        "Output as Cell Values" => "Výstup jako hodnoty buněk",
+        "Show Preview Card" => "Zobrazit kartu náhledu",
+        "Convert to Normal Cell" => "Převést na normální buňku",
+        "No result yet" => "Zatím žádný výsledek",
+        "Insert\nPython" => "Vložit\nPython",
+        "Insert Python" => "Vložit Python",
+        "Insert Python (Ctrl+Alt+Shift+P)" => "Vložit Python (Ctrl+Alt+Shift+P)",
+        "Python Cell" => "Buňka Pythonu",
+        "Insert xl() Reference" => "Vložit odkaz xl()",
+        "Initialization…" => "Inicializace…",
+        "Python in GridCraft" => "Python v GridCraftu",
+        "Reset" => "Obnovit",
+        "Reset Runtime" => "Obnovit běhové prostředí",
+        "Reset Runtime: start Python afresh and run every Python cell again" => {
+            "Obnovit běhové prostředí: spustit Python znovu a znovu spustit všechny buňky Pythonu"
+        }
+        "Reset and Clear Diagnostics" => "Obnovit a vymazat diagnostiku",
+        "Stop (Esc)" => "Zastavit (Esc)",
+        "Diagnostics" => "Diagnostika",
+        "Python Diagnostics: every run, its output and errors" => "Diagnostika Pythonu: každé spuštění, jeho výstup a chyby",
+        "Python" => "Python",
+        "This sheet" => "Tento list",
+        "Errors only" => "Jen chyby",
+        "Options…" => "Možnosti…",
+        "Python Options: which Python runs cells, and the time limit" => "Možnosti Pythonu: který Python spouští buňky a časový limit",
+        "Python Options…" => "Možnosti Pythonu…",
+        "No Python runs yet." => "Zatím žádná spuštění Pythonu.",
+        "Initialization" => "Inicializace",
+        "OK" => "OK",
+        "Cancel" => "Zrušit",
+        "Error" => "Chyba",
+        "Time limit" => "Časový limit",
+        "Memory limit" => "Limit paměti",
+        "Stopped" => "Zastaveno",
+        "Turned off" => "Vypnuto",
+        "Cycle" => "Cyklus",
+        "Output" => "Výstup",
+        "Errors" => "Chybový výstup",
+        "Show Diagnostics" => "Zobrazit diagnostiku",
+        "Python cells are turned off for this workbook." => "Buňky Pythonu jsou v tomto sešitu vypnuté.",
+        "Python cells run with your Python at {path}, with full access to your files and network. Enable only for workbooks you trust." => {
+            "Buňky Pythonu běží ve vašem Pythonu v {path} s plným přístupem k souborům a síti. Povolte jen u sešitů, kterým důvěřujete."
+        }
+        "Python runs in a sandbox with no file or network access." => "Python běží v izolovaném prostředí bez přístupu k souborům a síti.",
+        "Enable Python" => "Povolit Python",
+        "Dismiss this message" => "Zavřít tuto zprávu",
+        "Version" => "Verze",
+        "Program" => "Program",
+        "Found in" => "Nalezeno v",
+        "not installed" => "nenainstalováno",
+        "Python interpreter" => "Interpret Pythonu",
+        "Detect Again" => "Znovu zjistit",
+        "Look for Python again (after installing Python or a package)" => "Znovu vyhledat Python (po instalaci Pythonu nebo balíčku)",
+        "Time limit per cell" => "Časový limit na buňku",
+        "Not used ({count})" => "Nepoužito ({count})",
+        "This code runs first, before any Python cell, each time Python starts. Put imports and shared definitions here." => {
+            "Tento kód se spouští jako první, před všemi buňkami Pythonu, při každém spuštění Pythonu. Umístěte sem importy a sdílené definice."
+        }
+        "Py: built-in" => "Py: vestavěný",
+        "Py: off" => "Py: vypnuto",
+        "Run Python cell" => "Spustit buňku Pythonu",
+        "Stop Python" => "Zastavit Python",
+        "Re-run Python cell" => "Znovu spustit buňku Pythonu",
+        "Run Python cell: Python is turned off for this workbook. Choose Enable Python in the message bar to run it" => {
+            "Spustit buňku Pythonu: Python je v tomto sešitu vypnutý. Chcete-li ji spustit, zvolte na panelu zpráv Povolit Python"
+        }
+        "Python cell. Click to turn Python off for this cell (Enter then makes it a normal cell; undo brings the code back)" => {
+            "Buňka Pythonu. Kliknutím vypnete Python pro tuto buňku (Enter z ní pak udělá normální buňku; zpět vrátí kód)"
+        }
+        "Python Output" => "Výstup Pythonu",
+        "Python Output (Ctrl+Alt+Shift+M)" => "Výstup Pythonu (Ctrl+Alt+Shift+M)",
+        "Select a Python cell to change its output" => "Vyberte buňku Pythonu, jejíž výstup chcete změnit",
+        "Copy as CSV" => "Kopírovat jako CSV",
+        "Copy as Markdown" => "Kopírovat jako Markdown",
+        "Save as .csv…" => "Uložit jako .csv…",
+        "Spill Here" => "Přelít sem",
+        "Show the result as cell values, spilling from this cell" => "Zobrazit výsledek jako hodnoty buněk přelité od této buňky",
+        "Copied {count} rows as CSV" => "Zkopírované řádky ve formátu CSV: {count}",
+        "Copied {count} rows as Markdown" => "Zkopírované řádky ve formátu Markdown: {count}",
+        "Showing {shown} of {rows} rows and {cols} of {all} columns; Copy and Save include them all." => {
+            "Zobrazeno řádků: {shown} z {rows}, sloupců: {cols} z {all}; kopírování a uložení zahrnují všechny."
+        }
         _ => return None,
     })
 }
