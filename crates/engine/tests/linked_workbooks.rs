@@ -133,7 +133,7 @@ fn one_file_is_one_link() {
     set(&mut s, "A1", "=[Source.xlsx]Sheet1!A1");
     set(&mut s, "A2", "='[source.XLSX]Sheet2'!B2");
     set(&mut s, "A3", r"='C:\other\[Source.xlsx]Sheet1'!A1");
-    set(&mut s, "A4", r"='C:\other\[Source.xlsx]Sheet1'!A2");
+    set(&mut s, "A4", r"='C:/other/[Source.xlsx]Sheet1'!A2");
     assert_eq!(stored(&s, "A2"), "[1]Sheet2!B2");
     assert_eq!(stored(&s, "A3"), "[2]Sheet1!A1");
     assert_eq!(stored(&s, "A4"), "[2]Sheet1!A2");
@@ -143,6 +143,35 @@ fn one_file_is_one_link() {
     let parts = saved(&s);
     assert_eq!(parts["xl/workbook.xml"].matches("<externalReference ").count(), 2);
     assert!(parts["xl/externalLinks/_rels/externalLink2.xml.rels"].contains(r#"Target="file:///C:\other\Source.xlsx""#));
+}
+
+#[test]
+fn a_workbook_without_a_sheet_is_refused() {
+    let mut s = blank();
+    for typed in ["=[Sheet1]!A1", "='[Source.xlsx]'!A1", "='Q1 [draft]'!A1"] {
+        assert!(s.execute("cell.set", json!({"cell": "A1", "input": typed})).is_err(), "{typed}");
+    }
+    assert!(s.doc().unwrap().wb.external_books.is_empty());
+}
+
+#[test]
+fn a_folder_with_a_space_is_written_escaped_and_read_back() {
+    // Excel writes `My Files` as `My%20Files` in the link's target.
+    let mut s = blank();
+    set(&mut s, "A1", r"='C:\Users\me\My Files\[Source.xlsx]Sheet1'!A1");
+    let parts = saved(&s);
+    let rels = &parts["xl/externalLinks/_rels/externalLink1.xml.rels"];
+    assert!(rels.contains(r#"Target="file:///C:\Users\me\My%20Files\Source.xlsx""#), "{rels}");
+    let bytes = gridcraft_xlsx::write_xlsx(&s.doc().unwrap().wb).unwrap();
+    let (wb, _) = gridcraft_xlsx::read_xlsx(&bytes).unwrap();
+    assert_eq!(wb.external_books[0].path, r"C:\Users\me\My Files\Source.xlsx");
+    let mut s = Session::new();
+    s.add_document(DocState::new(wb, None, "Again".into()));
+    assert_eq!(shown(&s, "A1"), r"='C:\Users\me\My Files\[Source.xlsx]Sheet1'!A1");
+    // Typed as Excel shows it, the reference goes through the same link.
+    set(&mut s, "A2", r"='C:\Users\me\My Files\[Source.xlsx]Sheet1'!A2");
+    assert_eq!(stored(&s, "A2"), "[1]Sheet1!A2");
+    assert_eq!(s.doc().unwrap().wb.external_books.len(), 1);
 }
 
 #[test]

@@ -15,10 +15,12 @@ impl Workbook {
     /// file is read (references into it are `#REF!`, as in Excel when the file is missing).
     pub fn link_book(&mut self, path: &str) -> usize {
         let bare = !path.contains(['\\', '/']);
+        // `C:/links/Source.xlsx` is the same file as `C:\links\Source.xlsx`.
+        let same = |a: &str, b: &str| a.replace('/', "\\").eq_ignore_ascii_case(&b.replace('/', "\\"));
         let found = self
             .external_books
             .iter()
-            .position(|b| !b.path.is_empty() && if bare { b.file_name().eq_ignore_ascii_case(path) } else { b.path.eq_ignore_ascii_case(path) });
+            .position(|b| !b.path.is_empty() && if bare { b.file_name().eq_ignore_ascii_case(path) } else { same(&b.path, path) });
         let i = found.unwrap_or_else(|| {
             self.external_books.push(ExternalBook { path: path.to_string(), added: true, ..Default::default() });
             self.external_books.len() - 1
