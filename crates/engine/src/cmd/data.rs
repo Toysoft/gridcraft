@@ -1144,26 +1144,38 @@ fn outline_lines(s: &Session, p: &Json) -> Result<(bool, u32, u32)> {
 
 fn group(s: &mut Session, p: &Json, on: bool) -> Result<Json> {
     let (rows, a, b) = outline_lines(s, p)?;
+    let b = b.min(a.saturating_add(1_048_575));
+    // Ungrouping lines that aren't grouped changes nothing: no undo step.
+    if !on {
+        let sh = s.doc()?.wb.active().ok_or(EngineError::NoDocument)?;
+        if !(if rows { &sh.rows } else { &sh.cols }).range(a..=b).any(|(_, e)| e.outline > 0) {
+            return Ok(Json::Null);
+        }
+    }
     edit(s, |cx| {
         let si = cx.sheet_index();
         let sh = cx.sheet_mut(si)?;
         let map = if rows { &mut sh.rows } else { &mut sh.cols };
-        let b = b.min(a.saturating_add(1_048_575));
+        let mut shown = false;
         for i in a..=b {
             let e = map.entry(i).or_default();
             e.outline = if on { (e.outline + 1).min(outline::MAX_LEVEL) } else { e.outline.saturating_sub(1) };
-            if !on && e.outline == 0 {
+            if !on && e.outline == 0 && e.hidden {
                 e.hidden = false;
+                shown = true;
             }
         }
         // A summary line whose group is gone has nothing left to collapse.
-        if !on
-            && !outline::groups(map).iter().any(|g| g.end == b)
-            && let Some(e) = map.get_mut(&b.saturating_add(1))
-        {
-            e.collapsed = false;
+        if !on {
+            let summaries: std::collections::BTreeSet<u32> = outline::groups(map).iter().map(|g| g.summary()).collect();
+            for (i, e) in map.range_mut(a..=b.saturating_add(1)) {
+                if !summaries.contains(i) {
+                    e.collapsed = false;
+                }
+            }
         }
-        cx.structural = true; // ungrouping reveals hidden rows: SUBTOTAL(10x) depends on it
+        // SUBTOTAL(10x) and AGGREGATE skip hidden rows: lines shown again change their results.
+        cx.structural = shown;
         Ok(Json::Null)
     })
 }
@@ -1174,22 +1186,17 @@ fn group(s: &mut Session, p: &Json, on: bool) -> Result<Json> {
 fn detail(s: &mut Session, p: &Json, hide: bool) -> Result<Json> {
     let (rows, a, b) = outline_lines(s, p)?;
     let want = p.get("level").and_then(Json::as_u64).map(|l| l.min(outline::MAX_LEVEL as u64) as u8);
+    // No group there: nothing to show or hide, and no undo step.
+    let sh = s.doc()?.wb.active().ok_or(EngineError::NoDocument)?;
+    if detail_groups(if rows { &sh.rows } else { &sh.cols }, a, b, want).is_empty() {
+        return Ok(Json::Null);
+    }
     edit(s, |cx| {
         let si = cx.sheet_index();
         let sh = cx.sheet_mut(si)?;
         let map = if rows { &mut sh.rows } else { &mut sh.cols };
         let all = outline::groups(map);
-        let level_ok = |g: &outline::OutlineGroup| want.is_none_or(|l| g.level == l);
-        let pick = |hit: &dyn Fn(&outline::OutlineGroup) -> bool| -> Vec<outline::OutlineGroup> {
-            let hits: Vec<_> = all.iter().filter(|g| level_ok(g) && hit(g)).copied().collect();
-            let deepest = hits.iter().map(|g| g.level).max().unwrap_or(0);
-            hits.into_iter().filter(|g| g.level == deepest).collect()
-        };
-        let mut chosen = pick(&|g| g.start <= b && g.end >= a);
-        if chosen.is_empty() {
-            chosen = pick(&|g| g.summary() >= a && g.summary() <= b);
-        }
-        for g in chosen {
+        for g in detail_groups(map, a, b, want) {
             // Inner groups collapsed on their own (their summary marked), before this one changes.
             let inner: Vec<outline::OutlineGroup> = all
                 .iter()
@@ -1211,6 +1218,19 @@ fn detail(s: &mut Session, p: &Json, hide: bool) -> Result<Json> {
         cx.structural = true;
         Ok(Json::Null)
     })
+}
+
+/// The groups Hide / Show Detail act on: the innermost ones (or those at `level`) holding lines
+/// `a..=b`, failing that the ones those lines are the summary of.
+fn detail_groups(map: &std::collections::BTreeMap<u32, LineInfo>, a: u32, b: u32, level: Option<u8>) -> Vec<outline::OutlineGroup> {
+    let all = outline::groups(map);
+    let pick = |hit: &dyn Fn(&outline::OutlineGroup) -> bool| -> Vec<outline::OutlineGroup> {
+        let hits: Vec<_> = all.iter().filter(|g| level.is_none_or(|l| g.level == l) && hit(g)).copied().collect();
+        let deepest = hits.iter().map(|g| g.level).max().unwrap_or(0);
+        hits.into_iter().filter(|g| g.level == deepest).collect()
+    };
+    let holding = pick(&|g| g.start <= b && g.end >= a);
+    if holding.is_empty() { pick(&|g| g.summary() >= a && g.summary() <= b) } else { holding }
 }
 
 /// The outline's level buttons: show rows / columns down to outline level `n` (1 = only the
@@ -1472,6 +1492,35 @@ mod tests {
         let sh = s.doc().unwrap().wb.active().unwrap();
         assert!((1..=2).all(|c| sh.cols.get(&c).is_some_and(|l| l.outline == 1)));
         assert!(sh.rows.values().all(|l| l.outline == 0));
+    }
+
+    #[test]
+    fn ungrouping_a_collapsed_group_shows_its_lines_and_updates_subtotals() {
+        let mut s = Session::new();
+        s.new_workbook();
+        for (cell, input) in [("A1", "1"), ("A2", "2"), ("A3", "4"), ("A4", "8"), ("A10", "=SUBTOTAL(109,A1:A4)")] {
+            s.execute("cell.set", json!({"cell": cell, "input": input})).unwrap();
+        }
+        let total = |s: &mut Session| s.execute("cell.get", json!({"cell": "A10"})).unwrap()["value"].clone();
+        s.execute("data.group", json!({"rows": "2:3"})).unwrap();
+        s.execute("data.hideDetail", json!({"rows": "2:3"})).unwrap();
+        assert_eq!(total(&mut s), json!(9.0));
+        // The visible rows around the collapsed ones, as a selection usually has them.
+        s.execute("data.ungroup", json!({"rows": "1:4"})).unwrap();
+        assert_eq!(row_state(&s, 0..=4), [(false, false); 5]);
+        assert_eq!(total(&mut s), json!(15.0));
+    }
+
+    #[test]
+    fn outline_commands_with_nothing_to_act_on_add_no_undo_step() {
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("data.group", json!({"rows": "5:8"})).unwrap();
+        s.execute("selection.set", json!({"range": "C20"})).unwrap();
+        for id in ["data.showDetail", "data.hideDetail", "data.ungroup"] {
+            s.execute(id, json!({})).unwrap();
+        }
+        assert_eq!(s.doc().unwrap().undo.len(), 1);
     }
 
     #[test]
