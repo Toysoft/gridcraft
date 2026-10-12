@@ -869,6 +869,17 @@ fn data_conversion_options(app: &mut SheetApp, ui: &mut Ui) {
         {
             app.run_or_alert("app.dataConversion", json!({"removeLeadingZeros": zeros}));
         }
+        // GridCraft's addition to Excel's list, the counterpart of the one above.
+        let mut trailing = c.remove_trailing_zeros;
+        if ui
+            .checkbox(&mut trailing, lang.tr("Remove trailing zeros after the decimal point"))
+            .on_hover_text(lang.tr(
+                "Off: 720.0 shows and saves as 720.0, and 3.10 as 3.10 (the cell gets a 0.0 or 0.00 number format). It stays a number. Not an Excel option.",
+            ))
+            .changed()
+        {
+            app.run_or_alert("app.dataConversion", json!({"removeTrailingZeros": trailing}));
+        }
         let mut keep15 = c.keep_first_15_digits;
         if ui
             .checkbox(&mut keep15, lang.tr("Keep first 15 digits of long numbers and display in scientific notation"))

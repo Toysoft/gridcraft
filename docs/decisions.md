@@ -67,3 +67,11 @@ display for longer numbers; even at 15 no digit is lost. Core restates General's
 (`general_shows_exactly`) because core can't depend on numfmt; a numfmt test checks the two agree.
 The case that prompted it: CAD/CAM cut lists whose 12-character part codes are hex, all digits
 (`124412140710`) or digits-E-digits (`1244121406E6`).
+
+GridCraft adds one item to Excel's list, next to its counterpart "Remove leading zeros": *Remove
+trailing zeros after the decimal point*, on by default (what Excel does with `720.0`). Off, a plain
+number written with trailing decimal zeros (`720.0`, `3.10`, `.50`) gets a number format that shows
+them (`0.0`, `0.00`, `#.00`), as `1,234.50` already gets `#,##0.00`. It stays a number; the grid
+shows it as written; and since CSV export writes displayed values, the saved file has `720.0` again.
+It is one of the conversions "Enable all" sets, so unchecking that keeps everything as written. As
+with every automatic format, a cell that already has a format keeps it.

@@ -37,7 +37,51 @@ pub struct DataConversion {
     /// "Convert digits surrounding the letter E to a number in scientific notation": off keeps
     /// `1244121406E6`, and any number written with an exponent, as text.
     pub digits_around_e: bool,
+    /// "Remove trailing zeros after the decimal point", GridCraft's addition to the list: on (the
+    /// default, as in Excel) `720.0` shows and saves as `720`. Off, a number written with trailing
+    /// decimal zeros gets a number format that shows them (`720.0` → `0.0`, `3.10` → `0.00`), so the
+    /// grid shows it as written and a saved CSV writes it back the same. It stays a number.
+    pub remove_trailing_zeros: bool,
 }
+
+/// `0.0` … `0.000000000000000`: the formats that keep trailing zeros
+/// ([`DataConversion::remove_trailing_zeros`] off), by count.
+const DECIMALS: [&str; 15] = [
+    "0.0",
+    "0.00",
+    "0.000",
+    "0.0000",
+    "0.00000",
+    "0.000000",
+    "0.0000000",
+    "0.00000000",
+    "0.000000000",
+    "0.0000000000",
+    "0.00000000000",
+    "0.000000000000",
+    "0.0000000000000",
+    "0.00000000000000",
+    "0.000000000000000",
+];
+
+/// The same for numbers written without a leading digit (`.50` shows as `.50`, not `0.50`).
+const DECIMALS_NO_INT: [&str; 15] = [
+    "#.0",
+    "#.00",
+    "#.000",
+    "#.0000",
+    "#.00000",
+    "#.000000",
+    "#.0000000",
+    "#.00000000",
+    "#.000000000",
+    "#.0000000000",
+    "#.00000000000",
+    "#.000000000000",
+    "#.0000000000000",
+    "#.00000000000000",
+    "#.000000000000000",
+];
 
 /// The most digits a number may have and still convert with the long-number box off: past 15,
 /// digits would be lost.
@@ -57,14 +101,21 @@ pub fn general_shows_exactly(n: f64) -> bool {
 
 impl Default for DataConversion {
     fn default() -> Self {
-        DataConversion { remove_leading_zeros: true, keep_first_15_digits: true, long_number_digits: GENERAL_DIGITS, digits_around_e: true }
+        DataConversion {
+            remove_leading_zeros: true,
+            keep_first_15_digits: true,
+            long_number_digits: GENERAL_DIGITS,
+            digits_around_e: true,
+            remove_trailing_zeros: true,
+        }
     }
 }
 
 impl DataConversion {
-    /// Every conversion on, like Excel's "Enable all default data conversions" checkbox.
+    /// Every conversion on, like Excel's "Enable all default data conversions" checkbox. Off,
+    /// everything number-like is kept as written.
     pub fn all(&self) -> bool {
-        self.remove_leading_zeros && self.keep_first_15_digits && self.digits_around_e
+        self.remove_leading_zeros && self.keep_first_15_digits && self.digits_around_e && self.remove_trailing_zeros
     }
 
     /// Whether `plain`, text [`parse_plain`] read as the number `n`, may become one. Digits are
@@ -93,6 +144,22 @@ impl DataConversion {
         // an exponent already is scientific: the E option decides about it.
         let shown_ok = exponent || max > GENERAL_DIGITS || general_shows_exactly(n);
         mantissa.chars().filter(char::is_ascii_digit).count() <= usize::from(max) && shown_ok
+    }
+
+    /// With [`Self::remove_trailing_zeros`] off, the format that shows the plain number `plain` with
+    /// the decimal places it was written with, when General would drop trailing zeros. `None` when
+    /// General already shows it as written, or past 15 decimals.
+    fn decimals_format(&self, plain: &str) -> Option<&'static str> {
+        if self.remove_trailing_zeros {
+            return None;
+        }
+        let body = plain.trim_start_matches(['-', '+']).trim_start();
+        let (int, frac) = body.split_once('.')?;
+        if !frac.ends_with('0') || !frac.bytes().all(|b| b.is_ascii_digit()) || !int.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let table = if int.is_empty() { &DECIMALS_NO_INT } else { &DECIMALS };
+        table.get(frac.len().checked_sub(1)?).copied()
     }
 }
 
@@ -140,9 +207,13 @@ fn parse_numeric(t: &str, sys: DateSystem, conv: &DataConversion) -> Option<(f64
     if let Some(inner) = t.strip_prefix('(').and_then(|x| x.strip_suffix(')')) {
         return parse_numeric(inner.trim(), sys, conv).map(|(n, f)| (-n, f));
     }
-    if let Some(r) = parse_plain(t) {
+    if let Some((n, format)) = parse_plain(t) {
         // A number the options keep as text is text: it isn't a fraction or date either.
-        return conv.converts(t, r.0).then_some(r);
+        if !conv.converts(t, n) {
+            return None;
+        }
+        // Currency, percent, separators and exponents bring their own formats.
+        return Some((n, format.or_else(|| conv.decimals_format(t))));
     }
     if let Some(r) = parse_fraction(t) {
         return Some((r, Some("# ?/?")));
@@ -520,11 +591,48 @@ mod tests {
         assert_eq!(with("7", wild(0)), Value::Number(7.0));
         assert_eq!(with("12", wild(0)), Value::text("12"));
         // A leading apostrophe and arithmetic coercion are unaffected.
-        let none = DataConversion { remove_leading_zeros: false, keep_first_15_digits: false, long_number_digits: 1, digits_around_e: false };
+        let none = DataConversion {
+            remove_leading_zeros: false,
+            keep_first_15_digits: false,
+            long_number_digits: 1,
+            digits_around_e: false,
+            remove_trailing_zeros: false,
+        };
         assert_eq!(with("'5", none), Value::text("5"));
         assert_eq!(with("TRUE", none), Value::Bool(true));
         assert_eq!(parse_number_text("0123"), Some(123.0));
         assert_eq!(parse_number_text("1E3"), Some(1000.0));
+    }
+
+    #[test]
+    fn trailing_zeros_kept_when_not_removed() {
+        let on = DataConversion { remove_trailing_zeros: false, ..DataConversion::default() };
+        let with = |s: &str, conv: &DataConversion| parse_input_with(s, DateSystem::D1900, conv);
+        // Trailing decimal zeros get a format that shows them; the value is the same number.
+        for (input, n, format) in [
+            ("720.0", 720.0, "0.0"),
+            ("3.10", 3.1, "0.00"),
+            ("-0.50", -0.5, "0.00"),
+            ("+1.0", 1.0, "0.0"),
+            (".50", 0.5, "#.00"),
+            ("-.50", -0.5, "#.00"),
+            ("(720.0)", -720.0, "0.0"),
+            ("0.000000000000000", 0.0, "0.000000000000000"),
+        ] {
+            assert_eq!(with(input, &on), Parsed { value: Value::Number(n), format: Some(format) }, "{input}");
+        }
+        // Nothing to keep, or more decimals than a format can show: General, as before.
+        for (input, n) in [("720", 720.0), ("720.5", 720.5), ("720.", 720.0), ("0.0000000000000000", 0.0)] {
+            assert_eq!(with(input, &on), Parsed { value: Value::Number(n), format: None }, "{input}");
+        }
+        // Inputs with their own format keep it.
+        assert_eq!(with("$1.50", &on).format, Some("\"$\"#,##0.00"));
+        assert_eq!(with("1,234.50", &on).format, Some("#,##0.00"));
+        assert_eq!(with("12.50%", &on).format, Some("0.00%"));
+        assert_eq!(with("1.50E+3", &on).format, Some("0.00E+00"));
+        // Removed by default, as in Excel; keeping them is one of the conversions "all" turns off.
+        assert_eq!(p("720.0"), Parsed { value: Value::Number(720.0), format: None });
+        assert!(!on.all());
     }
 
     #[test]
@@ -533,10 +641,19 @@ mod tests {
         let old: DataConversion = serde_json::from_str("{}").unwrap();
         assert_eq!(old, DataConversion::default());
         let some: DataConversion = serde_json::from_str(r#"{"digitsAroundE": false, "keepFirst15Digits": false, "longNumberDigits": 11}"#).unwrap();
-        assert_eq!(some, DataConversion { remove_leading_zeros: true, keep_first_15_digits: false, long_number_digits: 11, digits_around_e: false });
+        assert_eq!(
+            some,
+            DataConversion {
+                remove_leading_zeros: true,
+                keep_first_15_digits: false,
+                long_number_digits: 11,
+                digits_around_e: false,
+                remove_trailing_zeros: true
+            }
+        );
         assert_eq!(
             serde_json::to_value(some).unwrap(),
-            serde_json::json!({"removeLeadingZeros": true, "keepFirst15Digits": false, "longNumberDigits": 11, "digitsAroundE": false})
+            serde_json::json!({"removeLeadingZeros": true, "keepFirst15Digits": false, "longNumberDigits": 11, "digitsAroundE": false, "removeTrailingZeros": true})
         );
     }
 

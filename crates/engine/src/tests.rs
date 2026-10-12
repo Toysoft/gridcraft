@@ -2802,22 +2802,34 @@ fn a_decrypted_workbook_never_overwrites_its_encrypted_original() {
 fn data_conversion_command_sets_reports_and_validates() {
     let mut s = s();
     let report = |s: &mut Session| s.execute("app.dataConversion", json!({})).unwrap();
-    let defaults = json!({"all": true, "removeLeadingZeros": true, "keepFirst15Digits": true, "longNumberDigits": 11, "digitsAroundE": true});
+    let defaults = json!({"all": true, "removeLeadingZeros": true, "keepFirst15Digits": true, "longNumberDigits": 11, "digitsAroundE": true, "removeTrailingZeros": true});
     assert_eq!(report(&mut s), defaults);
     // Unchecking the long-number box uses 11 (what General shows without scientific notation)
     // until a limit is given; giving one unchecks it.
     let r = s.execute("app.dataConversion", json!({"keepFirst15Digits": false})).unwrap();
-    assert_eq!(r, json!({"all": false, "removeLeadingZeros": true, "keepFirst15Digits": false, "longNumberDigits": 11, "digitsAroundE": true}));
+    assert_eq!(
+        r,
+        json!({"all": false, "removeLeadingZeros": true, "keepFirst15Digits": false, "longNumberDigits": 11, "digitsAroundE": true, "removeTrailingZeros": true})
+    );
     s.execute("app.dataConversion", json!({"keepFirst15Digits": true})).unwrap();
     let r = s.execute("app.dataConversion", json!({"longNumberDigits": 13, "digitsAroundE": false})).unwrap();
-    assert_eq!(r, json!({"all": false, "removeLeadingZeros": true, "keepFirst15Digits": false, "longNumberDigits": 13, "digitsAroundE": false}));
+    assert_eq!(
+        r,
+        json!({"all": false, "removeLeadingZeros": true, "keepFirst15Digits": false, "longNumberDigits": 13, "digitsAroundE": false, "removeTrailingZeros": true})
+    );
     // The limit is remembered through the checkbox and through "all".
     s.execute("app.dataConversion", json!({"keepFirst15Digits": true})).unwrap();
     assert_eq!(s.execute("app.dataConversion", json!({"keepFirst15Digits": false})).unwrap()["longNumberDigits"], 13);
     let r = s.execute("app.dataConversion", json!({"all": false})).unwrap();
-    assert_eq!(r, json!({"all": false, "removeLeadingZeros": false, "keepFirst15Digits": false, "longNumberDigits": 13, "digitsAroundE": false}));
+    assert_eq!(
+        r,
+        json!({"all": false, "removeLeadingZeros": false, "keepFirst15Digits": false, "longNumberDigits": 13, "digitsAroundE": false, "removeTrailingZeros": false})
+    );
     let r = s.execute("app.dataConversion", json!({"all": true})).unwrap();
-    assert_eq!(r, json!({"all": true, "removeLeadingZeros": true, "keepFirst15Digits": true, "longNumberDigits": 13, "digitsAroundE": true}));
+    assert_eq!(
+        r,
+        json!({"all": true, "removeLeadingZeros": true, "keepFirst15Digits": true, "longNumberDigits": 13, "digitsAroundE": true, "removeTrailingZeros": true})
+    );
     // A limit can be set while the box stays on.
     let r = s.execute("app.dataConversion", json!({"keepFirst15Digits": true, "longNumberDigits": 11})).unwrap();
     assert_eq!(r, defaults);
@@ -2898,6 +2910,61 @@ fn cut_list_codes_survive_with_conversions_off() {
     assert_eq!(v(&s, "B1"), Value::Number(720.0));
 }
 
+/// With every conversion off ("Enable all" unchecked), the cut list round-trips byte for byte:
+/// codes stay text, `720.0` keeps its `.0` in the grid and in the saved CSV, and stays a number.
+#[test]
+fn cut_list_round_trips_exactly_with_conversions_off() {
+    const CUT_LIST: &str = "1;720.0;579.0;K1_led_1;HDF_BIJELI;3.0;;;;;;\r\n\
+        1;511.0;83.0;P3_L2_led;2162PE;16.0;1MM_2162PE;1MM_2162PE;;;124412140710;\r\n\
+        1;996.0;596.0;K1_FR_2_Fronta;2162PE;19.0;1MM_2162PE;1MM_2162PE;1MM_2162PE;1MM_2162PE;11441214064B;\r\n\
+        1;562.0;510.0;P3_pod;2162PE;19.0;1MM_2162PE;;;;1244121406E6;\r\n\
+        1;782.0;312.0;V3_polFix;2162PE;19.0;1MM_2162PE;;;;2244121408DD;2144121408DD\r\n";
+    let mut s = s();
+    let r = s.execute("app.dataConversion", json!({"all": false})).unwrap();
+    assert_eq!(r["removeTrailingZeros"], false);
+    s.execute("file.open", json!({"name": "cut list.csv", "base64": crate::io::base64_encode(CUT_LIST.as_bytes())})).unwrap();
+    let saved = String::from_utf8(crate::io::save_bytes(&s.doc().unwrap().wb, "cut list.csv").unwrap()).unwrap();
+    assert_eq!(saved, CUT_LIST);
+    assert_eq!(v(&s, "B1"), Value::Number(720.0));
+    assert_eq!(v(&s, "K2"), Value::text("124412140710"));
+    // On its own, too: trailing zeros kept, the conversions Excel has left on.
+    let mut s = self::s();
+    s.execute("app.dataConversion", json!({"removeTrailingZeros": false})).unwrap();
+    s.execute("file.open", json!({"name": "cut list.csv", "base64": crate::io::base64_encode(CUT_LIST.as_bytes())})).unwrap();
+    let saved = String::from_utf8(crate::io::save_bytes(&s.doc().unwrap().wb, "cut list.csv").unwrap()).unwrap();
+    assert!(saved.starts_with("1;720.0;579.0;K1_led_1;HDF_BIJELI;3.0;"), "{saved}");
+}
+
+#[test]
+fn typed_decimal_places_show_as_written() {
+    let shown = |s: &Session, a: &str| {
+        let d = s.doc().unwrap();
+        crate::display::cell_text(&d.wb, d.wb.active().unwrap(), CellRef::parse(a).unwrap())
+    };
+    let mut s = s();
+    s.execute("app.dataConversion", json!({"removeTrailingZeros": false})).unwrap();
+    for (row, (input, text)) in
+        [("720.0", "720.0"), ("3.10", "3.10"), ("-0.50", "-0.50"), (".50", ".50"), ("-.50", "-.50"), ("720.5", "720.5")].into_iter().enumerate()
+    {
+        let cell = format!("A{}", row + 1);
+        s.execute("cell.set", json!({"cell": cell, "input": input})).unwrap();
+        assert_eq!(shown(&s, &cell), text, "{input}");
+        assert!(v(&s, &cell).is_number(), "{input}");
+    }
+    // Like every automatic format, it's applied to a General cell only: typing over A1 (now 0.0)
+    // keeps that format, as typing 3.1 over $5 keeps currency.
+    s.execute("cell.set", json!({"cell": "A1", "input": "3.10"})).unwrap();
+    assert_eq!(shown(&s, "A1"), "3.1");
+    // A cell someone already formatted keeps its format.
+    s.execute("home.numberFormat", json!({"range": "B1", "code": "0.000"})).unwrap();
+    s.execute("cell.set", json!({"cell": "B1", "input": "2.0"})).unwrap();
+    assert_eq!(shown(&s, "B1"), "2.000");
+    // Removed again (the default): General, as before.
+    s.execute("app.dataConversion", json!({"removeTrailingZeros": true})).unwrap();
+    s.execute("cell.set", json!({"cell": "C1", "input": "720.0"})).unwrap();
+    assert_eq!(shown(&s, "C1"), "720");
+}
+
 #[test]
 fn data_conversion_is_a_saved_preference() {
     // prefs.json from before the options keeps Excel's defaults; the options round-trip.
@@ -2908,7 +2975,7 @@ fn data_conversion_is_a_saved_preference() {
     let saved = serde_json::to_value(&s.prefs).unwrap();
     assert_eq!(
         saved["dataConversion"],
-        json!({"removeLeadingZeros": true, "keepFirst15Digits": false, "longNumberDigits": 11, "digitsAroundE": false})
+        json!({"removeLeadingZeros": true, "keepFirst15Digits": false, "longNumberDigits": 11, "digitsAroundE": false, "removeTrailingZeros": true})
     );
     let back: crate::Prefs = serde_json::from_value(saved).unwrap();
     assert_eq!(back.data_conversion, s.prefs.data_conversion);

@@ -61,7 +61,13 @@ fn data_conversion_options_apply_to_fields() {
     assert_eq!(v(&wb, 1, 10), Value::Number(1.244121406e15));
     assert_eq!(v(&wb, 1, 11), Value::Number(42.0));
     // E off, long numbers over 11 digits as text, leading zeros kept: every code stays as written.
-    let wb = read(DataConversion { remove_leading_zeros: false, keep_first_15_digits: false, long_number_digits: 11, digits_around_e: false });
+    let wb = read(DataConversion {
+        remove_leading_zeros: false,
+        keep_first_15_digits: false,
+        long_number_digits: 11,
+        digits_around_e: false,
+        remove_trailing_zeros: true,
+    });
     assert_eq!(v(&wb, 0, 10), Value::text("124412140710"));
     assert_eq!(v(&wb, 1, 10), Value::text("1244121406E6"));
     assert_eq!(v(&wb, 1, 11), Value::text("0042"));

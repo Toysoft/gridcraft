@@ -164,6 +164,7 @@ scrollbar bugs 2–4 · pixel/feel pass against observed Excel 7–12.
 | 2026-10-11 | minor | Outline band for grouped rows and columns, Show / Hide Detail on the Data tab, numpad navigation keys in shortcuts (#373) |
 | 2026-10-11 | minor | Shift+Space / Ctrl+Space no longer start an edit; Control+Space selects the column on Mac (#338) |
 | 2026-10-11 | minor | Selected whole columns can be reordered by dragging their headers to an insertion point |
+| 2026-10-12 | minor | File › Options › Data: "Remove trailing zeros after the decimal point" (GridCraft addition to the list) |
 | 2026-10-12 | minor | File › Options › Data: Automatic Data Conversion checkboxes with a digit limit for long numbers |
 | 2026-10-11 | minor | Page Layout view with rulers and in-place headers and footers (#329) |
 | 2026-10-11 | minor | Forecast Sheet dialog (#322) |
