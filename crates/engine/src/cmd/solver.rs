@@ -33,6 +33,8 @@ use super::*;
 
 const CMD: &str = "data.solver";
 const REPORT_CMD: &str = "data.solverReport";
+const SAVE_CMD: &str = "data.solverSaveModel";
+const LOAD_CMD: &str = "data.solverLoadModel";
 /// Excel's limit on decision variables.
 const MAX_VARS: usize = 200;
 /// Most scalar constraints (after expanding ranges).
@@ -70,6 +72,25 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             report
         ),
+        cmd!(
+            "data.solverSaveModel",
+            "Save Model",
+            [],
+            None,
+            "{to: \"H1\" (the first cell, on the model's sheet), model?: data.solver params (default the sheet's saved model)} → {range}. Writes the model down a column as formulas: =MAX(objective), =MIN(objective) or =objective=value; =COUNT(variables); one =AND(relation) per constraint (=AND(x=INT(x)) for integer, =AND((x=0)+(x=1)) for binary), which shows TRUE while it holds; and the options as an array constant {method (1 GRG Nonlinear, 2 Simplex LP, 3 Evolutionary), non-negative (1 yes, 2 no), population size, mutation rate, random seed, require bounds (1 yes, 2 no), convergence, generations without improvement}.",
+            has_doc,
+            save_model_cells
+        ),
+        cmd!(
+            "data.solverLoadModel",
+            "Load Model",
+            [],
+            None,
+            "{from: \"H1:H6\" (a range on the active sheet; one cell reads down to the first cell without a formula)} → {model}. Reads a model written by Save Model and makes it the sheet's Solver model.",
+            has_doc,
+            load_model_cells
+        ),
+        cmd!("data.solverReset", "Reset All", [], None, "{} → {removed}. Removes the active sheet's Solver model.", has_doc, reset_model),
     ]
 }
 
@@ -363,8 +384,9 @@ fn parse_model(s: &Session, p: &Json) -> Result<Model> {
 
 // ---------------------------------------------------------------- saved model
 
-fn ref_text(sheet_name: &str, cells: &str) -> String {
-    let q = crate::pivot::quote_sheet(sheet_name);
+/// `"B2:B4,D1"` as absolute references, each qualified by `sheet_name` when given.
+fn abs_text(sheet_name: Option<&str>, cells: &str) -> String {
+    let q = sheet_name.map(|n| format!("{}!", crate::pivot::quote_sheet(n))).unwrap_or_default();
     cells
         .split(',')
         .map(str::trim)
@@ -372,10 +394,14 @@ fn ref_text(sheet_name: &str, cells: &str) -> String {
         .filter_map(|part| {
             let r = RangeRef::parse(split_sheet(part).1.trim())?;
             let abs = |c: CellRef| format!("${}${}", gridcraft_core::col_to_letters(c.col), c.row as u64 + 1);
-            Some(if r.is_single() { format!("{q}!{}", abs(r.start)) } else { format!("{q}!{}:{}", abs(r.start), abs(r.end)) })
+            Some(if r.is_single() { format!("{q}{}", abs(r.start)) } else { format!("{q}{}:{}", abs(r.start), abs(r.end)) })
         })
         .collect::<Vec<_>>()
         .join(",")
+}
+
+fn ref_text(sheet_name: &str, cells: &str) -> String {
+    abs_text(Some(sheet_name), cells)
 }
 
 /// The model as hidden names scoped to its sheet (replacing any saved before).
@@ -529,6 +555,221 @@ fn model_params(wb: &Workbook, m: &Model) -> Json {
         out["requireBounds"] = json!(e.require_bounds);
     }
     out
+}
+
+// ---------------------------------------------------------------- model on cells
+
+/// The cells Save Model writes, top to bottom, as formula text.
+fn model_formulas(m: &Model) -> Result<Vec<String>> {
+    let one_area = |t: &str| !t.contains(',');
+    let mut rows = Vec::with_capacity(m.cons.len() + 3);
+    let obj = abs_ref(m.objective);
+    rows.push(match m.goal {
+        Goal::Max => format!("=MAX({obj})"),
+        Goal::Min => format!("=MIN({obj})"),
+        Goal::Value(v) => format!("={obj}={}", gridcraft_core::number_to_text(v)),
+    });
+    rows.push(format!("=COUNT({})", abs_text(None, &m.vars_text)));
+    for c in &m.cons {
+        if !one_area(&c.lhs_text) || !one_area(&c.rhs_text) {
+            return Err(EngineError::Other("Save Model needs each side of a constraint to be one range.".into()));
+        }
+        let lhs = abs_text(None, &c.lhs_text);
+        rows.push(match (c.rel, &c.rhs) {
+            (Rel::Int, _) => format!("=AND({lhs}=INT({lhs}))"),
+            (Rel::Bin, _) => format!("=AND(({lhs}=0)+({lhs}=1))"),
+            (rel, Rhs::Cells(_)) => format!("=AND({lhs}{}{})", rel.text(), abs_text(None, &c.rhs_text)),
+            (rel, Rhs::Const(v)) => format!("=AND({lhs}{}{})", rel.text(), gridcraft_core::number_to_text(*v)),
+            (rel, Rhs::None) => format!("=AND({lhs}{}0)", rel.text()),
+        });
+    }
+    let e = &m.evo;
+    let n = gridcraft_core::number_to_text;
+    let eng = match m.method {
+        Method::Grg => 1,
+        Method::Simplex => 2,
+        Method::Evolutionary => 3,
+    };
+    let yes = |b: bool| if b { 1 } else { 2 };
+    rows.push(format!(
+        "={{{eng},{},{},{},{},{},{},{}}}",
+        yes(m.non_negative),
+        e.population,
+        n(e.mutation),
+        e.seed,
+        yes(e.require_bounds),
+        n(e.convergence),
+        e.stall
+    ));
+    Ok(rows)
+}
+
+/// Reads formula text written by Save Model back into `data.solver` params.
+fn parse_model_formulas(rows: &[String]) -> Result<Json> {
+    let not_a_model = || EngineError::Other("The range doesn't hold a Solver model saved with Save Model.".into());
+    let body = |t: &str| t.trim().trim_start_matches('=').replace(' ', "");
+    let local = |t: &str| t.split(',').map(|p| split_sheet(p.trim()).1.replace('$', "")).collect::<Vec<_>>().join(",");
+    // `NAME(inner)` → inner, ignoring case.
+    let call = |t: &str, name: &str| -> Option<String> {
+        let head = t.get(..name.len() + 1)?;
+        (head.eq_ignore_ascii_case(&format!("{name}(")) && t.ends_with(')')).then(|| t.get(name.len() + 1..t.len() - 1).map(str::to_string))?
+    };
+    let first = body(rows.first().ok_or_else(not_a_model)?);
+    let (goal, objective, value) = if let Some(o) = call(&first, "MAX") {
+        ("max", o, 0.0)
+    } else if let Some(o) = call(&first, "MIN") {
+        ("min", o, 0.0)
+    } else {
+        let (o, v) = first.split_once('=').ok_or_else(not_a_model)?;
+        ("value", o.to_string(), num_text(v).ok_or_else(not_a_model)?)
+    };
+    let variables = call(&body(rows.get(1).ok_or_else(not_a_model)?), "COUNT").ok_or_else(not_a_model)?;
+    let mut model = json!({"objective": local(&objective), "goal": goal, "value": value, "variables": local(&variables)});
+    let mut constraints = Vec::new();
+    let rest = rows.get(2..).unwrap_or(&[]);
+    for (i, row) in rest.iter().enumerate() {
+        let t = body(row);
+        if let Some(list) = t.strip_prefix('{').and_then(|x| x.strip_suffix('}')) {
+            // The options: the last row.
+            if i + 1 != rest.len() {
+                return Err(not_a_model());
+            }
+            let v: Vec<Option<f64>> = list.split([',', ';']).take(16).map(num_text).collect();
+            let get = |k: usize| v.get(k).copied().flatten();
+            model["method"] = json!(match get(0).map(|x| x as i64) {
+                Some(2) => "simplex",
+                Some(3) => "evolutionary",
+                _ => "grg",
+            });
+            model["nonNegative"] = json!(get(1) != Some(2.0));
+            for (k, key) in [(2, "populationSize"), (3, "mutationRate"), (4, "randomSeed"), (6, "convergence"), (7, "generationsWithoutImprovement")]
+            {
+                if let Some(x) = get(k) {
+                    model[key] = json!(x);
+                }
+            }
+            model["requireBounds"] = json!(get(5) != Some(2.0));
+            break;
+        }
+        let t = call(&t, "AND").unwrap_or(t);
+        let c = if let Some((x, y)) = t.split_once("=INT(").or_else(|| t.split_once("=int(")) {
+            if y.strip_suffix(')') != Some(x) {
+                return Err(not_a_model());
+            }
+            format!("{} int", local(x))
+        } else if let Some(x) = t.strip_prefix('(').and_then(|x| x.strip_suffix("=1)")).and_then(|x| x.split_once("=0)+(")).filter(|(a, b)| a == b) {
+            format!("{} bin", local(x.0))
+        } else {
+            let (l, rel, r) = split_constraint(&t).ok_or_else(not_a_model)?;
+            let r = r.trim_matches('"');
+            match r.to_ascii_lowercase().as_str() {
+                "integer" => format!("{} int", local(&l)),
+                "binary" => format!("{} bin", local(&l)),
+                _ if num_text(r).is_some() => format!("{} {} {r}", local(&l), rel.text()),
+                _ => format!("{} {} {}", local(&l), rel.text(), local(r)),
+            }
+        };
+        constraints.push(json!(c));
+    }
+    model["constraints"] = json!(constraints);
+    Ok(model)
+}
+
+/// `data.solverSaveModel`: writes the model on cells of its sheet, in one step.
+fn save_model_cells(s: &mut Session, p: &Json) -> Result<Json> {
+    let d = s.doc()?;
+    let params = match p.get("model") {
+        Some(m @ Json::Object(_)) => m.clone(),
+        Some(Json::Null) | None => {
+            saved_model(&d.wb, d.wb.active_sheet).ok_or_else(|| EngineError::Other("This sheet has no saved Solver model.".into()))?
+        }
+        Some(_) => return Err(bad(SAVE_CMD, "`model` must be data.solver params")),
+    };
+    let model = parse_model(s, &params)?;
+    let to = cell_param_on(s, p, "to", model.sheet)?.ok_or_else(|| bad(SAVE_CMD, "missing `to` (the first cell of the saved model)"))?;
+    let rows = model_formulas(&model)?;
+    let count = u32::try_from(rows.len()).unwrap_or(u32::MAX);
+    let last = to
+        .row
+        .checked_add(count.saturating_sub(1))
+        .filter(|r| *r < gridcraft_core::MAX_ROWS)
+        .ok_or_else(|| EngineError::Other("The saved model doesn't fit below that cell.".into()))?;
+    let range = RangeRef::new(to, CellRef::new(last, to.col));
+    // The model's own cells are never overwritten.
+    let mut used = vec![model.objective];
+    used.extend(&model.vars);
+    for c in &model.cons {
+        used.extend(&c.lhs);
+        if let Rhs::Cells(r) = &c.rhs {
+            used.extend(r);
+        }
+    }
+    if used.iter().any(|c| range.contains(*c)) {
+        return Err(EngineError::Other(format!("{} overlaps the model's cells; choose another place to save it.", range.a1())));
+    }
+    let sheet = model.sheet;
+    edit(s, |cx| {
+        let sh = cx.sheet_mut(sheet)?;
+        let cells: Vec<CellRef> = range.iter().collect();
+        for (c, f) in cells.iter().zip(&rows) {
+            let mut cell = Cell::formula(gridcraft_model::Formula::new(f));
+            cell.style = sh.style_id(*c);
+            sh.set_cell(*c, cell);
+        }
+        for c in cells {
+            cx.touch(sheet, c);
+        }
+        Ok(())
+    })?;
+    Ok(json!({"range": range.a1()}))
+}
+
+/// `data.solverLoadModel`: makes a model written by Save Model the active sheet's model.
+fn load_model_cells(s: &mut Session, p: &Json) -> Result<Json> {
+    let d = s.doc()?;
+    let active = d.wb.active_sheet;
+    let text = str_param(p, "from").ok_or_else(|| bad(LOAD_CMD, "missing `from` (the saved model's range)"))?;
+    let (sh, body) = split_sheet(text);
+    if sh.is_some_and(|n| d.wb.sheet_index(&n) != Some(active)) {
+        return Err(EngineError::Other("Load Model reads a model saved on the active sheet.".into()));
+    }
+    let r = RangeRef::parse(body.trim()).ok_or_else(|| bad(LOAD_CMD, format!("not a range: `{text}`")))?;
+    let cap = MAX_CONSTRAINTS + 3;
+    let sheet = d.wb.sheet(active).ok_or(EngineError::NoDocument)?;
+    let formula = |c: CellRef| sheet.cell(c).and_then(|x| x.formula.as_ref()).map(|f| f.text.clone());
+    let rows: Vec<String> = if r.is_single() {
+        (0..cap as u32).map_while(|k| r.start.row.checked_add(k).and_then(|row| formula(CellRef::new(row, r.start.col)))).collect()
+    } else {
+        if r.count() > cap as u64 {
+            return Err(EngineError::Other(format!("The range is too large for a saved model (at most {cap} cells).")));
+        }
+        r.iter().filter_map(formula).collect()
+    };
+    let params = parse_model_formulas(&rows)?;
+    let model = parse_model(s, &params)?;
+    if model.sheet != active {
+        return Err(EngineError::Other("Load Model reads a model of the active sheet.".into()));
+    }
+    edit(s, |cx| {
+        save_model(&mut cx.wb, &model);
+        Ok(())
+    })?;
+    Ok(json!({"model": saved_model(&s.doc()?.wb, active)}))
+}
+
+/// `data.solverReset`: Reset All removes the active sheet's model.
+fn reset_model(s: &mut Session, _p: &Json) -> Result<Json> {
+    let d = s.doc()?;
+    let active = d.wb.active_sheet;
+    let is_model = |n: &DefinedName| n.scope == Some(active) && n.name.to_ascii_lowercase().starts_with("solver_");
+    let removed = d.wb.names.iter().filter(|n| is_model(n)).count();
+    if removed > 0 {
+        edit(s, |cx| {
+            cx.wb.names.retain(|n| !(n.scope == Some(active) && n.name.to_ascii_lowercase().starts_with("solver_")));
+            Ok(())
+        })?;
+    }
+    Ok(json!({"removed": removed}))
 }
 
 // ---------------------------------------------------------------- evaluation
@@ -2849,6 +3090,84 @@ mod tests {
         assert!(close(&report_row(&s, &rep, "$C$1", &["D", "E"]), &[0.0, 4.0], 1e-4), "{r}");
         assert!(close(&report_row(&s, &rep, "$C$2", &["D", "E"]), &[1.0, 0.0], 1e-4));
         assert!(close(&report_row(&s, &rep, "$D$2", &["D", "E"]), &[1.0, -2.0], 1e-4));
+    }
+
+    fn formula(s: &Session, a1: &str) -> String {
+        let d = s.doc().unwrap();
+        d.wb.active().unwrap().cell(CellRef::parse(a1).unwrap()).and_then(|c| c.formula.as_ref()).map(|f| f.text.clone()).unwrap_or_default()
+    }
+
+    #[test]
+    fn save_and_load_model_round_trip_through_cells() {
+        let mut s = s();
+        set(&mut s, &[("B1", "=5*A1+4*A2"), ("B2", "=6*A1+4*A2"), ("B3", "=A1+2*A2"), ("C2", "24")]);
+        let model = json!({"objective": "B1", "variables": "A1:A2", "constraints": ["B2 <= C2", "B3 <= 6", "A1:A2 int", "A2 bin", "A1 >= 1"], "method": "simplex"});
+        s.execute("data.solver", model.clone()).unwrap();
+        let out = s.execute("data.solverSaveModel", json!({"to": "H1"})).unwrap();
+        assert_eq!(out["range"], "H1:H8");
+        let rows: Vec<String> = (1..=8).map(|r| formula(&s, &format!("H{r}"))).collect();
+        assert_eq!(
+            rows,
+            [
+                "MAX($B$1)",
+                "COUNT($A$1:$A$2)",
+                "AND($B$2<=$C$2)",
+                "AND($B$3<=6)",
+                "AND($A$1:$A$2=INT($A$1:$A$2))",
+                "AND(($A$2=0)+($A$2=1))",
+                "AND($A$1>=1)",
+                "{2,1,100,0.075,0,1,0.0001,50}",
+            ]
+        );
+        // The constraint cells show whether each constraint holds at the solution (4, 0).
+        assert_eq!(at(&s, "Sheet1", "H3"), Value::Bool(true));
+        assert_eq!(at(&s, "Sheet1", "H2"), Value::number(2.0));
+        // Reset All removes the model; Load Model restores it from the range or its first cell.
+        assert_eq!(s.execute("data.solverReset", json!({})).unwrap()["removed"].as_u64().map(|n| n > 0), Some(true));
+        assert!(s.execute("data.solver", json!({})).unwrap()["model"].is_null());
+        assert_eq!(s.execute("data.solverReset", json!({})).unwrap()["removed"], 0);
+        for from in ["H1:H8", "H1"] {
+            let loaded = s.execute("data.solverLoadModel", json!({"from": from})).unwrap();
+            assert_eq!(loaded["model"]["objective"], "B1", "{loaded}");
+            assert_eq!(loaded["model"]["constraints"], json!(["B2 <= C2", "B3 <= 6", "A1:A2 int", "A2 bin", "A1 >= 1"]));
+            assert_eq!(loaded["model"]["method"], "simplex");
+        }
+        set(&mut s, &[("A1", "0"), ("A2", "0")]);
+        let r = s.execute("data.solver", json!({"saved": true})).unwrap();
+        assert_eq!((r["status"].as_str(), n(&s, "A1"), n(&s, "A2")), (Some("optimal"), 4.0, 0.0), "{r}");
+        // A Value Of goal and the Evolutionary options survive too; an explicit model is saved
+        // as given.
+        let evo = json!({"objective": "B1", "goal": "value", "value": -2.5, "variables": "A1:A2", "constraints": ["A1:A2 <= 10"], "nonNegative": false, "method": "evolutionary", "populationSize": 40, "randomSeed": 3, "requireBounds": false});
+        assert_eq!(s.execute("data.solverSaveModel", json!({"to": "J5", "model": evo})).unwrap()["range"], "J5:J8");
+        assert_eq!(formula(&s, "J5"), "$B$1=-2.5");
+        let m = s.execute("data.solverLoadModel", json!({"from": "J5:J8"})).unwrap()["model"].clone();
+        assert_eq!((m["goal"].as_str(), m["value"].as_f64(), m["nonNegative"].as_bool()), (Some("value"), Some(-2.5), Some(false)), "{m}");
+        assert_eq!((m["method"].as_str(), m["populationSize"].as_f64(), m["randomSeed"].as_f64()), (Some("evolutionary"), Some(40.0), Some(3.0)));
+        assert_eq!(m["requireBounds"], false);
+        // Each command is one undo step.
+        s.execute("edit.undo", json!({})).unwrap();
+        assert_eq!(s.execute("data.solver", json!({})).unwrap()["model"]["method"], "simplex");
+        // Refused: no model or no target, overlapping the model, off the sheet, ranges that
+        // hold no model, other sheets and oversized ranges.
+        set(&mut s, &[("L1", "=1+1"), ("L2", "=SUM(A1:A2)")]);
+        for (cmd, p) in [
+            ("data.solverSaveModel", json!({})),
+            ("data.solverSaveModel", json!({"to": "A1"})),
+            ("data.solverSaveModel", json!({"to": "B3"})),
+            ("data.solverSaveModel", json!({"to": "A1048575"})),
+            ("data.solverSaveModel", json!({"to": "H1", "model": {"objective": "B1", "variables": "A1,A2", "constraints": ["A1,A2 <= 3"]}})),
+            ("data.solverSaveModel", json!({"to": "H1", "model": "B1"})),
+            ("data.solverLoadModel", json!({})),
+            ("data.solverLoadModel", json!({"from": "L1:L2"})),
+            ("data.solverLoadModel", json!({"from": "Z1"})),
+            ("data.solverLoadModel", json!({"from": "H2:H8"})),
+            ("data.solverLoadModel", json!({"from": "H1:H1048576"})),
+            ("data.solverLoadModel", json!({"from": "Nope!H1"})),
+        ] {
+            assert!(s.execute(cmd, p.clone()).is_err(), "{cmd} {p}");
+        }
+        s.execute("data.solverReset", json!({})).unwrap();
+        assert!(s.execute("data.solverSaveModel", json!({"to": "H1"})).is_err(), "no model to save");
     }
 
     #[test]

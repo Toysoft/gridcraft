@@ -452,12 +452,18 @@ impl Dialog {
                 d
             }
             "solver" => {
-                // Starts from the sheet's saved model, else the active cell as objective.
+                // Starts from the sheet's saved model, else the active cell as objective; fields
+                // given when opening it go over either.
                 let saved = app.session.active().and_then(|doc| gridcraft_engine::cmd::solver::saved_model(&doc.wb, doc.wb.active_sheet));
                 let mut values = json!({"objective": active, "goal": "max", "value": "0", "variables": "", "constraints": [], "nonNegative": true, "method": "grg"});
-                if let (Some(m), Some(v)) = (saved.as_ref().and_then(Json::as_object), values.as_object_mut()) {
-                    for (k, x) in m {
-                        v.insert(k.clone(), if k == "value" { json!(x.to_string()) } else { x.clone() });
+                for m in [saved.as_ref(), Some(&params)].into_iter().flatten().filter_map(Json::as_object) {
+                    if let Some(v) = values.as_object_mut() {
+                        for (k, x) in m {
+                            v.insert(
+                                k.clone(),
+                                if k == "value" { json!(x.as_str().map_or_else(|| x.to_string(), str::to_string)) } else { x.clone() },
+                            );
+                        }
                     }
                 }
                 if let Some(v) = values.as_object_mut() {
@@ -914,7 +920,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "commandSearch" => command_search(app, ui, &mut d, &mut confirm),
                 "goalSeek" => goal_seek(app, ui, &mut d, &mut confirm),
                 "analysisToolPak" => analysis_toolpak(app, ui, &mut d, &mut confirm, &mut open),
-                "solver" => solver(ui, &mut d, &mut confirm, &mut open),
+                "solver" => solver(app, ui, &mut d, &mut confirm, &mut open),
                 "solverResults" => solver_results(app, ui, &mut d, &mut open),
                 "spelling" => spelling(app, ui, &mut d, &mut open),
                 "agents" => {
@@ -2271,8 +2277,9 @@ fn analysis_toolpak(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confi
 }
 
 /// Data › Solver: the Solver Parameters form. Solve runs `data.solver` through the dialog's
-/// command; the result opens Solver Results.
-fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+/// command; the result opens Solver Results. Reset All clears the form and the sheet's model;
+/// Load/Save reads or writes the model on cells of the sheet.
+fn solver(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
     let text = |d: &Dialog, k: &str| d.values.get(k).map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())).unwrap_or_default();
     let edit = |ui: &mut egui::Ui, d: &mut Dialog, k: &str, width: f32| {
         let mut t = text(d, k);
@@ -2373,6 +2380,68 @@ fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool
         })
         .small(),
     );
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        if ui.button("Reset All").clicked() {
+            match app.run("data.solverReset", json!({})) {
+                Ok(_) => {
+                    for (k, v) in [
+                        ("objective", json!("")),
+                        ("goal", json!("max")),
+                        ("value", json!("0")),
+                        ("variables", json!("")),
+                        ("constraints", json!([])),
+                        ("nonNegative", json!(true)),
+                        ("method", json!("grg")),
+                    ] {
+                        d.values.insert(k.into(), v);
+                    }
+                    d.values.remove("modelNote");
+                }
+                Err(e) => {
+                    d.values.insert("modelNote".into(), json!(crate::clean_error(&e)));
+                }
+            }
+        }
+        let shown = d.values.get("modelArea").and_then(Json::as_bool).unwrap_or(false);
+        if ui.selectable_label(shown, "Load/Save").clicked() {
+            d.values.insert("modelArea".into(), json!(!shown));
+        }
+    });
+    if d.values.get("modelArea").and_then(Json::as_bool) == Some(true) {
+        ui.horizontal(|ui| {
+            ui.label("Model Range:");
+            edit(ui, d, "modelRange", 140.0);
+            let range = text(d, "modelRange");
+            let ready = !range.trim().is_empty();
+            if ui.add_enabled(ready, egui::Button::new("Load")).clicked() {
+                match app.run("data.solverLoadModel", json!({"from": range.trim()})) {
+                    Ok(r) => {
+                        if let Some(m) = r.get("model").and_then(Json::as_object) {
+                            for (k, x) in m {
+                                d.values.insert(k.clone(), if k == "value" { json!(x.to_string()) } else { x.clone() });
+                            }
+                        }
+                        d.values.insert("modelNote".into(), json!("The model was loaded."));
+                    }
+                    Err(e) => {
+                        d.values.insert("modelNote".into(), json!(crate::clean_error(&e)));
+                    }
+                }
+            }
+            if ui.add_enabled(ready, egui::Button::new("Save")).clicked() {
+                let note = match app.run("data.solverSaveModel", json!({"to": range.trim(), "model": build_params(d)})) {
+                    Ok(r) => format!("The model was saved to {}.", r.get("range").and_then(Json::as_str).unwrap_or("")),
+                    Err(e) => crate::clean_error(&e),
+                };
+                d.values.insert("modelNote".into(), json!(note));
+            }
+        });
+    }
+    let note = text(d, "modelNote");
+    if !note.is_empty() {
+        ui.label(egui::RichText::new(note).small());
+    }
     ui.add_space(8.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let solve =
