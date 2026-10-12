@@ -2429,6 +2429,11 @@ pub fn shortcut(app: &mut SheetApp, key: Key, m: Modifiers) {
         Key::T if shift => Some(("formulas.autoSum", json!({}))),
         Key::T => Some(("insert.table", json!({}))),
         Key::E => Some(("edit.flashFill", json!({}))),
+        Key::Q => {
+            // Quick Analysis; a single cell has nothing to analyse, which is not worth an alert.
+            let _ = crate::quick_analysis::toggle(app, None);
+            None
+        }
         Key::Num1 => {
             app.open_dialog("formatCells", json!({}));
             None
