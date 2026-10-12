@@ -429,6 +429,33 @@ fn runs_roundtrip() {
     assert_eq!(s.cell_runs.get(&at("A4")), Some(&a4));
 }
 
+/// The reporter's Wingdings shape (issue #774, comment 6131667259): a run in a symbol font
+/// (`è` spells a check mark in Wingdings) followed by a normal-font run. Both `rFont` values
+/// must survive the round-trip — pre-fix, run font families were dropped on write.
+#[test]
+fn wingdings_rfont_roundtrip() {
+    // "è ok": the Wingdings `è` is 2 bytes, " ok" is 3.
+    let runs = CellRuns {
+        runs: vec![
+            Run { start: 0, len: 2, font: RunFont { name: Some("Wingdings".into()), ..none_font() } },
+            Run { start: 2, len: 3, font: RunFont { name: Some("Calibri".into()), ..none_font() } },
+        ],
+    };
+    let wb = runs_workbook(&[("A1", "è ok", runs.clone())]);
+    let bytes = write_xlsx(&wb).unwrap();
+    let xml = part(&bytes, "xl/sharedStrings.xml");
+    // `run_rpr_xml` emits `rFont` after any color/sz; with only a name set, it is the sole child.
+    assert!(xml.contains("<r><rPr><rFont val=\"Wingdings\"/></rPr><t>è</t></r>"), "{xml}");
+    assert!(xml.contains("<r><rPr><rFont val=\"Calibri\"/></rPr><t xml:space=\"preserve\"> ok</t></r>"), "{xml}");
+
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    let s = back.sheet(0).unwrap();
+    assert_eq!(s.value(at("A1")), Value::text("è ok"));
+    assert_eq!(s.cell_runs.get(&at("A1")), Some(&runs));
+    assert_eq!(s.cell_runs.get(&at("A1")).unwrap().runs[0].font.name.as_deref(), Some("Wingdings"));
+    assert_eq!(s.cell_runs.get(&at("A1")).unwrap().runs[1].font.name.as_deref(), Some("Calibri"));
+}
+
 /// Identical text and runs share one `<si>`; the same text with different runs gets its own.
 #[test]
 fn sst_dedup_shares_and_splits() {

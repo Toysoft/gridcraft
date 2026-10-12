@@ -177,6 +177,28 @@ mod tests {
         assert_ne!(j.sections[0].format.font_id.family, theme::cell_family(&base.name, false, false));
     }
 
+    /// A run's font family reaches the layout job (issue #774, comment 6131667259: Wingdings
+    /// runs lost their font on round-trip). Rendering the Wingdings glyph itself needs the font
+    /// installed; this asserts the family the run's glyphs would be laid out in.
+    #[test]
+    fn wingdings_run_family_reaches_job() {
+        let base = Font::default();
+        let theme = Theme::default();
+        // "è ok": the Wingdings `è` is 2 bytes, " ok" is 3 — in a monospace-named font.
+        let runs = CellRuns {
+            runs: vec![
+                run(0, 2, RunFont { name: Some("Wingdings".into()), ..none_font() }),
+                run(2, 3, RunFont { name: Some("Courier New".into()), ..none_font() }),
+            ],
+        };
+        let j = job("è ok", &runs, &base, Color32::BLACK, &theme, 1.0, None).unwrap();
+        assert_eq!(j.sections[0].format.font_id.family, theme::cell_family("Wingdings", false, false));
+        assert_eq!(j.sections[1].format.font_id.family, theme::cell_family("Courier New", false, false));
+        // `cell_family` buckets names, and a monospace name lands on a different family than
+        // the base font — so the per-run name genuinely drives the section's family.
+        assert_ne!(j.sections[1].format.font_id.family, theme::cell_family(&base.name, false, false));
+    }
+
     #[test]
     fn wrapped_job_honors_width() {
         let base = Font::default();
