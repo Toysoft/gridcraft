@@ -1,7 +1,7 @@
 use gridcraft_core::{CellRef, DateSystem, Value};
 use gridcraft_model::{Sheet, Workbook};
 
-use crate::csv::{decode_text, sniff_delimiter};
+use crate::csv::{AnsiCodePage, decode_ansi, decode_text, guess_code_page, sniff_delimiter};
 use crate::{CsvOptions, Format, read_csv, sniff, write_csv};
 
 fn v(wb: &Workbook, r: u32, c: u32) -> Value {
@@ -141,4 +141,53 @@ fn hostile_csv() {
     let wide = ",".repeat(20_000);
     let wb = read_csv(format!("{wide}x").as_bytes(), &CsvOptions::default()).unwrap();
     assert!(wb.sheet(0).unwrap().cells.is_empty(), "fields past column XFD are dropped");
+}
+
+/// `s` in a single-byte code page, through the decoder's own table (every char must be in it).
+fn encode_ansi(s: &str, page: AnsiCodePage) -> Vec<u8> {
+    s.chars().map(|c| (0..=255u8).find(|&b| decode_ansi(&[b], page).starts_with(c)).unwrap_or_else(|| panic!("{c:?} not in {page:?}"))).collect()
+}
+
+#[test]
+fn ansi_tables_match_known_bytes() {
+    // Arabic Windows: "اسم" is C7 D3 E3; Arabic comma A1, question mark BF, lam E1, yeh ED.
+    assert_eq!(decode_ansi(&[0xC7, 0xD3, 0xE3], AnsiCodePage::Windows1256), "اسم");
+    assert_eq!(decode_ansi(&[0xA1, 0xBF, 0xE1, 0xED, 0xDC, 0x81], AnsiCodePage::Windows1256), "،؟ليـپ");
+    assert_eq!(decode_ansi(&[0xE9, 0xD7, 0xF7], AnsiCodePage::Windows1256), "é×÷");
+    // Cyrillic Windows: "Привет" is CF F0 E8 E2 E5 F2; Ё A8, ё B8, № B9.
+    assert_eq!(decode_ansi(&[0xCF, 0xF0, 0xE8, 0xE2, 0xE5, 0xF2], AnsiCodePage::Windows1251), "Привет");
+    assert_eq!(decode_ansi(&[0xA8, 0xB8, 0xB9], AnsiCodePage::Windows1251), "Ёё№");
+    // Every byte decodes in every page without panicking.
+    let all: Vec<u8> = (0..=255).collect();
+    for page in [AnsiCodePage::Windows1252, AnsiCodePage::Windows1256, AnsiCodePage::Windows1251] {
+        assert_eq!(decode_ansi(&all, page).chars().count(), 256);
+    }
+}
+
+#[test]
+fn ansi_csv_code_page_is_guessed_from_its_text() {
+    // An Arabic accounts list as Excel saves "CSV (Comma delimited)" on Arabic Windows.
+    let arabic = "اسم الحساب;المجموع\r\n10102-customer-1111 - عبدالسلام;-506\r\n10102-customer-0085 - شركة جودة الاعتناء؛ فرع 2;26387.5\r\nمقهى فليم الصحافة;2346.2\r\n";
+    let bytes = encode_ansi(arabic, AnsiCodePage::Windows1256);
+    assert_eq!(guess_code_page(&bytes), AnsiCodePage::Windows1256);
+    assert_eq!(decode_text(&bytes), arabic);
+    let wb = read_csv(&bytes, &CsvOptions { delimiter: 0, ..Default::default() }).unwrap();
+    assert_eq!(v(&wb, 0, 0), Value::text("اسم الحساب"));
+    assert_eq!(v(&wb, 1, 0), Value::text("10102-customer-1111 - عبدالسلام"));
+    assert_eq!(v(&wb, 1, 1), Value::Number(-506.0));
+    // A single short Arabic word still reads as Arabic.
+    assert_eq!(decode_text(&encode_ansi("نعم,1", AnsiCodePage::Windows1256)), "نعم,1");
+
+    // Russian on Cyrillic Windows.
+    let russian = "Наименование;Количество;Цена\r\nСтол письменный;2;15000\r\nКресло офисное;4;7500,50\r\n";
+    let bytes = encode_ansi(russian, AnsiCodePage::Windows1251);
+    assert_eq!(guess_code_page(&bytes), AnsiCodePage::Windows1251);
+    assert_eq!(decode_text(&bytes), russian);
+
+    // Western European stays Windows-1252, as before.
+    for western in ["Élève;café;Größe;Ñandú\r\n", "Prénom,Nom\r\nFrançois,Lefèvre\r\nZoë,Müller\r\n", "Preis: 5 €\r\n"] {
+        let bytes = encode_ansi(western, AnsiCodePage::Windows1252);
+        assert_eq!(guess_code_page(&bytes), AnsiCodePage::Windows1252, "{western:?}");
+        assert_eq!(decode_text(&bytes), western);
+    }
 }
