@@ -14,7 +14,7 @@
 //! - `ui.edit.begin {text?}`, `ui.edit.commit {move?}`, `ui.edit.cancel`
 //! - `ui.screenshot {path?}` — PNG of the window (base64 when no path); animations are settled
 //! - `ui.resize {width, height}`, `ui.set {dark?, formulaBar?, ribbonCollapsed?, animations?}`
-//! - `app.open {path, password?}`, `app.save {path?}`, `app.quit`
+//! - `app.open {path, password?}`, `app.save {path?}`, `app.quit` (without asking to save)
 
 use std::sync::mpsc::Sender;
 
@@ -366,6 +366,8 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
         }
         "app.save" => wrap(app.run("file.save", json!({"path": s("path")}))),
         "app.quit" => {
+            // Automation quits without asking about unsaved changes.
+            app.quit_without_asking = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             ok(Json::Null)
         }
