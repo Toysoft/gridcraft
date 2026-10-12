@@ -171,6 +171,44 @@ fn references_into_linked_workbooks_read_the_saved_values() {
 }
 
 #[test]
+fn references_into_linked_workbooks_keep_their_position_and_size() {
+    use gridcraft_model::{ExternalBook, ExternalSheet};
+    let mut t = T::new();
+    // Data!A1:B6: a header row, then items a..e priced 10..14.
+    let mut cells = vec![(c("A1"), Value::text("Item")), (c("B1"), Value::text("Price"))];
+    for (i, item) in ["a", "b", "c", "d", "e"].into_iter().enumerate() {
+        cells.push((CellRef::new(i as u32 + 1, 0), Value::text(item)));
+        cells.push((CellRef::new(i as u32 + 1, 1), Value::Number(10.0 + i as f64)));
+    }
+    cells.sort_by_key(|(p, _)| *p);
+    t.wb.external_books = vec![ExternalBook { sheets: vec![ExternalSheet { name: "Data".into(), cells, refresh_error: false }], names: vec![] }];
+    // `@` takes the cell on the formula's row (or column), as for this workbook's references.
+    for at in ["D2", "D3", "D4", "D5", "D6"] {
+        t.set(at, "=@[1]Data!B:B");
+    }
+    assert_eq!([t.num("D2"), t.num("D3"), t.num("D4"), t.num("D5"), t.num("D6")], [10.0, 11.0, 12.0, 13.0, 14.0]);
+    t.set("F4", "=@[1]Data!B3:B6");
+    t.set("F9", "=@[1]Data!B3:B6");
+    t.set("B10", "=@[1]Data!A1:B1");
+    assert_eq!((t.num("F4"), t.get("F9"), t.get("B10")), (12.0, Value::Error(CellError::Value), Value::text("Price")));
+    // The reference keeps the size written, past the last saved cell.
+    t.set("G1", "=ROWS([1]Data!A:A)");
+    t.set("G2", "=ROWS([1]Data!A1:A100000)");
+    t.set("G3", "=COLUMNS([1]Data!1:1)");
+    t.set("G4", "=INDEX([1]Data!B:B,4)");
+    t.set("G5", "=INDEX([1]Data!A:A,10)");
+    t.set("G6", "=SUM([1]Data!B:B)+VLOOKUP(\"c\",[1]Data!A:B,2,FALSE)");
+    t.set("G7", "=ISREF([1]Data!B2)");
+    assert_eq!(
+        (t.num("G1"), t.num("G2"), t.num("G3"), t.num("G4"), t.num("G5"), t.num("G6"), t.get("G7")),
+        (1_048_576.0, 100_000.0, 16_384.0, 12.0, 0.0, 72.0, Value::Bool(true))
+    );
+    // INDIRECT reads another workbook only while it is open.
+    t.set("H1", "=INDIRECT(\"[1]Data!B2\")");
+    assert_eq!(t.get("H1"), Value::Error(CellError::Ref));
+}
+
+#[test]
 fn if_family_ranges_inside_lambdas_stay_references() {
     // MAP/BYROW hand their LAMBDA ranges of this workbook: COUNTIF and SUMIF take them.
     let mut t = T::new();

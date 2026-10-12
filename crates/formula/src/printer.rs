@@ -8,15 +8,20 @@ use crate::ast::*;
 
 /// Whether a sheet name needs quotes in a reference.
 pub fn needs_quotes(name: &str) -> bool {
-    if name.is_empty() {
-        return true;
-    }
     // A sheet in a linked workbook, `[1]Prices`: Excel quotes it only when the sheet name needs it.
     if let Some((book, sheet)) = name.strip_prefix('[').and_then(|s| s.split_once(']'))
         && !book.is_empty()
         && book.bytes().all(|b| b.is_ascii_digit())
     {
-        return needs_quotes(sheet);
+        return sheet_needs_quotes(sheet);
+    }
+    sheet_needs_quotes(name)
+}
+
+/// Whether a sheet name, without a linked workbook's `[n]`, needs quotes.
+fn sheet_needs_quotes(name: &str) -> bool {
+    if name.is_empty() {
+        return true;
     }
     let first = name.chars().next().unwrap_or('_');
     if first.is_ascii_digit() || name.chars().any(|c| !(c.is_alphanumeric() || c == '_' || c == '.')) {
@@ -35,8 +40,9 @@ fn sheet_prefix(s: &SheetSel) -> String {
         SheetSel::Current => String::new(),
         SheetSel::Named(n) => format!("{}!", quote_sheet(n)),
         SheetSel::Span(a, b) => {
+            // `[1]Jan:Dec!A1`: a linked workbook's index can start the range, not its second sheet.
             let joined = format!("{a}:{b}");
-            if needs_quotes(a) || needs_quotes(b) { format!("'{}'!", joined.replace('\'', "''")) } else { format!("{joined}!") }
+            if needs_quotes(a) || sheet_needs_quotes(b) { format!("'{}'!", joined.replace('\'', "''")) } else { format!("{joined}!") }
         }
     }
 }

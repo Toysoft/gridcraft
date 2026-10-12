@@ -78,6 +78,30 @@ fn normalises() {
 }
 
 #[test]
+fn linked_workbook_sheet_ranges_round_trip() {
+    // MS-XLSX `sheet-range = [workbook-index] sheet-name ":" sheet-name`, quoted or not.
+    let span = |a: &str, b: &str| SheetSel::Span(a.into(), b.into());
+    for (src, sheet) in [
+        ("SUM([1]Jan:Dec!A1)", span("[1]Jan", "Dec")),
+        ("SUM('[1]Jan:Dec'!A1)", span("[1]Jan", "Dec")),
+        ("SUM('[1]Jan:My Dec'!A1)", span("[1]Jan", "My Dec")),
+        ("SUM('Jan:[1]Dec'!A1)", span("Jan", "[1]Dec")),
+        ("[2]Prices!B2", SheetSel::Named("[2]Prices".into())),
+    ] {
+        let e = parse(src).unwrap_or_else(|e| panic!("{src}: {e}"));
+        let first = match &e {
+            Expr::Call(_, args) => args.first(),
+            r => Some(r),
+        };
+        let Some(Expr::Ref(r)) = first else { panic!("{src}: {e:?}") };
+        assert_eq!(r.sheet, sheet, "{src}");
+        // What the printer writes reads back as the same formula.
+        let printed = print(&e);
+        assert_eq!(parse(&printed).ok(), Some(e), "{src} printed as {printed}");
+    }
+}
+
+#[test]
 fn spill_operator() {
     for f in ["A1#", "Sheet1!$D$1#", "SUM(B2#)", "'My Sheet'!A1#*2", "ROWS(A1#)+1", "IF(A1,#N/A,#REF!)"] {
         assert_eq!(rt(f), f);

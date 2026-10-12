@@ -117,12 +117,16 @@ pub struct ExternalName {
 
 impl ExternalBook {
     pub fn sheet(&self, name: &str) -> Option<&ExternalSheet> {
-        self.sheets.iter().find(|s| s.name.eq_ignore_ascii_case(name))
+        self.sheets.get(self.sheet_index(name)?)
+    }
+    /// The position in `sheets` of the sheet named `name`.
+    pub fn sheet_index(&self, name: &str) -> Option<usize> {
+        self.sheets.iter().position(|s| s.name.eq_ignore_ascii_case(name))
     }
     /// The name `name` as seen from sheet `sheet` (`None` = from the workbook): the sheet's own
     /// name first, then the workbook-scoped one.
     pub fn name(&self, name: &str, sheet: Option<&str>) -> Option<&ExternalName> {
-        let si = sheet.and_then(|s| self.sheets.iter().position(|x| x.name.eq_ignore_ascii_case(s)));
+        let si = sheet.and_then(|s| self.sheet_index(s));
         let find = |scope: Option<usize>| self.names.iter().find(|n| n.sheet == scope && n.name.eq_ignore_ascii_case(name));
         si.and_then(|i| find(Some(i))).or_else(|| find(None))
     }
@@ -132,6 +136,11 @@ impl ExternalSheet {
     /// The cached value at `c` (blank when the link didn't store the cell).
     pub fn value(&self, c: CellRef) -> Value {
         self.cells.binary_search_by(|(p, _)| p.cmp(&c)).ok().and_then(|i| self.cells.get(i)).map(|(_, v)| v.clone()).unwrap_or_default()
+    }
+    /// The cached cells inside `range`, in order.
+    pub fn cells_in(&self, range: RangeRef) -> impl Iterator<Item = &(CellRef, Value)> {
+        let from = self.cells.partition_point(|(p, _)| p.row < range.start.row);
+        self.cells.get(from..).unwrap_or_default().iter().take_while(move |(p, _)| p.row <= range.end.row).filter(move |(p, _)| range.contains(*p))
     }
     /// The smallest range holding every cached cell.
     pub fn extent(&self) -> Option<RangeRef> {
