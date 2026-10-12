@@ -106,6 +106,8 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Shapes" => "Formes",
         "Icons" => "Icônes",
         "Text\nBox" => "Zone de texte",
+        "Word\nArt" => "WordArt",
+        "Insert WordArt" => "Insérer un WordArt",
         "Comment" => "Commentaire",
         "New\nComment" => "Nouveau commentaire",
         "New Note" => "Nouvelle note",

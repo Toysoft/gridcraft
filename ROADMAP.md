@@ -21,7 +21,7 @@ This page is the summary. The detail is in:
 
 | Number | Value | Kind |
 |---|---|---|
-| **Feature breadth** (weighted) | **~75%** | estimated, anchored on two measurements: ribbon catalog 274 / 290 (94.5%), worksheet functions 513 / 523 (98.1%; 504 working, 96.4%) |
+| **Feature breadth** (weighted) | **~75%** | estimated, anchored on two measurements: ribbon catalog 275 / 290 (94.8%), worksheet functions 513 / 523 (98.1%; 504 working, 96.4%) |
 | **Ready for real work** | **~50%** | estimated from written weights (51.6); [target-app-parity.md](docs/target-app-parity.md) |
 | **Mainstream practitioner** | **~50%** | estimated: typical analyst/finance user, weekly features, × 0.90 interaction × 0.92 stability × 0.88 file exchange; [method](docs/target-app-parity.md#mainstream-practitioner) |
 | **Essentials user** | **~63%** | estimated: core features only, × 0.92 launch/stability × 0.95 clarity × 0.90 opening sent files; [method](docs/target-app-parity.md#essentials-user) |
@@ -132,6 +132,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
+| 2026-10-12 | Insert › Text › WordArt (`insert.wordArt`, `wordArt.set`): floating decorative text with 10 original styles, outline and shadow, in-place editing, XLSX and print (#784) |
 | 2026-10-12 | File › Print selects a system printer, copies, duplex and grayscale, submits PDF jobs through craft-print on a worker and shows spooler errors; browser printing and PDF export remain available |
 | 2026-10-11 | Command-sequence fuzzing: random command sequences checked against undo/redo, XLSX round-trip and full recalculation; fixes for the table, legacy-array, spill, AutoSum, Watch Window and sheet-copy bugs it found |
 | 2026-10-11 | Password-protected workbooks open: GridCraft asks for the password and decrypts Agile and Standard encryption (#11) |
@@ -178,6 +179,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Catalog 274 → 275 / 290: Insert › WordArt (#784) |
 | 2026-10-12 | minor | Desktop File > Print now discovers printers and submits PDF jobs through pinned craft-print with printer choice, copies, duplex and grayscale; browser printing and PDF export remain available. Remaining print parity includes page ranges and driver-specific tray/options UI; physical printer fidelity needs hardware validation. |
 | 2026-10-11 | minor | Password-encrypted workbooks open (#11); progress log row |
 | 2026-10-11 | minor | Forecast Sheet (#322); progress log row |
