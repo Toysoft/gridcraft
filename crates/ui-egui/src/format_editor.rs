@@ -46,6 +46,7 @@ fn active_style(app: &SheetApp) -> Style {
 
 pub(crate) fn preview(app: &SheetApp, ui: &mut egui::Ui, style: &Style) {
     let Some(doc) = app.session.active() else { return };
+    let lang = app.ui.language;
     let theme = &doc.wb.theme;
     let mut effective = active_style(app);
     effective.apply_differential(style);
@@ -63,7 +64,7 @@ pub(crate) fn preview(app: &SheetApp, ui: &mut egui::Ui, style: &Style) {
             theme::color32([0, 1, 2].map(|i| ((fg[i] as u16 + bg[i] as u16 * 3) / 4) as u8))
         }
     };
-    ui.label("Preview");
+    ui.label(lang.tr("Preview"));
     let preview = egui::Frame::new().fill(fill).inner_margin(12.0).show(ui, |ui| {
         ui.set_min_width(320.0);
         let mut text = RichText::new(text).color(color).font(egui::FontId::new(
@@ -91,11 +92,17 @@ pub(crate) fn preview(app: &SheetApp, ui: &mut egui::Ui, style: &Style) {
     }
 }
 
-fn choice<T: Copy + PartialEq>(ui: &mut egui::Ui, id: &str, value: &mut T, options: &[(T, &str)]) {
+// Keep the shared editor's English labels and reuse translations from Format Cells.
+fn translated_label<'a>(lang: crate::i18n::Language, label: &'a str, key: &'a str) -> &'a str {
+    let translated = lang.tr(key);
+    if translated == key { label } else { translated }
+}
+
+fn choice<T: Copy + PartialEq>(ui: &mut egui::Ui, id: &str, value: &mut T, options: &[(T, &str)], lang: crate::i18n::Language) {
     let label = options.iter().find(|(v, _)| v == value).map(|(_, n)| *n).unwrap_or("");
-    egui::ComboBox::from_id_salt(id).selected_text(label).show_ui(ui, |ui| {
+    egui::ComboBox::from_id_salt(id).selected_text(lang.tr(label)).show_ui(ui, |ui| {
         for (v, name) in options {
-            ui.selectable_value(value, *v, *name);
+            ui.selectable_value(value, *v, lang.tr(name));
         }
     });
 }
@@ -128,7 +135,7 @@ fn override_row(
     });
 }
 
-fn color(ui: &mut egui::Ui, value: &mut Color, theme: &gridcraft_engine::model::Theme, draft: &mut ColorDraft) {
+fn color(ui: &mut egui::Ui, value: &mut Color, theme: &gridcraft_engine::model::Theme, draft: &mut ColorDraft, lang: crate::i18n::Language) {
     let hex = |c: Color| {
         let [r, g, b] = c.resolve(theme).unwrap_or([0, 0, 0]);
         format!("#{r:02X}{g:02X}{b:02X}")
@@ -147,11 +154,11 @@ fn color(ui: &mut egui::Ui, value: &mut Color, theme: &gridcraft_engine::model::
     {
         *value = c;
     }
-    if ui.small_button("Automatic").clicked() {
+    if ui.small_button(lang.tr("Automatic")).clicked() {
         *value = Color::Auto;
         draft.text = hex(*value);
     }
-    ui.menu_button("Palette", |ui| {
+    ui.menu_button(lang.tr("Palette"), |ui| {
         if let Some(c) = crate::widgets::color_palette(ui, &theme.colors, "Automatic") {
             *value = if c == "none" { Color::Auto } else { Color::from_hex(&c).unwrap_or_default() };
             draft.text = hex(*value);
@@ -172,75 +179,85 @@ pub(crate) fn options(
     drafts: &mut ColorDrafts,
 ) {
     use StyleProperty::*;
+    let lang = app.ui.language;
     let conditional = specified.is_some();
     let mut unused = Default::default();
     let set = specified.unwrap_or(&mut unused);
     let theme = app.session.active().map(|doc| doc.wb.theme.clone()).unwrap_or_default();
-    egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+    let mut draw = |ui: &mut egui::Ui| {
         match tab {
-            "Number" => override_row(ui, set, conditional, NumberFormat, "Number format", |ui| {
-                let sample = app.session.active().and_then(|doc| doc.wb.active().map(|s| s.value(doc.selection.active))).unwrap_or_default();
-                let mut code = style.num_fmt.as_str().to_string();
-                ui.columns(2, |cols| {
-                    cols[0].label(egui::RichText::new("Category:").strong());
-                    for name in [
-                        "General",
-                        "Number",
-                        "Currency",
-                        "Accounting",
-                        "Short Date",
-                        "Long Date",
-                        "Time",
-                        "Percentage",
-                        "Fraction",
-                        "Scientific",
-                        "Text",
-                    ] {
-                        let c = gridcraft_engine::cmd::format::format_code_for(name).to_string();
-                        if cols[0].selectable_label(code == c, name).clicked() {
-                            code = c;
+            "Number" => {
+                let mut draw = |ui: &mut egui::Ui| {
+                    let sample = app.session.active().and_then(|doc| doc.wb.active().map(|s| s.value(doc.selection.active))).unwrap_or_default();
+                    let mut code = style.num_fmt.as_str().to_string();
+                    ui.columns(2, |cols| {
+                        cols[0].label(egui::RichText::new(lang.tr("Category:")).strong());
+                        for name in [
+                            "General",
+                            "Number",
+                            "Currency",
+                            "Accounting",
+                            "Short Date",
+                            "Long Date",
+                            "Time",
+                            "Percentage",
+                            "Fraction",
+                            "Scientific",
+                            "Text",
+                        ] {
+                            let c = gridcraft_engine::cmd::format::format_code_for(name).to_string();
+                            let response = cols[0].selectable_label(code == c, lang.tr(name));
+                            if response.clicked() {
+                                code = c;
+                            }
                         }
-                    }
-                    cols[1].label(egui::RichText::new("Sample").strong());
-                    let preview = app.session.active().map(|doc| gridcraft_engine::display::format(&sample, &code, &doc.wb).text).unwrap_or_default();
-                    cols[1].label(egui::RichText::new(preview).font(theme::ui_font(15.0)));
-                    cols[1].add_space(8.0);
-                    cols[1].label("Type (custom format code):");
-                    cols[1].text_edit_singleline(&mut code);
-                    for c in [
-                        "0",
-                        "0.00",
-                        "#,##0",
-                        "#,##0.00",
-                        "#,##0;[Red]-#,##0",
-                        "0%",
-                        "0.00%",
-                        "0.00E+00",
-                        "# ?/?",
-                        "m/d/yyyy",
-                        "d-mmm-yy",
-                        "mmmm d, yyyy",
-                        "h:mm AM/PM",
-                        "h:mm:ss",
-                        "[h]:mm:ss",
-                        "@",
-                    ] {
-                        if cols[1].small_button(c).clicked() {
-                            code = c.to_string();
+                        cols[1].label(egui::RichText::new(lang.tr("Sample")).strong());
+                        let preview =
+                            app.session.active().map(|doc| gridcraft_engine::display::format(&sample, &code, &doc.wb).text).unwrap_or_default();
+                        cols[1].label(egui::RichText::new(preview).font(theme::ui_font(15.0)));
+                        cols[1].add_space(8.0);
+                        cols[1].label("Type (custom format code):");
+                        cols[1].text_edit_singleline(&mut code);
+                        for c in [
+                            "0",
+                            "0.00",
+                            "#,##0",
+                            "#,##0.00",
+                            "#,##0;[Red]-#,##0",
+                            "0%",
+                            "0.00%",
+                            "0.00E+00",
+                            "# ?/?",
+                            "m/d/yyyy",
+                            "d-mmm-yy",
+                            "mmmm d, yyyy",
+                            "h:mm AM/PM",
+                            "h:mm:ss",
+                            "[h]:mm:ss",
+                            "@",
+                        ] {
+                            if cols[1].small_button(c).clicked() {
+                                code = c.to_string();
+                            }
                         }
-                    }
-                });
-                style.num_fmt = gridcraft_engine::model::NumFmt::new(&code);
-            }),
+                    });
+                    style.num_fmt = gridcraft_engine::model::NumFmt::new(&code);
+                };
+                if conditional {
+                    override_row(ui, set, true, NumberFormat, translated_label(lang, "Number format", "Number"), draw);
+                } else {
+                    draw(ui);
+                }
+            }
             "Font" => {
-                override_row(ui, set, conditional, FontName, "Font family", |ui| {
+                override_row(ui, set, conditional, FontName, translated_label(lang, "Font family", "Font"), |ui| {
                     egui::ComboBox::from_id_salt("family").selected_text(&style.font.name).show_ui(ui, |ui| {
                         for family in crate::fonts::families() {
                             ui.selectable_value(&mut style.font.name, family.clone(), family);
                         }
                     });
                 });
-                override_row(ui, set, conditional, FontSize, "Font size", |ui| {
+                override_row(ui, set, conditional, FontSize, translated_label(lang, "Font size", "Size"), |ui| {
                     ui.add(egui::DragValue::new(&mut style.font.size).range(1.0..=409.0).suffix(" pt"));
                 });
                 for (property, label, value) in [
@@ -248,11 +265,11 @@ pub(crate) fn options(
                     (Italic, "Italic", &mut style.font.italic),
                     (Strike, "Strikethrough", &mut style.font.strike),
                 ] {
-                    override_row(ui, set, conditional, property, label, |ui| {
-                        choice(ui, label, value, &[(false, "Off"), (true, "On")]);
+                    override_row(ui, set, conditional, property, lang.tr(label), |ui| {
+                        choice(ui, label, value, &[(false, "Off"), (true, "On")], lang);
                     });
                 }
-                override_row(ui, set, conditional, StyleProperty::Underline, "Underline", |ui| {
+                override_row(ui, set, conditional, StyleProperty::Underline, lang.tr("Underline"), |ui| {
                     choice(
                         ui,
                         "underline",
@@ -261,24 +278,26 @@ pub(crate) fn options(
                             (FontUnderline::None, "None"),
                             (FontUnderline::Single, "Single"),
                             (FontUnderline::Double, "Double"),
-                            (FontUnderline::SingleAccounting, "Single accounting"),
-                            (FontUnderline::DoubleAccounting, "Double accounting"),
+                            (FontUnderline::SingleAccounting, "Single Accounting"),
+                            (FontUnderline::DoubleAccounting, "Double Accounting"),
                         ],
+                        lang,
                     );
                 });
-                override_row(ui, set, conditional, FontVertical, "Vertical position", |ui| {
+                override_row(ui, set, conditional, FontVertical, translated_label(lang, "Vertical position", "Normal"), |ui| {
                     choice(
                         ui,
                         "vertical",
                         &mut style.font.vert,
                         &[(VertAlign::Baseline, "Normal"), (VertAlign::Superscript, "Superscript"), (VertAlign::Subscript, "Subscript")],
+                        lang,
                     );
                 });
-                override_row(ui, set, conditional, FontColor, "Font color", |ui| {
-                    color(ui, &mut style.font.color, &theme, drafts.entry("font").or_default());
+                override_row(ui, set, conditional, FontColor, translated_label(lang, "Font color", "Color:"), |ui| {
+                    color(ui, &mut style.font.color, &theme, drafts.entry("font").or_default(), lang);
                 });
             }
-            "Fill" => override_row(ui, set, conditional, Fill, "Fill", |ui| {
+            "Fill" => override_row(ui, set, conditional, Fill, lang.tr("Format Cells|Fill"), |ui| {
                 ui.vertical(|ui| {
                     choice(
                         ui,
@@ -305,15 +324,16 @@ pub(crate) fn options(
                             (PatternType::LightGrid, "Light grid"),
                             (PatternType::LightTrellis, "Light trellis"),
                         ],
+                        lang,
                     );
                     ui.horizontal(|ui| {
-                        ui.label("Foreground");
-                        color(ui, &mut style.fill.fg, &theme, drafts.entry("fillForeground").or_default());
+                        ui.label(lang.tr("Foreground"));
+                        color(ui, &mut style.fill.fg, &theme, drafts.entry("fillForeground").or_default(), lang);
                     });
                     if !matches!(style.fill.pattern, PatternType::None | PatternType::Solid) {
                         ui.horizontal(|ui| {
-                            ui.label("Background");
-                            color(ui, &mut style.fill.bg, &theme, drafts.entry("fillBackground").or_default());
+                            ui.label(lang.tr("Background"));
+                            color(ui, &mut style.fill.bg, &theme, drafts.entry("fillBackground").or_default(), lang);
                         });
                     }
                 });
@@ -321,7 +341,7 @@ pub(crate) fn options(
             "Border" => {
                 let old_diagonal = style.borders.diag_down;
                 ui.horizontal(|ui| {
-                    if ui.button("Outline").clicked() {
+                    if ui.button(lang.tr("Outline")).clicked() {
                         for p in [LeftBorder, RightBorder, TopBorder, BottomBorder] {
                             set.insert(p);
                         }
@@ -331,7 +351,7 @@ pub(crate) fn options(
                             }
                         }
                     }
-                    if ui.button("No borders").clicked() {
+                    if ui.button(lang.tr("No borders")).clicked() {
                         for p in [LeftBorder, RightBorder, TopBorder, BottomBorder, DiagonalDown, DiagonalUp] {
                             set.insert(p);
                         }
@@ -346,7 +366,7 @@ pub(crate) fn options(
                     (DiagonalDown, "Diagonal down", &mut style.borders.diag_down),
                     (DiagonalUp, "Diagonal up", &mut style.borders.diag_up),
                 ] {
-                    override_row(ui, set, conditional, p, label, |ui| {
+                    override_row(ui, set, conditional, p, lang.tr(label), |ui| {
                         let styles = &[
                             (BorderStyle::None, "None"),
                             (BorderStyle::Thin, "Thin"),
@@ -366,29 +386,29 @@ pub(crate) fn options(
                         ui.vertical(|ui| {
                             ui.horizontal_wrapped(|ui| {
                                 for (style, name) in styles.iter().take(7) {
-                                    let response = ui.selectable_label(line.style == *style, name.to_ascii_lowercase());
+                                    let response = ui.selectable_label(line.style == *style, lang.tr(&name.to_ascii_lowercase()));
                                     response.widget_info(|| {
                                         egui::WidgetInfo::labeled(
                                             egui::WidgetType::SelectableLabel,
                                             ui.is_enabled(),
-                                            format!("{label} {}", name.to_ascii_lowercase()),
+                                            format!("{} {}", lang.tr(label), lang.tr(&name.to_ascii_lowercase())),
                                         )
                                     });
                                     if response.clicked() {
                                         line.style = *style;
                                     }
                                 }
-                                ui.menu_button("More styles", |ui| {
+                                ui.menu_button(lang.tr("More styles"), |ui| {
                                     for (style, name) in styles.iter().skip(7) {
-                                        if ui.selectable_value(&mut line.style, *style, *name).clicked() {
+                                        if ui.selectable_value(&mut line.style, *style, lang.tr(name)).clicked() {
                                             ui.close();
                                         }
                                     }
                                 });
                             });
                             ui.horizontal(|ui| {
-                                ui.label("Color");
-                                color(ui, &mut line.color, &theme, drafts.entry(label).or_default());
+                                ui.label(lang.tr("Color"));
+                                color(ui, &mut line.color, &theme, drafts.entry(label).or_default(), lang);
                             });
                         });
                     });
@@ -404,26 +424,32 @@ pub(crate) fn options(
             }
             _ => {}
         }
-    });
+    };
+    if !conditional && tab == "Number" {
+        draw(ui);
+    } else {
+        egui::ScrollArea::vertical().max_height(360.0).show(ui, draw);
+    }
     if !conditional && tab == "Border" {
         crate::border_preview::sample(ui, &style.borders, &theme);
     }
 }
 
 pub(crate) fn editor(app: &SheetApp, ui: &mut egui::Ui, d: &mut Dialog) {
+    let lang = app.ui.language;
     let patch: Style = d.values.get("style").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
     let mut set = patch.differential_properties();
     let mut style = active_style(app);
     style.apply_differential(&patch);
     ui.horizontal(|ui| {
         for tab in ["Number", "Font", "Border", "Fill"] {
-            if ui.selectable_label(d.tab == tab, tab).clicked() {
+            if ui.selectable_label(d.tab == tab, lang.tr(if tab == "Fill" { "Format Cells|Fill" } else { tab })).clicked() {
                 d.tab = tab.into();
             }
         }
     });
     ui.separator();
-    ui.weak("Checked properties override the cell format. Unchecked properties stay unchanged.");
+    ui.weak(lang.tr("Checked properties override the cell format. Unchecked properties stay unchanged."));
     options(app, ui, &mut style, &d.tab, Some(&mut set), &mut d.color_drafts);
     ui.separator();
     let mut selected = Style::default();
@@ -435,7 +461,7 @@ pub(crate) fn editor(app: &SheetApp, ui: &mut egui::Ui, d: &mut Dialog) {
     selected.protection = patch.protection;
     selected.specified = Some(set);
     preview(app, ui, &selected);
-    if ui.button("Clear custom formatting").clicked() {
+    if ui.button(lang.tr("Clear custom formatting")).clicked() {
         selected = Style::default();
         selected.specified = Some(Default::default());
     }
