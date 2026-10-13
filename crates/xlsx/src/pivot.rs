@@ -973,6 +973,7 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
                 && let Some(one) = sel.first()
                 && let Some(x) = c.fields.get(*i).and_then(|cf| cf.item_labels().iter().position(|l| same(l, one)))
             {
+                // An index into the field's <items>, which are written in shared-item order.
                 let _ = write!(s, " item=\"{x}\"");
             }
             s.push_str(" hier=\"-1\"/>");
@@ -1351,7 +1352,13 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
         let Some((name, _)) = field_ref(cx, cache, i) else { continue };
         let labels = cache.fields.get(i).map(|f| f.labels().to_vec()).unwrap_or_default();
         let selected = if let Some(k) = p.attr_u32("item") {
-            labels.get(k as usize).map(|l| vec![l.clone()])
+            // `item` indexes the pivot field's <items>; that item's `x` is the shared item. Only
+            // a field written without items falls back to the shared items' order.
+            let shared = match pf(i).and_then(|e| e.child("items")) {
+                Some(items) => items.kids("item").nth(k as usize).and_then(|it| it.attr_u32("x")),
+                None => Some(k),
+            };
+            shared.and_then(|x| labels.get(x as usize)).map(|l| vec![l.clone()])
         } else {
             pf(i).and_then(|e| {
                 let items = items_of(e);

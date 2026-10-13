@@ -720,6 +720,16 @@ fn cache_flags_count_booleans_and_errors_as_strings() {
 }
 
 #[test]
+fn report_filter_item_indexes_the_fields_items() {
+    // pageField@item points into the pivot field's <items>, whose x is the shared item. Excel
+    // writes items in its own order, so item="1" here is <item x="0"/>, the shared item "x".
+    let table = r#"<pivotTableDefinition name="Paged" cacheId="1"><location ref="A3:B4" firstHeaderRow="1" firstDataRow="1" firstDataCol="0" rowPageCount="1" colPageCount="1"/><pivotFields><pivotField axis="axisPage"><items><item x="3"/><item x="0"/><item x="1"/><item x="2"/><item x="4"/><item t="default"/></items></pivotField><pivotField dataField="1"/></pivotFields><pageFields count="1"><pageField fld="0" item="1" hier="-1"/></pageFields><dataFields><dataField name="Count of V" fld="1" subtotal="count"/></dataFields></pivotTableDefinition>"#;
+    let (wb, _) = read_xlsx(&with_pivot(table, Some(GOOD_CACHE))).unwrap();
+    let pt = &wb.sheet(0).unwrap().pivots[0];
+    assert_eq!(pt.filters, vec![PivotFilter { source_col: "K".into(), selected: Some(vec!["x".into()]) }]);
+}
+
+#[test]
 fn values_ahead_of_column_fields_read_last() {
     let table = r#"<pivotTableDefinition name="ValuesFirst" cacheId="1"><location ref="C1:F4"/><pivotFields><pivotField axis="axisCol"><items><item x="0"/><item x="1"/><item t="default"/></items></pivotField><pivotField dataField="1"/></pivotFields><colFields count="2"><field x="-2"/><field x="0"/></colFields><dataFields><dataField name="Sum of V" fld="1"/><dataField name="Count of V" fld="1" subtotal="count"/></dataFields></pivotTableDefinition>"#;
     let (wb, _) = read_xlsx(&with_pivot(table, Some(GOOD_CACHE))).unwrap();
