@@ -217,7 +217,8 @@ fn n_or_div0(x: f64) -> Value {
     if x.is_finite() { Value::number(x) } else { div0() }
 }
 
-/// Host services for calling worksheet functions directly.
+/// Host services for calling worksheet functions directly. The tools only call the F and T
+/// distributions through it, which use no dates, so the date system doesn't matter here.
 struct FnHost;
 
 impl gridcraft_functions::Ctx for FnHost {
