@@ -911,11 +911,40 @@ fn axis_lines(keys: &Array, rows: &[usize], axis: &Axis, value_of: &mut dyn FnMu
         cells.resize(k, gap());
         Line { cells, rows: rows.to_vec() }
     };
-    let line = |p: usize| {
-        let Some(x) = prefixes.get(p) else { return Line { cells: vec![gap(); k], rows: Vec::new() } };
-        let mut cells: Vec<Value> = (0..x.level).map(|c| shown_key(&shown(p, c))).collect();
+    // Excel spells every line of a group the way the group's first key is spelled, in key order
+    // (ascending keys when sorting by a value).
+    let mut by_key: Vec<&Vec<usize>> = paths.iter().collect();
+    if matches!(axis.order, Order::Value(..)) {
+        by_key.sort_by(|a, b| {
+            let Some((pa, pb)) = a.iter().zip(b.iter()).find(|(x, y)| x != y) else { return Ordering::Equal };
+            let c = prefixes.get(*pa).map_or(1, |p| p.level) - 1;
+            cmp_dir(&shown(*pa, c), &shown(*pb, c), 1)
+        });
+    }
+    let mut spelled: Vec<Option<usize>> = vec![None; prefixes.len()];
+    for path in by_key {
+        let row = path.last().and_then(|&l| prefixes.get(l)).map(|x| x.first);
+        for &p in path {
+            if let Some(s) = spelled.get_mut(p)
+                && s.is_none()
+            {
+                *s = row;
+            }
+        }
+    }
+    // The line of the prefix that ends a path (outermost first): its cells and rows.
+    let line = |path: &[usize]| {
+        let mut cells: Vec<Value> = path
+            .iter()
+            .enumerate()
+            .map(|(c, &p)| {
+                let row = spelled.get(p).copied().flatten().or_else(|| prefixes.get(p).map(|x| x.first)).unwrap_or(0);
+                shown_key(keys.get(row, c).unwrap_or(&Value::Empty))
+            })
+            .collect();
         cells.resize(k, gap());
-        Line { cells, rows: x.rows.clone() }
+        let rows = path.last().and_then(|&p| prefixes.get(p)).map(|x| x.rows.clone()).unwrap_or_default();
+        Line { cells, rows }
     };
     // Subtotals for the prefixes of 1 ..= levels - 1 key columns: deepest first after a group
     // ends, outermost first before it starts.
@@ -930,19 +959,17 @@ fn axis_lines(keys: &Array, rows: &[usize], axis: &Axis, value_of: &mut dyn FnMu
         if axis.depth < 0 {
             let from = i.checked_sub(1).and_then(|j| paths.get(j)).map_or(0, |prev| parts(prev, path));
             for len in (from + 1)..=sub {
-                if let Some(&id) = path.get(len - 1) {
-                    out.push(line(id));
+                if let Some(prefix) = path.get(..len) {
+                    out.push(line(prefix));
                 }
             }
         }
-        if let Some(&leaf) = path.last() {
-            out.push(line(leaf));
-        }
+        out.push(line(path));
         if axis.depth > 0 {
             let to = paths.get(i + 1).map_or(0, |next| parts(path, next));
             for len in ((to + 1)..=sub).rev() {
-                if let Some(&id) = path.get(len - 1) {
-                    out.push(line(id));
+                if let Some(prefix) = path.get(..len) {
+                    out.push(line(prefix));
                 }
             }
         }
@@ -1624,6 +1651,28 @@ mod tests {
         let cf = av(arr(vec![vec![tv("C1"), tv("C2")], vec![tv("x"), tv("p")]]));
         let r = ev("PIVOTBY", vec![c(vec![tv("R"), tv("a")]), cf, c(vec![tv("V"), nv(1.0)]), t("SUM"), n(3.0)]);
         assert_eq!(rows_of(&r)[0][1], tv("C1, C2"));
+    }
+
+    /// Every line of a group is spelled like the group's first key in order (Excel 365).
+    #[test]
+    fn groupby_spells_a_group_like_its_first_key() {
+        let keys = || {
+            av(arr(vec![
+                vec![tv("east"), tv("B")],
+                vec![tv("EAST"), tv("C")],
+                vec![tv("East"), tv("C")],
+                vec![tv("East"), tv("A")],
+                vec![tv("East"), tv("B")],
+            ]))
+        };
+        let first = |sort: f64| {
+            let r = ev("GROUPBY", vec![keys(), av(col(&[1.0, 2.0, 3.0, 4.0, 5.0])), t("SUM"), empty(), n(0.0), n(sort)]);
+            rows_of(&r).iter().map(|l| format!("{} {} {}", l[0].display(), l[1].display(), l[2].display())).collect::<Vec<_>>()
+        };
+        assert_eq!(first(1.0), ["East A 4", "East B 6", "East C 5"]);
+        assert_eq!(first(-2.0), ["EAST C 5", "EAST B 6", "EAST A 4"]);
+        // Sorted by a value, the spelling still comes from the keys' order.
+        assert_eq!(first(-3.0), ["East B 6", "East C 5", "East A 4"]);
     }
 
     /// Subtotals and totals of GROUPBY / PIVOTBY as Excel (Microsoft 365) lays them out.
