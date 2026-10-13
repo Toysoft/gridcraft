@@ -98,6 +98,37 @@ fn overlay(base: &RunFont, delta: &RunFont) -> RunFont {
     }
 }
 
+/// The longest common byte prefix `p` (snapped back to a UTF-8 boundary: the kept bytes are
+/// identical, so boundary-ness agrees in both texts) and the longest common byte suffix `s`
+/// of the remainders past it (zipping caps it at the shorter remainder, so the kept parts
+/// never overlap). `old_text` and `new_text` then differ only inside `[p, old_len - s)` versus
+/// `[p, new_len - s)`. Never panics.
+fn common_prefix_suffix(old_text: &str, new_text: &str) -> (usize, usize) {
+    let mut p = 0;
+    for (a, b) in old_text.as_bytes().iter().zip(new_text.as_bytes()) {
+        if a != b {
+            break;
+        }
+        p += 1;
+    }
+    while p > 0 && !old_text.is_char_boundary(p) {
+        p -= 1;
+    }
+    let old_tail = old_text.as_bytes().get(p..).unwrap_or(&[]);
+    let new_tail = new_text.as_bytes().get(p..).unwrap_or(&[]);
+    let mut s = 0;
+    for (a, b) in old_tail.iter().rev().zip(new_tail.iter().rev()) {
+        if a != b {
+            break;
+        }
+        s += 1;
+    }
+    while s > 0 && !old_text.is_char_boundary(old_text.len() - s) {
+        s -= 1;
+    }
+    (p, s)
+}
+
 impl CellRuns {
     /// True when the runs are in order, non-overlapping, on UTF-8 boundaries and concatenate to
     /// exactly `text`. An empty run list is never valid.
@@ -193,32 +224,7 @@ impl CellRuns {
         }
         let old_len = old_text.len();
         let new_len = new_text.len();
-        // Longest common byte prefix, snapped back to a UTF-8 boundary (the kept bytes are
-        // identical, so boundary-ness agrees in both texts).
-        let mut p = 0;
-        for (a, b) in old_text.as_bytes().iter().zip(new_text.as_bytes()) {
-            if a != b {
-                break;
-            }
-            p += 1;
-        }
-        while p > 0 && !old_text.is_char_boundary(p) {
-            p -= 1;
-        }
-        // Longest common suffix over the remainders; zipping caps it at the shorter remainder,
-        // so the kept parts never overlap.
-        let old_tail = old_text.as_bytes().get(p..).unwrap_or(&[]);
-        let new_tail = new_text.as_bytes().get(p..).unwrap_or(&[]);
-        let mut s = 0;
-        for (a, b) in old_tail.iter().rev().zip(new_tail.iter().rev()) {
-            if a != b {
-                break;
-            }
-            s += 1;
-        }
-        while s > 0 && !old_text.is_char_boundary(old_len - s) {
-            s -= 1;
-        }
+        let (p, s) = common_prefix_suffix(old_text, new_text);
         let new_mid = (new_len - s).saturating_sub(p); // bytes inserted into the middle of new
         let k2_old = old_len - s; // kept-suffix start, old coordinates (deleted: p..k2_old)
         let k2_new = new_len - s; // kept-suffix start, new coordinates
@@ -268,6 +274,103 @@ impl CellRuns {
         }
         let edited = CellRuns { runs: coalesced };
         if edited.valid_for(new_text) { Some(edited) } else { None }
+    }
+
+    /// Re-derives the runs after a series fill: `self` is valid for `old_text`, the result for
+    /// `new_text`, which is `old_text` with one contiguous byte region replaced (the renumbered
+    /// part of the fill). Runs before and after the region keep their fonts — the tail shifted
+    /// by the region's length change — and the region's new bytes take the font of the run
+    /// covering offset `p` in `old_text` at its start: a run starting exactly at `p` wins over
+    /// the one ending there, so a renumbered digit keeps its own font where
+    /// [`CellRuns::edited`] would hand the inserted bytes to the preceding run. Byte ranges of
+    /// `new_text` no piece covers (a region starting past every run, or a `self` that was not
+    /// valid for `old_text`) get a default-font run, so the result concatenates to `new_text`.
+    /// Returns `None` when the result is flat — empty, or one all-default run covering all of
+    /// `new_text` — or would exceed [`MAX_RUNS_PER_CELL`], and defensively when the pieces
+    /// cannot be kept valid for `new_text` (e.g. they overlap). Never panics.
+    pub fn filled(&self, old_text: &str, new_text: &str) -> Option<CellRuns> {
+        if old_text == new_text {
+            return Some(self.clone());
+        }
+        let old_len = old_text.len();
+        let new_len = new_text.len();
+        let (p, s) = common_prefix_suffix(old_text, new_text);
+        let m = (new_len - s).saturating_sub(p); // bytes replacing the old middle
+        let k2_old = old_len - s; // kept-suffix start, old coordinates (replaced: p..k2_old)
+        let k2_new = new_len - s; // kept-suffix start, new coordinates
+        let shift = k2_new as i64 - k2_old as i64;
+        // Kept pieces: each old run contributes its head (before the region) and its tail
+        // (after the region, shifted into new coordinates); the covered middle is dropped.
+        let mut pieces: Vec<Run> = Vec::with_capacity(self.runs.len() + 1);
+        for old in &self.runs {
+            let rs = old.start as usize;
+            let re = rs.saturating_add(old.len as usize);
+            let head_end = re.min(p);
+            if head_end > rs {
+                pieces.push(Run { start: old.start, len: (head_end - rs) as u32, font: old.font.clone() });
+            }
+            let tail_start = rs.max(k2_old);
+            if re > tail_start {
+                let start = (tail_start as i64).checked_add(shift).and_then(|start| u32::try_from(start).ok());
+                if let Some(start) = start {
+                    pieces.push(Run { start, len: (re - tail_start) as u32, font: old.font.clone() });
+                }
+            }
+        }
+        // The replaced region takes the font of the run covering offset `p` at its start —
+        // the number's own run, not the preceding one; with no covering run (the region
+        // starts past every run) the default-font gap fill below covers it.
+        if m > 0 {
+            let font = self
+                .runs
+                .iter()
+                .find(|r| (r.start as usize) <= p && p < (r.start as usize).saturating_add(r.len as usize))
+                .map(|r| r.font.clone())
+                .unwrap_or_default();
+            let split = pieces.iter().rposition(|r| (r.start as usize) < p);
+            pieces.insert(split.map_or(0, |i| i + 1), Run { start: p as u32, len: m as u32, font });
+        }
+        // Walk the pieces in start order, giving every uncovered byte range of `new_text` a
+        // default-font run so the result concatenates to `new_text` (`valid_for` demands a
+        // first run at 0); overlapping or out-of-order pieces cannot be repaired.
+        let mut spans: Vec<Run> = Vec::with_capacity(pieces.len() + 1);
+        let mut cursor = 0usize;
+        for piece in pieces {
+            let start = piece.start as usize;
+            if start < cursor {
+                return None;
+            }
+            if start > cursor {
+                spans.push(Run { start: cursor as u32, len: (start - cursor) as u32, font: RunFont::default() });
+            }
+            cursor = start.saturating_add(piece.len as usize);
+            spans.push(piece);
+        }
+        if cursor > new_len {
+            return None;
+        }
+        if cursor < new_len {
+            spans.push(Run { start: cursor as u32, len: (new_len - cursor) as u32, font: RunFont::default() });
+        }
+        let mut coalesced: Vec<Run> = Vec::with_capacity(spans.len());
+        for r in spans {
+            match coalesced.last_mut() {
+                Some(last) if last.font == r.font && (last.start as usize).saturating_add(last.len as usize) == r.start as usize => {
+                    last.len = last.len.saturating_add(r.len);
+                }
+                _ => coalesced.push(r),
+            }
+        }
+        let flat = match coalesced.as_slice() {
+            [] => true,
+            [one] => one.start == 0 && one.len as usize == new_text.len() && one.font == RunFont::default(),
+            _ => false,
+        };
+        if flat || coalesced.len() > MAX_RUNS_PER_CELL {
+            return None;
+        }
+        let filled = CellRuns { runs: coalesced };
+        if filled.valid_for(new_text) { Some(filled) } else { None }
     }
 }
 
@@ -536,6 +639,61 @@ mod tests {
                 assert!(out.valid_for(new), "edited({old:?} → {new:?}) produced runs not valid for the new text");
             }
         }
+    }
+
+    #[test]
+    fn filled_changed_digit_keeps_its_font() {
+        // "Item 1" with a bold "1" -> "Item 2": the bold stays on the digit.
+        let runs = CellRuns {
+            runs: vec![
+                Run { start: 0, len: 5, font: RunFont::default() },
+                Run { start: 5, len: 1, font: RunFont { bold: Some(true), ..RunFont::default() } },
+            ],
+        };
+        let out = runs.filled("Item 1", "Item 2").unwrap();
+        assert!(out.valid_for("Item 2"));
+        assert_eq!(
+            out.runs,
+            vec![
+                Run { start: 0, len: 5, font: RunFont::default() },
+                Run { start: 5, len: 1, font: RunFont { bold: Some(true), ..RunFont::default() } },
+            ]
+        );
+    }
+
+    #[test]
+    fn filled_widening_number_covers_the_growth() {
+        // "Item 9" -> "Item 10": the bold covers both digits.
+        let runs = CellRuns { runs: vec![Run { start: 5, len: 1, font: RunFont { bold: Some(true), ..RunFont::default() } }] };
+        let out = runs.filled("Item 9", "Item 10").unwrap();
+        assert!(out.valid_for("Item 10"));
+        assert_eq!(out.runs.len(), 2, "implicit default head + bold digits");
+        assert_eq!(out.runs[1].len, 2);
+    }
+
+    #[test]
+    fn filled_prefix_and_suffix_runs_stay_anchored() {
+        // Leading number: "5 kg" -> "6 kg" with a red "kg": the red stays on "kg".
+        let runs = CellRuns {
+            runs: vec![
+                Run { start: 0, len: 2, font: RunFont::default() },
+                Run { start: 2, len: 2, font: RunFont { color: Some(Color::Rgb(0xFF0000)), ..RunFont::default() } },
+            ],
+        };
+        let out = runs.filled("5 kg", "6 kg").unwrap();
+        assert_eq!(out.runs[1], Run { start: 2, len: 2, font: RunFont { color: Some(Color::Rgb(0xFF0000)), ..RunFont::default() } });
+    }
+
+    #[test]
+    fn filled_flat_result_is_none() {
+        let runs = CellRuns { runs: vec![Run { start: 0, len: 3, font: RunFont::default() }] };
+        assert!(runs.filled("Mon", "Tue").is_none(), "a single all-default run covering the text is flat");
+    }
+
+    #[test]
+    fn filled_identical_text_clones() {
+        let runs = CellRuns { runs: vec![Run { start: 0, len: 5, font: RunFont { italic: Some(true), ..RunFont::default() } }] };
+        assert_eq!(runs.filled("hello", "hello").unwrap(), runs);
     }
 
     #[test]
