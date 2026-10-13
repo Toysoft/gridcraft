@@ -64,7 +64,7 @@ pub fn apply_tint(rgb: [u8; 3], tint: f64) -> [u8; 3] {
     hsl_to_rgb(h, s, l.clamp(0.0, 1.0))
 }
 
-fn rgb_to_hsl([r, g, b]: [u8; 3]) -> (f64, f64, f64) {
+pub(crate) fn rgb_to_hsl([r, g, b]: [u8; 3]) -> (f64, f64, f64) {
     let (r, g, b) = (r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0);
     let max = r.max(g).max(b);
     let min = r.min(g).min(b);
@@ -84,7 +84,7 @@ fn rgb_to_hsl([r, g, b]: [u8; 3]) -> (f64, f64, f64) {
     (h / 6.0, s, l)
 }
 
-fn hsl_to_rgb(h: f64, s: f64, l: f64) -> [u8; 3] {
+pub(crate) fn hsl_to_rgb(h: f64, s: f64, l: f64) -> [u8; 3] {
     if s == 0.0 {
         let v = (l * 255.0).round() as u8;
         return [v, v, v];
@@ -119,6 +119,17 @@ pub struct Theme {
     pub colors: [u32; 12],
     pub major_font: String,
     pub minor_font: String,
+    /// The format scheme's fills (`fillStyleLst`), referenced by shape styles (`fillRef idx`
+    /// 1..=3), with placeholder colours.
+    #[serde(default)]
+    pub fill_styles: Vec<crate::dml::DmlFill>,
+    /// The format scheme's effects (`effectStyleLst`, `effectRef idx` 1..=3).
+    #[serde(default)]
+    pub effect_styles: Vec<crate::dml::DmlEffects>,
+    /// The file's `a:fmtScheme` element as read, written back unchanged so Excel draws styled
+    /// shapes as before. `None`: GridCraft writes its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fmt_scheme_xml: Option<String>,
 }
 
 impl Default for Theme {
@@ -129,6 +140,9 @@ impl Default for Theme {
             colors: [0xFFFFFF, 0x000000, 0xE8E8E8, 0x0E2841, 0x156082, 0xE97132, 0x196B24, 0x0F9ED5, 0xA02B93, 0x4EA72E, 0x467886, 0x96607D],
             major_font: crate::DEFAULT_FONT.into(),
             minor_font: crate::DEFAULT_FONT.into(),
+            fill_styles: crate::dml::default_fill_styles(),
+            effect_styles: crate::dml::default_effect_styles(),
+            fmt_scheme_xml: None,
         }
     }
 }

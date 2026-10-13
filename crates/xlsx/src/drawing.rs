@@ -31,6 +31,17 @@ fn ext_px(e: Option<&El>) -> (f32, f32) {
     }
 }
 
+/// An anchor from `from`/`to` cell markers (a two-cell anchor, or a control's `controlPr/anchor`).
+pub(crate) fn from_to_anchor(a: &El, sheet: &Sheet) -> Option<Anchor> {
+    let (cell, dx, dy) = marker(a.child("from")?);
+    let (to, tdx, tdy) = a.child("to").map(marker).unwrap_or((cell, dx, dy));
+    let x1 = sheet.col_left(cell.col) + dx as f64;
+    let y1 = sheet.row_top(cell.row) + dy as f64;
+    let x2 = sheet.col_left(to.col) + tdx as f64;
+    let y2 = sheet.row_top(to.row) + tdy as f64;
+    Some(Anchor { cell, dx, dy, width: (x2 - x1).max(0.0) as f32, height: (y2 - y1).max(0.0) as f32, mode: AnchorMode::MoveAndSize })
+}
+
 fn read_anchor(a: &El, sheet: &Sheet) -> Option<Anchor> {
     match a.name.as_str() {
         "twoCellAnchor" => {
@@ -120,9 +131,25 @@ fn mime_for(name: &str) -> &'static str {
 }
 
 pub fn read_drawing(cx: &mut Ctx<'_>, part: &str, sheet: &mut Sheet) -> Result<(), IoError> {
-    let Some(x) = cx.optional_xml(part)? else { return Ok(()) };
+    let Some(bytes) = cx.pkg.read(part)? else {
+        cx.warn(format!("missing part {part}"));
+        return Ok(());
+    };
+    let x = match crate::xml::parse(&bytes) {
+        Ok(x) => x,
+        Err(e) => {
+            cx.warn(format!("skipped {part}: {e}"));
+            return Ok(());
+        }
+    };
+    // The source of each shape placed straight in an anchor, in order, kept for saving.
+    let mut raw_shapes = crate::xml::raw_elements(&bytes, 2, &["sp"]).into_iter().map(|(_, raw)| raw);
     let rels = cx.pkg.rels(part)?;
     for a in &x.children {
+        // Shapes straight in this anchor (not in markup-compatibility blocks) have a source.
+        let direct_sp = a.children.iter().filter(|o| o.name == "sp").count();
+        let mut sources: Vec<String> = raw_shapes.by_ref().take(direct_sp).collect();
+        sources.reverse();
         let Some(anchor) = read_anchor(a, sheet) else { continue };
         // Objects in markup-compatibility blocks: the first choice (chartex frames), else the
         // fallback.
@@ -180,9 +207,14 @@ pub fn read_drawing(cx: &mut Ctx<'_>, part: &str, sheet: &mut Sheet) -> Result<(
                     }
                 }
                 "sp" | "cxnSp" => {
-                    if let Some(s) = read_shape(obj, anchor) {
+                    let direct = obj.name == "sp" && a.children.iter().any(|c| std::ptr::eq(c, obj));
+                    let source = if direct { sources.pop() } else { None };
+                    if let Some(s) = read_shape(obj, anchor, &cx.theme) {
                         let id = cx.next_object_id();
-                        sheet.shapes.push(Shape { id, ..s });
+                        // Kept only when it refers to no other part (relationship ids would not
+                        // survive the save).
+                        let source_xml = source.filter(|x| !(x.contains(":embed=") || x.contains(":link=") || x.contains(" r:id=")));
+                        sheet.shapes.push(Shape { id, source_xml, ..s });
                     }
                 }
                 "grpSp" => cx.warn("grouped shapes are not supported and were skipped"),
@@ -193,7 +225,29 @@ pub fn read_drawing(cx: &mut Ctx<'_>, part: &str, sheet: &mut Sheet) -> Result<(
     Ok(())
 }
 
-fn read_shape(obj: &El, anchor: Anchor) -> Option<Shape> {
+/// A style reference (`a:fillRef`, `a:lnRef`, `a:effectRef`, `a:fontRef`): its index and colour.
+fn style_ref(obj: &El, name: &str) -> Option<(u32, Option<gridcraft_model::DmlColor>)> {
+    let r = obj.path(&["style", name])?;
+    let idx = r.attr_u32("idx").unwrap_or(0);
+    Some((idx, crate::dml::color_in(r)))
+}
+
+/// The plain model colour closest to a fill: a theme slot or RGB for a solid fill, the colour
+/// half way along a gradient.
+fn plain_color(f: &gridcraft_model::DmlFill, theme: &Theme) -> Color {
+    use gridcraft_model::{DmlBase, DmlFill};
+    match f {
+        DmlFill::Solid(c) if c.mods.is_empty() => match c.base {
+            DmlBase::Rgb(v) => Color::Rgb(v),
+            DmlBase::Scheme(i) => Color::Theme(i, 0),
+            DmlBase::Placeholder => Color::Auto,
+        },
+        f => f.color_at(theme, 0.5).map_or(Color::Auto, |[r, g, b, _]| Color::rgb(r, g, b)),
+    }
+}
+
+pub(crate) fn read_shape(obj: &El, anchor: Anchor, theme: &Theme) -> Option<Shape> {
+    use gridcraft_model::{DmlEffects, DmlFill};
     let sp = obj.child("spPr")?;
     let prst = sp.child("prstGeom").and_then(|g| g.attr("prst")).unwrap_or("rect");
     let tx_box = obj.path(&["nvSpPr", "cNvSpPr"]).is_some_and(|c| c.flag("txBox", false));
@@ -209,17 +263,96 @@ fn read_shape(obj: &El, anchor: Anchor) -> Option<Shape> {
         "rightArrow" => ShapeKind::Arrow,
         _ => ShapeKind::Rectangle,
     };
-    let fill = sp.child("solidFill").and_then(dml_color).unwrap_or_default();
-    let line = ln.and_then(|l| l.child("solidFill")).and_then(dml_color).unwrap_or_default();
+    // The fill: the shape's own, else its style's theme fill in the reference's colour.
+    let style_fill = style_ref(obj, "fillRef").and_then(|(idx, c)| {
+        let c = c?;
+        match idx {
+            0 => None,
+            1..=3 => Some(theme.fill_styles.get(idx as usize - 1).map_or(DmlFill::Solid(c.clone()), |f| f.with_placeholder(&c))),
+            _ => Some(DmlFill::Solid(c)),
+        }
+    });
+    let own_fill = crate::dml::fill_of(sp);
+    let full_fill = own_fill.clone().or(style_fill);
+    let fill = match &full_fill {
+        Some(f) => plain_color(f, theme),
+        None => Color::default(),
+    };
+    // The outline: the shape's own, else the style's (`lnRef idx="0"` is none).
+    let own_line = ln.and_then(|l| l.child("solidFill")).and_then(dml_color);
+    let style_line = style_ref(obj, "lnRef").and_then(|(idx, c)| if idx == 0 { None } else { c });
+    let line = own_line.or_else(|| style_line.as_ref().map(|c| plain_color(&DmlFill::Solid(c.clone()), theme))).unwrap_or_default();
     let text = obj
         .child("txBody")
         .map(|tb| {
-            tb.kids("p").map(|p| p.kids("r").filter_map(|r| r.child("t")).map(|t| t.text.as_str()).collect::<String>()).collect::<Vec<_>>().join("\n")
+            tb.kids("p")
+                .map(|p| {
+                    p.children
+                        .iter()
+                        .filter(|r| r.name == "r" || r.name == "fld")
+                        .filter_map(|r| r.child("t"))
+                        .map(|t| t.text.as_str())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
         })
         .unwrap_or_default();
     let mut format = read_text_format(obj.child("txBody"));
-    format.no_line = ln.is_some_and(|l| l.child("noFill").is_some());
-    Some(Shape { id: 0, kind, anchor, fill, line, text, format })
+    format.no_line =
+        ln.is_some_and(|l| l.child("noFill").is_some()) || (own_line.is_none() && style_line.is_none() && style_ref(obj, "lnRef").is_some());
+    // Keep the full fill only when the plain colour can't say it.
+    format.fill = full_fill.filter(|f| !matches!(f, DmlFill::Solid(c) if c.mods.is_empty() && c.base != gridcraft_model::DmlBase::Placeholder));
+    // Effects: the style's, overridden by the shape's own shadow and bevel.
+    let mut effects = style_ref(obj, "effectRef")
+        .and_then(|(idx, c)| {
+            let e = theme.effect_styles.get((idx as usize).checked_sub(1)?)?;
+            Some(match c {
+                Some(c) => e.with_placeholder(&c),
+                None => e.clone(),
+            })
+        })
+        .unwrap_or_default();
+    let own = crate::dml::effects(sp.child("effectLst"), sp.child("sp3d"));
+    if sp.child("effectLst").is_some() {
+        effects.shadow = own.shadow;
+    }
+    if own.bevel.is_some() {
+        effects.bevel = own.bevel;
+    }
+    // A text bevel (`bodyPr/sp3d`) on a shape reads as the shape's bevel too.
+    if effects.bevel.is_none() {
+        effects.bevel = crate::dml::effects(None, obj.path(&["txBody", "bodyPr", "sp3d"])).bevel;
+    }
+    format.effects = if effects == DmlEffects::default() { DmlEffects::default() } else { effects };
+    // Text colour: the run's own fill, else the style's font colour.
+    let rpr = obj
+        .child("txBody")
+        .and_then(|b| b.kids("p").flat_map(|p| p.children.iter().filter(|r| r.name == "r" || r.name == "fld")).find_map(|r| r.child("rPr")));
+    let run_fill = rpr.and_then(crate::dml::fill_of);
+    let font_color = style_ref(obj, "fontRef").and_then(|(_, c)| c).map(DmlFill::Solid);
+    format.text_fill = match (&run_fill, &format.text_color) {
+        (Some(f @ DmlFill::Gradient { .. }), _) => Some(f.clone()),
+        (Some(f @ DmlFill::Solid(c)), _) if !c.mods.is_empty() => Some(f.clone()),
+        (None, None) => font_color,
+        _ => None,
+    };
+    if format.text_color.is_none()
+        && let Some(f) = &format.text_fill
+    {
+        format.text_color = Some(plain_color(f, theme));
+    }
+    let macro_name = obj.attr("macro").map(macro_from_attr).filter(|m| !m.is_empty());
+    let text_link = obj.attr("textlink").map(str::trim).filter(|t| !t.is_empty()).map(str::to_string);
+    Some(Shape { id: 0, kind, anchor, fill, line, text, format, macro_name, text_link, source_xml: None })
+}
+
+/// The macro name in a shape's `macro` attribute: `[0]!Macro1` (this workbook) → `Macro1`, with
+/// Excel's `_xludf.` prefix for names that look like functions dropped.
+pub(crate) fn macro_from_attr(m: &str) -> String {
+    let m = m.trim();
+    let m = m.strip_prefix("[0]!").unwrap_or(m);
+    m.strip_prefix("_xludf.").unwrap_or(m).to_string()
 }
 
 /// A shape's text formatting: vertical anchor (`a:bodyPr anchor`), the first paragraph's
@@ -239,7 +372,7 @@ fn read_text_format(body: Option<&El>) -> ShapeFormat {
         "r" => ShapeTextAlign::Right,
         _ => ShapeTextAlign::Left,
     });
-    let rpr = body.kids("p").flat_map(|p| p.kids("r")).find_map(|r| r.child("rPr"));
+    let rpr = body.kids("p").flat_map(|p| p.children.iter().filter(|r| r.name == "r" || r.name == "fld")).find_map(|r| r.child("rPr"));
     if let Some(r) = rpr {
         // `sz` is in hundredths of a point (100..=400000 in the schema).
         f.font_size = r.attr_f64("sz").filter(|v| v.is_finite()).map(|v| (v / 100.0).clamp(1.0, 4000.0) as f32);
@@ -358,78 +491,117 @@ pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
                 let (open, close) = anchor_open(sheet, &sh.anchor);
                 close_tag = close;
                 s.push_str(&open);
-                let (prst, tx) = match sh.kind {
-                    ShapeKind::Rectangle => ("rect", false),
-                    ShapeKind::RoundedRectangle => ("roundRect", false),
-                    ShapeKind::Ellipse => ("ellipse", false),
-                    ShapeKind::Triangle => ("triangle", false),
-                    ShapeKind::Line | ShapeKind::Arrow => ("line", false),
-                    ShapeKind::TextBox => ("rect", true),
-                    ShapeKind::Icon | ShapeKind::Ink => ("rect", false),
-                };
-                let _ = write!(
-                    s,
-                    "<xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"{id}\" name=\"Shape {}\"/><xdr:cNvSpPr{}/></xdr:nvSpPr><xdr:spPr>{}<a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>",
-                    id - 1,
-                    if tx { " txBox=\"1\"" } else { "" },
-                    xfrm(&sh.anchor, "a:xfrm")
-                );
-                if let Some(c) = srgb(&sh.fill, theme) {
-                    let _ = write!(s, "<a:solidFill>{c}</a:solidFill>");
+                match unchanged_source(sh, theme) {
+                    Some(raw) => s.push_str(&renumber(raw, id)),
+                    None => s.push_str(&shape_xml(sh, theme, id)),
                 }
-                let line_c = srgb(&sh.line, theme);
-                if sh.format.no_line {
-                    s.push_str("<a:ln><a:noFill/></a:ln>");
-                } else if line_c.is_some() || sh.kind == ShapeKind::Arrow {
-                    s.push_str("<a:ln w=\"9525\">");
-                    match line_c {
-                        Some(c) => {
-                            let _ = write!(s, "<a:solidFill>{c}</a:solidFill>");
-                        }
-                        None => s.push_str("<a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill>"),
-                    }
-                    if sh.kind == ShapeKind::Arrow {
-                        s.push_str("<a:tailEnd type=\"triangle\"/>");
-                    }
-                    s.push_str("</a:ln>");
-                }
-                s.push_str("</xdr:spPr>");
-                if !sh.text.is_empty() {
-                    let f = &sh.format;
-                    let anchor = match f.anchor {
-                        Some(ShapeTextAnchor::Top) => " anchor=\"t\"",
-                        Some(ShapeTextAnchor::Middle) => " anchor=\"ctr\"",
-                        Some(ShapeTextAnchor::Bottom) => " anchor=\"b\"",
-                        None if sh.kind == ShapeKind::TextBox => " anchor=\"t\"",
-                        None => "",
-                    };
-                    let _ = write!(s, "<xdr:txBody><a:bodyPr wrap=\"square\" rtlCol=\"0\"{anchor}/><a:lstStyle/>");
-                    let ppr = match f.align {
-                        None => "",
-                        Some(ShapeTextAlign::Left) => "<a:pPr algn=\"l\"/>",
-                        Some(ShapeTextAlign::Center) => "<a:pPr algn=\"ctr\"/>",
-                        Some(ShapeTextAlign::Right) => "<a:pPr algn=\"r\"/>",
-                    };
-                    let (rpr_attrs, rpr_body) = run_props(f, theme);
-                    for line in sh.text.split('\n') {
-                        if line.is_empty() {
-                            let _ = write!(s, "<a:p>{ppr}<a:endParaRPr lang=\"en-US\"{rpr_attrs}/></a:p>");
-                        } else if rpr_body.is_empty() {
-                            let _ = write!(s, "<a:p>{ppr}<a:r><a:rPr lang=\"en-US\"{rpr_attrs}/><a:t>{}</a:t></a:r></a:p>", esc(line));
-                        } else {
-                            let _ =
-                                write!(s, "<a:p>{ppr}<a:r><a:rPr lang=\"en-US\"{rpr_attrs}>{rpr_body}</a:rPr><a:t>{}</a:t></a:r></a:p>", esc(line));
-                        }
-                    }
-                    s.push_str("</xdr:txBody>");
-                }
-                s.push_str("</xdr:sp>");
             }
         }
         s.push_str("<xdr:clientData/>");
         s.push_str(close_tag);
     }
     s.push_str("</xdr:wsDr>");
+    s
+}
+
+/// The source a shape was read from, when it still says exactly what the shape is now (reading
+/// it again gives the same shape), so formatting GridCraft doesn't model survives the save.
+fn unchanged_source<'a>(sh: &'a Shape, theme: &Theme) -> Option<&'a str> {
+    let raw = sh.source_xml.as_deref()?;
+    let el = crate::xml::parse(raw.as_bytes()).ok()?;
+    let back = read_shape(&el, sh.anchor, theme)?;
+    let same = back.kind == sh.kind
+        && back.fill == sh.fill
+        && back.line == sh.line
+        && back.text == sh.text
+        && back.format == sh.format
+        && back.macro_name == sh.macro_name
+        && back.text_link == sh.text_link;
+    same.then_some(raw)
+}
+
+/// `raw` with its drawing object id (`cNvPr id`) replaced by `id`, so ids stay unique.
+fn renumber(raw: &str, id: usize) -> String {
+    let Some(at) = raw.find("cNvPr ") else { return raw.to_string() };
+    let Some(rel) = raw.get(at..).and_then(|r| r.find(" id=\"")) else { return raw.to_string() };
+    let start = at + rel + 5;
+    let Some(len) = raw.get(start..).and_then(|r| r.find('"')) else { return raw.to_string() };
+    format!("{}{id}{}", raw.get(..start).unwrap_or(""), raw.get(start + len..).unwrap_or(""))
+}
+
+/// A shape as DrawingML (from the model).
+fn shape_xml(sh: &Shape, theme: &Theme, id: usize) -> String {
+    let mut s = String::new();
+    let (prst, tx) = match sh.kind {
+        ShapeKind::Rectangle => ("rect", false),
+        ShapeKind::RoundedRectangle => ("roundRect", false),
+        ShapeKind::Ellipse => ("ellipse", false),
+        ShapeKind::Triangle => ("triangle", false),
+        ShapeKind::Line | ShapeKind::Arrow => ("line", false),
+        ShapeKind::TextBox => ("rect", true),
+        ShapeKind::Icon | ShapeKind::Ink => ("rect", false),
+    };
+    let _ = write!(
+        s,
+        "<xdr:sp macro=\"{}\" textlink=\"{}\"><xdr:nvSpPr><xdr:cNvPr id=\"{id}\" name=\"Shape {}\"/><xdr:cNvSpPr{}/></xdr:nvSpPr><xdr:spPr>{}<a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>",
+        sh.macro_name.as_deref().map(|m| esc_attr(&format!("[0]!{m}"))).unwrap_or_default(),
+        esc_attr(sh.text_link.as_deref().unwrap_or("")),
+        id - 1,
+        if tx { " txBox=\"1\"" } else { "" },
+        xfrm(&sh.anchor, "a:xfrm")
+    );
+    if let Some(f) = &sh.format.fill {
+        s.push_str(&crate::dml::fill_xml(f));
+    } else if let Some(c) = srgb(&sh.fill, theme) {
+        let _ = write!(s, "<a:solidFill>{c}</a:solidFill>");
+    }
+    let line_c = srgb(&sh.line, theme);
+    if sh.format.no_line {
+        s.push_str("<a:ln><a:noFill/></a:ln>");
+    } else if line_c.is_some() || sh.kind == ShapeKind::Arrow {
+        s.push_str("<a:ln w=\"9525\">");
+        match line_c {
+            Some(c) => {
+                let _ = write!(s, "<a:solidFill>{c}</a:solidFill>");
+            }
+            None => s.push_str("<a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill>"),
+        }
+        if sh.kind == ShapeKind::Arrow {
+            s.push_str("<a:tailEnd type=\"triangle\"/>");
+        }
+        s.push_str("</a:ln>");
+    }
+    s.push_str(&crate::dml::shape_effects_xml(&sh.format.effects));
+    s.push_str("</xdr:spPr>");
+    if !sh.text.is_empty() {
+        let f = &sh.format;
+        let anchor = match f.anchor {
+            Some(ShapeTextAnchor::Top) => " anchor=\"t\"",
+            Some(ShapeTextAnchor::Middle) => " anchor=\"ctr\"",
+            Some(ShapeTextAnchor::Bottom) => " anchor=\"b\"",
+            None if sh.kind == ShapeKind::TextBox => " anchor=\"t\"",
+            None => "",
+        };
+        let _ = write!(s, "<xdr:txBody><a:bodyPr wrap=\"square\" rtlCol=\"0\"{anchor}/><a:lstStyle/>");
+        let ppr = match f.align {
+            None => "",
+            Some(ShapeTextAlign::Left) => "<a:pPr algn=\"l\"/>",
+            Some(ShapeTextAlign::Center) => "<a:pPr algn=\"ctr\"/>",
+            Some(ShapeTextAlign::Right) => "<a:pPr algn=\"r\"/>",
+        };
+        let (rpr_attrs, rpr_body) = run_props(f, theme);
+        for line in sh.text.split('\n') {
+            if line.is_empty() {
+                let _ = write!(s, "<a:p>{ppr}<a:endParaRPr lang=\"en-US\"{rpr_attrs}/></a:p>");
+            } else if rpr_body.is_empty() {
+                let _ = write!(s, "<a:p>{ppr}<a:r><a:rPr lang=\"en-US\"{rpr_attrs}/><a:t>{}</a:t></a:r></a:p>", esc(line));
+            } else {
+                let _ = write!(s, "<a:p>{ppr}<a:r><a:rPr lang=\"en-US\"{rpr_attrs}>{rpr_body}</a:rPr><a:t>{}</a:t></a:r></a:p>", esc(line));
+            }
+        }
+        s.push_str("</xdr:txBody>");
+    }
+    s.push_str("</xdr:sp>");
     s
 }
 
@@ -453,7 +625,9 @@ fn run_props(f: &ShapeFormat, theme: &Theme) -> (String, String) {
         let emu = (w.clamp(0.0, 100.0) * 12700.0).round() as u32;
         let _ = write!(body, "<a:ln w=\"{emu}\"><a:solidFill>{c}</a:solidFill></a:ln>");
     }
-    if let Some(c) = f.text_color.as_ref().and_then(|c| srgb(c, theme)) {
+    if let Some(tf) = &f.text_fill {
+        body.push_str(&crate::dml::fill_xml(tf));
+    } else if let Some(c) = f.text_color.as_ref().and_then(|c| srgb(c, theme)) {
         let _ = write!(body, "<a:solidFill>{c}</a:solidFill>");
     }
     if let Some(font) = &f.font {
@@ -499,5 +673,85 @@ pub fn image_content_type(ext: &str) -> &'static str {
         "wmf" => "image/x-wmf",
         "webp" => "image/webp",
         _ => "image/png",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gridcraft_model::{DmlBase, DmlFill};
+
+    /// A macro button the way Excel writes one: theme style references (gradient fill, effect,
+    /// white text), a text bevel and a macro.
+    const BUTTON: &str = r#"<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><xdr:twoCellAnchor><xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>3</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>3</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp macro="[0]!_xludf.save" textlink=""><xdr:nvSpPr><xdr:cNvPr id="7" name="Rectangle 6"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="100" cy="100"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:style><a:lnRef idx="0"><a:schemeClr val="accent5"/></a:lnRef><a:fillRef idx="3"><a:schemeClr val="accent5"/></a:fillRef><a:effectRef idx="3"><a:schemeClr val="accent5"/></a:effectRef><a:fontRef idx="minor"><a:schemeClr val="lt1"/></a:fontRef></xdr:style><xdr:txBody><a:bodyPr anchor="ctr"><a:sp3d><a:bevelT w="25400" h="55880" prst="artDeco"/></a:sp3d></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US" sz="1600" b="1"/><a:t>Save</a:t></a:r></a:p></xdr:txBody></xdr:sp><xdr:clientData/></xdr:twoCellAnchor><xdr:twoCellAnchor><xdr:from><xdr:col>5</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>7</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>2</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:sp macro="" textlink="$G$21"><xdr:nvSpPr><xdr:cNvPr id="4" name="TextBox 3"/><xdr:cNvSpPr txBox="1"/></xdr:nvSpPr><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr><xdr:txBody><a:bodyPr/><a:lstStyle/><a:p><a:fld id="{1}" type="TxLink"><a:rPr lang="en-US"/><a:t>12</a:t></a:fld></a:p></xdr:txBody></xdr:sp><xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>"#;
+
+    fn read(xml: &str, theme: &Theme) -> Vec<Shape> {
+        let x = crate::xml::parse(xml.as_bytes()).unwrap();
+        let raws: Vec<String> = crate::xml::raw_elements(xml.as_bytes(), 2, &["sp"]).into_iter().map(|(_, r)| r).collect();
+        let sheet = Sheet::new("S");
+        x.children
+            .iter()
+            .zip(raws)
+            .filter_map(|(a, raw)| {
+                let anchor = read_anchor(a, &sheet)?;
+                let sp = read_shape(a.child("sp")?, anchor, theme)?;
+                Some(Shape { source_xml: Some(raw), ..sp })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn style_references_give_the_theme_look() {
+        let theme = Theme::default();
+        let shapes = read(BUTTON, &theme);
+        let b = &shapes[0];
+        assert_eq!(b.macro_name.as_deref(), Some("save"), "[0]! and _xludf. are dropped");
+        assert!(matches!(b.format.fill, Some(DmlFill::Gradient { .. })), "fillRef 3 is the theme's third fill: {:?}", b.format.fill);
+        assert!(b.format.no_line, "lnRef 0 is no outline");
+        assert!(b.format.effects.shadow.is_some(), "effectRef 3 has a shadow");
+        assert_eq!(b.format.effects.bevel, Some(3.0), "effect style 3 has a bevel");
+        assert!(matches!(&b.format.text_fill, Some(DmlFill::Solid(c)) if c.base == DmlBase::Scheme(0)), "fontRef lt1 is white text");
+        let t = &shapes[1];
+        assert_eq!(t.text, "12", "field runs are text");
+        assert_eq!(t.text_link.as_deref(), Some("$G$21"));
+    }
+
+    #[test]
+    fn unchanged_shapes_save_as_read_and_edited_ones_are_rebuilt() {
+        let theme = Theme::default();
+        let mut shapes = read(BUTTON, &theme);
+        let sheet = Sheet::new("S");
+        let objs: Vec<Obj<'_>> = shapes.iter().map(Obj::Shape).collect();
+        let out = write_drawing(&sheet, &theme, &objs);
+        assert!(out.contains("prst=\"artDeco\"") && out.contains("<a:fillRef idx=\"3\">"), "the source is written back: {out}");
+        assert!(out.contains("macro=\"[0]!_xludf.save\""));
+        // Ids are renumbered so they stay unique in the part.
+        assert!(out.contains("<xdr:cNvPr id=\"2\" name=\"Rectangle 6\""), "{out}");
+        // Read back: the same shapes.
+        let again = read(&out, &theme);
+        assert_eq!(again[0].format, shapes[0].format);
+        assert_eq!(again[0].macro_name, shapes[0].macro_name);
+        assert_eq!(again[1].text_link, shapes[1].text_link);
+        // An edited fill drops the source; the macro and link are still written.
+        shapes[0].fill = Color::Rgb(0xFF0000);
+        shapes[0].format.fill = None;
+        let objs: Vec<Obj<'_>> = shapes.iter().map(Obj::Shape).collect();
+        let out = write_drawing(&sheet, &theme, &objs);
+        assert!(!out.contains("artDeco") && out.contains("FF0000"), "{out}");
+        assert!(out.contains("macro=\"[0]!save\"") && out.contains("textlink=\"$G$21\""), "{out}");
+    }
+
+    #[test]
+    fn raw_elements_are_self_contained() {
+        let raws = crate::xml::raw_elements(BUTTON.as_bytes(), 2, &["sp"]);
+        assert_eq!(raws.len(), 2);
+        let (name, raw) = &raws[0];
+        assert_eq!(name, "sp");
+        assert!(raw.starts_with("<xdr:sp xmlns:xdr=") && raw.contains("xmlns:a="), "{raw}");
+        assert!(crate::xml::parse(raw.as_bytes()).is_ok());
+        assert_eq!(renumber(raw, 9).matches("id=\"9\"").count(), 1);
+        // Broken XML gives what was read before the break, never a panic.
+        let cut = &BUTTON[..BUTTON.len() / 2];
+        assert!(crate::xml::raw_elements(cut.as_bytes(), 2, &["sp"]).len() <= 1);
     }
 }

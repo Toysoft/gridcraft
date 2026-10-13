@@ -232,7 +232,12 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
                 if let Some(d) = app.session.active() {
                     if d.wb.vba_project.is_some() {
                         ui.add_space(12.0);
-                        ui.label(egui::RichText::new("Macros preserved (not executed)").font(theme::ui_font(12.5)).color(t.danger));
+                        let (text, color) = match app.macros.running(d.uid) {
+                            Some(name) => (format!("Running macro {name}… (Esc to stop)"), t.accent),
+                            None if gridcraft_engine::vba::enabled(&app.session, d.uid) => ("Macros enabled".to_string(), t.text_dim),
+                            None => ("Macros disabled".to_string(), t.danger),
+                        };
+                        ui.label(egui::RichText::new(text).font(theme::ui_font(12.5)).color(color));
                     }
                     if d.wb.calc.mode == gridcraft_engine::model::CalcMode::Manual {
                         ui.add_space(12.0);

@@ -494,8 +494,8 @@ fn macro_workbook_bytes() -> Vec<u8> {
 
 #[test]
 fn opening_a_macro_workbook_shows_a_notice() {
-    // The reader's "macros kept but not executed" warning must reach a dismissible info bar,
-    // not be silently dropped (issue #6 follow-up: Excel-style message bar).
+    // The reader's macro warning becomes Excel's security bar: macros stay off until the user
+    // clicks Enable Content.
     let mut h = harness(blank());
     let b64 = gridcraft_engine::io::base64_encode(&macro_workbook_bytes());
     let res = h.state_mut().session.run("file.open", json!({"name": "macros.xlsm", "base64": b64})).unwrap();
@@ -506,9 +506,9 @@ fn opening_a_macro_workbook_shows_a_notice() {
     // The UI-side handler turns that open result into the notice (open_path does this in the app).
     h.state_mut().show_open_warnings(&res);
     let n = h.state().notice.clone().expect("a notice was shown");
-    assert!(n.text.contains("VBA"), "{}", n.text);
+    assert!(n.text.contains("Macros have been disabled"), "{}", n.text);
     assert_eq!(n.kind, gridcraft_ui_egui::NoticeKind::Warning);
-    assert_eq!(n.action.as_ref().map(|a| a.1.as_str()), Some("macros"), "action opens the Macros dialog");
+    assert_eq!(n.action.as_ref().map(|a| a.0.as_str()), Some("Enable Content"), "the bar's button enables macros");
 
     // The notice bar renders without panic; `ui.notice` surfaces it; dismissing clears it.
     h.run_steps(2);

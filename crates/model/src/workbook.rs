@@ -104,11 +104,14 @@ pub struct Workbook {
     pub custom_lists: Vec<Vec<String>>,
     /// Named cell styles (Cell Styles gallery): name → style.
     pub cell_styles: Vec<(String, crate::style::Style)>,
-    /// VBA project (`xl/vbaProject.bin`) carried through unchanged. GridCraft does not run
-    /// macros; the blob is preserved so that saving a macro-enabled workbook never destroys the
+    /// VBA project (`xl/vbaProject.bin`) carried through unchanged. GridCraft runs the macros
+    /// from it (when the user enables them) and the blob is preserved so that saving a macro-enabled workbook never destroys the
     /// macros it arrived with. base64 in JSON. `None` = the workbook has no macros.
     #[serde(default, with = "crate::b64::opt")]
     pub vba_project: Option<Vec<u8>>,
+    /// The workbook's VBA code name (`workbookPr codeName`, usually `ThisWorkbook`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_name: Option<String>,
     /// Field separator of the CSV this workbook was read from, so saving it as CSV writes the same
     /// separator back (a `;` file stays a `;` file). `None` = not read from CSV: CSV saves use `,`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -141,6 +144,7 @@ impl Workbook {
             custom_lists: vec![],
             cell_styles: vec![],
             vba_project: None,
+            code_name: None,
             csv_delimiter: None,
             preserved: None,
         }

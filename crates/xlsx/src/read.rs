@@ -28,6 +28,8 @@ pub struct Ctx<'a> {
     pub num_fmts: std::collections::HashMap<u32, String>,
     /// Value metadata blocks, indexed by the worksheet's one-based `vm` attribute.
     pub cell_pictures: Vec<Option<Arc<CellPicture>>>,
+    /// The workbook's theme (shape styles refer to its format scheme).
+    pub theme: gridcraft_model::Theme,
 }
 
 impl Ctx<'_> {
@@ -79,6 +81,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         next_id: 1,
         num_fmts: Default::default(),
         cell_pictures: vec![],
+        theme: Default::default(),
     };
     let root_rels = cx.pkg.rels("")?;
     let wb_part = find_rel(&root_rels, "officeDocument").map(|r| r.target.clone()).unwrap_or_else(|| "xl/workbook.xml".into());
@@ -129,9 +132,15 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         cx.warn("no styles part");
     }
     if let Some(r) = find_rel(&wb_rels, "theme").cloned()
-        && let Some(x) = cx.optional_xml(&r.target)?
+        && let Some(bytes) = cx.pkg.read(&r.target)?
     {
-        wb.theme = crate::theme::read_theme(&x);
+        match crate::theme::read_theme_part(&bytes) {
+            Some(t) => {
+                cx.theme = t.clone();
+                wb.theme = t;
+            }
+            None => cx.warn("the theme could not be read; the default theme is used"),
+        }
     }
     // Shared strings, streamed item by item.
     if let Some(r) = find_rel(&wb_rels, "sharedStrings").cloned() {
@@ -162,10 +171,11 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
     }
 
     // Workbook properties.
-    if let Some(p) = wb_xml.child("workbookPr")
-        && p.flag("date1904", false)
-    {
-        cx.date_system = DateSystem::D1904;
+    if let Some(p) = wb_xml.child("workbookPr") {
+        if p.flag("date1904", false) {
+            cx.date_system = DateSystem::D1904;
+        }
+        wb.code_name = p.attr("codeName").filter(|n| !n.is_empty()).map(str::to_string);
     }
     wb.date_system = cx.date_system;
     if let Some(c) = wb_xml.child("calcPr") {
@@ -221,6 +231,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
             Err(e) => cx.warn(format!("PivotTables on sheet \"{name}\" could not be read: {e}")),
         }
         sheet.preserved = kept.sheet(&mut cx, &rel.target, &name);
+        sheet.controls = crate::sheet_controls::read(&sheet);
         sheet.visibility = match se.attr("state") {
             Some("hidden") => Visibility::Hidden,
             Some("veryHidden") => Visibility::VeryHidden,
@@ -320,7 +331,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         match cx.pkg.read(&r.target) {
             Ok(Some(data)) => {
                 wb.vba_project = Some(data);
-                cx.warn("macros (VBA project) were kept but not executed");
+                cx.warn("this workbook contains macros (VBA project); they run after you enable content, and are kept when you save");
             }
             Ok(None) => cx.warn("macros (VBA project) reference a missing part and were dropped"),
             Err(IoError::TooLarge(m)) => return Err(IoError::TooLarge(m)),

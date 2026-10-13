@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (created from the code on main; supersedes the local-only plan/architecture.md for committed docs) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (VBA macros: the `vba` crate, the engine's object model and the app's macro thread) · **Target:** Microsoft Excel (Microsoft 365)
 
 How GridCraft is built today. Rules for contributors are in [`AGENTS.md`](../AGENTS.md).
 
@@ -15,6 +15,7 @@ including tests, 2026-10-10.
 | L0 | `core` | ~1.3k | Cell and range addresses (A1, R1C1, sheet-qualified; 1,048,576 × 16,384), `Value`, `CellError`, Excel coercion, 1900/1904 date serials, typed-input parsing |
 | L0 | `numfmt` | ~2.1k | Excel number-format codes (sections, conditions, colours, dates, elapsed time, fractions, scientific, fill), General, `TEXT()`; en-US only |
 | L1 | `formula` | ~1.7k | Tokenizer, parser, AST, printer (A1 and R1C1), reference adjustment for copy, fill and structural edits |
+| L1 | `vba` | ~6.7k | VBA projects ([MS-OVBA] storage and compression), UserForm designs ([MS-OFORMS]), and a sandboxed interpreter (lexer, parser, Variants, the VBA library) that reaches the world only through a `Host` trait |
 | L1 | `functions` | ~13.4k | The function library: `FnSpec` registry (name, arity, category, scalar args, signature, description) and pure implementations; automatic array lifting |
 | L2 | `model` | ~2.2k | Workbook, sheets, copy-on-write cell store (64-row bands behind `Arc`), interned styles, names, tables, CF, validation, comments, charts, shapes, images, sparklines, print settings, protection |
 | L2 | `calc` | ~2.9k | Evaluator (references, names, tables, LET/LAMBDA, special forms like OFFSET/INDIRECT/SUBTOTAL) and dependency-graph recalculation with dynamic arrays, spills and cycle detection; single-threaded |
@@ -57,6 +58,22 @@ macOS universal, Windows x64/x86/arm64, Linux x86_64/aarch64/riscv64 (AppImage, 
 rpm, tarball), FreeBSD, and web (WASM; WebGPU or WebGL2). Release workflows in
 `.github/workflows/release.yml`; see [`releasing.md`](releasing.md).
 
+## Macros (VBA)
+
+A workbook's `vbaProject.bin` is kept byte for byte and runs only after Enable Content.
+`xlsx::read_vba` opens the compound file and hands `vba::ovba::read_project` its streams
+(module source) and `vba::forms::read_form` each UserForm's `f`/`o`/`VBFrame` streams. The
+engine's `vba` module implements the interpreter's `Host` as Excel's object model (`model.rs`:
+`Application`, `Workbook(s)`, `Sheets`, `Range` with `Cells`/`Offset`/`End`/`Find`/`Copy`/
+`PasteSpecial`/formatting, `WorksheetFunction` evaluated as formulas) over the session's commands
+and edits, and keeps UserForm and sheet-control state (`forms.rs`) with the events changes fire.
+`DirectHost` runs a macro on the calling thread (CLI, MCP, tests). The desktop app runs each
+workbook's interpreter on a worker thread whose host forwards every call to the UI thread
+(`ui-egui/macros.rs`), so a modal UserForm's `.Show` blocks only the worker while the UI draws the
+form (`userforms.rs`) and turns clicks and typing into VBA events. There is no file, process,
+registry, COM or DLL access: `Declare`d functions return 0 and `Shell`/`Kill`/`CreateObject` are
+errors.
+
 ## Known architectural gaps
 
 - No threading in calc (see [hardware-parity.md](hardware-parity.md)).
@@ -68,4 +85,5 @@ rpm, tarball), FreeBSD, and web (WASM; WebGPU or WebGL2). Release workflows in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | VBA macros: `vba` crate (L1), engine object model, app macro thread and UserForms |
 | 2026-10-10 | major | Created from the code on main: crates, layers, data flow, agent control, known gaps |

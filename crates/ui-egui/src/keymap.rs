@@ -157,6 +157,9 @@ pub fn lookup(key: Key, physical: Option<Key>, m: Modifiers, mac: bool) -> Optio
         F9 if plain && s => run("formulas.calculateSheet"),
         F10 if plain && s => Shortcut::ContextMenu,
         F11 if plain && s => run("home.insertSheet"),
+        // Alt+F8: Macros; Alt+F11: the Visual Basic viewer (Option on a Mac).
+        F8 if alt => Shortcut::Dialog("macros", json!({})),
+        F11 if alt => Shortcut::Dialog("visualBasic", json!({})),
         F12 if plain && !s => run("file.saveAs"),
         _ => return None,
     })

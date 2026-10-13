@@ -205,7 +205,11 @@ fn paint_shape_text(p: &Painter, wb: &Workbook, sp: &gridcraft_engine::model::Sh
     let align = f.align.unwrap_or(if text_box { ShapeTextAlign::Left } else { ShapeTextAlign::Center });
     let anchor = f.anchor.unwrap_or(if text_box { ShapeTextAnchor::Top } else { ShapeTextAnchor::Middle });
     let default_color = if text_box { Color32::BLACK } else { Color32::WHITE };
-    let color = f.text_color.and_then(|c| c.resolve(&wb.theme)).map(theme::color32).unwrap_or(default_color);
+    let color = match &f.text_fill {
+        Some(tf) => tf.color_at(&wb.theme, 0.5).map(|[r, g, b, a]| Color32::from_rgba_unmultiplied(r, g, b, a)),
+        None => f.text_color.and_then(|c| c.resolve(&wb.theme)).map(theme::color32),
+    }
+    .unwrap_or(default_color);
     // Default 14 px (as before); a set size is in points.
     let size = f.font_size.map_or(14.0, |pt| pt * 96.0 / 72.0).clamp(1.0, 2000.0) * z;
     let family = theme::cell_family(f.font.as_deref().unwrap_or(""), f.bold, f.italic);
@@ -243,6 +247,91 @@ fn paint_shape_text(p: &Painter, wb: &Workbook, sp: &gridcraft_engine::model::Sh
     clip.galley(pos, g, color);
 }
 
+/// The text of the cell a shape is linked to (`textlink`: `$G$21` or `Sheet!$G$21`).
+fn linked_text(wb: &Workbook, sh: &Sheet, link: &str) -> Option<String> {
+    let link = link.trim().trim_start_matches('=');
+    let (sheet, cell) = match link.rsplit_once('!') {
+        Some((name, cell)) => (wb.sheet_index(name.trim_matches('\'')).and_then(|i| wb.sheet(i))?, cell),
+        None => (sh, link),
+    };
+    let c = gridcraft_engine::core::CellRef::parse(&cell.replace('$', ""))?;
+    Some(gridcraft_engine::display::cell_text(wb, sheet, c))
+}
+
+fn color32_of(c: [u8; 4]) -> Color32 {
+    Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3])
+}
+
+/// A fill (solid or linear gradient) over a rectangle, as a vertex-coloured grid.
+fn paint_fill(p: &Painter, r: Rect, f: &gridcraft_engine::model::DmlFill, theme: &gridcraft_engine::model::Theme) {
+    use gridcraft_engine::model::DmlFill;
+    let angle = match f {
+        DmlFill::None => return,
+        DmlFill::Solid(_) => {
+            if let Some(c) = f.color_at(theme, 0.0) {
+                p.rect_filled(r, 0.0, color32_of(c));
+            }
+            return;
+        }
+        DmlFill::Gradient { angle, .. } => angle.to_radians(),
+    };
+    let dir = vec2(angle.cos(), angle.sin());
+    // The gradient runs between the rectangle's extreme points along `dir`.
+    let corners = [r.left_top(), r.right_top(), r.left_bottom(), r.right_bottom()];
+    let proj: Vec<f32> = corners.iter().map(|c| c.to_vec2().dot(dir)).collect();
+    let (lo, hi) = proj.iter().fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+    let span = (hi - lo).max(1e-3);
+    const N: u32 = 12;
+    let mut mesh = egui::Mesh::default();
+    for j in 0..=N {
+        for i in 0..=N {
+            let pt = pos2(r.left() + r.width() * i as f32 / N as f32, r.top() + r.height() * j as f32 / N as f32);
+            let t = (pt.to_vec2().dot(dir) - lo) / span;
+            mesh.colored_vertex(pt, f.color_at(theme, t).map_or(Color32::TRANSPARENT, color32_of));
+        }
+    }
+    for j in 0..N {
+        for i in 0..N {
+            let a = j * (N + 1) + i;
+            let b = a + 1;
+            let c = a + N + 1;
+            let d = c + 1;
+            mesh.add_triangle(a, b, d);
+            mesh.add_triangle(a, d, c);
+        }
+    }
+    p.add(egui::Shape::mesh(mesh));
+}
+
+/// An outer shadow: the shape's rectangle offset, softened by a few widening translucent copies.
+fn paint_shadow(p: &Painter, r: Rect, sh: &gridcraft_engine::model::DmlShadow, theme: &gridcraft_engine::model::Theme, z: f32) {
+    let px = |pt: f32| pt * 96.0 / 72.0 * z;
+    let [cr, cg, cb, ca] = sh.color.resolve(theme, None);
+    let at = r.translate(vec2(px(sh.dx), px(sh.dy)));
+    let blur = px(sh.blur).clamp(0.0, 40.0);
+    let steps = if blur < 1.0 { 1 } else { 4 };
+    for k in 0..steps {
+        let grow = blur * (steps - k) as f32 / steps as f32 / 2.0;
+        let alpha = (f32::from(ca) / steps as f32).round() as u8;
+        p.rect_filled(at.expand(grow), grow, Color32::from_rgba_unmultiplied(cr, cg, cb, alpha));
+    }
+}
+
+/// A raised bevel: light top and left bands, dark bottom and right bands, `w` pixels wide.
+fn paint_bevel(p: &Painter, r: Rect, w: f32) {
+    let w = w.clamp(1.0, r.width().min(r.height()) / 3.0);
+    let light = Color32::from_rgba_unmultiplied(255, 255, 255, 90);
+    let dark = Color32::from_rgba_unmultiplied(0, 0, 0, 70);
+    let (o, i) = (r, r.shrink(w));
+    let quad = |pts: [Pos2; 4], c: Color32| {
+        p.add(PathShape::convex_polygon(pts.to_vec(), c, Stroke::NONE));
+    };
+    quad([o.left_top(), o.right_top(), i.right_top(), i.left_top()], light);
+    quad([o.left_top(), i.left_top(), i.left_bottom(), o.left_bottom()], light);
+    quad([o.left_bottom(), i.left_bottom(), i.right_bottom(), o.right_bottom()], dark);
+    quad([o.right_top(), o.right_bottom(), i.right_bottom(), i.right_top()], dark);
+}
+
 pub(crate) fn anchor_rect(geo: &Geo, sh: &Sheet, a: &Anchor) -> Rect {
     let x = geo.x(sh, a.cell.col) + a.dx * geo.z;
     let y = geo.y(sh, a.cell.row) + a.dy * geo.z;
@@ -268,7 +357,23 @@ pub(crate) fn paint_objects(app: &SheetApp, p: &Painter, geo: &Geo, wb: &Workboo
         }
         let start = p.add(egui::Shape::Noop);
         let mut label = true;
-        let fill = sp.fill.resolve(&wb.theme).map(theme::color32).unwrap_or(Color32::TRANSPARENT);
+        let full_fill = sp.format.fill.as_ref();
+        let rectangular = matches!(sp.kind, ShapeKind::Rectangle | ShapeKind::TextBox | ShapeKind::RoundedRectangle);
+        if let Some(sh) = &sp.format.effects.shadow
+            && rectangular
+        {
+            paint_shadow(p, r, sh, &wb.theme, geo.z);
+        }
+        // Gradients are drawn as a mesh under the outline; other shapes take the gradient's
+        // middle colour.
+        let fill = match full_fill {
+            Some(f) if rectangular => {
+                paint_fill(p, r, f, &wb.theme);
+                Color32::TRANSPARENT
+            }
+            Some(f) => f.color_at(&wb.theme, 0.5).map_or(Color32::TRANSPARENT, |[r, g, b, a]| Color32::from_rgba_unmultiplied(r, g, b, a)),
+            None => sp.fill.resolve(&wb.theme).map(theme::color32).unwrap_or(Color32::TRANSPARENT),
+        };
         let line =
             if sp.format.no_line { Color32::TRANSPARENT } else { sp.line.resolve(&wb.theme).map(theme::color32).unwrap_or(Color32::DARK_GRAY) };
         match sp.kind {
@@ -318,8 +423,17 @@ pub(crate) fn paint_objects(app: &SheetApp, p: &Painter, geo: &Geo, wb: &Workboo
                 }
             }
         }
-        if label && !sp.text.is_empty() && !app.editing_text_box(sp.id) {
-            paint_shape_text(p, wb, sp, r, geo.z);
+        if let Some(w) = sp.format.effects.bevel
+            && rectangular
+        {
+            paint_bevel(p, r, w * 96.0 / 72.0 * geo.z);
+        }
+        let linked = sp.text_link.as_deref().and_then(|l| linked_text(wb, sh, l));
+        if label && (!sp.text.is_empty() || linked.is_some()) && !app.editing_text_box(sp.id) {
+            match linked {
+                Some(t) => paint_shape_text(p, wb, &gridcraft_engine::model::Shape { text: t, ..sp.clone() }, r, geo.z),
+                None => paint_shape_text(p, wb, sp, r, geo.z),
+            }
         }
         if label && sp.kind == ShapeKind::TextBox && app.selected_chart == Some(sp.id) {
             selection_frame(p, r);

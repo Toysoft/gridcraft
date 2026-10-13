@@ -22,6 +22,7 @@ pub mod i18n;
 pub mod icons;
 pub mod keymap;
 pub mod keytips;
+pub mod macros;
 pub mod outline;
 pub mod panes;
 pub mod paper_view;
@@ -29,9 +30,11 @@ pub mod pivot_pane;
 pub mod printing;
 pub mod ribbon;
 pub mod selection_glide;
+pub mod sheet_controls;
 pub mod tabs;
 pub mod text_box;
 pub mod theme;
+pub mod userforms;
 pub mod widgets;
 
 use std::collections::HashMap;
@@ -247,6 +250,10 @@ pub struct SheetApp {
     /// Chart selected on the sheet (id).
     pub selected_chart: Option<u32>,
     pub started: f64,
+    /// Running VBA macros: worker threads, their pending dialogs and form events.
+    pub macros: macros::Macros,
+    /// UserForm UI state (focus, text on entry).
+    pub forms: userforms::Forms,
 }
 
 impl SheetApp {
@@ -288,6 +295,8 @@ impl SheetApp {
             shots: control::Shots::default(),
             selected_chart: None,
             started: now_ms(),
+            macros: Default::default(),
+            forms: Default::default(),
         }
     }
 
@@ -317,6 +326,8 @@ impl SheetApp {
             // Text boxes and shapes name their own typefaces.
             names.extend(d.wb.sheets.iter().flat_map(|sh| sh.shapes.iter().filter_map(|s| s.format.font.clone())));
         }
+        // UserForms' fonts, once the project has been read.
+        names.extend(userforms::fonts(self));
         names
     }
 
@@ -577,6 +588,15 @@ impl SheetApp {
     pub fn after_engine(&mut self) {
         for req in self.session.take_ui_requests() {
             match req {
+                // A macro's PrintOut: the Print page (or a straight print without native printing).
+                UiRequest::Dialog(name, params) if name == "macroPrint" => {
+                    if self.services.print_native.is_some() {
+                        self.open_backstage(backstage::Page::Print);
+                    } else {
+                        self.print_now(params);
+                    }
+                }
+                UiRequest::Dialog(name, _) if name == "printPreview" => self.open_backstage(backstage::Page::Print),
                 UiRequest::Dialog(name, params) => self.open_dialog(&name, params),
                 UiRequest::Message(m) => self.message = Some(("GridCraft".into(), m)),
                 UiRequest::EditCell(text) => {
@@ -628,6 +648,7 @@ impl SheetApp {
                     dl(&name, &b);
                 }
             }
+            "__enableMacros" => macros::enable_content(self),
             // File › Options (`file.options`) and the File tab itself open the Backstage view.
             "options" => self.open_backstage(backstage::Page::Options),
             "backstage" => {
@@ -689,11 +710,8 @@ impl SheetApp {
         }
         let vba: Vec<&str> = msgs.iter().copied().filter(|m| m.to_lowercase().contains("macro") || m.contains("VBA")).collect();
         if !vba.is_empty() {
-            self.notice = Some(Notice {
-                text: "This workbook contains VBA macros. GridCraft keeps them intact when you save, but does not run them.".into(),
-                kind: NoticeKind::Warning,
-                action: Some(("What this means".into(), "macros".into())),
-            });
+            // Excel's security bar: macros stay off until the user enables them.
+            macros::security_notice(self);
         } else {
             let text = if msgs.len() == 1 {
                 msgs[0].to_string()
@@ -988,6 +1006,7 @@ impl SheetApp {
             return;
         }
         let t0 = now_ms();
+        macros::pump(self, &ctx);
         text_box::before_ui(self, &ctx);
         // The language the widgets translate with this frame (see `i18n::current`).
         i18n::set_current(&ctx, self.ui.language);
@@ -1018,6 +1037,9 @@ impl SheetApp {
             });
         }
         dialogs::show(self, &ctx);
+        userforms::show(self, &ctx);
+        userforms::apply_focus(self, &ctx);
+        macros::dialogs(self, &ctx);
         widgets::message_box(self, &ctx);
         widgets::toast(self, &ctx);
         control::issue_screenshots(self, &ctx);

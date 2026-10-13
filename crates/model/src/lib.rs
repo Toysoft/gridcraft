@@ -7,6 +7,7 @@
 mod b64;
 pub mod cell;
 mod cellmap;
+pub mod dml;
 pub mod features;
 pub mod password;
 pub mod preserved;
@@ -16,6 +17,7 @@ pub mod style;
 pub mod workbook;
 
 pub use cell::{Cell, CellPicture, Formula};
+pub use dml::{ColorMod, DmlBase, DmlColor, DmlEffects, DmlFill, DmlShadow, GradientStop};
 pub use features::*;
 pub use password::PasswordHash;
 pub use preserved::{Preserved, PreservedPart, PreservedRel, PreservedXml};

@@ -1571,6 +1571,7 @@ dependencies = [
  "gridcraft-model",
  "gridcraft-numfmt",
  "gridcraft-pdf",
+ "gridcraft-vba",
  "gridcraft-xlsx",
  "image",
  "log",
@@ -1652,6 +1653,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gridcraft-vba"
+version = "0.6.1"
+dependencies = [
+ "gridcraft-core",
+ "gridcraft-numfmt",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "gridcraft-web"
 version = "0.6.1"
 dependencies = [
@@ -1676,6 +1686,7 @@ dependencies = [
  "gridcraft-core",
  "gridcraft-formula",
  "gridcraft-model",
+ "gridcraft-vba",
  "quick-xml",
  "sha1",
  "sha2",

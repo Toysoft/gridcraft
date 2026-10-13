@@ -183,6 +183,9 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
                 ("view.animations", "Animations", "{on?: bool} (toggles without it) → {on}"),
                 ("view.interfaceScale", "Interface Size", "{percent: 75–200 | \"auto\"} (100 = auto; clamped)"),
                 ("ui.dialog", "Open Dialog", ""),
+                ("ui.macros.enable", "Enable Content (macros)", "{}"),
+                ("ui.macros.run", "Run Macro (in the app)", "{name}"),
+                ("ui.macros.state", "Macro State", "{} → {running, forms, message, immediate}"),
                 ("ui.backstage", "File (Backstage view)", "{page?: home|new|open|info|saveAs|print|export|options|close}"),
                 (
                     "ui.printSettings",
@@ -229,6 +232,29 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
                 o.insert("formulaBar".into(), json!(app.session.prefs.formula_bar));
             }
             ok(out)
+        }
+        // Macros through the app (worker thread, dialogs, forms), as a click would run them.
+        "ui.macros.enable" => {
+            crate::macros::enable_content(app);
+            ok(json!({"enabled": true}))
+        }
+        "ui.macros.run" => {
+            let Some(name) = s("name") else { return err("missing `name`") };
+            crate::macros::run(app, name);
+            ok(json!({"running": name}))
+        }
+        "ui.macros.state" => {
+            let uid = app.session.active().map(|d| d.uid).unwrap_or(0);
+            let forms: Vec<Json> = app
+                .session
+                .macros
+                .doc(uid)
+                .map(|d| d.forms.iter().map(|f| json!({"name": f.name(), "visible": f.visible, "modal": f.modal, "caption": f.caption})).collect())
+                .unwrap_or_default();
+            let (calls, serve_ms) = app.macros.stats(uid);
+            ok(
+                json!({"running": app.macros.running(uid), "forms": forms, "message": app.message, "immediate": app.macros.immediate, "calls": calls, "serveMs": serve_ms}),
+            )
         }
         "ui.dialog" => {
             app.open_dialog(s("name").unwrap_or(""), p.clone());

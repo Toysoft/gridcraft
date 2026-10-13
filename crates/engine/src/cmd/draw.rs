@@ -95,6 +95,9 @@ fn stroke(s: &mut Session, p: &Json) -> Result<Json> {
         line: Color::from_hex(&color).unwrap_or(Color::rgb(0x1F, 0x5F, 0xC9)),
         text,
         format: Default::default(),
+        macro_name: None,
+        text_link: None,
+        source_xml: None,
     };
     edit(s, |cx| {
         cx.sheet_mut(si)?.shapes.push(shape);

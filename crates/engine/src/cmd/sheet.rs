@@ -797,6 +797,10 @@ fn move_sheet(s: &mut Session, p: &Json) -> Result<Json> {
             sh.name = name;
             sh.tables.clear(); // table names must be unique
             sh.preserved = None; // kept file content (form controls, OLE objects…) stays with the original
+            sh.controls.clear();
+            // A copy has no document module of its own: its code name would clash with the
+            // original's (Excel gives it a new one when it adds the module).
+            sh.code_name = None;
             let at = to.min(n);
             // The copy gets its own copies of the sheet's names, referring to the copy.
             let copies: Vec<gridcraft_model::DefinedName> = cx

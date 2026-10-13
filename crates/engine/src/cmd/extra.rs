@@ -147,7 +147,19 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "view.unhideWindow", "Unhide…", ["View", "Window"], None, "{index?}", has_doc, unhide_window),
         cmd!(query "view.switchWindows", "Switch Windows", ["View", "Window"], None, "{} → open windows", always, switch_windows),
         cmd!(noundo "view.ruler", "Ruler", ["View", "Show"], None, "{on?} → {on}: rulers in Page Layout view (an application option)", has_doc, ruler),
-        cmd!(query "view.macros", "Macros", ["View", "Macros"], None, "{} → scripts", has_doc, all_scripts),
+        cmd!(query "view.macros", "Macros", ["View", "Macros"], None, "{} → scripts and VBA macros", has_doc, all_scripts),
+        cmd!(noundo "developer.runMacro", "Run Macro", ["Developer", "Code"], None, "{name: \"Macro1\" | \"Module1.Macro1\", enable?: bool} → {ran, messages}: runs a VBA macro headless (message boxes answer OK); needs macros enabled", has_doc, crate::vba::run_command),
+        cmd!(noundo "developer.enableMacros", "Enable Content", ["Developer", "Code"], None, "{on?: bool} → {enabled}: lets this workbook's VBA macros run (Excel's Enable Content)", has_doc, |s, p| {
+            let uid = s.doc()?.uid;
+            let on = bool_param(p, "on").unwrap_or(true);
+            crate::vba::enable(s, uid, on);
+            Ok(json!({ "enabled": on }))
+        }),
+        cmd!(query "developer.macroSource", "Macro Source", ["Developer", "Code"], None, "{module?} → {modules: [{name, kind, code}], forms}", has_doc, crate::vba::source_command),
+        cmd!(query "developer.visualBasic", "Visual Basic Editor", ["Developer", "Code"], Some("Alt+F11"), "{} (opens the code viewer)", has_doc, |s, _| {
+            s.ui_requests.push(crate::UiRequest::Dialog("visualBasic".into(), json!({})));
+            ok()
+        }),
         // Table tools
         cmd!("table.resize", "Resize Table", ["Table Design", "Properties"], None, "{table?, range: \"A1:F20\"}", has_doc, table_resize),
         cmd!("table.removeDuplicates", "Remove Duplicates", ["Table Design", "Tools"], None, "{table?, columns?}", has_doc, |s, p| s
@@ -527,14 +539,21 @@ fn format_series(s: &mut Session, p: &Json) -> Result<Json> {
 fn shape_fill(s: &mut Session, p: &Json) -> Result<Json> {
     if str_param(p, "kind") == Some("shape") {
         let color = str_param(p, "color").and_then(Color::from_hex).unwrap_or_default();
-        return with_shape(s, p, |sh| sh.fill = color);
+        // A chosen colour replaces any gradient or style fill the shape came with.
+        return with_shape(s, p, |sh| {
+            sh.fill = color;
+            sh.format.fill = None;
+        });
     }
     format_series(s, p)
 }
 
 fn shape_outline(s: &mut Session, p: &Json) -> Result<Json> {
     let color = str_param(p, "color").and_then(Color::from_hex).unwrap_or_default();
-    with_shape(s, p, |sh| sh.line = color)
+    with_shape(s, p, |sh| {
+        sh.line = color;
+        sh.format.no_line = false;
+    })
 }
 
 fn with_shape(s: &mut Session, p: &Json, f: impl FnOnce(&mut Shape)) -> Result<Json> {
@@ -950,10 +969,20 @@ fn all_scripts(s: &mut Session, _: &Json) -> Result<Json> {
     let all = stash_get(wb, SCRIPTS_NAME);
     let mut list: Vec<Json> =
         all.as_object().map(|o| o.iter().map(|(k, v)| json!({"name": k, "steps": v.as_array().map_or(0, Vec::len)})).collect()).unwrap_or_default();
-    // A preserved VBA project is reported alongside GridCraft's own scripts; it is carried on
-    // save but never executed here, so it has no step count.
-    if let Some(bytes) = &wb.vba_project {
-        list.push(json!({"name": "(VBA)", "steps": 0, "kind": "vba", "size": bytes.len(), "executed": false}));
+    // VBA macros (public parameterless Subs) run with developer.runMacro once enabled.
+    if wb.vba_project.is_some() {
+        let uid = s.doc()?.uid;
+        let enabled = crate::vba::enabled(s, uid);
+        let names = crate::vba::macro_names(s, uid);
+        for name in &names {
+            list.push(json!({"name": name, "steps": 0, "kind": "vba", "enabled": enabled}));
+        }
+        // A project GridCraft can't read still shows, with why.
+        if names.is_empty()
+            && let Some(why) = s.macros.doc(uid).and_then(|d| d.load_error.clone())
+        {
+            list.push(json!({"name": "(VBA project)", "steps": 0, "kind": "vba", "enabled": false, "error": why}));
+        }
     }
     Ok(Json::Array(list))
 }

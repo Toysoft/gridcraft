@@ -322,6 +322,9 @@ fn sample() -> Workbook {
         line: Color::Rgb(0x000000),
         text: "Hi\nthere".into(),
         format: Default::default(),
+        macro_name: None,
+        text_link: None,
+        source_xml: None,
     });
     s.shapes.push(Shape {
         id: 12,
@@ -331,6 +334,9 @@ fn sample() -> Workbook {
         line: Color::Rgb(0xFF0000),
         text: String::new(),
         format: Default::default(),
+        macro_name: None,
+        text_link: None,
+        source_xml: None,
     });
     s.shapes.push(Shape {
         id: 13,
@@ -349,7 +355,11 @@ fn sample() -> Workbook {
             text_outline: Some((Color::Rgb(0xFF0000), 1.5)),
             align: Some(ShapeTextAlign::Right),
             anchor: Some(ShapeTextAnchor::Bottom),
+            ..Default::default()
         },
+        macro_name: None,
+        text_link: None,
+        source_xml: None,
     });
     let base_chart = Chart {
         id: 20,
@@ -739,7 +749,7 @@ fn vba_project_roundtrip() {
 
     let (back, rep) = read_xlsx(&bytes).unwrap();
     assert_eq!(back.vba_project.as_deref(), Some(vba.as_slice()), "vbaProject survives the read");
-    assert!(rep.warnings.iter().any(|w| w.contains("not executed")), "{:?}", rep.warnings);
+    assert!(rep.warnings.iter().any(|w| w.contains("enable content")), "{:?}", rep.warnings);
 
     // A workbook without macros stays macro-free and free of VBA warnings.
     let (plain, rp) = read_xlsx(&write_xlsx(&Workbook::new()).unwrap()).unwrap();
@@ -759,7 +769,7 @@ fn vba_project_read_from_foreign_file() {
     );
     let (wb, rep) = read_xlsx(&bytes).unwrap();
     assert!(wb.vba_project.is_some(), "VBA blob captured");
-    assert!(rep.warnings.iter().any(|w| w.contains("not executed")), "{:?}", rep.warnings);
+    assert!(rep.warnings.iter().any(|w| w.contains("enable content")), "{:?}", rep.warnings);
     let _ = vba;
 }
 

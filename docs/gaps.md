@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (direct desktop printing through craft-print) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (criteria/lookup formulas over shared ranges no longer quadratic) · **Target:** Microsoft Excel (Microsoft 365)
 
 Every known shortfall against Excel, one entry each, ranked by user impact (what blocks someone
 using GridCraft for real work first). This is the work list: pick from the top, check the open
@@ -27,7 +27,10 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 
 ### 2. Large workbooks don't open; recalc is single-threaded (P, H)
 - **Missing:** streaming read for ~100 MB XLSX; multi-threaded recalc; 100k-dependent edit under
-  100 ms (was ~0.4 s); whole-sheet operations bounded.
+  100 ms (was ~0.4 s); whole-sheet operations bounded. Done 2026-10-13: SUMIF/COUNTIF/*IFS and
+  exact VLOOKUP/HLOOKUP/MATCH reading a range that many formulas share now reuse one array per pass and
+  a hash index (an 11.5 MB stock ledger, 55k formulas, went from >15 min to ~1 s recalc; the
+  ~3–4 s left on open is XML parsing). XLOOKUP/XMATCH, comparison (`">5"`) and wildcard criteria still scan.
 - **Evidence:** #175; no threading in `crates/calc`; PR #152 (whole-sheet Fill/Remove Duplicates
   out of memory), PR #151 (current region past 10,000 rows).
 - **Impact:** finance and data users routinely have big workbooks.
@@ -142,8 +145,13 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
   [hardware-parity.md](hardware-parity.md)
 
 ### 21. Automation and add-ins (F)
-- VBA out of scope (dropped on open, #6); no Office Scripts compatibility; no plugin or custom
-  function API. **Estimate:** 25–40 h plus an owner decision.
+- VBA runs (since 2026-10-13): macros, UserForms, sheet ActiveX controls, button shapes,
+  `OnKey` and recorded shortcuts, after Enable Content, sandboxed. Missing: editing VBA (the
+  viewer is read only), a debugger (breakpoints, stepping, Immediate window input), the long
+  tail of the object model (charts, pivots, shapes, `Application.FileDialog`, events beyond
+  `Workbook_Open`/control events such as `Worksheet_Change`), `UserForm_QueryClose` cancelling,
+  mouse-move events, Frames/MultiPage contents, Windows API calls (inert). No Office Scripts
+  compatibility; no plugin or custom function API. **Estimate:** 30–50 h for the rest of VBA.
 
 ### 22. AI features (F)
 - No in-app assistant, natural-language formulas or Analyze Data; agent control via MCP is

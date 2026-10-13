@@ -243,6 +243,96 @@ pub fn parse_streaming(xml: &[u8], split: &[&str], cb: &mut dyn FnMut(El) -> Res
     root.ok_or_else(|| IoError::Xml("no root element".into()))
 }
 
+/// The raw source of every element at `depth` (the root is depth 0) whose local name is in
+/// `names`, in document order, with the root's namespace declarations that it uses added to its
+/// start tag so it stays well-formed wherever it is written back. Damaged XML yields what was
+/// read before the damage.
+pub fn raw_elements(xml: &[u8], depth: usize, names: &[&str]) -> Vec<(String, String)> {
+    let data = to_utf8(xml);
+    let bytes: &[u8] = data.as_ref();
+    let mut reader = Reader::from_reader(bytes);
+    {
+        let cfg = reader.config_mut();
+        cfg.check_end_names = false;
+        cfg.allow_unmatched_ends = true;
+        cfg.trim_text_start = false;
+        cfg.trim_text_end = false;
+    }
+    let mut out = Vec::new();
+    let mut root_ns: Vec<(String, String)> = Vec::new();
+    let mut level = 0usize;
+    // (local name, start offset) of the element being captured.
+    let mut open: Option<(String, usize)> = None;
+    let mut buf = Vec::new();
+    loop {
+        let before = usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX);
+        let Ok(ev) = reader.read_event_into(&mut buf) else { break };
+        let after = usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX);
+        match ev {
+            Event::Start(e) if level == 0 => {
+                for a in e.attributes().with_checks(false).flatten() {
+                    let key = a.key.as_ref();
+                    if let Some(prefix) = key.strip_prefix(b"xmlns:") {
+                        root_ns.push((String::from_utf8_lossy(prefix).into_owned(), String::from_utf8_lossy(&a.value).into_owned()));
+                    } else if key == b"xmlns" {
+                        root_ns.push((String::new(), String::from_utf8_lossy(&a.value).into_owned()));
+                    }
+                }
+                level = 1;
+            }
+            Event::Start(e) => {
+                if open.is_none() && level == depth && names.contains(&local(e.name().as_ref()).as_str()) {
+                    open = Some((local(e.name().as_ref()), before));
+                }
+                level += 1;
+            }
+            Event::Empty(e) => {
+                if open.is_none()
+                    && level == depth
+                    && names.contains(&local(e.name().as_ref()).as_str())
+                    && let Some(raw) = bytes.get(before..after)
+                {
+                    out.push((local(e.name().as_ref()), with_namespaces(&String::from_utf8_lossy(raw), &root_ns)));
+                }
+            }
+            Event::End(_) => {
+                level = level.saturating_sub(1);
+                if level == depth
+                    && let Some((name, start)) = open.take()
+                    && let Some(raw) = bytes.get(start..after)
+                {
+                    out.push((name, with_namespaces(&String::from_utf8_lossy(raw), &root_ns)));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    out
+}
+
+/// `raw` (one element) with the declarations from `ns` whose prefixes it uses added to its start
+/// tag.
+fn with_namespaces(raw: &str, ns: &[(String, String)]) -> String {
+    let raw = raw.trim_start();
+    let tag_end = raw.find(|c: char| c.is_whitespace() || c == '>' || c == '/').unwrap_or(raw.len());
+    let mut decls = String::new();
+    for (prefix, uri) in ns {
+        let used = if prefix.is_empty() {
+            raw.get(1..tag_end).is_some_and(|t| !t.contains(':'))
+        } else {
+            raw.contains(&format!("<{prefix}:")) || raw.contains(&format!(" {prefix}:")) || raw.contains(&format!("</{prefix}:"))
+        };
+        let attr = if prefix.is_empty() { "xmlns".to_string() } else { format!("xmlns:{prefix}") };
+        if used && !raw.contains(&format!("{attr}=")) {
+            decls.push_str(&format!(" {attr}=\"{}\"", esc_attr(uri)));
+        }
+    }
+    let (head, tail) = raw.split_at(tag_end);
+    format!("{head}{decls}{tail}")
+}
+
 // ---------------------------------------------------------------- writing helpers
 
 /// Escapes text content.

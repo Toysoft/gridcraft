@@ -257,14 +257,12 @@ impl<'a> Compound<'a> {
         Ok(out)
     }
 
-    /// The contents of the stream called `name` (case-insensitive) directly under the root
-    /// storage, or `None` when there is no such stream.
-    /// The directory entry of the stream called `name` (case-insensitive) directly under the
-    /// root storage.
-    fn root_entry(&self, name: &str) -> Result<Option<&DirEntry>, String> {
-        let Some(root) = self.entries.first() else { return Ok(None) };
-        // Walk the root's children (a red-black tree through left/right siblings), bounded.
-        let mut stack = vec![root.child];
+    /// The entries directly under storage `parent` (a red-black tree through left/right
+    /// siblings, walked with a bound so a looping directory can't hang).
+    fn children(&self, parent: usize) -> Result<Vec<usize>, String> {
+        let Some(p) = self.entries.get(parent) else { return Ok(vec![]) };
+        let mut out = Vec::new();
+        let mut stack = vec![p.child];
         let mut seen = 0usize;
         while let Some(i) = stack.pop() {
             if i == NO_STREAM {
@@ -275,13 +273,34 @@ impl<'a> Compound<'a> {
                 return Err("damaged compound file: directory tree loops".into());
             }
             let Some(e) = self.entries.get(i as usize) else { continue };
-            if e.kind == STREAM_OBJECT && e.name.eq_ignore_ascii_case(name) {
-                return Ok(Some(e));
-            }
+            out.push(i as usize);
             stack.push(e.left);
             stack.push(e.right);
         }
-        Ok(None)
+        Ok(out)
+    }
+
+    /// The entry at a `/`-separated path of storage names (case-insensitive) from the root.
+    fn entry_at(&self, path: &str) -> Result<Option<&DirEntry>, String> {
+        let mut at = 0usize;
+        for part in path.split('/').filter(|p| !p.is_empty()) {
+            let next = self.children(at)?.into_iter().find(|&i| self.entries.get(i).is_some_and(|e| e.name.eq_ignore_ascii_case(part)));
+            match next {
+                Some(i) => at = i,
+                None => return Ok(None),
+            }
+        }
+        Ok(self.entries.get(at).filter(|_| at != 0))
+    }
+
+    fn root_entry(&self, name: &str) -> Result<Option<&DirEntry>, String> {
+        Ok(self.entry_at(name)?.filter(|e| e.kind == STREAM_OBJECT))
+    }
+
+    /// The contents of the stream at `path` (`VBA/dir`), `None` when there is none.
+    pub(crate) fn stream(&self, path: &str) -> Result<Option<Vec<u8>>, String> {
+        let Some(e) = self.entry_at(path)?.filter(|e| e.kind == STREAM_OBJECT) else { return Ok(None) };
+        self.read_entry(e).map(Some)
     }
 
     /// Whether the root storage holds a stream called `name`, without reading it.
@@ -292,9 +311,14 @@ impl<'a> Compound<'a> {
     /// The contents of the stream called `name` (case-insensitive) directly under the root
     /// storage, or `None` when there is no such stream.
     pub(crate) fn root_stream(&self, name: &str) -> Result<Option<Vec<u8>>, String> {
-        let Some(root) = self.entries.first() else { return Ok(None) };
-        let found = self.root_entry(name)?;
-        let Some(e) = found else { return Ok(None) };
+        match self.root_entry(name)? {
+            Some(e) => self.read_entry(e).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    fn read_entry(&self, e: &DirEntry) -> Result<Vec<u8>, String> {
+        let Some(root) = self.entries.first() else { return Ok(vec![]) };
         if e.size > MAX_STREAM {
             return Err("the workbook stream is larger than 1 GiB".into());
         }
@@ -309,7 +333,7 @@ impl<'a> Compound<'a> {
             return Err("damaged compound file: a stream is shorter than its declared size (the file may be truncated)".into());
         }
         data.truncate(size);
-        Ok(Some(data))
+        Ok(data)
     }
 }
 

@@ -447,8 +447,10 @@ impl KeptReader {
                 Err(why) => cx.warn(format!("sheet \"{name}\": {slot} were dropped: {why}")),
             }
         }
-        if p.elements.iter().any(|e| e.slot == "oleObjects" || e.slot == "controls") {
-            cx.warn(format!("sheet \"{name}\": embedded objects and form controls are not shown; they are kept for saving"));
+        if p.elements.iter().any(|e| e.slot == "oleObjects") {
+            cx.warn(format!("sheet \"{name}\": embedded objects are not shown; they are kept for saving"));
+        } else if p.elements.iter().any(|e| e.slot == "controls") {
+            // ActiveX controls are drawn (see `sheet_controls`); their parts are kept for saving.
         } else {
             p.vml = None;
         }

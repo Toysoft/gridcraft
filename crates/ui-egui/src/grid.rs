@@ -593,6 +593,7 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
     // Objects above cells.
     let objects = crate::chartview::paint_objects(app, &painter.with_clip_rect(geo.cells), &geo, &wb, si, sh);
     paint_overlays(app, ui, &painter.with_clip_rect(geo.cells), &geo, &wb, si, sh, &sel);
+    crate::sheet_controls::show(app, ui, &geo, sh);
     if sh.view == gridcraft_engine::model::SheetViewMode::PageBreakPreview {
         paint_pages(app, &painter.with_clip_rect(geo.cells), &geo, sh);
     }
@@ -1621,6 +1622,13 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
             ctx.set_cursor_icon(if selected { CursorIcon::Move } else { CursorIcon::Default });
         }
         app.grid.hover_cell = in_cells.then(|| geo.cell_at(sh, p));
+        // A shape that runs a macro shows the hand, like a button.
+        if let Some(("shape", id, _)) = crate::chartview::hit(app, geo, sh, p)
+            && sh.shapes.iter().any(|s| s.id == id && s.macro_name.is_some())
+            && !(mods.ctrl || mods.command)
+        {
+            ctx.set_cursor_icon(CursorIcon::PointingHand);
+        }
     }
 
     // Draw tab tools: the pen records a stroke, the eraser deletes ink under the pointer.
@@ -1693,6 +1701,17 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
         if let Some(p) = at
             && let Some((kind, id, rect)) = crate::chartview::hit(app, geo, sh, p)
         {
+            // A shape with a macro assigned runs it on click (Ctrl+click selects it instead).
+            if kind == "shape"
+                && primary_clicked
+                && !resp.drag_started()
+                && !(mods.ctrl || mods.command)
+                && let Some(name) = sh.shapes.iter().find(|s| s.id == id).and_then(|s| s.macro_name.clone())
+            {
+                app.selected_chart = None;
+                crate::macros::run(app, &name);
+                return;
+            }
             app.selected_chart = Some(id);
             if kind == "shape"
                 && resp.double_clicked()
@@ -2363,6 +2382,17 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
             }
             egui::Event::Key { key, physical_key, pressed: true, modifiers: m, .. } => {
                 use egui::Key;
+                // Esc stops a running macro; keys bound to macros run them.
+                if key == Key::Escape
+                    && let Some(uid) = app.session.active().map(|d| d.uid)
+                    && app.macros.running(uid).is_some()
+                {
+                    app.macros.stop(uid);
+                    continue;
+                }
+                if crate::macros::key(app, key, m) {
+                    continue;
+                }
                 if crate::keymap::dispatch(app, ctx, key, physical_key, m, geo, sh) {
                     continue;
                 }

@@ -515,6 +515,44 @@ pub struct Shape {
     /// Outline visibility and text formatting (DrawingML `a:ln`, `a:bodyPr`, `a:pPr`, `a:rPr`).
     #[serde(default)]
     pub format: ShapeFormat,
+    /// The macro the shape runs when clicked (`macro="[0]!Macro1"` → `Macro1`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub macro_name: Option<String>,
+    /// The cell the shape shows the value of (`textlink="$G$21"`), as written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_link: Option<String>,
+    /// The shape's `xdr:sp` element as read (self-contained namespaces), written back as is while
+    /// the shape is unchanged, so formatting GridCraft doesn't model survives a save.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_xml: Option<String>,
+}
+
+/// A control placed on a sheet (an ActiveX or form control): what GridCraft draws over the cells
+/// and macros reach as `Sheet1.ComboBox1`. Read from the file's control parts, which are kept
+/// as they are for saving.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SheetControl {
+    pub name: String,
+    /// `ComboBox`, `ListBox`, `TextBox`, `CheckBox`, `OptionButton`, `ToggleButton`,
+    /// `CommandButton`, `Label`, `SpinButton`, `ScrollBar`, `Image`.
+    pub kind: String,
+    pub anchor: Anchor,
+    /// The cell the control's value goes to (`LinkedCell`).
+    pub linked_cell: Option<String>,
+    /// The range its list comes from (`ListFillRange`).
+    pub list_fill_range: Option<String>,
+    pub value: String,
+    pub caption: String,
+    pub font: Option<String>,
+    /// Points.
+    pub font_size: Option<f32>,
+    pub bold: bool,
+    /// 0xRRGGBB.
+    pub fore: Option<u32>,
+    pub back: Option<u32>,
+    pub drop_list: bool,
+    pub enabled: bool,
 }
 
 /// Horizontal alignment of a shape's text (`a:pPr algn`).
@@ -556,6 +594,14 @@ pub struct ShapeFormat {
     pub align: Option<ShapeTextAlign>,
     /// `None`: the shape's default (top for text boxes, middle for other shapes).
     pub anchor: Option<ShapeTextAnchor>,
+    /// The shape's fill in full (gradients, theme colours with modifiers, style fills); when set
+    /// it is drawn instead of `Shape::fill`.
+    pub fill: Option<crate::dml::DmlFill>,
+    /// The text's fill when it is a gradient or a modified theme colour (drawn instead of
+    /// `text_color`).
+    pub text_fill: Option<crate::dml::DmlFill>,
+    /// Outer shadow and bevel (from the shape or its style's effect reference).
+    pub effects: crate::dml::DmlEffects,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

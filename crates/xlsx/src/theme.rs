@@ -64,7 +64,28 @@ pub fn read_theme(root: &El) -> Theme {
             t.minor_font = f.to_string();
         }
     }
+    if let Some(fmt) = el.child("fmtScheme") {
+        let (fills, effects) = crate::dml::fmt_scheme(fmt);
+        if !fills.is_empty() {
+            t.fill_styles = fills;
+        }
+        if !effects.is_empty() {
+            t.effect_styles = effects;
+        }
+    }
     t
+}
+
+/// [`read_theme`] from the part's bytes, also keeping the file's format scheme as written.
+pub fn read_theme_part(bytes: &[u8]) -> Option<Theme> {
+    let root = crate::xml::parse(bytes).ok()?;
+    let mut t = read_theme(&root);
+    // GridCraft's own scheme is written again from the styles; another application's is kept.
+    let ours = root.path(&["themeElements", "fmtScheme"]).and_then(|f| f.attr("name")) == Some("Craft");
+    if !ours {
+        t.fmt_scheme_xml = crate::xml::raw_elements(bytes, 2, &["fmtScheme"]).into_iter().next().map(|(_, raw)| raw);
+    }
+    Some(t)
 }
 
 /// A minimal, schema-complete theme part for `t`.
@@ -85,10 +106,19 @@ pub fn write_theme(t: &Theme) -> String {
         esc_attr(&t.major_font),
         esc_attr(&t.minor_font)
     );
-    // Format scheme: three entries per list, as the schema requires.
+    // Format scheme: the file's own when it came with one, else ours (three entries per list, as
+    // the schema requires).
+    if let Some(raw) = &t.fmt_scheme_xml {
+        s.push_str(raw);
+        s.push_str("</a:themeElements><a:objectDefaults/><a:extraClrSchemeLst/></a:theme>");
+        return s;
+    }
     s.push_str("<a:fmtScheme name=\"Craft\"><a:fillStyleLst>");
-    for _ in 0..3 {
-        s.push_str("<a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill>");
+    for i in 0..3 {
+        match t.fill_styles.get(i) {
+            Some(f) => s.push_str(&crate::dml::fill_xml(f)),
+            None => s.push_str("<a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill>"),
+        }
     }
     s.push_str("</a:fillStyleLst><a:lnStyleLst>");
     for w in [6350, 12700, 19050] {
@@ -98,8 +128,8 @@ pub fn write_theme(t: &Theme) -> String {
         );
     }
     s.push_str("</a:lnStyleLst><a:effectStyleLst>");
-    for _ in 0..3 {
-        s.push_str("<a:effectStyle><a:effectLst/></a:effectStyle>");
+    for i in 0..3 {
+        s.push_str(&crate::dml::effect_style_xml(t.effect_styles.get(i)));
     }
     s.push_str("</a:effectStyleLst><a:bgFillStyleLst>");
     for _ in 0..3 {

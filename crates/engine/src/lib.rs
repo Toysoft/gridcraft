@@ -20,6 +20,7 @@ pub mod pivot_calc;
 pub mod sample;
 pub mod selection;
 pub mod tables;
+pub mod vba;
 
 use std::sync::Arc;
 
@@ -35,6 +36,7 @@ pub use gridcraft_core as core;
 pub use gridcraft_formula as formula;
 pub use gridcraft_model as model;
 pub use gridcraft_numfmt as numfmt;
+pub use gridcraft_vba as vbalang;
 pub use selection::Selection;
 
 #[derive(Debug, thiserror::Error)]
@@ -251,6 +253,9 @@ pub struct Session {
     /// Review › Notes › Show All Notes: every note is displayed. An application display setting
     /// (like Excel's comment indicator option), so it's not saved in the file.
     pub show_all_notes: bool,
+    /// Macros: each workbook's VBA project, whether it may run, its loaded UserForms and pending
+    /// events.
+    pub macros: vba::MacroState,
 }
 
 impl Session {

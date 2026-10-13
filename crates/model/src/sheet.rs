@@ -71,6 +71,10 @@ pub struct Sheet {
     /// Frozen rows and columns (top/left).
     pub freeze: Option<(u32, u32)>,
     pub tab_color: Option<Color>,
+    /// The sheet's VBA code name (`sheetPr codeName`, e.g. `Sheet1`): what its document module
+    /// and macros call it, whatever the tab says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_name: Option<String>,
     pub visibility: Visibility,
     pub show_gridlines: bool,
     pub show_headings: bool,
@@ -111,6 +115,9 @@ pub struct Sheet {
     /// tables). Goes away with the sheet; not in JSON.
     #[serde(skip)]
     pub preserved: Option<Arc<crate::preserved::Preserved>>,
+    /// Controls placed on the sheet (drawn and scriptable; their file parts are in `preserved`).
+    #[serde(skip)]
+    pub controls: Vec<crate::features::SheetControl>,
 }
 
 /// Default width of a column (points) and height of a row (points) for the default font.
@@ -132,6 +139,7 @@ impl Sheet {
             merges: vec![],
             freeze: None,
             tab_color: None,
+            code_name: None,
             visibility: Visibility::Visible,
             show_gridlines: true,
             show_headings: true,
@@ -158,6 +166,7 @@ impl Sheet {
             view_top_left: CellRef::default(),
             view: SheetViewMode::Normal,
             preserved: None,
+            controls: Vec::new(),
         }
     }
 

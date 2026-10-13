@@ -1026,6 +1026,9 @@ fn insert_shape(s: &mut Session, p: &Json) -> Result<Json> {
         line,
         text: str_param(p, "text").unwrap_or("").into(),
         format: Default::default(),
+        macro_name: None,
+        text_link: None,
+        source_xml: None,
     };
     let sheet = d.wb.active_sheet;
     edit(s, |cx| {
@@ -1459,6 +1462,9 @@ fn insert_icon(s: &mut Session, p: &Json) -> Result<Json> {
         line: Color::Auto,
         text: name,
         format: Default::default(),
+        macro_name: None,
+        text_link: None,
+        source_xml: None,
     };
     let sheet = d.wb.active_sheet;
     edit(s, |cx| {

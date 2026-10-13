@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~25 points of "ready for real work" and ~160–240 h away
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (direct desktop printing through craft-print) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (VBA macros run; shape styles; large criteria/lookup recalc; Myanmar text) · **Target:** Microsoft Excel (Microsoft 365)
 
 GridCraft aims at full Microsoft Excel parity, and at being better in places: faster, open (XLSX
 is the native format), fully scriptable by agents (MCP, control channel, CLI), and on the web.
@@ -132,6 +132,8 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
+| 2026-10-13 | VBA macros run (after Enable Content, sandboxed): a VBA interpreter, Excel's object model for ranges, sheets, workbooks and WorksheetFunction, UserForms drawn from the file's designs with their events, ActiveX controls on sheets, button shapes that run their macro, Alt+F8 / Alt+F11, OnKey and recorded shortcuts. Shapes keep the theme look (style references, gradients, shadows, bevels, linked text) and save back as read; sheet code names round-trip |
+| 2026-10-13 | Large ledger workbooks open: thousands of SUMIF/COUNTIF/SUMIFS/VLOOKUP/MATCH formulas over the same whole columns share one array per pass and an equality index, so a real 11.5 MB .xlsm (55k formulas, 1.8M cells) recalculates in ~1 s instead of over 15 minutes, matching Excel's cached values on every formula. A range argument that is an error (`#NAME?` from an undefined name) is the criteria function's result, as in Excel. Myanmar (Burmese) text renders with a system Myanmar font instead of empty boxes |
 | 2026-10-12 | File › Print selects a system printer, copies, duplex and grayscale, submits PDF jobs through craft-print on a worker and shows spooler errors; browser printing and PDF export remain available |
 | 2026-10-11 | Command-sequence fuzzing: random command sequences checked against undo/redo, XLSX round-trip and full recalculation; fixes for the table, legacy-array, spill, AutoSum, Watch Window and sheet-copy bugs it found |
 | 2026-10-11 | Password-protected workbooks open: GridCraft asks for the password and decrypts Agile and Standard encryption (#11) |
@@ -178,6 +180,8 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | VBA macros, UserForms and sheet controls; shape styles; progress log row |
+| 2026-10-13 | minor | Criteria/lookup recalculation scales on large workbooks; Myanmar fallback font; progress log row |
 | 2026-10-12 | minor | Desktop File > Print now discovers printers and submits PDF jobs through pinned craft-print with printer choice, copies, duplex and grayscale; browser printing and PDF export remain available. Remaining print parity includes page ranges and driver-specific tray/options UI; physical printer fidelity needs hardware validation. |
 | 2026-10-11 | minor | Password-encrypted workbooks open (#11); progress log row |
 | 2026-10-11 | minor | Forecast Sheet (#322); progress log row |

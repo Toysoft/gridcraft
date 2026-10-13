@@ -733,6 +733,11 @@ impl Dialog {
                 d.result = app.session.run("view.macros", json!({})).ok();
                 d
             }
+            "visualBasic" => {
+                let mut d = Dialog::custom("visualBasic", "Visual Basic", json!({}));
+                d.result = app.session.run("developer.macroSource", json!({})).ok();
+                d
+            }
             "statistics" => {
                 let mut d = Dialog::custom("statistics", "Workbook Statistics", json!({}));
                 d.result = app.session.run("review.workbookStatistics", json!({})).ok();
@@ -886,6 +891,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "formatCells" => 560.0,
         "about" => 660.0,
         "insertFunction" | "commandSearch" | "nameManager" | "manageRules" | "journal" | "agents" | "macros" => 520.0,
+        "visualBasic" => 860.0,
         "recommendedCharts" => 600.0,
         "analysisToolPak" => 420.0,
         "solver" => 460.0,
@@ -932,7 +938,8 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                         }
                     });
                 }
-                "macros" => macros(ui, &mut d),
+                "macros" => macros(app, ui, &mut d, &mut open),
+                "visualBasic" => visual_basic(ui, &mut d),
                 "statistics" | "accessibility" | "errorChecking" | "evaluateFormula" | "comments" => {
                     let r = if d.name == "comments" {
                         app.session.active().and_then(|doc| doc.wb.active().map(|s| json!(s.comments.iter().map(|(c, m)| json!({"cell": c.a1(), "author": m.author, "text": m.text})).collect::<Vec<_>>())))
@@ -1333,31 +1340,106 @@ fn about(ui: &mut egui::Ui, d: &mut Dialog) {
     }
 }
 
-/// The Macros dialog: lists GridCraft's own recorded scripts and (if the file carries one) the
-/// preserved VBA project. Mirrors Excel's Developer ▸ Macros list, but is honest that VBA is
-/// preserved and not executed.
-fn macros(ui: &mut egui::Ui, d: &mut Dialog) {
-    ui.label("Automation in this workbook. GridCraft runs its own scripts; a file's VBA project is preserved but not executed.");
-    ui.add_space(6.0);
+/// The Macros dialog (Alt+F8): the workbook's VBA macros and GridCraft's own recorded scripts.
+/// Select one and Run; VBA needs the workbook's content enabled first.
+fn macros(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool) {
     let items: Vec<Json> = d.result.as_ref().and_then(Json::as_array).cloned().unwrap_or_default();
     if items.is_empty() {
-        ui.weak("This workbook has no scripts or macros.");
+        ui.weak("This workbook has no macros or scripts.");
         return;
     }
+    let uid = app.session.active().map(|doc| doc.uid).unwrap_or(0);
+    let enabled = gridcraft_engine::vba::enabled(&app.session, uid);
+    let has_vba = items.iter().any(|it| it.get("kind").and_then(Json::as_str) == Some("vba"));
+    if has_vba && !enabled {
+        ui.horizontal(|ui| {
+            ui.colored_label(egui::Color32::from_rgb(0xC4, 0x2B, 0x1C), "Macros in this workbook are disabled.");
+            if ui.button("Enable Content").clicked() {
+                crate::macros::enable_content(app);
+            }
+        });
+        ui.add_space(4.0);
+    }
+    ui.label("Macro name:");
+    let mut run: Option<(String, bool)> = None;
     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-        for it in &items {
+        for (i, it) in items.iter().enumerate() {
             let name = it.get("name").and_then(Json::as_str).unwrap_or("(unnamed)");
             let is_vba = it.get("kind").and_then(Json::as_str) == Some("vba");
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(name).strong());
-                if is_vba {
-                    ui.weak("— VBA project (preserved, not run)");
-                } else {
-                    let steps = it.get("steps").and_then(Json::as_u64).unwrap_or(0);
-                    ui.weak(format!("— {steps} step{}", if steps == 1 { "" } else { "s" }));
+            let label = if let Some(err) = it.get("error").and_then(Json::as_str) {
+                format!("{name}  — can't be read: {err}")
+            } else if is_vba {
+                name.to_string()
+            } else {
+                let steps = it.get("steps").and_then(Json::as_u64).unwrap_or(0);
+                format!("{name}  — script, {steps} step{}", if steps == 1 { "" } else { "s" })
+            };
+            let r = ui.selectable_label(d.list_index == i, label);
+            if r.clicked() {
+                d.list_index = i;
+            }
+            if r.double_clicked() {
+                run = Some((name.to_string(), is_vba));
+            }
+        }
+    });
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        let chosen = items.get(d.list_index);
+        if ui.button("  Run  ").clicked()
+            && let Some(it) = chosen
+        {
+            run = Some((it.get("name").and_then(Json::as_str).unwrap_or_default().to_string(), it.get("kind").and_then(Json::as_str) == Some("vba")));
+        }
+        if has_vba && ui.button("Visual Basic…").clicked() {
+            app.open_dialog("visualBasic", json!({}));
+        }
+    });
+    if let Some((name, vba)) = run {
+        *open = false;
+        if vba {
+            crate::macros::run(app, &name);
+        } else if let Err(e) = app.run("automate.runScript", json!({"name": name})) {
+            app.message = Some(("Macros".into(), crate::clean_error(&e)));
+        }
+    }
+}
+
+/// The Visual Basic viewer (Alt+F11): the project's modules and their code, read only.
+fn visual_basic(ui: &mut egui::Ui, d: &mut Dialog) {
+    let modules: Vec<Json> = d.result.as_ref().and_then(|r| r.get("modules")).and_then(Json::as_array).cloned().unwrap_or_default();
+    if modules.is_empty() {
+        ui.weak("This workbook has no VBA project.");
+        return;
+    }
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(180.0);
+            ui.label(egui::RichText::new("Project").strong());
+            egui::ScrollArea::vertical().id_salt("vb_modules").max_height(480.0).show(ui, |ui| {
+                for (i, m) in modules.iter().enumerate() {
+                    let name = m.get("name").and_then(Json::as_str).unwrap_or("");
+                    let kind = m.get("kind").and_then(Json::as_str).unwrap_or("");
+                    let glyph = match kind {
+                        "form" => "▣",
+                        "document" => "▤",
+                        "class" => "◇",
+                        _ => "≡",
+                    };
+                    if ui.selectable_label(d.list_index == i, format!("{glyph} {name}")).clicked() {
+                        d.list_index = i;
+                    }
                 }
             });
-        }
+        });
+        ui.separator();
+        ui.vertical(|ui| {
+            let code = modules.get(d.list_index).and_then(|m| m.get("code")).and_then(Json::as_str).unwrap_or("");
+            egui::ScrollArea::both().id_salt("vb_code").max_height(480.0).show(ui, |ui| {
+                let mut text = code.to_string();
+                ui.add(egui::TextEdit::multiline(&mut text).code_editor().interactive(true).desired_width(600.0).desired_rows(30));
+            });
+        });
     });
 }
 
