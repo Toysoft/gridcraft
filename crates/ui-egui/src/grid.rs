@@ -2281,11 +2281,36 @@ fn delete_selected_object(app: &mut SheetApp, sh: &Sheet) -> bool {
     true
 }
 
+/// Link schemes a hyperlink may open outside the app (after the user confirms).
+const SAFE_LINK_SCHEMES: &[&str] = &["http://", "https://", "mailto:"];
+
+/// True when `target` points outside the workbook (a URL or mail address, not a cell reference).
+pub fn is_external_link(target: &str) -> bool {
+    target.contains("://") || target.to_ascii_lowercase().starts_with("mailto:")
+}
+
+/// True when `target` uses a scheme that may be handed to the system (web pages and mail only:
+/// `file://` and app-specific schemes can launch programs, so a workbook can't open them).
+pub fn is_safe_link(target: &str) -> bool {
+    let t = target.trim_start().to_ascii_lowercase();
+    SAFE_LINK_SCHEMES.iter().any(|s| t.starts_with(s))
+}
+
+/// Asks before opening an external link; links with other schemes are refused.
+pub fn request_open_link(app: &mut SheetApp, target: &str) {
+    if is_safe_link(target) {
+        app.pending_link = Some(target.trim().to_string());
+    } else {
+        app.message = Some((
+            "GridCraft".into(),
+            format!("This link was blocked because it isn't a web or email address, and it could open a file or another program:\n\n{target}"),
+        ));
+    }
+}
+
 pub fn follow_link(app: &mut SheetApp, target: &str) {
-    if target.contains("://") || target.starts_with("mailto:") {
-        if let Some(f) = &app.services.open_url {
-            f(target);
-        }
+    if is_external_link(target) {
+        request_open_link(app, target);
     } else {
         let t = target.trim_start_matches('#');
         let _ = app.session.run("edit.goTo", json!({"reference": t}));
@@ -2327,7 +2352,7 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
         resp.request_focus();
     }
     let other_focus = ctx.memory(|m| m.focused()).is_some_and(|f| f != resp.id && (editing || !stale.contains(&f)));
-    if editing || app.dialog.is_some() || other_focus || app.message.is_some() {
+    if editing || app.dialog.is_some() || other_focus || app.message.is_some() || app.pending_link.is_some() {
         return;
     }
     if ctx.memory(|m| m.focused()).is_none() {
@@ -3052,6 +3077,19 @@ mod selection_fill_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_web_and_mail_links_may_open_outside_the_app() {
+        for ok in ["https://example.com", "HTTP://example.com/a?b", "mailto:a@b.c", " https://x.y"] {
+            assert!(is_safe_link(ok), "{ok}");
+        }
+        for bad in ["file:///Applications/Calculator.app", "smb://host/share", "vscode://x", "-a Terminal://", "javascript://x", "ftp://h"] {
+            assert!(!is_safe_link(bad), "{bad}");
+            assert!(is_external_link(bad), "{bad}");
+        }
+        assert!(!is_external_link("Sheet2!A1"));
+        assert!(!is_external_link("#B5"));
+    }
 
     #[test]
     fn cell_text_y_moves_monotonically_in_standard_and_tall_rows() {

@@ -211,6 +211,8 @@ pub struct SheetApp {
     /// The File tab's Backstage view, when open (UI-only; replaces the ribbon, grid and tabs).
     pub backstage: Option<backstage::Backstage>,
     pub message: Option<(String, String)>,
+    /// An external link waiting for the user to confirm it before it opens (`grid::request_open_link`).
+    pub pending_link: Option<String>,
     pub toast: Option<(String, f64)>,
     /// Dismissible info bar under the ribbon (open-time notices).
     pub notice: Option<Notice>,
@@ -260,6 +262,7 @@ impl SheetApp {
             dialog: None,
             backstage: None,
             message: None,
+            pending_link: None,
             toast: None,
             notice: None,
             services,
@@ -588,11 +591,7 @@ impl SheetApp {
                     });
                     self.begin_edit(text, false);
                 }
-                UiRequest::OpenUrl(u) => {
-                    if let Some(f) = &self.services.open_url {
-                        f(&u);
-                    }
-                }
+                UiRequest::OpenUrl(u) => grid::request_open_link(self, &u),
             }
         }
     }
@@ -1019,6 +1018,7 @@ impl SheetApp {
         }
         dialogs::show(self, &ctx);
         widgets::message_box(self, &ctx);
+        widgets::link_confirm(self, &ctx);
         widgets::toast(self, &ctx);
         control::issue_screenshots(self, &ctx);
         control::collect_screenshots(self, &ctx);
@@ -1060,6 +1060,7 @@ impl SheetApp {
         let enabled = self.editor.is_none()
             && self.dialog.is_none()
             && self.message.is_none()
+            && self.pending_link.is_none()
             && self.name_box.is_none()
             && !ctx.text_edit_focused()
             && self.grid.context_menu.is_none()
