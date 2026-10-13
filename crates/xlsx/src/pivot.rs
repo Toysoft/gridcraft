@@ -412,10 +412,12 @@ fn range_source_xml(sheet: &str, r: RangeRef) -> String {
     format!("<worksheetSource ref=\"{}\" sheet=\"{}\"/>", r.a1(), esc_attr(&name))
 }
 
+/// A source header as a cache field name: the text as it is, spaces included (as Excel names it,
+/// and as the PivotTable's fields refer to it).
 fn header_text(v: &Value) -> String {
     match v {
         Value::Empty => String::new(),
-        v => label(v).trim().to_string(),
+        v => label(v),
     }
 }
 
@@ -431,7 +433,7 @@ fn build_cache(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Option<Cac
     let mut next_suffix: HashMap<String, usize> = HashMap::new();
     for (k, c) in (r.start.col..=r.end.col).enumerate() {
         let mut h = header_text(&sh.value(CellRef::new(r.start.row, c)).scalar());
-        if h.is_empty() {
+        if h.trim().is_empty() {
             h = format!("Column{}", k + 1);
         }
         let mut n = h.clone();

@@ -42,8 +42,17 @@ pub struct Source {
 }
 
 impl Source {
+    /// The column of a field. Headers keep their spaces, as in Excel (`Region `); a name typed
+    /// without them still finds the field when only one header matches that way.
     pub fn col(&self, name: &str) -> Option<usize> {
-        self.headers.iter().position(|h| h.eq_ignore_ascii_case(name))
+        self.headers.iter().position(|h| h.eq_ignore_ascii_case(name)).or_else(|| {
+            let name = name.trim();
+            let mut hits = self.headers.iter().enumerate().filter(|(_, h)| h.trim().eq_ignore_ascii_case(name));
+            match (hits.next(), hits.next()) {
+                (Some((i, _)), None) => Some(i),
+                _ => None,
+            }
+        })
     }
 }
 
@@ -134,8 +143,9 @@ pub fn read_source(wb: &Workbook, text: &str, default_sheet: usize) -> Result<So
     let mut next_suffix: HashMap<String, usize> = HashMap::new();
     let mut formats = Vec::new();
     for c in r.start.col..=r.end.col {
-        let h = crate::display::cell_text(wb, sh, CellRef::new(r.start.row, c)).trim().to_string();
-        if h.is_empty() {
+        // A field is named by its header exactly, spaces included, as in Excel and in the cache.
+        let h = crate::display::cell_text(wb, sh, CellRef::new(r.start.row, c));
+        if h.trim().is_empty() {
             return Err(FIELD_NAME_ERR.into());
         }
         let key = h.to_ascii_lowercase();

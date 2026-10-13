@@ -1848,6 +1848,36 @@ mod tests {
     }
 
     #[test]
+    fn headers_keep_their_spaces() {
+        // Excel names a field by its header exactly ("Region "), in the cache and in the layout.
+        let mut s = Session::new();
+        s.new_workbook();
+        let rows = json!([["Region ", " Sales ", "Qty"], ["East", 10, 1], ["West", 20, 2], ["East", 5, 3]]);
+        s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+        // Typed without the spaces, the fields are still found, and kept with them.
+        let p = json!({"source": "Sheet1!$A$1:$C$4", "destination": "Sheet1!E3", "rows": ["Region"], "values": ["Sales", "Qty"]});
+        s.execute("insert.pivotTable", p).unwrap();
+        let p = pt(&s);
+        assert_eq!(p.rows[0].source_col, "Region ");
+        assert_eq!(p.values[0].source_col, " Sales ");
+        let east = find_row(&s, "East").unwrap();
+        assert_eq!(val(&s, &CellRef::new(east, 5).a1()), Value::Number(15.0));
+        let f = s.execute("pivot.fields", json!({})).unwrap();
+        assert!(f["fields"].as_array().unwrap().iter().any(|x| x["name"] == "Region "), "{f}");
+        // Saved and reopened, the layout still finds its fields, and a refresh keeps them.
+        let wb = (*s.doc().unwrap().wb).clone();
+        let (back, report) = gridcraft_xlsx::read_xlsx(&gridcraft_xlsx::write_xlsx(&wb).unwrap()).unwrap();
+        assert!(report.warnings.iter().all(|w| !w.to_lowercase().contains("pivot")), "{:?}", report.warnings);
+        let rp = back.sheet(0).unwrap().pivots.first().unwrap().clone();
+        assert_eq!((rp.rows.len(), rp.values.len()), (1, 2));
+        assert_eq!(rp.rows[0].source_col, "Region ");
+        let mut back = back;
+        crate::pivot::refresh(&mut back, 0, 0, true).unwrap();
+        let out = crate::pivot::compute(&back, back.sheet(0).unwrap().pivots.first().unwrap(), 0).unwrap();
+        assert!(out.grid.iter().any(|row| row.first().is_some_and(|c| c.value == Value::text("East"))));
+    }
+
+    #[test]
     fn date_grouping_by_quarter_and_month() {
         let mut s = sales();
         s.execute("insert.pivotTable", json!({"rows": ["Date"], "values": ["Sales"]})).unwrap();
