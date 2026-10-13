@@ -275,6 +275,21 @@ fn num_fmt_code(id: u32, custom: &HashMap<u32, String>) -> NumFmt {
 }
 
 fn read_xf(xf: &El, fonts: &[Font], fills: &[Fill], borders: &[Borders], fmts: &HashMap<u32, String>, checkboxes: &[bool]) -> Style {
+    read_xf_with_parent(xf, fonts, fills, borders, fmts, checkboxes, &[])
+}
+
+/// A cell format whose `numFmtId` is 0 without `applyNumberFormat` inherits the number format of
+/// the `cellStyleXfs` entry its `xfId` points at (Excel: applying a named style only overrides the
+/// properties it names).
+fn read_xf_with_parent(
+    xf: &El,
+    fonts: &[Font],
+    fills: &[Fill],
+    borders: &[Borders],
+    fmts: &HashMap<u32, String>,
+    checkboxes: &[bool],
+    style_xfs: &[Style],
+) -> Style {
     let mut s = Style::default();
     if let Some(f) = xf.attr_u32("fontId").and_then(|i| fonts.get(i as usize)) {
         s.font = f.clone();
@@ -287,7 +302,15 @@ fn read_xf(xf: &El, fonts: &[Font], fills: &[Fill], borders: &[Borders], fmts: &
     if let Some(b) = xf.attr_u32("borderId").and_then(|i| borders.get(i as usize)) {
         s.borders = *b;
     }
-    s.num_fmt = num_fmt_code(xf.attr_u32("numFmtId").unwrap_or(0), fmts);
+    let id = xf.attr_u32("numFmtId").unwrap_or(0);
+    if id == 0
+        && !xf.flag("applyNumberFormat", false)
+        && let Some(parent) = xf.attr_u32("xfId").and_then(|i| style_xfs.get(i as usize))
+    {
+        s.num_fmt = parent.num_fmt.clone();
+    } else {
+        s.num_fmt = num_fmt_code(id, fmts);
+    }
     // A checkbox cell control (Insert › Checkbox) is a feature-property-bag complement on the xf.
     if crate::feature_bags::xf_is_checkbox(xf, checkboxes) {
         s.num_fmt = NumFmt::new("checkbox");
@@ -328,10 +351,12 @@ pub fn read_styles(root: &El, checkboxes: &[bool]) -> StylesIn {
     let fonts: Vec<Font> = root.child("fonts").map(|f| f.kids("font").map(|e| read_font(e, &palette)).collect()).unwrap_or_default();
     let fills: Vec<Fill> = root.child("fills").map(|f| f.kids("fill").map(|e| read_fill(e, &palette, false)).collect()).unwrap_or_default();
     let borders: Vec<Borders> = root.child("borders").map(|f| f.kids("border").map(|e| read_border(e, &palette)).collect()).unwrap_or_default();
-    let xfs =
-        root.child("cellXfs").map(|x| x.kids("xf").map(|xf| read_xf(xf, &fonts, &fills, &borders, &fmts, checkboxes)).collect()).unwrap_or_default();
     let style_xfs: Vec<Style> =
         root.child("cellStyleXfs").map(|x| x.kids("xf").map(|xf| read_xf(xf, &fonts, &fills, &borders, &fmts, &[])).collect()).unwrap_or_default();
+    let xfs = root
+        .child("cellXfs")
+        .map(|x| x.kids("xf").map(|xf| read_xf_with_parent(xf, &fonts, &fills, &borders, &fmts, checkboxes, &style_xfs)).collect())
+        .unwrap_or_default();
     let mut named = Vec::new();
     if let Some(cs) = root.child("cellStyles") {
         for c in cs.kids("cellStyle") {

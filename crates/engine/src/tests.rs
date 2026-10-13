@@ -3087,3 +3087,39 @@ fn paste_special_validation_moves_relative_references() {
     assert!(!ok(&mut s, "C3", "5"), "the pasted rule checks C3, not A1");
     assert!(ok(&mut s, "C3", "20"));
 }
+
+use std::io::Write;
+
+fn xlsx_with_named_date_style() -> Vec<u8> {
+    let sheet = r#"<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" s="1"><v>46308</v></c></row></sheetData></worksheet>"#;
+    let styles = r#"<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="14" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="1"/></cellXfs><cellStyles count="2"><cellStyle name="Normal" xfId="0" builtinId="0"/><cellStyle name="Date" xfId="1" builtinId="1"/></cellStyles></styleSheet>"#;
+    let wb = r#"<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets></workbook>"#;
+    let rels = r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#;
+    let wbrels = r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#;
+    let ct = r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/></Types>"#;
+    let mut z = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (n, d) in [
+        ("[Content_Types].xml", ct),
+        ("_rels/.rels", wbrels),
+        ("xl/workbook.xml", wb),
+        ("xl/_rels/workbook.xml.rels", rels),
+        ("xl/worksheets/sheet1.xml", sheet),
+        ("xl/styles.xml", styles),
+    ] {
+        z.start_file(n, zip::write::SimpleFileOptions::default()).unwrap();
+        z.write_all(d.as_bytes()).unwrap();
+    }
+    z.finish().unwrap().into_inner()
+}
+
+#[test]
+fn named_cell_style_number_format_is_inherited_by_cell_xfs() {
+    let bytes = xlsx_with_named_date_style();
+    let (w, _) = gridcraft_xlsx::read_xlsx(&bytes).unwrap();
+    let sh = w.sheet(0).unwrap();
+    let at = CellRef::parse("A1").unwrap();
+    let code = w.styles.get(sh.style_id(at)).num_fmt.as_str();
+    assert_eq!(code, "m/d/yyyy");
+    let t = crate::display::value_text(&w, sh, at);
+    assert_eq!(t, "10/13/2026", "serial 46308 (2026-10-13) must display as a date");
+}
