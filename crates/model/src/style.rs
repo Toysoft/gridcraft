@@ -245,6 +245,49 @@ pub enum BorderStyle {
 }
 
 impl BorderStyle {
+    /// Every style: None and Excel's 13 line styles (Format Cells › Border › Style).
+    pub const ALL: [BorderStyle; 14] = [
+        BorderStyle::None,
+        BorderStyle::Thin,
+        BorderStyle::Medium,
+        BorderStyle::Thick,
+        BorderStyle::Dashed,
+        BorderStyle::Dotted,
+        BorderStyle::Double,
+        BorderStyle::Hair,
+        BorderStyle::MediumDashed,
+        BorderStyle::DashDot,
+        BorderStyle::MediumDashDot,
+        BorderStyle::DashDotDot,
+        BorderStyle::MediumDashDotDot,
+        BorderStyle::SlantDashDot,
+    ];
+
+    /// The SpreadsheetML name (`thin`, `mediumDashDotDot`, …), used in files and commands.
+    pub fn name(self) -> &'static str {
+        match self {
+            BorderStyle::None => "none",
+            BorderStyle::Thin => "thin",
+            BorderStyle::Medium => "medium",
+            BorderStyle::Thick => "thick",
+            BorderStyle::Dashed => "dashed",
+            BorderStyle::Dotted => "dotted",
+            BorderStyle::Double => "double",
+            BorderStyle::Hair => "hair",
+            BorderStyle::MediumDashed => "mediumDashed",
+            BorderStyle::DashDot => "dashDot",
+            BorderStyle::MediumDashDot => "mediumDashDot",
+            BorderStyle::DashDotDot => "dashDotDot",
+            BorderStyle::MediumDashDotDot => "mediumDashDotDot",
+            BorderStyle::SlantDashDot => "slantDashDot",
+        }
+    }
+
+    /// The style with this [`BorderStyle::name`]; `None` for an unknown name.
+    pub fn from_name(name: &str) -> Option<BorderStyle> {
+        BorderStyle::ALL.into_iter().find(|s| s.name() == name)
+    }
+
     pub fn width(&self) -> f32 {
         match self {
             BorderStyle::None => 0.0,
@@ -423,6 +466,32 @@ static DEFAULT_STYLE: std::sync::LazyLock<Style> = std::sync::LazyLock::new(Styl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn border_style_names_round_trip() {
+        for st in BorderStyle::ALL {
+            assert_eq!(BorderStyle::from_name(st.name()), Some(st));
+        }
+        assert_eq!(BorderStyle::from_name("mediumDashDotDot"), Some(BorderStyle::MediumDashDotDot));
+        assert_eq!(BorderStyle::from_name("Thin"), None);
+        assert_eq!(BorderStyle::from_name("wavy"), None);
+    }
+
+    #[test]
+    fn operator_and_validation_names_round_trip() {
+        use crate::{CfOperator, ValidationKind};
+        for op in CfOperator::ALL {
+            assert_eq!(CfOperator::from_name(op.name()), Some(op));
+        }
+        assert_eq!(CfOperator::from_name("greater"), Some(CfOperator::Greater));
+        assert_eq!(CfOperator::from_name("lessOrEqual"), Some(CfOperator::LessOrEqual));
+        assert_eq!(CfOperator::from_name("bigger"), None);
+        for k in ValidationKind::ALL {
+            assert_eq!(ValidationKind::from_name(k.name()), Some(k));
+        }
+        assert_eq!(ValidationKind::from_name("any"), Some(ValidationKind::Any));
+        assert_eq!(ValidationKind::from_name("integer"), None);
+    }
 
     #[test]
     fn interning() {

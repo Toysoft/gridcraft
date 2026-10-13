@@ -170,41 +170,7 @@ pub fn read_fill(e: &El, palette: &[u32], dxf: bool) -> Fill {
 }
 
 fn border_style(s: &str) -> BorderStyle {
-    match s {
-        "thin" => BorderStyle::Thin,
-        "medium" => BorderStyle::Medium,
-        "thick" => BorderStyle::Thick,
-        "dashed" => BorderStyle::Dashed,
-        "dotted" => BorderStyle::Dotted,
-        "double" => BorderStyle::Double,
-        "hair" => BorderStyle::Hair,
-        "mediumDashed" => BorderStyle::MediumDashed,
-        "dashDot" => BorderStyle::DashDot,
-        "mediumDashDot" => BorderStyle::MediumDashDot,
-        "dashDotDot" => BorderStyle::DashDotDot,
-        "mediumDashDotDot" => BorderStyle::MediumDashDotDot,
-        "slantDashDot" => BorderStyle::SlantDashDot,
-        _ => BorderStyle::None,
-    }
-}
-
-fn border_style_name(s: BorderStyle) -> &'static str {
-    match s {
-        BorderStyle::None => "none",
-        BorderStyle::Thin => "thin",
-        BorderStyle::Medium => "medium",
-        BorderStyle::Thick => "thick",
-        BorderStyle::Dashed => "dashed",
-        BorderStyle::Dotted => "dotted",
-        BorderStyle::Double => "double",
-        BorderStyle::Hair => "hair",
-        BorderStyle::MediumDashed => "mediumDashed",
-        BorderStyle::DashDot => "dashDot",
-        BorderStyle::MediumDashDot => "mediumDashDot",
-        BorderStyle::DashDotDot => "dashDotDot",
-        BorderStyle::MediumDashDotDot => "mediumDashDotDot",
-        BorderStyle::SlantDashDot => "slantDashDot",
-    }
+    BorderStyle::from_name(s).unwrap_or(BorderStyle::None)
 }
 
 fn read_line(e: Option<&El>, palette: &[u32]) -> BorderLine {
@@ -466,7 +432,7 @@ fn line_xml(tag: &str, l: &BorderLine) -> String {
         return format!("<{tag}/>");
     }
     let color = if l.color == Color::Auto { "<color indexed=\"64\"/>".to_string() } else { format!("<color {}/>", color_attrs(&l.color)) };
-    format!("<{tag} style=\"{}\">{color}</{tag}>", border_style_name(l.style))
+    format!("<{tag} style=\"{}\">{color}</{tag}>", l.style.name())
 }
 
 fn border_xml(b: &Borders) -> String {

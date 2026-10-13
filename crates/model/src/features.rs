@@ -129,6 +129,46 @@ pub enum CfOperator {
     LessOrEqual,
 }
 
+impl CfOperator {
+    /// Every operator.
+    pub const ALL: [CfOperator; 8] = [
+        CfOperator::Between,
+        CfOperator::NotBetween,
+        CfOperator::Equal,
+        CfOperator::NotEqual,
+        CfOperator::Greater,
+        CfOperator::Less,
+        CfOperator::GreaterOrEqual,
+        CfOperator::LessOrEqual,
+    ];
+
+    /// The SpreadsheetML name (`between`, `greaterThan`, …), as files and VBA spell it.
+    pub fn name(self) -> &'static str {
+        match self {
+            CfOperator::Between => "between",
+            CfOperator::NotBetween => "notBetween",
+            CfOperator::Equal => "equal",
+            CfOperator::NotEqual => "notEqual",
+            CfOperator::Greater => "greaterThan",
+            CfOperator::Less => "lessThan",
+            CfOperator::GreaterOrEqual => "greaterThanOrEqual",
+            CfOperator::LessOrEqual => "lessThanOrEqual",
+        }
+    }
+
+    /// The operator named `name`: its [`CfOperator::name`] or GridCraft's short form (`greater`,
+    /// `less`, `greaterOrEqual`, `lessOrEqual`). `None` for anything else.
+    pub fn from_name(name: &str) -> Option<CfOperator> {
+        Some(match name {
+            "greater" => CfOperator::Greater,
+            "less" => CfOperator::Less,
+            "greaterOrEqual" => CfOperator::GreaterOrEqual,
+            "lessOrEqual" => CfOperator::LessOrEqual,
+            _ => return CfOperator::ALL.into_iter().find(|o| o.name() == name),
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CfValueKind {
     Min,
@@ -257,6 +297,43 @@ pub enum ValidationKind {
     Time,
     TextLength,
     Custom,
+}
+
+impl ValidationKind {
+    /// Every kind.
+    pub const ALL: [ValidationKind; 8] = [
+        ValidationKind::Any,
+        ValidationKind::Whole,
+        ValidationKind::Decimal,
+        ValidationKind::List,
+        ValidationKind::Date,
+        ValidationKind::Time,
+        ValidationKind::TextLength,
+        ValidationKind::Custom,
+    ];
+
+    /// The SpreadsheetML name (`none` for Any value, `whole`, `textLength`, …).
+    pub fn name(self) -> &'static str {
+        match self {
+            ValidationKind::Any => "none",
+            ValidationKind::Whole => "whole",
+            ValidationKind::Decimal => "decimal",
+            ValidationKind::List => "list",
+            ValidationKind::Date => "date",
+            ValidationKind::Time => "time",
+            ValidationKind::TextLength => "textLength",
+            ValidationKind::Custom => "custom",
+        }
+    }
+
+    /// The kind named `name`: its [`ValidationKind::name`], or `any` for Any value. `None` for
+    /// anything else.
+    pub fn from_name(name: &str) -> Option<ValidationKind> {
+        if name == "any" {
+            return Some(ValidationKind::Any);
+        }
+        ValidationKind::ALL.into_iter().find(|k| k.name() == name)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

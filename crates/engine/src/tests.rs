@@ -415,6 +415,37 @@ fn no_border_handles_sheet_corners_without_creating_out_of_bounds_cells() {
 }
 
 #[test]
+fn borders_take_every_excel_line_style_and_refuse_unknown_ones() {
+    use gridcraft_model::BorderStyle;
+    let mut s = s();
+    for (i, st) in BorderStyle::ALL.into_iter().enumerate().skip(1) {
+        let cell = format!("B{}", 2 * i);
+        s.execute("home.borders", json!({"range": cell, "preset": "bottom", "style": st.name()})).unwrap();
+    }
+    reopen(&mut s);
+    let wb = &s.doc().unwrap().wb;
+    let sh = wb.active().unwrap();
+    for (i, st) in BorderStyle::ALL.into_iter().enumerate().skip(1) {
+        let c = CellRef::parse(&format!("B{}", 2 * i)).unwrap();
+        assert_eq!(wb.styles.get(sh.style_id(c)).borders.bottom.style, st, "{}", st.name());
+    }
+    assert!(s.execute("home.borders", json!({"range": "A1", "preset": "bottom", "style": "wavy"})).is_err());
+}
+
+#[test]
+fn unknown_validation_operators_and_types_are_refused() {
+    let mut s = s();
+    let rule = |op: &str, ty: &str| json!({"range": "A1", "type": ty, "operator": op, "formula1": "1", "formula2": "10"});
+    assert!(s.execute("data.validation", rule("bigger", "whole")).is_err());
+    assert!(s.execute("data.validation", rule("between", "integer")).is_err());
+    assert!(s.execute("home.conditionalFormat", json!({"range": "A1", "rule": {"type": "cellIs", "operator": "bigger", "value": 1}})).is_err());
+    // Short and file spellings both work.
+    s.execute("data.validation", rule("greaterOrEqual", "whole")).unwrap();
+    s.execute("data.validation", rule("greaterThanOrEqual", "decimal")).unwrap();
+    s.execute("data.validation", rule("between", "any")).unwrap();
+}
+
+#[test]
 fn borders_respect_sheet_formatting_protection() {
     let mut s = s();
     s.execute("home.borders", json!({"range": "A1:B2", "preset": "all"})).unwrap();

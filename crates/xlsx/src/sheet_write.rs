@@ -22,19 +22,6 @@ fn sqref(ranges: &[RangeRef]) -> String {
     ranges.iter().map(|r| r.a1()).collect::<Vec<_>>().join(" ")
 }
 
-fn cf_op_name(op: CfOperator) -> &'static str {
-    match op {
-        CfOperator::Between => "between",
-        CfOperator::NotBetween => "notBetween",
-        CfOperator::Equal => "equal",
-        CfOperator::NotEqual => "notEqual",
-        CfOperator::Greater => "greaterThan",
-        CfOperator::Less => "lessThan",
-        CfOperator::GreaterOrEqual => "greaterThanOrEqual",
-        CfOperator::LessOrEqual => "lessThanOrEqual",
-    }
-}
-
 /// Valid table name: letters, digits, `_` and `.`, starting with a letter, `_` or `\`
 /// (Microsoft "Names in formulas" rules).
 fn table_name(name: &str, used: &mut HashSet<String>, n: u32) -> String {
@@ -785,7 +772,7 @@ fn cf_rule_xml(cf: &CondFormat, priority: u32, out: &mut Out) -> String {
             if let Some(b) = b {
                 body.push_str(&f(b));
             }
-            simple("cellIs", style, &format!(" operator=\"{}\"", cf_op_name(*op)), body, &mut dxf)
+            simple("cellIs", style, &format!(" operator=\"{}\"", op.name()), body, &mut dxf)
         }
         CfRule::Expression { formula, style } => simple("expression", style, "", f(formula), &mut dxf),
         CfRule::ContainsText { text, style } => simple(
@@ -909,16 +896,7 @@ fn validation_formula(f: &str) -> String {
 }
 
 fn validation_xml(v: &Validation) -> String {
-    let ty = match v.kind {
-        ValidationKind::Any => "none",
-        ValidationKind::Whole => "whole",
-        ValidationKind::Decimal => "decimal",
-        ValidationKind::List => "list",
-        ValidationKind::Date => "date",
-        ValidationKind::Time => "time",
-        ValidationKind::TextLength => "textLength",
-        ValidationKind::Custom => "custom",
-    };
+    let ty = v.kind.name();
     let mut s = format!("<dataValidation type=\"{ty}\"");
     match v.error_style {
         ErrorStyle::Stop => {}
@@ -926,7 +904,7 @@ fn validation_xml(v: &Validation) -> String {
         ErrorStyle::Information => s.push_str(" errorStyle=\"information\""),
     }
     if v.op != CfOperator::Between && !matches!(v.kind, ValidationKind::List | ValidationKind::Custom | ValidationKind::Any) {
-        let _ = write!(s, " operator=\"{}\"", cf_op_name(v.op));
+        let _ = write!(s, " operator=\"{}\"", v.op.name());
     }
     if v.allow_blank {
         s.push_str(" allowBlank=\"1\"");
