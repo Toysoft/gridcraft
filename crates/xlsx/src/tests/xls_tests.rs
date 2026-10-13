@@ -330,11 +330,12 @@ fn reads_values_formulas_formats_and_layout() {
         // Shared formula: relative offsets resolve per cell.
         assert_eq!(ftext(&wb, "B5").as_deref(), Some("A5*10"));
         assert_eq!(ftext(&wb, "B6").as_deref(), Some("A6*10"));
-        // Array formula: the anchor holds it, the other cell keeps its value.
+        // Array formula: the anchor holds it; the other cell's cached result is dropped so that
+        // the formula fills the range on recalculation (as when an .xlsx is read, #156).
         let c5 = wb.sheets[0].cell(CellRef::parse("C5").unwrap()).unwrap().formula.clone().unwrap();
         assert_eq!((c5.text.as_str(), c5.array), ("A5:A6*2", Some(RangeRef::parse("C5:C6").unwrap())));
         assert_eq!(ftext(&wb, "C6"), None);
-        assert_eq!(v(&wb, 0, "C6"), Value::Number(4.0));
+        assert_eq!(v(&wb, 0, "C6"), Value::Empty);
         // Number formats, merges, sizes, names, print area; embedded chart records ignored.
         let sh = &wb.sheets[0];
         assert_eq!(wb.styles.get(sh.style_id(CellRef::parse("A4").unwrap())).num_fmt.as_str(), "yyyy-mm-dd");
@@ -490,6 +491,72 @@ fn sheets_share_one_record_budget() {
     dup.extend(eof());
     let err = read_xls(&compound("Workbook", &dup)).unwrap_err().to_string();
     assert!(err.contains("same substream"), "{err}");
+}
+
+#[test]
+fn formulas_using_a_skipped_name_keep_their_saved_results() {
+    // Lbl "ExtRange" = [Source.xlsx]Sheet1!$A$1:$A$3 (PtgArea3d through an external SupBook),
+    // "Local" = Sheet1!$A$1 and "Twice" = ExtRange*2. Only the first is skipped on import; a
+    // name that uses it is still read as it was.
+    let ext = cat(&[&[0x3B], &1u16.to_le_bytes(), &u16s(&[0, 2, 0, 0])]);
+    let local = cat(&[&[0x3A], &0u16.to_le_bytes(), &u16s(&[0, 0])]);
+    let twice = cat(&[&[0x23], &1u32.to_le_bytes(), &ptg_int(2), &[0x05]]);
+    let lbl = |name: &str, rgce: &[u8]| {
+        rec(0x0018, &cat(&[&u16s(&[0]), &[0, name.len() as u8], &u16s(&[rgce.len() as u16, 0, 0]), &[0; 4], &[0], name.as_bytes(), rgce]))
+    };
+    let boundsheet = |pos: u32| rec(0x0085, &cat(&[&pos.to_le_bytes(), &[0, 0, 6, 0], b"Sheet1"]));
+    let globals = |pos: u32| {
+        cat(&[
+            &bof(0x0005),
+            &boundsheet(pos),
+            &rec(0x01AE, &u16s(&[1, 0x0401])),
+            &rec(0x01AE, &cat(&[&u16s(&[1]), &xlstr("Source.xlsx"), &xlstr("Sheet1")])),
+            &rec(0x0017, &cat(&[&u16s(&[2]), &u16s(&[0, 0, 0]), &u16s(&[1, 0, 0])])),
+            &lbl("ExtRange", &ext),
+            &lbl("Local", &local),
+            &lbl("Twice", &twice),
+            &eof(),
+        ])
+    };
+    let sum_ext = cat(&[&[0x43], &1u32.to_le_bytes(), &[0x22, 1], &4u16.to_le_bytes()]);
+    let local_x2 = cat(&[&[0x43], &2u32.to_le_bytes(), &ptg_int(2), &[0x05]]);
+    let sheet = cat(&[
+        &bof(0x0010),
+        &rec(0x0203, &cat(&[&cell(0, 0, 0), &10.0f64.to_le_bytes()])),
+        &formula(5, 1, num(60.0), &sum_ext),
+        &formula(6, 1, num(20.0), &local_x2),
+        &eof(),
+    ]);
+    let pos = globals(0).len() as u32;
+    let (wb, report) = read_xls(&compound("Workbook", &cat(&[&globals(pos), &sheet]))).unwrap();
+    let names: Vec<_> = wb.names.iter().map(|n| (n.name.as_str(), n.formula.as_str())).collect();
+    assert_eq!(names, [("Local", "Sheet1!$A$1"), ("Twice", "ExtRange*2")]);
+    assert_eq!(ftext(&wb, "B6"), None);
+    assert_eq!(v(&wb, 0, "B6"), Value::Number(60.0));
+    assert_eq!(ftext(&wb, "B7").as_deref(), Some("Local*2"));
+    assert!(report.warnings.iter().any(|w| w.contains("defined names") && w.contains("saved results")), "{:?}", report.warnings);
+}
+
+#[test]
+fn reads_iterative_calculation_settings() {
+    // CalcMode, CalcCount, CalcIter and CalcDelta repeat in every worksheet substream; here only
+    // the first sheet carries them, so the sheet after it must not reset them to the defaults.
+    // CalcPrecision sits in the globals.
+    let calc = cat(&[&rec(0x000D, &u16s(&[0])), &rec(0x000C, &u16s(&[50])), &rec(0x0011, &u16s(&[1])), &rec(0x0010, &0.01f64.to_le_bytes())]);
+    let sheet1 = cat(&[&bof(0x0010), &calc, &eof()]);
+    let sheet2 = cat(&[&bof(0x0010), &eof()]);
+    let boundsheet = |pos: u32, name: &str| rec(0x0085, &cat(&[&pos.to_le_bytes(), &[0, 0, name.len() as u8, 0], name.as_bytes()]));
+    let globals = |p1: u32, p2: u32| cat(&[&bof(0x0005), &rec(0x000E, &u16s(&[0])), &boundsheet(p1, "A"), &boundsheet(p2, "B"), &eof()]);
+    let p1 = globals(0, 0).len() as u32;
+    let p2 = p1 + sheet1.len() as u32;
+    let (wb, _) = read_xls(&compound("Workbook", &cat(&[&globals(p1, p2), &sheet1, &sheet2]))).unwrap();
+    assert!(wb.calc.iterative);
+    assert_eq!((wb.calc.max_iterations, wb.calc.max_change), (50, 0.01));
+    assert_eq!(wb.calc.mode, gridcraft_model::CalcMode::Manual);
+    assert!(wb.calc.precision_as_displayed);
+    // Without the records: Excel's defaults, iteration off.
+    let (wb, _) = read_xls(&compound("Workbook", &sample(false))).unwrap();
+    assert_eq!(wb.calc, gridcraft_model::CalcSettings::default());
 }
 
 #[test]

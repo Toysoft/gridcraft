@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use gridcraft_core::{CellError, DateSystem, Value};
+use gridcraft_core::{Array, CellError, DateSystem, Value};
 
 /// Builds a [`FnSpec`] whose implementation returns `Result<Value, CellError>`.
 ///
@@ -105,6 +105,12 @@ pub trait Ctx {
     fn now_serial(&self) -> f64;
     /// Uniform in [0, 1).
     fn random(&mut self) -> f64;
+    /// For the database functions: whether the formula in the criteria cell at (`row`, `col`) holds
+    /// for `record` (a row of `db` below its labels). `None` when that cell holds no formula or the
+    /// criteria didn't come from a reference.
+    fn computed_criterion(&mut self, _row: usize, _col: usize, _db: &Array, _record: usize) -> Option<bool> {
+        None
+    }
 }
 
 pub type FnImpl = fn(&[Arg], &mut dyn Ctx) -> Value;

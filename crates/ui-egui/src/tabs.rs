@@ -71,6 +71,15 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
             // Keep worksheet tabs in their own horizontally scrollable
             // viewport, leaving room for the New Sheet button and grid scrollbar.
             let tabs_width = (ui.available_width() - 180.0).max(100.0);
+            // Reveal the selected sheet after navigation or layout changes, but
+            // allow browsing other tabs without snapping back on every frame.
+            let reveal_key = egui::Id::new((d.uid, d.wb.active_sheet, &sheets, tabs_width.to_bits()));
+            let reveal_id = ui.id().with("worksheet_tabs_reveal");
+            let reveal_active = ui.ctx().data_mut(|data| {
+                let changed = data.get_temp::<egui::Id>(reveal_id) != Some(reveal_key);
+                data.insert_temp(reveal_id, reveal_key);
+                changed
+            });
             ui.allocate_ui_with_layout(vec2(tabs_width, 30.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 // Translate vertical wheel movement into horizontal
                 // worksheet-tab scrolling.
@@ -99,6 +108,9 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                                 let tw = ui.painter().layout_no_wrap(name.clone(), font.clone(), t.text).size().x;
                                 let w = (tw + 32.0).max(72.0);
                                 let (r, resp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click_and_drag());
+                                if active && reveal_active {
+                                    resp.scroll_to_me(None);
+                                }
                                 let r = r.shrink2(vec2(0.0, 1.0));
                                 if active {
                                     ui.painter().rect_filled(Rect::from_min_max(pos2(r.left(), r.top() - 2.0), r.max), 4.0, t.tab_active);

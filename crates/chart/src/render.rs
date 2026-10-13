@@ -129,7 +129,7 @@ fn plot_kind(chart: &Chart, s: &SeriesData) -> ChartKind {
 fn point_color(data: &ChartData, j: usize) -> Rgba {
     match (j, data.series.first()) {
         (0, Some(s)) => s.color,
-        _ => series_color(&Theme::default(), j),
+        _ => j.checked_rem(data.palette.len()).and_then(|k| data.palette.get(k)).copied().unwrap_or_else(|| series_color(&Theme::default(), j)),
     }
 }
 
@@ -190,6 +190,7 @@ fn sanitize_vals(v: &[Option<f64>]) -> Vec<Option<f64>> {
 
 fn sanitize(d: &ChartData) -> ChartData {
     ChartData {
+        palette: d.palette.iter().take(MAX_POINTS).copied().collect(),
         categories: d.categories.iter().take(MAX_POINTS).cloned().collect(),
         series: d
             .series
@@ -254,7 +255,7 @@ fn draw_kind(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {
         Doughnut => pie(ctx, chart, data, area, 0.5, false),
         Sunburst => pie(ctx, chart, data, area, 0.2, true),
         Treemap => treemap(ctx, chart, data, area),
-        Funnel => funnel(ctx, data, area),
+        Funnel => funnel(ctx, chart, data, area),
         Radar => radar(ctx, chart, data, area),
         _ => {
             let area = axis_titles(ctx, chart, area);
@@ -266,8 +267,8 @@ fn draw_kind(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {
                 Scatter | ScatterLines | Bubble => scatter(ctx, chart, data, area),
                 Histogram => histogram(ctx, chart, data, area),
                 Waterfall => waterfall(ctx, chart, data, area),
-                BoxWhisker => box_whisker(ctx, data, area),
-                Stock => stock(ctx, data, area),
+                BoxWhisker => box_whisker(ctx, chart, data, area),
+                Stock => stock(ctx, chart, data, area),
                 _ => cartesian(ctx, chart, data, area, false),
             }
         }
@@ -1315,7 +1316,7 @@ fn waterfall(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {
 
 // ---------------------------------------------------------------- funnel
 
-fn funnel(ctx: &mut Ctx, data: &ChartData, area: Bx) {
+fn funnel(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {
     let Some(s) = data.series.first() else { return };
     let n = data.categories.len().max(s.values.len()).min(MAX_CATS);
     if n == 0 {
@@ -1345,9 +1346,11 @@ fn funnel(ctx: &mut Ctx, data: &ChartData, area: Bx) {
         }
         if show {
             let yc = y + bh / 2.0;
-            let t = f.format(s.values.get(j).copied().flatten().unwrap_or(0.0), None);
-            let color = if ctx.tw(&t, LABEL_SIZE) + 4.0 <= bw { on(s.color) } else { TEXT };
-            ctx.text(plot.cx(), yc, &t, LABEL_SIZE, color, HAlign::Center, VAlign::Middle);
+            if chart.data_labels {
+                let t = f.format(s.values.get(j).copied().flatten().unwrap_or(0.0), None);
+                let color = if ctx.tw(&t, LABEL_SIZE) + 4.0 <= bw { on(s.color) } else { TEXT };
+                ctx.text(plot.cx(), yc, &t, LABEL_SIZE, color, HAlign::Center, VAlign::Middle);
+            }
             let l = ctx.fit(labels.get(j).map(String::as_str).unwrap_or(""), LABEL_SIZE, lw - 8.0);
             ctx.text(plot.x - 6.0, yc, &l, LABEL_SIZE, TEXT, HAlign::Right, VAlign::Middle);
         }
@@ -1571,12 +1574,12 @@ fn quantile(sorted: &[f64], q: f64) -> f64 {
     a + (b - a) * frac
 }
 
-fn box_whisker(ctx: &mut Ctx, data: &ChartData, area: Bx) {
+fn box_whisker(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {
     let labels: Vec<String> = data.series.iter().map(|s| s.name.clone()).collect();
     let Some((lo, hi)) = value_range(data.series.iter().flat_map(|s| s.values.iter().flatten().copied())) else { return };
     let ys = nice_scale(lo, hi, false);
     let f = Fmt::new(data.series.first().map(|s| s.number_format.as_str()).unwrap_or("General"));
-    let plot = frame(ctx, area, CatAxis::Labels(&labels), &ValAxis { scale: ys, fmt: &f }, None, false, true);
+    let plot = frame(ctx, area, CatAxis::Labels(&labels), &ValAxis { scale: ys, fmt: &f }, None, false, chart.gridlines);
     if !plot.ok() {
         return;
     }
@@ -1615,7 +1618,7 @@ fn box_whisker(ctx: &mut Ctx, data: &ChartData, area: Bx) {
 
 // ---------------------------------------------------------------- stock
 
-fn stock(ctx: &mut Ctx, data: &ChartData, area: Bx) {
+fn stock(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {
     let ncat = data.categories.len().max(data.series.iter().map(|s| s.values.len()).max().unwrap_or(0)).min(MAX_CATS);
     if ncat == 0 {
         return;
@@ -1624,7 +1627,7 @@ fn stock(ctx: &mut Ctx, data: &ChartData, area: Bx) {
     let Some((lo, hi)) = value_range(data.series.iter().flat_map(|s| s.values.iter().flatten().copied())) else { return };
     let ys = nice_scale(lo, hi, false);
     let f = Fmt::new(data.series.first().map(|s| s.number_format.as_str()).unwrap_or("General"));
-    let plot = frame(ctx, area, CatAxis::Labels(&labels), &ValAxis { scale: ys, fmt: &f }, None, false, true);
+    let plot = frame(ctx, area, CatAxis::Labels(&labels), &ValAxis { scale: ys, fmt: &f }, None, false, chart.gridlines);
     if !plot.ok() {
         return;
     }
