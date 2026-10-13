@@ -230,8 +230,10 @@ impl Geo {
         let (fr, fc) = sh.freeze.unwrap_or((0, 0));
         let frozen_w = (ci.start(fc) as f32) * z;
         let frozen_h = (ri.start(fr) as f32) * z;
-        let row_outline = Arc::new(crate::outline::Axis::new(&sh.rows));
-        let col_outline = Arc::new(crate::outline::Axis::new(&sh.cols));
+        // Show Outline Symbols off (Ctrl+8) hides the band, its brackets and level buttons.
+        let axis = |lines| if sh.show_outline_symbols { crate::outline::Axis::new(lines) } else { crate::outline::Axis::default() };
+        let row_outline = Arc::new(axis(&sh.rows));
+        let col_outline = Arc::new(axis(&sh.cols));
         let mut band_w = crate::outline::band(row_outline.levels, zoom);
         let mut band_h = crate::outline::band(col_outline.levels, zoom);
         // Without headings the level buttons still need a corner to sit in.

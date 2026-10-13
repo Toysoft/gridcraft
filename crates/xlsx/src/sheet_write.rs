@@ -151,6 +151,9 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
     if sheet.right_to_left {
         s.push_str(" rightToLeft=\"1\"");
     }
+    if !sheet.show_outline_symbols {
+        s.push_str(" showOutlineSymbols=\"0\"");
+    }
     if sheet.view != gridcraft_model::SheetViewMode::Normal {
         let _ = write!(s, " view=\"{}\"", sheet.view.as_str());
     }

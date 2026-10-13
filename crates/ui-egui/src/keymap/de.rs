@@ -58,6 +58,9 @@ pub fn lookup(key: Key, physical: Option<Key>, m: Modifiers) -> Option<Shortcut>
         Num9 if ctrl && s => run("home.unhideColumns"),
         Num0 if ctrl && s => Shortcut::Unbound,
         Num8 if ctrl => run("home.hideColumns"),
+        // Strg+7 outline symbols; Strg+' (Umschalt+#) next corner of the selection.
+        Num7 if ctrl && !s => run("view.outlineSymbols"),
+        Backslash if ctrl && s => run("selection.nextCorner"),
         // Alt+= (Alt+Umschalt+0) is AutoSum; Strg+Alt+= / Strg+Alt+- zoom.
         Num0 if alt && s => run("formulas.autoSum"),
         Num0 if ctrl_alt && s => Shortcut::Zoom(10),

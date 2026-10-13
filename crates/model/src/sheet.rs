@@ -76,6 +76,10 @@ pub struct Sheet {
     pub show_headings: bool,
     pub show_formulas: bool,
     pub show_zeros: bool,
+    /// The outline band (group brackets and level buttons) when the sheet has an outline: Excel's
+    /// "Show outline symbols if an outline is applied" (Ctrl+8). Saved as `showOutlineSymbols`.
+    #[serde(default = "yes")]
+    pub show_outline_symbols: bool,
     pub right_to_left: bool,
     pub zoom: u16,
     pub cond_formats: Vec<CondFormat>,
@@ -143,6 +147,7 @@ impl Sheet {
             show_headings: true,
             show_formulas: false,
             show_zeros: true,
+            show_outline_symbols: true,
             right_to_left: false,
             zoom: 100,
             cond_formats: vec![],
@@ -458,4 +463,8 @@ mod picture_map {
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<BTreeMap<CellRef, Arc<CellPicture>>, D::Error> {
         Ok(Vec::<(CellRef, Arc<CellPicture>)>::deserialize(deserializer)?.into_iter().collect())
     }
+}
+
+fn yes() -> bool {
+    true
 }

@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (shortcuts follow the interface language; German measured in Excel) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (Show Outline Symbols and Next Corner of Selection: Ctrl+8, Ctrl+.; German Strg+7, Strg+') · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Interaction, controls and feel, against Excel. Part of [target-app-parity.md](target-app-parity.md).
 **UI/UX fidelity: ~55% ready, 50–80 h** (estimated). Ribbon command coverage is measured
@@ -111,6 +111,7 @@ otherwise. Number-format and border keys match the physical key (Ctrl+Shift+4, w
 | — | Cmd+Shift+H, Cmd+Shift+R, Cmd+Shift+K / J, Control+L, Control+U | replace, sort, group / ungroup, Define Name, edit cell | **added** |
 | Alt+Shift+Right / Left | Option+Right / Left is next/previous sheet | group / ungroup | **added** |
 | Ctrl+Shift+* (Ctrl+Shift+8), Ctrl+Shift+Space | Cmd+Shift+Space | current region, select all | **added** |
+| Ctrl+8, Ctrl+. | Control+8 | outline symbols on/off, next corner of the selection (clockwise) | **added** |
 | Ctrl+Shift+Home / End, Shift+Home | same | extend to A1 / last used cell / row start | **added** |
 | Ctrl+P | Cmd+P | print | **added** |
 | Ctrl+Shift+> / < | Cmd+Shift+> / < | font size | **added** |
@@ -124,7 +125,7 @@ otherwise. Number-format and border keys match the physical key (Ctrl+Shift+4, w
 | F5, Shift+F5 (Mac), F7, Shift+F9, Ctrl+Alt+F9, F12, Ctrl+F4 | same | Go To, Find, Spelling, calculate sheet / all, Save As, close | **added** |
 | Shift+F10, Alt+Shift+F10, Ctrl+F1 | Shift+F10, Cmd+Option+R | context menu, Error Checking, ribbon | **added** |
 | F1, F3, F4 (repeat), F6 / Shift+F6, F8 / Shift+F8, F11, End mode | same | help, Paste Name, Repeat, pane cycling, extend/add mode, chart sheet | missing (no such feature yet) |
-| Ctrl+6, Ctrl+8, Ctrl+Q, Ctrl+Shift+A, Ctrl+A after a function name, Ctrl+Shift+U, Ctrl+Alt+P | same | objects, outline symbols, Quick Analysis, argument names, Function Arguments, formula bar height, tooltips | missing |
+| Ctrl+6, Ctrl+Q, Ctrl+Shift+A, Ctrl+A after a function name, Ctrl+Shift+U, Ctrl+Alt+P | same | objects, Quick Analysis, argument names, Function Arguments, formula bar height, tooltips | missing |
 | Ctrl+Shift+Page Up / Down, Ctrl+Alt+5, Ctrl+Shift+F1, Ctrl+F5–F10, Alt+F8 / F11 / F12 | same | group sheets, shape cycling, full screen, window keys, macros, VBA, Power Query | missing |
 | — | Cmd+= (calculate), Cmd+T (references while editing; F4 works), Shift+F7, Cmd+Shift+L | Mac-only extras | missing (Cmd+= is egui's zoom key; no thesaurus or Modify Cell Style) |
 
@@ -143,7 +144,8 @@ Strg++ insert, Strg+* current region, Strg+_ outline border; Strg+Umschalt+2 / 6
 General; Strg+( / Strg+) unhide rows / columns; Strg+8 hide columns; Strg+Umschalt+A / P Format
 Cells › Font; Alt+= (Alt+Umschalt+0) AutoSum; Strg+Alt+= / - zoom. Keys German Excel leaves free
 keep the English binding (Strg+B bold), except Strg+Umschalt+0, which would open Insert.
-Missing in German as in English: Strg+7 outline symbols, Strg+6 objects, Strg+' (next corner).
+Strg+7 shows and hides the outline symbols, Strg+' (Umschalt+#) moves to the next corner of the
+selection. Missing in German as in English: Strg+6 objects.
 Spanish, French and Brazilian Portuguese Excel have their own shortcuts too, waiting for a
 measurement with that interface language; Czech and Russian keep the English shortcuts but have
 their own key tips. Ctrl with the numpad's + opens Insert in every language.
@@ -178,6 +180,7 @@ scrollbar bugs 2–4 · pixel/feel pass against observed Excel 7–12.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Show Outline Symbols (`view.outlineSymbols`, Ctrl+8, German Strg+7; per sheet, saved as `showOutlineSymbols`) hides the outline band; Next Corner of Selection (`selection.nextCorner`, Ctrl+., German Strg+') moves the active cell clockwise around the selection |
 | 2026-10-13 | minor | Shortcuts follow the interface language like `i18n`: `keymap/de.rs` holds German Excel's shortcuts (measured in Excel 365), English is the fallback. Ctrl with the numpad's + opens Insert; text a shortcut types (Alt+= types `=`) no longer starts an entry |
 | 2026-10-12 | minor | The File view's recent list tells when each workbook was last changed, read off the UI thread |
 | 2026-10-13 | minor | Horizontal scrollbar in the sheet tab bar: drag, track click pages, frozen columns excluded from the page (#840) |

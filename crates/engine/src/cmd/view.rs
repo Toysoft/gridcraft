@@ -26,6 +26,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("view.gridlines", "Gridlines", ["View", "Show"], None, "{on?}", has_doc, |s, p| sheet_flag(s, p, "gridlines")),
         cmd!("view.headings", "Headings", ["View", "Show"], None, "{on?}", has_doc, |s, p| sheet_flag(s, p, "headings")),
         cmd!("view.showZeros", "Show Zeros", [], None, "{on?}", has_doc, |s, p| sheet_flag(s, p, "zeros")),
+        cmd!("view.outlineSymbols", "Show Outline Symbols", [], Some("Ctrl+8"), "{on?}", has_doc, |s, p| sheet_flag(s, p, "outlineSymbols")),
         cmd!("view.rightToLeft", "Sheet Right-to-Left", ["Page Layout", "Sheet Options"], None, "{on?}", has_doc, |s, p| sheet_flag(s, p, "rtl")),
         cmd!("view.zoom", "Zoom", ["View", "Zoom"], None, "{percent: 10..400}", has_doc, zoom),
         cmd!("view.zoom100", "100%", ["View", "Zoom"], None, "{}", has_doc, |s, _| zoom(s, &json!({"percent": 100}))),
@@ -143,6 +144,7 @@ fn sheet_flag(s: &mut Session, p: &Json, which: &str) -> Result<Json> {
             "gridlines" => &mut sh.show_gridlines,
             "headings" => &mut sh.show_headings,
             "zeros" => &mut sh.show_zeros,
+            "outlineSymbols" => &mut sh.show_outline_symbols,
             "rtl" => &mut sh.right_to_left,
             "printGridlines" => &mut sh.print.gridlines,
             _ => &mut sh.print.headings,
@@ -405,6 +407,24 @@ fn unused(_: CellRef) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outline_symbols_toggle_per_sheet_and_undo() {
+        let mut s = Session::new();
+        s.new_workbook();
+        assert!(s.doc().unwrap().wb.active().unwrap().show_outline_symbols);
+        assert_eq!(s.execute("view.outlineSymbols", json!({})).unwrap()["on"], false);
+        assert!(!s.doc().unwrap().wb.active().unwrap().show_outline_symbols);
+        assert_eq!(s.execute("view.outlineSymbols", json!({})).unwrap()["on"], true);
+        s.execute("view.outlineSymbols", json!({"on": false})).unwrap();
+        s.execute("edit.undo", json!({})).unwrap();
+        assert!(s.doc().unwrap().wb.active().unwrap().show_outline_symbols);
+        // A sheet saved before the option existed keeps its outline symbols.
+        let mut v = serde_json::to_value(gridcraft_model::Sheet::new("S")).unwrap();
+        v.as_object_mut().unwrap().remove("show_outline_symbols");
+        let old: gridcraft_model::Sheet = serde_json::from_value(v).unwrap();
+        assert!(old.show_outline_symbols);
+    }
 
     #[test]
     fn zoom_100_resets_the_active_sheet_zoom() {

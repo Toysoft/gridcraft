@@ -82,6 +82,20 @@ impl Selection {
             *r = cur;
         }
     }
+    /// Moves the active cell clockwise to the next corner of the current area (Excel's Ctrl+.). The
+    /// area stays; Shift+arrows then move the corner opposite the new active cell.
+    pub fn next_corner(&mut self) {
+        let r = self.current();
+        let corners = [r.start, CellRef::new(r.start.row, r.end.col), r.end, CellRef::new(r.end.row, r.start.col)];
+        // An active cell off the corners (after Enter inside the area) goes to the first one.
+        let at = corners.iter().position(|c| *c == self.active).unwrap_or(corners.len() - 1);
+        // A single row or column has two corners twice: skip to one that moves.
+        let next = corners.iter().cycle().skip(at + 1).take(corners.len()).find(|c| **c != self.active).copied();
+        if let Some(c) = next {
+            self.active = c;
+            self.anchor = c;
+        }
+    }
     /// Moves the active cell within the selection (Enter/Tab inside a multi-cell selection).
     pub fn cycle(&mut self, forward: bool, by_row: bool) {
         let r = self.current();
@@ -220,6 +234,31 @@ pub fn current_region(sheet: &Sheet, c: CellRef) -> RangeRef {
 mod tests {
     use super::*;
     use gridcraft_core::Value;
+
+    #[test]
+    fn next_corner_goes_clockwise_and_keeps_the_area() {
+        let r = RangeRef::new(CellRef::new(1, 1), CellRef::new(2, 2));
+        let mut sel = Selection::range(r);
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            sel.next_corner();
+            assert_eq!(sel.current(), r);
+            seen.push(sel.active.a1());
+        }
+        assert_eq!(seen, ["C2", "C3", "B3", "B2"]);
+        // Shift+arrows then move the corner opposite the active cell.
+        sel.next_corner();
+        assert_eq!(sel.moving_end().a1(), "B3");
+        // A single row has two ends; a single cell stays.
+        let mut row = Selection::range(RangeRef::new(CellRef::new(1, 1), CellRef::new(1, 3)));
+        row.next_corner();
+        assert_eq!(row.active.a1(), "D2");
+        row.next_corner();
+        assert_eq!(row.active.a1(), "B2");
+        let mut one = Selection::at(CellRef::new(4, 4));
+        one.next_corner();
+        assert_eq!(one.active, CellRef::new(4, 4));
+    }
 
     #[test]
     fn jumps() {

@@ -315,3 +315,32 @@ fn shortcuts_follow_the_interface_language() {
     // A key German Excel leaves free doesn't fall through to English.
     assert_eq!(lookup_in(Language::De, Key::Equals, Some(Key::Num0), CTRL_SHIFT, false), Some(Shortcut::Unbound));
 }
+
+#[test]
+fn outline_symbols_and_next_corner_by_keyboard() {
+    let mut s = book("A1:B2");
+    s.execute("data.group", json!({"rows": "2:3"})).unwrap();
+    s.execute("selection.set", json!({"range": "A1:B2"})).unwrap();
+    let mut h = harness(s);
+    let levels = |h: &Harness| gridcraft_ui_egui::grid::Geo::new(sheet(h), h.state().grid.rect.unwrap(), h.state().view().scroll).row_outline.levels;
+    let active = |h: &Harness| h.state().session.active().unwrap().selection.active.a1();
+    assert_eq!(levels(&h), 1);
+    // Ctrl+8 hides the outline symbols, and the second press shows them again.
+    key(&mut h, Key::Num8, CTRL);
+    assert!(!sheet(&h).show_outline_symbols);
+    assert_eq!(levels(&h), 0);
+    key(&mut h, Key::Num8, CTRL);
+    assert_eq!(levels(&h), 1);
+    // Ctrl+. walks the corners of the selection clockwise.
+    key(&mut h, Key::Period, CTRL);
+    assert_eq!(active(&h), "B1");
+    key(&mut h, Key::Period, CTRL);
+    assert_eq!(active(&h), "B2");
+    assert_eq!(h.state().session.active().unwrap().selection.a1(), "A1:B2");
+    // German: Strg+7 and Strg+' (Strg+Umschalt+#).
+    h.state_mut().ui.language = Language::De;
+    de_key(&mut h, Key::Num7, Key::Num7, CTRL, None);
+    assert!(!sheet(&h).show_outline_symbols);
+    de_key(&mut h, Key::Quote, Key::Backslash, CTRL_SHIFT, Some("'"));
+    assert_eq!(active(&h), "A2");
+}

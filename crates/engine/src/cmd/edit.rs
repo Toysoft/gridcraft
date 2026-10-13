@@ -31,6 +31,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(noundo "selection.set", "Select", [], None, "{range: \"A1:B2,D4\" | cell, active?: \"A1\", sheet?}", has_doc, selection_set),
         cmd!(noundo "selection.move", "Move Selection", [], None, "{dr, dc, extend?: bool, jump?: bool (Ctrl+arrow), page?: bool}", has_doc, selection_move),
+        cmd!(noundo "selection.nextCorner", "Next Corner of Selection", [], Some("Ctrl+."), "{} (moves the active cell clockwise to the next corner of the selection)", has_doc, selection_next_corner),
         cmd!(noundo "selection.next", "Next Cell in Selection", [], None, "{forward?: true, byRow?: false} (Enter/Tab inside a selection)", has_doc, selection_next),
         cmd!(noundo "edit.selectAll", "Select All", ["Edit"], Some("Cmd+A"), "{} (current region first, then the whole sheet)", has_doc, select_all),
         cmd!(noundo "selection.currentRegion", "Select Current Region", [], Some("Ctrl+Shift+8"), "{}", has_doc, select_region),
@@ -464,6 +465,12 @@ fn selection_next(s: &mut Session, p: &Json) -> Result<Json> {
     let by_row = bool_param(p, "byRow").unwrap_or(false);
     let d = s.doc_mut()?;
     d.selection.cycle(fwd, by_row);
+    Ok(json!({"active": d.selection.active.a1()}))
+}
+
+fn selection_next_corner(s: &mut Session, _: &Json) -> Result<Json> {
+    let d = s.doc_mut()?;
+    d.selection.next_corner();
     Ok(json!({"active": d.selection.active.a1()}))
 }
 

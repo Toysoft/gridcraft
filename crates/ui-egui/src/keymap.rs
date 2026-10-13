@@ -109,6 +109,9 @@ pub fn lookup(key: Key, physical: Option<Key>, m: Modifiers, mac: bool) -> Optio
         // Windows Ctrl+; is in `ribbon::shortcut`; Excel for Mac uses Control+; and Command+;.
         Semicolon if mac && ctrl => Shortcut::Date,
         Semicolon if mac && cmd && !s => Shortcut::Time,
+        // Ctrl+8 outline symbols, Ctrl+. next corner of the selection.
+        Num8 if ctrl && !s => run("view.outlineSymbols"),
+        Period if ctrl && !s && !mac => run("selection.nextCorner"),
         // Ctrl+2..5 (Windows).
         Num2 if ctrl && !mac => run("home.bold"),
         Num3 if ctrl && !mac => run("home.italic"),

@@ -117,6 +117,7 @@ fn sample() -> Workbook {
     s.show_gridlines = false;
     s.show_headings = false;
     s.show_zeros = false;
+    s.show_outline_symbols = false;
     s.right_to_left = true;
     s.zoom = 125;
     s.view = gridcraft_model::SheetViewMode::PageLayout;
@@ -497,6 +498,7 @@ fn full_roundtrip() {
     assert_eq!(b.freeze, a.freeze);
     assert_eq!(b.tab_color, a.tab_color);
     assert_eq!((b.show_gridlines, b.show_headings, b.show_zeros, b.right_to_left, b.zoom), (false, false, false, true, 125));
+    assert!(!b.show_outline_symbols, "sheetView showOutlineSymbols=\"0\" round-trips");
     assert_eq!(b.view_active, a.view_active);
     assert_eq!(b.view, gridcraft_model::SheetViewMode::PageLayout, "sheetView view=\"pageLayout\" round-trips");
     assert_eq!(b.cond_formats, a.cond_formats);
