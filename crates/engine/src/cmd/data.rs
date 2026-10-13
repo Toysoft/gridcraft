@@ -122,7 +122,7 @@ pub fn specs() -> Vec<CommandSpec> {
 fn col_param(v: Option<&Json>, base: u32) -> Option<u32> {
     match v? {
         Json::String(s) => gridcraft_core::letters_to_col(s.trim_start_matches('$')),
-        Json::Number(n) => n.as_u64().map(|o| base + o as u32),
+        Json::Number(n) => n.as_u64().and_then(|o| u32::try_from(o).ok()).and_then(|o| base.checked_add(o)),
         _ => None,
     }
 }
@@ -500,7 +500,12 @@ fn filter_by(s: &mut Session, p: &Json) -> Result<Json> {
             s.doc()?.wb.sheet(sheet).and_then(|sh| sh.autofilter.clone()).ok_or_else(|| EngineError::Other("no filter".into()))?
         }
     };
-    let col = col_param(p.get("column"), af.range.start.col).ok_or_else(|| bad("data.filterBy", "missing `column`"))?;
+    let col = match col_param(p.get("column"), af.range.start.col) {
+        Some(c) => c,
+        // A number too large to be a column is outside the filter range, not a missing parameter.
+        None if p.get("column").is_some_and(|v| v.as_u64().is_some()) => return Err(bad("data.filterBy", "column outside the filter range")),
+        None => return Err(bad("data.filterBy", "missing `column`")),
+    };
     if col < af.range.start.col || col > af.range.end.col {
         return Err(bad("data.filterBy", "column outside the filter range"));
     }
@@ -1307,6 +1312,20 @@ fn subtotal(s: &mut Session, p: &Json) -> Result<Json> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn filter_by_huge_numeric_column_is_rejected_not_overflowed() {
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("range.setValues", json!({"range": "B1", "values": [["Name", "Qty"], ["a", 1], ["b", 2]]})).unwrap();
+        s.execute("data.filter", json!({"range": "B1:C3"})).unwrap();
+        for col in [json!(2), json!(u64::from(u32::MAX)), json!(u64::MAX)] {
+            let err = s.execute("data.filterBy", json!({"column": col, "values": ["a"]})).unwrap_err();
+            assert!(err.to_string().contains("column outside the filter range"), "{col}: {err}");
+        }
+        let ok = s.execute("data.filterBy", json!({"column": 0, "values": ["a"]})).unwrap();
+        assert_eq!(ok["hiddenRows"], json!(1));
+    }
 
     #[test]
     fn filter_by_inside_a_table_installs_the_autofilter_and_keeps_the_button() {

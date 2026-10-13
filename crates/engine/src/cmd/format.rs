@@ -237,10 +237,12 @@ pub(crate) fn apply_style(s: &mut Session, p: &Json, f: impl Fn(&mut Style)) -> 
                 // Existing cells in those lines.
                 let cells: Vec<(CellRef, StyleId)> =
                     cx.wb.sheet(sheet).map(|sh| sh.cells.iter_range(*r).map(|(c, x)| (c, x.style)).collect()).unwrap_or_default();
-                for (c, st) in cells {
-                    let new = *cache.entry(st).or_insert_with(|| cx.wb.styles.derive(st, &f));
-                    cx.sheet_mut(sheet)?.set_style(c, new);
+                for (c, st) in &cells {
+                    let new = *cache.entry(*st).or_insert_with(|| cx.wb.styles.derive(*st, &f));
+                    cx.sheet_mut(sheet)?.set_style(*c, new);
                 }
+                // Formatting touched these cells: re-fit their rows (Excel auto-fits).
+                cx.fit_rows.extend(cells.iter().map(|(c, _)| (sheet, c.row)));
                 continue;
             }
             if r.count() > 4_000_000 {

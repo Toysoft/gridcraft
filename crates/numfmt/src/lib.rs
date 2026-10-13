@@ -98,15 +98,38 @@ impl Default for NumberFormat {
     }
 }
 
+/// Longest number format code, in characters (not bytes), that is parsed: Excel's own limit.
+/// A longer code is invalid: [`NumberFormat::parse`] returns a General format (the cell shows
+/// its value unformatted; the stored code is kept as is) and `TEXT` returns `#VALUE!`. The cap
+/// also bounds every allocation that scales with the number of placeholders in a code.
+pub const MAX_FORMAT_CODE_CHARS: usize = 255;
+
+/// True when `code` is longer than [`MAX_FORMAT_CODE_CHARS`] characters.
+fn too_long(code: &str) -> bool {
+    // A code of more than 255 bytes can still be short in characters; count only when needed.
+    code.len() > MAX_FORMAT_CODE_CHARS && code.chars().count() > MAX_FORMAT_CODE_CHARS
+}
+
 impl NumberFormat {
-    /// Parses a format code. Never fails: unknown or malformed parts degrade to literal text.
+    /// Parses a format code. Never fails: unknown or malformed parts degrade to literal text, and
+    /// a code longer than [`MAX_FORMAT_CODE_CHARS`] characters degrades to General.
     pub fn parse(code: &str) -> NumberFormat {
+        Self::parse_inner(code, false)
+    }
+
+    /// `parse` without the length cap, so tests can reach renderer paths a capped code cannot.
+    #[cfg(test)]
+    fn parse_uncapped(code: &str) -> NumberFormat {
+        Self::parse_inner(code, true)
+    }
+
+    fn parse_inner(code: &str, uncapped: bool) -> NumberFormat {
         #[cfg(test)]
         parse_cache::count_parse();
         let trimmed = code.trim();
         // `checkbox` marks a checkbox cell (Insert › Checkbox): TRUE/FALSE draw as a box, any other
         // value displays as General.
-        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("general") || trimmed == "checkbox" {
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("general") || trimmed == "checkbox" || (!uncapped && too_long(code)) {
             return NumberFormat {
                 inner: Arc::new(Inner { code: code.to_string(), general: true, sections: Vec::new(), num_sections: 0, text_section: None }),
             };
@@ -375,6 +398,9 @@ impl NumberFormat {
 pub fn text_function(v: &Value, code: &str, sys: DateSystem) -> Result<String, CellError> {
     if code.is_empty() {
         return Ok(String::new());
+    }
+    if too_long(code) {
+        return Err(CellError::Value);
     }
     let fmt = NumberFormat::parse_cached(code);
     let n = match v.scalar() {

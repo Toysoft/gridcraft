@@ -48,6 +48,23 @@ pub struct TableColumn {
     pub totals_label: Option<String>,
     /// Calculated column formula.
     pub formula: Option<String>,
+    /// `uniqueName`: the name XML maps know the column by.
+    #[serde(default)]
+    pub unique_name: Option<String>,
+    /// Binding to an element of an XML map. It moves with the column and goes when the column is
+    /// deleted; inserted columns are unmapped.
+    #[serde(default)]
+    pub xml: Option<XmlColumnPr>,
+}
+
+/// A table column's binding to an XML map (`<xmlColumnPr>`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct XmlColumnPr {
+    pub map_id: u32,
+    pub xpath: String,
+    /// `xmlDataType` as written in the file (`string`, `boolean`, `integer`…).
+    pub data_type: String,
+    pub denormalized: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -70,6 +87,12 @@ pub struct Table {
     /// SUBTOTAL distinguishes.
     #[serde(default)]
     pub filter: Vec<(u32, FilterCriterion)>,
+    /// `tableType` when it isn't a plain worksheet table: `xml` for a table bound to an XML map.
+    #[serde(default)]
+    pub table_type: Option<String>,
+    /// The connection (`xl/connections.xml`) an XML table is bound through.
+    #[serde(default)]
+    pub connection_id: Option<u32>,
 }
 
 impl Table {

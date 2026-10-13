@@ -224,9 +224,15 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
     };
 
     let mut wb_rels = Rels::default();
+    // Kept content first: the chart sheets among the worksheets need their relationship ids.
+    let kept = crate::passthrough::write_workbook(wb, &mut wb_rels, &mut out);
     let mut pivots = crate::pivot::PivotWriter::default();
     let mut sheets_xml = String::new();
+    let mut sheet_id = 1usize;
     for (i, sheet) in wb.sheets.iter().enumerate() {
+        let (before, next) = kept.sheet_entries(i, false, sheet_id);
+        sheets_xml.push_str(&before);
+        sheet_id = next;
         let (xml, mut rels) = crate::sheet_write::write_sheet(wb, i, i == active, &mut out);
         pivots.add_sheet(wb, i, &mut out, &mut rels);
         let name = format!("xl/worksheets/sheet{}.xml", i + 1);
@@ -242,8 +248,10 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
             Visibility::VeryHidden => " state=\"veryHidden\"",
         };
         let name: String = sheet.name.chars().take(31).collect();
-        let _ = write!(sheets_xml, "<sheet name=\"{}\" sheetId=\"{}\"{state} r:id=\"{rid}\"/>", esc_attr(&name), i + 1);
+        let _ = write!(sheets_xml, "<sheet name=\"{}\" sheetId=\"{sheet_id}\"{state} r:id=\"{rid}\"/>", esc_attr(&name));
+        sheet_id += 1;
     }
+    sheets_xml.push_str(&kept.sheet_entries(wb.sheets.len(), true, sheet_id).0);
 
     // Defined names, then print areas and titles.
     let mut names = String::new();
@@ -259,7 +267,7 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
         }
         let _ = write!(names, "<definedName name=\"{}\"", esc_attr(&n.name));
         if let Some(sc) = n.scope {
-            let _ = write!(names, " localSheetId=\"{sc}\"");
+            let _ = write!(names, " localSheetId=\"{}\"", kept.file_index(sc));
         }
         if n.hidden {
             names.push_str(" hidden=\"1\"");
@@ -280,7 +288,13 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
     for (i, sheet) in wb.sheets.iter().enumerate() {
         let q = quote_sheet(&sheet.name);
         if let Some(pa) = &sheet.print.print_area {
-            let _ = write!(names, "<definedName name=\"_xlnm.Print_Area\" localSheetId=\"{i}\">{}!{}</definedName>", esc(&q), abs_range(pa));
+            let _ = write!(
+                names,
+                "<definedName name=\"_xlnm.Print_Area\" localSheetId=\"{}\">{}!{}</definedName>",
+                kept.file_index(i),
+                esc(&q),
+                abs_range(pa)
+            );
         }
         let mut titles = vec![];
         if let Some((c0, c1)) = sheet.print.title_cols {
@@ -290,7 +304,12 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
             titles.push(format!("{q}!{}", abs_range(&RangeRef::rows(r0.min(r1), r0.max(r1)))));
         }
         if !titles.is_empty() {
-            let _ = write!(names, "<definedName name=\"_xlnm.Print_Titles\" localSheetId=\"{i}\">{}</definedName>", esc(&titles.join(",")));
+            let _ = write!(
+                names,
+                "<definedName name=\"_xlnm.Print_Titles\" localSheetId=\"{}\">{}</definedName>",
+                kept.file_index(i),
+                esc(&titles.join(","))
+            );
         }
     }
 
@@ -301,8 +320,8 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
         let pw = wb.structure_password.as_ref().map(|h| crate::sheet_write::password_attrs(h, "workbook")).unwrap_or_default();
         let _ = write!(w, "<workbookProtection{pw} lockStructure=\"1\"/>");
     }
-    let _ = write!(w, "<bookViews><workbookView activeTab=\"{active}\"/></bookViews><sheets>{sheets_xml}</sheets>");
-    w.push_str(&crate::passthrough::write_workbook(wb, &mut wb_rels, &mut out));
+    let _ = write!(w, "<bookViews><workbookView activeTab=\"{}\"/></bookViews><sheets>{sheets_xml}</sheets>", kept.file_index(active));
+    w.push_str(&kept.elements);
     if !names.is_empty() {
         let _ = write!(w, "<definedNames>{names}</definedNames>");
     }

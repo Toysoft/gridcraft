@@ -349,6 +349,20 @@ impl Dialog {
                     json!({"text": existing}),
                 )
             }
+            // Asks before a web or e-mail link leaves the workbook; OK runs `link.open`, which
+            // refuses anything but http, https and mailto.
+            "openLink" => {
+                let url = params.get("url").and_then(Json::as_str).unwrap_or_default().to_string();
+                Dialog::form(
+                    "openLink",
+                    "Open Hyperlink",
+                    "link.open",
+                    vec![Note(format!(
+                        "This workbook asks to open the address below. Links can lead to harmful sites or start other programs: open it only if you trust the workbook.\n\n{url}"
+                    ))],
+                    json!({"url": url}),
+                )
+            }
             "insertLink" => Dialog::form(
                 "insertLink",
                 "Insert Hyperlink",
@@ -552,47 +566,7 @@ impl Dialog {
                 "dataValidation",
                 "Data Validation",
                 "data.validation",
-                vec![
-                    Choice {
-                        key: "type",
-                        label: "Allow",
-                        options: vec![
-                            ("any", "Any value"),
-                            ("whole", "Whole number"),
-                            ("decimal", "Decimal"),
-                            ("list", "List"),
-                            ("date", "Date"),
-                            ("time", "Time"),
-                            ("textLength", "Text length"),
-                            ("custom", "Custom"),
-                        ],
-                    },
-                    Choice {
-                        key: "operator",
-                        label: "Data",
-                        options: vec![
-                            ("between", "between"),
-                            ("notBetween", "not between"),
-                            ("equal", "equal to"),
-                            ("notEqual", "not equal to"),
-                            ("greater", "greater than"),
-                            ("less", "less than"),
-                            ("greaterOrEqual", "greater than or equal to"),
-                            ("lessOrEqual", "less than or equal to"),
-                        ],
-                    },
-                    Text { key: "formula1", label: "Minimum / Source / Formula:" },
-                    Text { key: "formula2", label: "Maximum:" },
-                    Check { key: "ignoreBlank", label: "Ignore blank" },
-                    Check { key: "dropdown", label: "In-cell dropdown" },
-                    Text { key: "inputMessage", label: "Input message:" },
-                    Choice {
-                        key: "errorStyle",
-                        label: "Error style",
-                        options: vec![("stop", "Stop"), ("warning", "Warning"), ("information", "Information")],
-                    },
-                    Text { key: "errorMessage", label: "Error message:" },
-                ],
+                data_validation_fields("any", "between"),
                 validation_defaults(app),
             ),
             "cfQuick" => {
@@ -860,10 +834,132 @@ fn abs(r: &gridcraft_engine::core::RangeRef) -> String {
     if r.is_single() { a(r.start) } else { format!("{}:{}", a(r.start), a(r.end)) }
 }
 
+/// The criterion controls in Excel's Settings tab depend on both Allow and Data.
+/// `formula1` is the sole source for a list or custom rule; `formula2` is a
+/// second bound only for Between and Not between.
+fn data_validation_fields(kind: &str, operator: &str) -> Vec<Field> {
+    use Field::*;
+    let mut fields = vec![Choice {
+        key: "type",
+        label: "Allow",
+        options: vec![
+            ("any", "Any value"),
+            ("whole", "Whole number"),
+            ("decimal", "Decimal"),
+            ("list", "List"),
+            ("date", "Date"),
+            ("time", "Time"),
+            ("textLength", "Text length"),
+            ("custom", "Custom"),
+        ],
+    }];
+    let two_bounds = matches!(operator, "between" | "notBetween");
+    match kind {
+        "list" => {
+            fields.push(Text { key: "formula1", label: "Source:" });
+            fields.push(Check { key: "ignoreBlank", label: "Ignore blank" });
+            fields.push(Check { key: "dropdown", label: "In-cell dropdown" });
+        }
+        "custom" => {
+            fields.push(Text { key: "formula1", label: "Formula:" });
+            fields.push(Check { key: "ignoreBlank", label: "Ignore blank" });
+        }
+        "whole" | "decimal" | "date" | "time" | "textLength" => {
+            fields.push(Choice {
+                key: "operator",
+                label: "Data",
+                options: vec![
+                    ("between", "between"),
+                    ("notBetween", "not between"),
+                    ("equal", "equal to"),
+                    ("notEqual", "not equal to"),
+                    ("greater", "greater than"),
+                    ("less", "less than"),
+                    ("greaterOrEqual", "greater than or equal to"),
+                    ("lessOrEqual", "less than or equal to"),
+                ],
+            });
+            let lower = matches!(operator, "greater" | "greaterOrEqual");
+            let (first, second) = match kind {
+                "date" => (
+                    if two_bounds || lower {
+                        "Start date:"
+                    } else if matches!(operator, "less" | "lessOrEqual") {
+                        "End date:"
+                    } else {
+                        "Date:"
+                    },
+                    "End date:",
+                ),
+                "time" => (
+                    if two_bounds || lower {
+                        "Start time:"
+                    } else if matches!(operator, "less" | "lessOrEqual") {
+                        "End time:"
+                    } else {
+                        "Time:"
+                    },
+                    "End time:",
+                ),
+                _ => (
+                    if two_bounds || lower {
+                        "Minimum:"
+                    } else if matches!(operator, "less" | "lessOrEqual") {
+                        "Maximum:"
+                    } else {
+                        "Value:"
+                    },
+                    "Maximum:",
+                ),
+            };
+            fields.push(Text { key: "formula1", label: first });
+            if two_bounds {
+                fields.push(Text { key: "formula2", label: second });
+            }
+            fields.push(Check { key: "ignoreBlank", label: "Ignore blank" });
+        }
+        _ => {}
+    }
+    fields.push(Text { key: "inputMessage", label: "Input message:" });
+    fields.push(Choice {
+        key: "errorStyle",
+        label: "Error style",
+        options: vec![("stop", "Stop"), ("warning", "Warning"), ("information", "Information")],
+    });
+    fields.push(Text { key: "errorMessage", label: "Error message:" });
+    fields
+}
+
+fn data_validation_form(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+    let kind = d.values.get("type").and_then(Json::as_str).unwrap_or("any");
+    let operator = d.values.get("operator").and_then(Json::as_str).unwrap_or("between");
+    d.fields = data_validation_fields(kind, operator);
+    form_fields(ui, d);
+    ok_cancel(ui, confirm, open);
+}
+
 /// Builds the command params from form values for dialogs that need translation.
 fn build_params(d: &Dialog) -> Json {
     let mut v = Json::Object(d.values.clone());
     match d.name.as_str() {
+        "dataValidation" => {
+            let kind = d.values.get("type").and_then(Json::as_str).unwrap_or("any");
+            let operator = d.values.get("operator").and_then(Json::as_str).unwrap_or("between");
+            if let Some(m) = v.as_object_mut() {
+                if !matches!(operator, "between" | "notBetween") || matches!(kind, "any" | "list" | "custom") {
+                    m.remove("formula2");
+                }
+                if matches!(kind, "any" | "list" | "custom") {
+                    m.remove("operator");
+                }
+                if kind == "any" {
+                    m.remove("formula1");
+                }
+                if kind != "list" {
+                    m.remove("dropdown");
+                }
+            }
+        }
         "textToColumns" => {
             let mut delims = Vec::new();
             for (k, c) in [("tab", "\t"), ("semicolon", ";"), ("comma", ","), ("space", " ")] {
@@ -951,6 +1047,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
             ui.set_min_width(width - 20.0);
             match d.name.as_str() {
                 "formatCells" => format_cells(app, ui, &mut d, &mut confirm),
+                "dataValidation" => data_validation_form(ui, &mut d, &mut confirm, &mut open),
                 "insertFunction" => insert_function(app, ui, &mut d, &mut confirm),
                 "find" => find(app, ui, &mut d),
                 "goTo" => go_to(app, ui, &mut d, &mut confirm),
@@ -1338,9 +1435,20 @@ fn form_fields(ui: &mut egui::Ui, d: &mut Dialog) {
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new(label).strong());
                         let cur = d.values.get(key).and_then(Json::as_str).unwrap_or("").to_string();
-                        for (val, text) in options {
-                            if ui.radio(cur == val, text).clicked() {
-                                d.set_value(key, json!(val));
+                        if d.name == "dataValidation" {
+                            let selected = options.iter().find(|(val, _)| *val == cur).map(|(_, text)| *text).unwrap_or("");
+                            egui::ComboBox::from_id_salt(("dataValidation", key)).selected_text(selected).width(300.0).show_ui(ui, |ui| {
+                                for (val, text) in options {
+                                    if ui.selectable_label(cur == val, text).clicked() {
+                                        d.set_value(key, json!(val));
+                                    }
+                                }
+                            });
+                        } else {
+                            for (val, text) in options {
+                                if ui.radio(cur == val, text).clicked() {
+                                    d.set_value(key, json!(val));
+                                }
                             }
                         }
                     });
@@ -2552,6 +2660,51 @@ fn spelling(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bo
             }
         }
     });
+}
+
+#[cfg(test)]
+mod data_validation_tests {
+    use super::*;
+
+    #[test]
+    fn list_uses_one_source_and_does_not_submit_a_second_list() {
+        let fields = data_validation_fields("list", "between");
+        assert!(fields.iter().any(|f| matches!(f, Field::Text { key: "formula1", label: "Source:" })));
+        assert!(!fields.iter().any(|f| matches!(f, Field::Text { key: "formula2", .. } | Field::Choice { key: "operator", .. })));
+
+        let dialog = Dialog::form(
+            "dataValidation",
+            "Data Validation",
+            "data.validation",
+            fields,
+            json!({"type": "list", "operator": "between", "formula1": "ABC,DEF", "formula2": "GHI,JKL", "dropdown": true}),
+        );
+        let params = build_params(&dialog);
+        assert_eq!(params["formula1"], "ABC,DEF");
+        assert!(params.get("formula2").is_none());
+        assert!(params.get("operator").is_none());
+    }
+
+    #[test]
+    fn only_between_operators_show_and_submit_two_bounds() {
+        let two = data_validation_fields("whole", "between");
+        assert!(two.iter().any(|f| matches!(f, Field::Text { key: "formula2", label: "Maximum:" })));
+        let one = data_validation_fields("date", "lessOrEqual");
+        assert!(one.iter().any(|f| matches!(f, Field::Text { key: "formula1", label: "End date:" })));
+        assert!(!one.iter().any(|f| matches!(f, Field::Text { key: "formula2", .. })));
+
+        let dialog = Dialog::form(
+            "dataValidation",
+            "Data Validation",
+            "data.validation",
+            one,
+            json!({"type": "date", "operator": "lessOrEqual", "formula1": "2026-10-12", "formula2": "2030-01-01"}),
+        );
+        let params = build_params(&dialog);
+        assert_eq!(params["operator"], "lessOrEqual");
+        assert_eq!(params["formula1"], "2026-10-12");
+        assert!(params.get("formula2").is_none());
+    }
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~25 points of "ready for real work" and ~160–240 h away
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (editable ink survives XLSX saves) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (rows auto-fit oversized fonts on open and whole-row/column formatting) · **Target:** Microsoft Excel (Microsoft 365)
 
 GridCraft aims at full Microsoft Excel parity, and at being better in places: faster, open (XLSX
 is the native format), fully scriptable by agents (MCP, control channel, CLI), and on the web.
@@ -132,6 +132,12 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
+| 2026-10-12 | Rows auto-fit oversized fonts: opening a file and whole-row/column formatting grow non-custom rows to their tallest font (#833) |
+| 2026-10-12 | Number formats: parsing a format code is linear in its length (long runs of `[`, `,` or `/` no longer take quadratic time), and an unclosed `[` is a literal when splitting sections as well as when tokenizing (#810) |
+| 2026-10-12 | Number formats: a fraction denominator with 65,536 zeros no longer crashes; format codes are capped at 255 characters like Excel (longer codes display as General, `TEXT` gives `#VALUE!`) (#807) |
+| 2026-10-12 | Security: cell hyperlinks open only http, https and mailto, after a confirmation; other schemes (file:, smb:, UNC, custom handlers) are refused (#777, part 1) |
+| 2026-10-12 | Deleting several Ctrl-selected rows or columns removes them all in one undo step (#758) |
+| 2026-10-12 | XLSX chart sheets are kept on open and save: the sheet, its drawing and chart (with style and colours) are written back unchanged in their place among the worksheets, and left out when the sheet they plot is deleted or renamed or a worksheet took their name (#727) |
 | 2026-10-12 | CSV and tab-separated export is capped at 512 MiB: a sheet whose used range would expand to more (two cells far apart, such as A1 and XFD1048576, are 16 GiB of commas) is refused with the rows, columns and limit, before anything is allocated or written (#528) |
 | 2026-10-12 | PDF writer hardening: text width cannot overflow, all-zero dash arrays and negative or NaN stroke widths are sanitised, non-finite sizes and positions draw nothing (#812) |
 | 2026-10-12 | PDF export writes the document title and author as UTF-16BE when they are not ASCII, so viewers show accents, currency signs and non-Latin text correctly (#813) |
@@ -187,6 +193,9 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Rows auto-fit oversized fonts on open and whole-row/column formatting (#833); progress log row |
+| 2026-10-12 | minor | Progress log: multi-area row/column delete (#758) |
+| 2026-10-12 | trivial | Progress log: XLSX chart sheets kept on save (#727) |
 | 2026-10-12 | trivial | Progress log: CSV export size cap (#528) |
 | 2026-10-12 | minor | Progress log: margins dragged on the Page Layout rulers (#792) |
 | 2026-10-12 | minor | Ink preservation across XLSX save/reopen (ink portion of #551) |
