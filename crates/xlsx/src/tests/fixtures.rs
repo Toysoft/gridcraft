@@ -458,6 +458,43 @@ fn drawing_with_chartex_in_alternate_content() {
 }
 
 #[test]
+fn box_whisker_keeps_its_quartile_method() {
+    use gridcraft_model::{Chart, ChartKind, LegendPos, QuartileMethod, Series};
+    let mut wb = gridcraft_model::Workbook::new();
+    let mut sheet = gridcraft_model::Sheet::new("Data");
+    sheet.charts.push(Chart {
+        id: 1,
+        kind: ChartKind::BoxWhisker,
+        anchor: Default::default(),
+        title: None,
+        series: vec![Series { values: "Data!$A$1:$A$6".into(), ..Default::default() }],
+        legend: LegendPos::Bottom,
+        data_labels: false,
+        gridlines: true,
+        style: 2,
+        x_title: None,
+        y_title: None,
+        source: None,
+        by_rows: false,
+        pivot: None,
+        quartiles: QuartileMethod::Inclusive,
+    });
+    wb.sheets = vec![std::sync::Arc::new(sheet)];
+    let bytes = crate::write_xlsx(&wb).unwrap();
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).unwrap();
+    let mut cx = String::new();
+    std::io::Read::read_to_string(&mut z.by_name("xl/charts/chartEx1.xml").unwrap(), &mut cx).unwrap();
+    assert!(cx.contains(r#"<cx:statistics quartileMethod="inclusive"/>"#), "{cx}");
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    assert_eq!(back.sheet(0).unwrap().charts[0].quartiles, QuartileMethod::Inclusive);
+    // Excel's default, and what a file without the attribute means.
+    let excl = cx.replace(r#"quartileMethod="inclusive""#, r#"quartileMethod="exclusive""#);
+    assert_eq!(crate::chartex::read_chartex(&crate::xml::parse(excl.as_bytes()).unwrap()).map(|c| c.quartiles), Some(QuartileMethod::Exclusive));
+    let none = cx.replace(r#"<cx:statistics quartileMethod="inclusive"/>"#, "");
+    assert_eq!(crate::chartex::read_chartex(&crate::xml::parse(none.as_bytes()).unwrap()).map(|c| c.quartiles), Some(QuartileMethod::Exclusive));
+}
+
+#[test]
 fn chartex_parts_as_excel_expects_them() {
     use gridcraft_model::{Chart, ChartKind, LegendPos, Series};
     let mut wb = gridcraft_model::Workbook::new();
@@ -482,6 +519,7 @@ fn chartex_parts_as_excel_expects_them() {
         source: None,
         by_rows: false,
         pivot: None,
+        quartiles: Default::default(),
     });
     wb.sheets = vec![std::sync::Arc::new(sheet)];
     let bytes = crate::write_xlsx(&wb).unwrap();

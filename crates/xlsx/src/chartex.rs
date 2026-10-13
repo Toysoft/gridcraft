@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 
 use gridcraft_core::RangeRef;
 use gridcraft_formula::{Expr, SheetSel};
-use gridcraft_model::{Chart, ChartKind, LegendPos, Series, Workbook};
+use gridcraft_model::{Chart, ChartKind, LegendPos, QuartileMethod, Series, Workbook};
 
 use crate::drawing::{dml_color, srgb};
 use crate::xml::{El, esc, esc_attr};
@@ -87,6 +87,7 @@ pub fn read_chartex(root: &El) -> Option<Chart> {
     let mut kind = None;
     let mut series = vec![];
     let mut data_labels = false;
+    let mut quartiles = None;
     for s in region.kids("series") {
         let layout = s.attr("layoutId").unwrap_or("");
         // A Pareto line belongs to its histogram.
@@ -98,6 +99,14 @@ pub fn read_chartex(root: &El) -> Option<Chart> {
         let id = s.child_val("dataId").unwrap_or("");
         let (cat, val) = data.iter().find(|(i, _, _)| i == id).map(|(_, c, v)| (c.clone(), v.clone())).unwrap_or_default();
         data_labels |= s.path(&["dataLabels", "visibility"]).is_some_and(|v| v.flag("value", false));
+        // Excel keeps the method per series; the first box & whisker series sets the chart's.
+        if quartiles.is_none() {
+            quartiles = match s.path(&["layoutPr", "statistics"]).and_then(|st| st.attr("quartileMethod")) {
+                Some("inclusive") => Some(QuartileMethod::Inclusive),
+                Some("exclusive") => Some(QuartileMethod::Exclusive),
+                _ => None,
+            };
+        }
         series.push(Series {
             name: s.child("tx").and_then(text),
             categories: cat,
@@ -135,6 +144,7 @@ pub fn read_chartex(root: &El) -> Option<Chart> {
         source: None,
         by_rows: false,
         pivot: None,
+        quartiles: quartiles.unwrap_or_default(),
     })
 }
 
@@ -309,9 +319,16 @@ pub fn write_chartex(wb: &Workbook, si: usize, ch: &Chart, names: &mut Vec<Strin
         let _ = write!(s, "<cx:dataId val=\"{i}\"/>");
         match ch.kind {
             ChartKind::Histogram => s.push_str("<cx:layoutPr><cx:binning intervalClosed=\"r\"/></cx:layoutPr>"),
-            ChartKind::BoxWhisker => s.push_str(
-                "<cx:layoutPr><cx:visibility meanLine=\"0\" meanMarker=\"1\" nonoutliers=\"0\" outliers=\"1\"/><cx:statistics quartileMethod=\"exclusive\"/></cx:layoutPr>",
-            ),
+            ChartKind::BoxWhisker => {
+                let method = match ch.quartiles {
+                    QuartileMethod::Exclusive => "exclusive",
+                    QuartileMethod::Inclusive => "inclusive",
+                };
+                let _ = write!(
+                    s,
+                    "<cx:layoutPr><cx:visibility meanLine=\"0\" meanMarker=\"1\" nonoutliers=\"0\" outliers=\"1\"/><cx:statistics quartileMethod=\"{method}\"/></cx:layoutPr>"
+                );
+            }
             ChartKind::Treemap => s.push_str("<cx:layoutPr><cx:parentLabelLayout val=\"overlapping\"/></cx:layoutPr>"),
             _ => {}
         }

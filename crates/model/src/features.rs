@@ -502,6 +502,19 @@ pub struct Chart {
     /// whenever the PivotTable is refreshed or its layout changes.
     #[serde(default)]
     pub pivot: Option<String>,
+    /// Box & whisker: how quartiles are computed (Format Data Series › Quartile Calculation).
+    #[serde(default)]
+    pub quartiles: QuartileMethod,
+}
+
+/// Box & whisker quartile calculation (`cx:statistics quartileMethod`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum QuartileMethod {
+    /// Excel's default, "Exclusive median": QUARTILE.EXC.
+    #[default]
+    Exclusive,
+    /// "Inclusive median": QUARTILE.INC.
+    Inclusive,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

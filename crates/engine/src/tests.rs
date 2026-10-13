@@ -2184,6 +2184,19 @@ fn chart_data(s: &mut Session) {
 }
 
 #[test]
+fn box_whisker_quartile_method_is_set_and_saved() {
+    use gridcraft_model::QuartileMethod;
+    let mut s = s();
+    chart_data(&mut s);
+    s.execute("insert.chart", json!({"type": "boxWhisker", "range": "B2:B7"})).unwrap();
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().charts[0].quartiles, QuartileMethod::Exclusive);
+    s.execute("chart.set", json!({"quartiles": "inclusive"})).unwrap();
+    assert!(s.execute("chart.set", json!({"quartiles": "median"})).is_err());
+    reopen(&mut s);
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().charts[0].quartiles, QuartileMethod::Inclusive);
+}
+
+#[test]
 fn every_chart_kind_survives_xlsx() {
     use gridcraft_model::ChartKind;
     let kinds = [

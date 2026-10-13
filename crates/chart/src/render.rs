@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::f32::consts::{PI, TAU};
 
-use gridcraft_model::{Chart, ChartKind, LegendPos, LineDash, Theme, TrendlineKind};
+use gridcraft_model::{Chart, ChartKind, LegendPos, LineDash, QuartileMethod, Theme, TrendlineKind};
 
 use crate::axis::{Fmt, Scale, clean, fixed_scale, nice_scale};
 use crate::resolve::{MAX_POINTS, MAX_SERIES, MAX_TRENDLINES, series_color};
@@ -1561,17 +1561,17 @@ fn radar(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {
 
 // ---------------------------------------------------------------- box & whisker
 
-fn quantile(sorted: &[f64], q: f64) -> f64 {
-    let n = sorted.len();
-    if n == 0 {
-        return 0.0;
-    }
-    let pos = q * (n - 1) as f64;
-    let i = pos.floor() as usize;
-    let frac = pos - i as f64;
-    let a = sorted.get(i).copied().unwrap_or(0.0);
-    let b = sorted.get(i + 1).copied().unwrap_or(a);
-    a + (b - a) * frac
+/// The statistic at fraction `q` of ascending `sorted` for a box & whisker chart, by the chart's
+/// quartile method (QUARTILE.EXC or QUARTILE.INC, as Excel draws it). With too few values for an
+/// exclusive quartile (fewer than three), the box reaches the smallest or largest value.
+fn quantile(sorted: &[f64], q: f64, method: QuartileMethod) -> f64 {
+    let v = match method {
+        QuartileMethod::Inclusive => gridcraft_core::stats::percentile_inc(sorted, q),
+        QuartileMethod::Exclusive => {
+            gridcraft_core::stats::percentile_exc(sorted, q).or_else(|| if q < 0.5 { sorted.first() } else { sorted.last() }.copied())
+        }
+    };
+    v.unwrap_or(0.0)
 }
 
 fn box_whisker(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {
@@ -1593,7 +1593,8 @@ fn box_whisker(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {
             continue;
         }
         v.sort_by(f64::total_cmp);
-        let (q1, med, q3) = (quantile(&v, 0.25), quantile(&v, 0.5), quantile(&v, 0.75));
+        let m = chart.quartiles;
+        let (q1, med, q3) = (quantile(&v, 0.25, m), quantile(&v, 0.5, m), quantile(&v, 0.75, m));
         let iqr = q3 - q1;
         let (flo, fhi) = (q1 - 1.5 * iqr, q3 + 1.5 * iqr);
         let wlo = v.iter().copied().find(|x| *x >= flo).unwrap_or(q1);
@@ -1742,6 +1743,29 @@ pub(crate) fn finalize(prims: Vec<Prim>, w: f32, h: f32) -> Vec<Prim> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod box_tests {
+    use super::*;
+
+    /// Excel 365 draws these boxes (measured on its exported charts): Exclusive = QUARTILE.EXC,
+    /// Inclusive = QUARTILE.INC.
+    #[test]
+    fn box_quartiles_follow_the_quartile_method() {
+        let q = |v: &[f64], m| (quantile(v, 0.25, m), quantile(v, 0.5, m), quantile(v, 0.75, m));
+        let (ex, inc) = (QuartileMethod::Exclusive, QuartileMethod::Inclusive);
+        assert_eq!(q(&[1.0, 2.0, 3.0, 4.0, 5.0], ex), (1.5, 3.0, 4.5));
+        assert_eq!(q(&[1.0, 2.0, 3.0, 4.0, 5.0], inc), (2.0, 3.0, 4.0));
+        assert_eq!(q(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], ex), (1.75, 3.5, 5.25));
+        assert_eq!(q(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], inc), (2.25, 3.5, 4.75));
+        assert_eq!(q(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0], ex), (2.0, 4.0, 6.0));
+        assert_eq!(q(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0], inc), (2.5, 4.0, 5.5));
+        assert_eq!(q(&[1.0, 1.0, 2.0, 3.0, 5.0, 8.0], inc), (1.25, 2.5, 4.5));
+        // Too few values for an exclusive quartile: the box reaches the ends.
+        assert_eq!(q(&[2.0, 4.0], ex), (2.0, 3.0, 4.0));
+        assert_eq!(q(&[], ex), (0.0, 0.0, 0.0));
+    }
 }
 
 #[cfg(test)]

@@ -56,16 +56,10 @@ fn numbers_in(sh: &Sheet, ranges: &[RangeRef]) -> (Vec<f64>, HashMap<String, usi
     (nums, counts)
 }
 
+/// The `p`-th percentile (0–100) of ascending `sorted`, as Excel computes it for conditional
+/// formatting (PERCENTILE.INC); 0 when there are no numbers.
 fn percentile(sorted: &[f64], p: f64) -> f64 {
-    if sorted.is_empty() {
-        return 0.0;
-    }
-    let rank = (p / 100.0).clamp(0.0, 1.0) * (sorted.len() - 1) as f64;
-    let lo = rank.floor() as usize;
-    let hi = rank.ceil() as usize;
-    let a = sorted.get(lo).copied().unwrap_or(0.0);
-    let b = sorted.get(hi).copied().unwrap_or(a);
-    a + (b - a) * (rank - lo as f64)
+    gridcraft_core::stats::percentile_inc(sorted, (p / 100.0).clamp(0.0, 1.0)).unwrap_or(0.0)
 }
 
 fn threshold(wb: &Workbook, sheet: usize, at: CellRef, st: &RuleStats, k: &CfValueKind) -> f64 {

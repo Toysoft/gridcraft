@@ -90,7 +90,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart Properties",
             ["Chart Design"],
             None,
-            "{chart?: id, type?, title?, legend?: none|bottom|top|left|right, dataLabels?, gridlines?, style?, xTitle?, yTitle?, at?, width?, height?, dx?, dy?}",
+            "{chart?: id, type?, title?, legend?: none|bottom|top|left|right, dataLabels?, gridlines?, style?, xTitle?, yTitle?, quartiles?: exclusive|inclusive (box & whisker), at?, width?, height?, dx?, dy?}",
             has_doc,
             chart_set
         ),
@@ -761,6 +761,7 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
         source: Some(format!("{}!{}", gridcraft_formula::quote_sheet(&sh.name), r.a1())),
         by_rows,
         pivot: None,
+        quartiles: Default::default(),
     };
     Ok((sheet, chart))
 }
@@ -788,6 +789,12 @@ fn find_chart(s: &Session, p: &Json) -> Result<(usize, usize)> {
 fn chart_set(s: &mut Session, p: &Json) -> Result<Json> {
     let (si, ci) = find_chart(s, p)?;
     let at = cell_param_on(s, p, "at", si)?;
+    let quartiles = match str_param(p, "quartiles") {
+        None => None,
+        Some("exclusive") => Some(QuartileMethod::Exclusive),
+        Some("inclusive") => Some(QuartileMethod::Inclusive),
+        Some(other) => return Err(bad("chart.set", format!("`quartiles` is exclusive or inclusive, not `{other}`"))),
+    };
     edit(s, |cx| {
         let sh = cx.sheet_mut(si)?;
         let Some(c) = sh.charts.get_mut(ci) else { return Ok(Json::Null) };
@@ -811,6 +818,9 @@ fn chart_set(s: &mut Session, p: &Json) -> Result<Json> {
         }
         if let Some(v) = bool_param(p, "gridlines") {
             c.gridlines = v;
+        }
+        if let Some(q) = quartiles {
+            c.quartiles = q;
         }
         if let Some(v) = u32_param(p, "style") {
             c.style = v.clamp(1, 16);

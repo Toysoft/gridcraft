@@ -131,36 +131,12 @@ fn kth(v: Vec<f64>, k: f64, largest: bool) -> R<f64> {
     s.get(idx).copied().ok_or(CellError::Num)
 }
 
-fn interp(s: &[f64], pos: f64) -> R<f64> {
-    let i = pos.floor();
-    let frac = pos - i;
-    let i = i as usize;
-    let lo = *s.get(i).ok_or(CellError::Num)?;
-    match s.get(i + 1) {
-        Some(hi) if frac > 0.0 => Ok(lo + frac * (hi - lo)),
-        _ => Ok(lo),
-    }
-}
-
 fn percentile_inc(v: Vec<f64>, k: f64) -> R<f64> {
-    if v.is_empty() || !(0.0..=1.0).contains(&k) {
-        return Err(CellError::Num);
-    }
-    let s = sorted(v);
-    interp(&s, k * (s.len() - 1) as f64)
+    gridcraft_core::stats::percentile_inc(&sorted(v), k).ok_or(CellError::Num)
 }
 
 fn percentile_exc(v: Vec<f64>, k: f64) -> R<f64> {
-    let n = v.len() as f64;
-    if v.is_empty() || !(k > 0.0 && k < 1.0) {
-        return Err(CellError::Num);
-    }
-    let pos = k * (n + 1.0);
-    if pos < 1.0 || pos > n {
-        return Err(CellError::Num);
-    }
-    let s = sorted(v);
-    interp(&s, pos - 1.0)
+    gridcraft_core::stats::percentile_exc(&sorted(v), k).ok_or(CellError::Num)
 }
 
 fn quartile_inc(v: Vec<f64>, q: f64) -> R<f64> {
