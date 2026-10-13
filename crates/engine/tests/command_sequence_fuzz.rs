@@ -16,6 +16,8 @@
 //! - the structure stays valid: active sheet in range, sheet and table names valid and unique,
 //!   merges and tables on the sheet and not overlapping, legacy arrays anchored at their
 //!   top-left cell, the selection on the sheet;
+//! - every rich-text runs entry stays valid for its cell's text — the side-table only
+//!   describes text values, and the runs concatenate to exactly that text (issue #906);
 //! - a full recalculation from scratch gives the values the incremental recalculation left
 //!   (catches stale dependency graphs);
 //! - every few steps and at the end, an XLSX save and reload (with the recalculation opening does)
@@ -326,11 +328,14 @@ impl Harness {
         Ok(())
     }
 
-    /// Structure and recalculation invariants on the current state.
+    /// Structure, rich-text runs and recalculation invariants on the current state.
     fn check_state(&self, i: usize) -> Result<(), Failure> {
         let d = self.s.doc().expect("document");
         if let Some(e) = structure_problem(&d.wb, &d.selection) {
             return Err(fail(i, "structure", e));
+        }
+        if let Some(e) = runs_problem(&d.wb) {
+            return Err(fail(i, "runs", e));
         }
         let wb = d.wb.clone();
         guarded(i, "recalc", || recalc_diff(&wb))
@@ -459,6 +464,23 @@ fn structure_problem(wb: &Workbook, sel: &gridcraft_engine::Selection) -> Option
     }
     if sel.ranges.is_empty() || !sel.active.is_valid() || sel.ranges.iter().any(|r| !r.start.is_valid() || !r.end.is_valid()) {
         return Some(format!("selection {sel:?}"));
+    }
+    None
+}
+
+/// Every `cell_runs` entry must stay valid for its cell's text (issue #906): the side-table
+/// only ever layers font deltas over a cell's plain `Value::Text`, so an entry on any other
+/// value (number, non-text formula result, empty) is stale, and an entry whose runs don't
+/// concatenate to exactly the current text would draw slices that aren't there. Checked after
+/// every step and around undo/redo, alongside the XLSX round-trip and `workbook_diff`, which
+/// compare the whole side-table between states.
+fn runs_problem(wb: &Workbook) -> Option<String> {
+    for sh in &wb.sheets {
+        for (c, runs) in &sh.cell_runs {
+            if !sh.cell(*c).is_some_and(|cell| cell.value.as_text().is_some_and(|t| runs.valid_for(t))) {
+                return Some(format!("{}!{c}: runs not valid for the cell text", sh.name));
+            }
+        }
     }
     None
 }
