@@ -110,9 +110,12 @@ pub fn fill(cx: &mut Ctx, sheet: usize, src: RangeRef, target: RangeRef, mode: F
                 && let Some(old_cell) = &scell
                 && let Value::Text(new_t) = &cell.value
                 && let Value::Text(old_t) = &old_cell.value
-                && old_t == new_t
             {
-                runs.push((*t, src_runs.clone()));
+                // Same text (a copy): clone. Changed by a series pattern: re-base positionally.
+                let carried = if old_t == new_t { Some(src_runs.clone()) } else { src_runs.filled(old_t, new_t) };
+                if let Some(cr) = carried {
+                    runs.push((*t, cr));
+                }
             }
             if let Some(picture) = sh.cell_pictures.get(&sc) {
                 pictures.push((*t, picture.clone()));

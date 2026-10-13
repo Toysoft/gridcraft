@@ -2049,6 +2049,37 @@ fn fill_values_and_formats_leave_runs_alone() {
 }
 
 #[test]
+fn autofill_series_rebases_runs() {
+    let mut s = s();
+    let runs = CellRuns { runs: vec![
+        Run { start: 0, len: 5, font: runs_none_font() },
+        Run { start: 5, len: 1, font: RunFont { bold: Some(true), ..runs_none_font() } },
+    ] };
+    s.execute("cell.set", json!({"cell": "A1", "input": "Item 1", "runs": serde_json::to_value(&runs).unwrap()})).unwrap();
+    s.execute("edit.autoFill", json!({"source": "A1", "target": "A1:A3"})).unwrap();
+    assert_eq!(v(&s, "A2"), Value::text("Item 2"));
+    let r2 = runs_of(&s, "A2").expect("series fill keeps the runs");
+    assert!(r2.valid_for("Item 2"));
+    assert_eq!(r2.runs[1].font.bold, Some(true), "the bold follows the changed digit");
+    assert_eq!(v(&s, "A3"), Value::text("Item 3"));
+    assert!(runs_of(&s, "A3").is_some_and(|r| r.valid_for("Item 3")));
+}
+
+#[test]
+fn series_fill_widening_number_rebases() {
+    let mut s = s();
+    let runs = CellRuns { runs: vec![
+        Run { start: 0, len: 5, font: runs_none_font() },
+        Run { start: 5, len: 1, font: RunFont { bold: Some(true), ..runs_none_font() } },
+    ] };
+    s.execute("cell.set", json!({"cell": "A1", "input": "Item 9", "runs": serde_json::to_value(&runs).unwrap()})).unwrap();
+    s.execute("edit.autoFill", json!({"source": "A1", "target": "A1:A2"})).unwrap();
+    assert_eq!(v(&s, "A2"), Value::text("Item 10"));
+    let r2 = runs_of(&s, "A2").expect("runs survive the widening");
+    assert!(r2.valid_for("Item 10"), "the runs cover the wider number");
+}
+
+#[test]
 fn copy_paste_repeats_runs() {
     let mut s = s();
     let runs = repro_runs();

@@ -697,6 +697,43 @@ mod tests {
     }
 
     #[test]
+    fn filled_result_always_valid() {
+        // Property over hostile inputs: the result is always `None` or valid for the new text.
+        // Multibyte texts (kept prefix, replaced middle, kept suffix), a `self` that was never
+        // valid for `old_text` (a gap, overlapping runs, a run past the text end), an empty
+        // `new_text`, an empty `old_text`, and texts at the run-cap boundary: exactly
+        // `MAX_RUNS_PER_CELL` alternating runs that a fill re-bases to exactly the cap, and one
+        // that would need a run more.
+        let cap = MAX_RUNS_PER_CELL as u32;
+        let at_cap = CellRuns { runs: (0..cap).map(|i| run_font(i, 1, if i % 2 == 0 { bold_font() } else { none_font() })).collect() };
+        let old_cap = "a".repeat(cap as usize);
+        let shapes: Vec<(CellRuns, String, String)> = vec![
+            (black_red_green(), "black red green".into(), "black red green".into()),
+            (black_red_green(), "black red green".into(), String::new()),
+            (black_red_green(), String::new(), "black red green".into()),
+            // Multibyte kept prefix and suffix, and a replaced middle that cuts through
+            // non-ASCII characters ("1 ère" -> "2 ème" differs at every byte of "ère"/"ème").
+            (CellRuns { runs: vec![run(0, 6), run_font(6, 1, bold_font())] }, "café 1".into(), "café 10".into()),
+            (CellRuns { runs: vec![run(0, 1), run_font(1, 5, red_font())] }, "1 ère".into(), "2 ème".into()),
+            (CellRuns { runs: vec![run_font(0, 2, bold_font()), run(2, 4)] }, "10 €".into(), "100 €".into()),
+            // A `self` that is not valid for `old_text`: a gap at byte 2, runs that overlap,
+            // and a run reaching past the end of the text.
+            (CellRuns { runs: vec![run_font(0, 2, bold_font()), run(3, 1)] }, "abcd".into(), "abxd".into()),
+            (CellRuns { runs: vec![run(0, 3), run(2, 2)] }, "abcd".into(), "abcdx".into()),
+            (CellRuns { runs: vec![run_font(0, 10, bold_font())] }, "abc".into(), "abcd".into()),
+            // At the cap: changing the last byte keeps exactly `cap` runs; growing past the
+            // end of an all-'a' text would need `cap + 1`.
+            (at_cap.clone(), old_cap.clone(), format!("{}b", "a".repeat((cap - 1) as usize))),
+            (at_cap, old_cap.clone(), format!("b{old_cap}")),
+        ];
+        for (cr, old, new) in &shapes {
+            if let Some(out) = cr.filled(old, new) {
+                assert!(out.valid_for(new), "filled({old:?} → {new:?}) produced runs not valid for the new text");
+            }
+        }
+    }
+
+    #[test]
     fn serde_roundtrip() {
         let cr = CellRuns {
             runs: vec![Run { start: 0, len: 5, font: RunFont { name: Some("Georgia".into()), size: Some(14.0), bold: Some(true), ..none_font() } }],
