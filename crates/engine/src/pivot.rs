@@ -1081,6 +1081,9 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
     };
 
     // ---- header rows
+    // Σ Values in Columns: a row of value captions below the column fields. Alone it adds no row
+    // of its own (Excel 365 hides that Values row; the file says so, see the XLSX writer).
+    let values_in_cols = k > 1 && !on_rows;
     if cols.is_empty() {
         let r = g.push_row(RowKind::Header)?;
         row_header(&mut g, r);
@@ -1093,15 +1096,21 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
             }
         }
     } else {
-        let cap = g.push_row(RowKind::Header)?;
-        if l > 0 && k == 1 {
-            g.set(cap, 0, Value::text(val_name(0)), CellKind::Header, 0, None);
+        // The caption row holds the value field's caption (one value field) and, with headers
+        // shown, the column caption. With headers off and nothing to show in it, Excel leaves it out.
+        let value_caption = l > 0 && k == 1;
+        if value_caption || headers_on {
+            let cap = g.push_row(RowKind::Header)?;
+            if value_caption {
+                g.set(cap, 0, Value::text(val_name(0)), CellKind::Header, 0, None);
+            }
+            if headers_on {
+                let caption =
+                    if compact { "Column Labels".to_string() } else { col_fields.first().map(|f| f.source_col.clone()).unwrap_or_default() };
+                g.set(cap, l, Value::text(caption), CellKind::Header, 0, None);
+            }
         }
-        if headers_on {
-            let caption = if compact { "Column Labels".to_string() } else { col_fields.first().map(|f| f.source_col.clone()).unwrap_or_default() };
-            g.set(cap, l, Value::text(caption), CellKind::Header, 0, None);
-        }
-        let levels = cols.len() + usize::from(k > 1 && !on_rows);
+        let levels = cols.len() + usize::from(values_in_cols);
         let first_level = g.rows.len();
         for _ in 0..levels {
             g.push_row(RowKind::Header)?;

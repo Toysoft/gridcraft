@@ -338,7 +338,8 @@ fn pivot_xml_details() {
     let parts = unzip(&write_xlsx(&workbook()).unwrap());
     let t1 = String::from_utf8(parts.get("xl/pivotTables/pivotTable1.xml").unwrap().clone()).unwrap();
     assert!(
-        t1.contains("<location ref=\"A4:H12\" firstHeaderRow=\"1\" firstDataRow=\"3\" firstDataCol=\"1\" rowPageCount=\"1\" colPageCount=\"1\"/>"),
+        // Headers off and two value fields: no caption row (Excel 365 writes firstHeaderRow 0).
+        t1.contains("<location ref=\"A4:H12\" firstHeaderRow=\"0\" firstDataRow=\"2\" firstDataCol=\"1\" rowPageCount=\"1\" colPageCount=\"1\"/>"),
         "{t1}"
     );
     assert!(t1.contains("<field x=\"-2\"/>"));
@@ -567,6 +568,30 @@ fn values_on_rows_round_trip() {
     assert_eq!(axis_xs(&t2, "colFields").last(), Some(&-2), "{t2}");
     let (back, _) = read_xlsx(&bytes).unwrap();
     assert_eq!(back.sheet(1).unwrap().pivots[1].values_position, None);
+}
+
+#[test]
+fn two_values_without_column_fields_hide_the_values_row() {
+    // Σ Values alone in Columns: GridCraft lays out no Values row, so the file turns Excel's "Show
+    // the Values row" off (hideValuesRow), as Excel 365 does for its own new PivotTables, and the
+    // value captions are the header row (Excel writes firstHeaderRow="0" firstDataRow="1").
+    let mut wb = workbook();
+    {
+        let p = wb.sheet_mut(1).unwrap().pivots.get_mut(2).unwrap();
+        p.values.push(PivotValue { source_col: "Sales".into(), func: PivotFunc::Sum, name: "Sum of Sales".into(), ..PivotValue::default() });
+        p.last_range = Some(rr("AB1:AD6"));
+    }
+    let parts = unzip(&write_xlsx(&wb).unwrap());
+    let t3 = String::from_utf8(parts.get("xl/pivotTables/pivotTable3.xml").unwrap().clone()).unwrap();
+    assert!(t3.contains("<location ref=\"AB1:AD6\" firstHeaderRow=\"0\" firstDataRow=\"1\" firstDataCol=\"1\""), "{t3}");
+    assert_eq!(axis_xs(&t3, "colFields"), vec![-2], "{t3}");
+    assert!(t3.contains("<x14:pivotTableDefinition hideValuesRow=\"1\"/></ext></extLst></pivotTableDefinition>"), "{t3}");
+    // One value field: the header row is row 1, as before.
+    let t1 = String::from_utf8(unzip(&write_xlsx(&workbook()).unwrap()).get("xl/pivotTables/pivotTable3.xml").unwrap().clone()).unwrap();
+    assert!(t1.contains("firstHeaderRow=\"1\" firstDataRow=\"1\" firstDataCol=\"1\""), "{t1}");
+    // Read back unchanged.
+    let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
+    assert_eq!(back.sheet(1).unwrap().pivots[2], wb.sheet(1).unwrap().pivots[2]);
 }
 
 #[test]

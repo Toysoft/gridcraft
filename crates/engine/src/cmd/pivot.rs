@@ -1677,6 +1677,32 @@ mod tests {
     }
 
     #[test]
+    fn two_values_without_column_fields_keep_one_header_row() {
+        // Excel 365 hides the Values row of its new PivotTables ("Show the Values row" off): with
+        // two value fields and no column field the value captions are the header row, in every
+        // layout. GridCraft lays it out that way and saves the setting (hideValuesRow).
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"values": ["Sales", {"field": "Units", "func": "average"}]})).unwrap();
+        assert_eq!(text(&s, "A3"), "Sum of Sales");
+        assert_eq!(text(&s, "B3"), "Average of Units");
+        assert_eq!(val(&s, "A4"), Value::Number(TOTAL));
+        assert_eq!(pt(&s).last_range.unwrap().a1(), "A3:B4");
+        s.execute("pivot.addField", json!({"field": "Region", "area": "rows"})).unwrap();
+        for layout in ["compact", "outline", "tabular"] {
+            s.execute("pivot.layout", json!({"layout": layout})).unwrap();
+            assert_eq!(text(&s, "B3"), "Sum of Sales", "{layout}");
+            assert_eq!(text(&s, "A4"), "East", "{layout}");
+            assert_eq!(pt(&s).last_range.unwrap().a1(), "A3:C7", "{layout}");
+        }
+        let wb = (*s.doc().unwrap().wb).clone();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(gridcraft_xlsx::write_xlsx(&wb).unwrap())).unwrap();
+        let mut x = String::new();
+        std::io::Read::read_to_string(&mut z.by_name("xl/pivotTables/pivotTable1.xml").unwrap(), &mut x).unwrap();
+        assert!(x.contains("hideValuesRow=\"1\""), "{x}");
+        assert!(x.contains("<location ref=\"A3:C7\" firstHeaderRow=\"0\" firstDataRow=\"1\" firstDataCol=\"1\"/>"), "{x}");
+    }
+
+    #[test]
     fn date_grouping_by_quarter_and_month() {
         let mut s = sales();
         s.execute("insert.pivotTable", json!({"rows": ["Date"], "values": ["Sales"]})).unwrap();

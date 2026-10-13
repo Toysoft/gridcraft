@@ -40,6 +40,8 @@ const MAX_ITEMS: usize = 1_048_576;
 const MAX_FIELDS: usize = 16_384;
 /// The `x14:dataField` extension (Excel 2010 show-values-as additions such as rank).
 const EXT_X14_DATA_FIELD: &str = "{E15A36E0-9728-4e99-A89B-3F7291B0FE68}";
+/// The `x14:pivotTableDefinition` extension ("Show the Values row": `hideValuesRow`).
+const EXT_X14_TABLE: &str = "{962EF5D1-5CA2-4c93-8EF4-DBF5C05439D2}";
 const NS_X14: &str = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main";
 
 const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -835,8 +837,18 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
     let row_values = (k > 1 && pt.values_on_rows).then(|| values_at(row_map, row_idx.len()));
     // In Columns Σ Values comes after the last field: the column layout doesn't place it elsewhere.
     let col_values = (k > 1 && !pt.values_on_rows).then_some(col_idx.len());
-    let first_data_row = if col_idx.is_empty() { 1 } else { 1 + col_idx.len() + usize::from(col_values.is_some()) };
     let row_levels = row_idx.len() + usize::from(row_values.is_some());
+    // Σ Values alone in Columns: its row is hidden (hideValuesRow, below), so the value captions are
+    // the header row, which Excel 365 counts as row 0. Column fields take a row each, Σ Values among
+    // them, below a caption row. The caption row holds the value's caption (one value field) and,
+    // with headers shown, the column caption; Excel leaves it out when it would be empty
+    // (firstHeaderRow 0).
+    let (first_header_row, first_data_row) = if col_idx.is_empty() {
+        (usize::from(col_values.is_none()), 1)
+    } else {
+        let caption_row = pt.show_headers || k == 1;
+        (usize::from(caption_row), usize::from(caption_row) + col_idx.len() + usize::from(col_values.is_some()))
+    };
     let first_data_col = if row_levels == 0 && col_idx.is_empty() {
         0
     } else if compact {
@@ -844,7 +856,11 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
     } else {
         row_levels.max(1)
     };
-    let _ = write!(s, "<location ref=\"{}\" firstHeaderRow=\"1\" firstDataRow=\"{first_data_row}\" firstDataCol=\"{first_data_col}\"", loc.a1());
+    let _ = write!(
+        s,
+        "<location ref=\"{}\" firstHeaderRow=\"{first_header_row}\" firstDataRow=\"{first_data_row}\" firstDataCol=\"{first_data_col}\"",
+        loc.a1()
+    );
     if !pages.is_empty() {
         let _ = write!(s, " rowPageCount=\"{}\" colPageCount=\"1\"", pages.len());
     }
@@ -1001,6 +1017,10 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
         let _ = write!(s, " name=\"{}\"", esc_attr(&pt.style));
     }
     s.push_str(" showRowHeaders=\"1\" showColHeaders=\"1\" showRowStripes=\"0\" showColStripes=\"0\" showLastColumn=\"1\"/>");
+    // "Show the Values row" off, as in Excel 365's new PivotTables: without this, Excel adds a
+    // Values caption row above the value captions when Σ Values is the only column field, which the
+    // report as laid out doesn't have.
+    let _ = write!(s, "<extLst><ext uri=\"{EXT_X14_TABLE}\" xmlns:x14=\"{NS_X14}\"><x14:pivotTableDefinition hideValuesRow=\"1\"/></ext></extLst>");
     s.push_str("</pivotTableDefinition>");
     s
 }
