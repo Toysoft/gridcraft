@@ -341,6 +341,10 @@ impl Acc {
         }
     }
     fn result(&self, f: PivotFunc) -> Value {
+        // An item whose values are all blank shows an empty cell, whatever the function (Excel 365).
+        if self.count == 0 {
+            return Value::Empty;
+        }
         let n = self.nums as f64;
         match f {
             PivotFunc::Count => return Value::number(self.count as f64),
@@ -1169,7 +1173,7 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
                     src.col(name)
                         .and_then(|c| extra.iter().position(|x| *x == c))
                         .and_then(|j| accs.get(k + j))
-                        .map(|a| a.result(PivotFunc::Sum))
+                        .map(|a| if a.count == 0 { Value::Number(0.0) } else { a.result(PivotFunc::Sum) })
                         .unwrap_or(Value::Number(0.0))
                 };
                 Some(calc.value(wb, *i, &sum))
@@ -1267,6 +1271,12 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
             let Some((_, vdef)) = vals.get(*vi) else { continue };
             let cp = spec.path.as_slice();
             let Some(raw) = get(rp, cp, *vi) else { continue };
+            // Shown as a share or a running total, an item with only blank values counts as 0.
+            let raw = match (&raw, vdef.show_as) {
+                (Value::Empty, PivotShowAs::Normal | PivotShowAs::Rank) => raw,
+                (Value::Empty, _) => Value::Number(0.0),
+                _ => raw,
+            };
             let shown = match vdef.show_as {
                 PivotShowAs::Normal => raw,
                 PivotShowAs::PercentOfGrandTotal => ratio(raw, get(&[], &[], *vi)),

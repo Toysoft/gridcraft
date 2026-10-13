@@ -1703,6 +1703,37 @@ mod tests {
     }
 
     #[test]
+    fn items_with_only_blank_values_show_empty_cells() {
+        // Key A: 1 and 3; B: one blank value; C: 2. Excel 365 leaves B empty for every function.
+        let keyed = || {
+            let mut s = Session::new();
+            s.new_workbook();
+            let rows = json!([["Key", "Val"], ["A", 1], ["A", 3], ["B", null], ["C", 2]]);
+            s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+            s
+        };
+        let funcs = ["sum", "average", "count", "max", "min", "product", "countNumbers", "stdDev", "stdDevP", "var", "varP"];
+        let values: Vec<Json> = funcs.iter().map(|f| json!({"field": "Val", "func": f})).collect();
+        let mut s = keyed();
+        s.execute("insert.pivotTable", json!({"source": "Sheet1!$A$1:$B$5", "destination": "Sheet1!E3", "rows": ["Key"], "values": values})).unwrap();
+        let b = find_row(&s, "B").unwrap();
+        for (j, f) in funcs.iter().enumerate() {
+            assert_eq!(val(&s, &CellRef::new(b, 5 + j as u32).a1()), Value::Empty, "{f}");
+        }
+        let a = find_row(&s, "A").unwrap();
+        assert_eq!(val(&s, &CellRef::new(a, 5).a1()), Value::Number(4.0));
+        // As a share of the grand total B is 0; as a running total it carries A forward.
+        for (show, want) in [("percentOfGrandTotal", 0.0), ("runningTotal", 4.0)] {
+            let mut s = keyed();
+            s.execute("insert.pivotTable", json!({"source": "Sheet1!$A$1:$B$5", "destination": "Sheet1!E3", "rows": ["Key"], "values": ["Val"]}))
+                .unwrap();
+            s.execute("pivot.valueSettings", json!({"field": "Val", "showAs": show})).unwrap();
+            let b = find_row(&s, "B").unwrap();
+            assert_eq!(val(&s, &CellRef::new(b, 5).a1()), Value::Number(want), "{show}");
+        }
+    }
+
+    #[test]
     fn date_grouping_by_quarter_and_month() {
         let mut s = sales();
         s.execute("insert.pivotTable", json!({"rows": ["Date"], "values": ["Sales"]})).unwrap();
