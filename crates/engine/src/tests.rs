@@ -2001,6 +2001,54 @@ fn remove_duplicates_compacts_runs_and_cut_moves_them() {
 }
 
 #[test]
+fn fill_down_repeats_runs() {
+    let mut s = s();
+    let runs = repro_runs();
+    let text = add_runs_cell(&mut s, "A1", runs.clone());
+    s.execute("edit.fillDown", json!({"range": "A1:A3"})).unwrap();
+    for a in ["A1", "A2", "A3"] {
+        assert_eq!(runs_of(&s, a), Some(runs.clone()), "{a} repeats the runs");
+        assert_eq!(v(&s, a), Value::text(text.as_str()));
+    }
+}
+
+#[test]
+fn autofill_copy_mode_repeats_runs() {
+    let mut s = s();
+    let runs = repro_runs();
+    add_runs_cell(&mut s, "A1", runs.clone());
+    s.execute("edit.autoFill", json!({"source": "A1", "target": "A1:C1", "mode": "copy"})).unwrap();
+    assert_eq!(runs_of(&s, "B1"), Some(runs.clone()));
+    assert_eq!(runs_of(&s, "C1"), Some(runs));
+}
+
+#[test]
+fn fill_up_repeats_runs() {
+    let mut s = s();
+    let runs = repro_runs();
+    add_runs_cell(&mut s, "A3", runs.clone());
+    s.execute("edit.autoFill", json!({"source": "A3", "target": "A1:A3", "mode": "copy"})).unwrap();
+    assert_eq!(runs_of(&s, "A1"), Some(runs.clone()), "backward fill pairs targets with sources in reverse");
+    assert_eq!(runs_of(&s, "A2"), Some(runs));
+}
+
+#[test]
+fn fill_values_and_formats_leave_runs_alone() {
+    let mut s = s();
+    add_runs_cell(&mut s, "A1", repro_runs());
+    // Values-only fill down: A2 gets the text, not the runs.
+    s.execute("edit.autoFill", json!({"source": "A1", "target": "A1:A2", "mode": "values"})).unwrap();
+    assert!(runs_of(&s, "A2").is_none(), "values-only fill is flat");
+    // Formats fill copies styles over cells next to the source; a destination that already has
+    // runs keeps them (the formats write path bypasses `set_cell`'s runs-clearing).
+    s.execute("cell.set", json!({"cell": "C1", "input": "x"})).unwrap();
+    add_runs_cell(&mut s, "C2", repro_runs());
+    s.execute("edit.autoFill", json!({"source": "C1", "target": "C1:C3", "mode": "formats"})).unwrap();
+    assert!(runs_of(&s, "C2").is_some(), "formats fill does not touch the destination's own runs");
+    assert!(runs_of(&s, "C3").is_none());
+}
+
+#[test]
 fn copy_paste_repeats_runs() {
     let mut s = s();
     let runs = repro_runs();

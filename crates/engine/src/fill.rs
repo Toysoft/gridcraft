@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use gridcraft_core::date::{MONTHS, WEEKDAYS, datetime_from_serial, days_in_month, serial_from_ymd};
 use gridcraft_core::{CellRef, RangeRef, Value};
-use gridcraft_model::{Cell, Formula};
+use gridcraft_model::{Cell, CellRuns, Formula};
 
 use crate::Result;
 use crate::cmd::Ctx;
@@ -49,6 +49,7 @@ pub fn fill(cx: &mut Ctx, sheet: usize, src: RangeRef, target: RangeRef, mode: F
     let src_len = if vertical { src.height() } else { src.width() };
     let mut writes: Vec<(CellRef, Option<Cell>)> = Vec::new();
     let mut pictures = Vec::new();
+    let mut runs: Vec<(CellRef, CellRuns)> = Vec::new();
     for lane in lanes {
         let src_cells: Vec<(CellRef, Option<Cell>)> = (0..src_len)
             .map(|i| {
@@ -102,6 +103,17 @@ pub fn fill(cx: &mut Ctx, sheet: usize, src: RangeRef, target: RangeRef, mode: F
                     cell.style = style;
                 }
             }
+            // Rich-text runs travel with the cell that carries them (#906): cloned when the
+            // fill writes the same text (a copy), re-based when a series pattern changed it.
+            if mode != FillMode::ValuesOnly
+                && let Some(src_runs) = sh.cell_runs.get(&sc)
+                && let Some(old_cell) = &scell
+                && let Value::Text(new_t) = &cell.value
+                && let Value::Text(old_t) = &old_cell.value
+                && old_t == new_t
+            {
+                runs.push((*t, src_runs.clone()));
+            }
             if let Some(picture) = sh.cell_pictures.get(&sc) {
                 pictures.push((*t, picture.clone()));
             }
@@ -119,6 +131,8 @@ pub fn fill(cx: &mut Ctx, sheet: usize, src: RangeRef, target: RangeRef, mode: F
         }
     }
     sh.cell_pictures.extend(pictures);
+    // After `set_cell` cleared the destinations, the runs go back with their cells.
+    sh.cell_runs.extend(runs);
     for (c, _) in writes {
         cx.touch(sheet, c);
     }
