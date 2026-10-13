@@ -73,9 +73,7 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
     // an unprotected copy.
     let path = str_param(p, "path").filter(|_| !imported && !encrypted).map(str::to_string);
     // Replace an untouched blank Book1 like Excel does.
-    if s.documents().len() == 1
-        && s.active().is_some_and(|d| d.path.is_none() && !d.is_dirty() && d.undo.is_empty() && d.wb.sheets.iter().all(|sh| sh.cells.is_empty()))
-    {
+    if s.documents().len() == 1 && s.active().is_some_and(DocState::is_untouched_blank) {
         s.close_document(0);
     }
     let mut doc = DocState::new(wb, path, title);

@@ -3282,3 +3282,24 @@ fn paste_special_validation_moves_relative_references() {
     assert!(!ok(&mut s, "C3", "5"), "the pasted rule checks C3, not A1");
     assert!(ok(&mut s, "C3", "20"));
 }
+
+#[test]
+fn new_workbooks_and_sheets_are_named_in_the_interface_language() {
+    let mut s = Session::new();
+    s.new_workbook();
+    assert_eq!(s.doc().unwrap().title, "Book1");
+    // The untouched start-up workbook is renamed when the interface turns out to be Georgian.
+    s.set_language("ka");
+    assert_eq!(s.documents().len(), 1);
+    assert_eq!(s.doc().unwrap().title, "წიგნი1");
+    assert_eq!(s.doc().unwrap().wb.sheets[0].name, "ფურცელი1");
+    s.execute("home.insertSheet", json!({})).unwrap();
+    assert!(s.doc().unwrap().wb.sheet_index("ფურცელი2").is_some());
+    // A workbook with content keeps its names on a language switch.
+    s.execute("cell.set", json!({"cell": "A1", "input": "1"})).unwrap();
+    s.set_language("en");
+    assert_eq!(s.doc().unwrap().title, "წიგნი1");
+    s.new_workbook();
+    assert_eq!(s.doc().unwrap().title, "Book1");
+    assert_eq!(s.doc().unwrap().wb.sheets[0].name, "Sheet1");
+}
