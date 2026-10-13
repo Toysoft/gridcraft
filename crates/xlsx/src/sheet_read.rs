@@ -60,6 +60,7 @@ pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<Sheet, IoE
     drop(bytes);
 
     let mut fit_to_page = false;
+    cx.cf_ext_ids.clear();
     for e in &root.children {
         match e.name.as_str() {
             "sheetPr" => {
@@ -596,6 +597,9 @@ fn read_cf(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
         let formulas: Vec<String> = r.kids("formula").map(|f| from_file(f.text.trim())).collect();
         let f0 = formulas.first().cloned().unwrap_or_default();
         let text = r.attr("text").unwrap_or("").to_string();
+        // The x14 id that links a data bar to its Excel 2010 extension (solid fill lives there).
+        let ext_id =
+            r.child("extLst").and_then(|l| l.kids("ext").find_map(|x| x.child("id"))).map(|i| i.text.trim().to_string()).filter(|i| !i.is_empty());
         let rule = match r.attr("type").unwrap_or("") {
             "cellIs" => CfRule::CellIs { op: cf_op(r.attr("operator")), a: f0, b: formulas.get(1).cloned(), style },
             "expression" => CfRule::Expression { formula: f0, style },
@@ -649,6 +653,9 @@ fn read_cf(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
                 continue;
             }
         };
+        if let Some(id) = ext_id {
+            cx.cf_ext_ids.push((id, sheet.cond_formats.len()));
+        }
         sheet.cond_formats.push(CondFormat {
             ranges: ranges.clone(),
             rule,
@@ -956,7 +963,23 @@ fn read_ext(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
                         }
                     }
                 }
-                "conditionalFormattings" => cx.warn("some Excel 2010 conditional format extensions were skipped"),
+                "conditionalFormattings" => {
+                    let mut skipped = false;
+                    for r in c.kids("conditionalFormatting").flat_map(|f| f.kids("cfRule")) {
+                        let idx = r.attr("id").and_then(|id| cx.cf_ext_ids.iter().find(|(i, _)| i == id)).map(|(_, n)| *n);
+                        match (idx.and_then(|n| sheet.cond_formats.get_mut(n)), r.child("dataBar")) {
+                            (Some(CondFormat { rule: CfRule::DataBar { gradient, .. }, .. }), Some(db)) => {
+                                *gradient = db.flag("gradient", true);
+                                // Only the fill style is modelled; borders, lengths, axis or negative colours are lost.
+                                skipped |= db.attrs.iter().any(|(k, _)| k != "gradient") || db.children.iter().any(|k| k.name != "cfvo");
+                            }
+                            _ => skipped = true,
+                        }
+                    }
+                    if skipped {
+                        cx.warn("some Excel 2010 conditional format extensions were skipped");
+                    }
+                }
                 _ => {}
             }
         }

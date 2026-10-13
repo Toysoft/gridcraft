@@ -119,7 +119,12 @@ fn write_struct_ref(s: &StructRef, at_shorthand: bool) -> String {
             let _ = write!(out, "[{}]", s.specifiers.first().map(item).unwrap_or(""));
         }
         (Some(c), None) if s.specifiers.is_empty() => {
-            let _ = write!(out, "[{}]", esc(c));
+            // Excel writes a name with spaces at its edges in the double-bracket form.
+            if c.trim() == c {
+                let _ = write!(out, "[{}]", esc(c));
+            } else {
+                let _ = write!(out, "[[{}]]", esc(c));
+            }
         }
         (Some(c), None) if this_row => {
             if simple_col(c) {
@@ -188,7 +193,15 @@ fn write_expr(s: &mut String, e: &Expr, r1c1: Option<CellRef>) {
             Some(at) => s.push_str(&reference_r1c1(r, at)),
             None => s.push_str(&reference_a1(r)),
         },
-        Expr::Name(n) => s.push_str(n),
+        Expr::Name(n) => match n.rsplit_once('!') {
+            // A sheet-qualified name is stored with the bare sheet name (`My Sheet!Total`): quote it so it parses back.
+            Some((sheet, name)) => {
+                s.push_str(&quote_sheet(sheet));
+                s.push('!');
+                s.push_str(name);
+            }
+            _ => s.push_str(n),
+        },
         Expr::Struct(st) => s.push_str(&struct_ref(st)),
         Expr::Unary(op, x) => match op {
             UnOp::Neg => {

@@ -101,6 +101,8 @@ impl Default for NumberFormat {
 impl NumberFormat {
     /// Parses a format code. Never fails: unknown or malformed parts degrade to literal text.
     pub fn parse(code: &str) -> NumberFormat {
+        #[cfg(test)]
+        parse_cache::count_parse();
         let trimmed = code.trim();
         // `checkbox` marks a checkbox cell (Insert › Checkbox): TRUE/FALSE draw as a box, any other
         // value displays as General.
@@ -295,6 +297,78 @@ pub fn format_value(v: &Value, fmt: &NumberFormat, sys: DateSystem) -> Formatted
     }
 }
 
+/// A small per-thread cache of parsed format codes for callers that format many values with the
+/// same code (`TEXT` over a range, chart labels). A parsed format depends on the code text only
+/// (the date system and values are applied when formatting), so the code is the whole key.
+mod parse_cache {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    use super::NumberFormat;
+
+    /// Most codes kept per thread. A full cache is emptied, so memory stays bounded.
+    pub(super) const CAPACITY: usize = 64;
+    /// Longer codes are parsed every time and never stored.
+    pub(super) const MAX_CODE_LEN: usize = 256;
+
+    thread_local! {
+        static CACHE: RefCell<HashMap<String, NumberFormat>> = RefCell::new(HashMap::new());
+    }
+
+    pub(super) fn get(code: &str) -> NumberFormat {
+        if code.len() > MAX_CODE_LEN {
+            return NumberFormat::parse(code);
+        }
+        // Not usable (thread shutting down, re-entered): parse without the cache.
+        let cached = CACHE
+            .try_with(|c| {
+                let mut c = c.try_borrow_mut().ok()?;
+                if let Some(f) = c.get(code) {
+                    return Some(f.clone());
+                }
+                let f = NumberFormat::parse(code);
+                if c.len() >= CAPACITY {
+                    c.clear();
+                }
+                c.insert(code.to_string(), f.clone());
+                Some(f)
+            })
+            .ok()
+            .flatten();
+        cached.unwrap_or_else(|| NumberFormat::parse(code))
+    }
+
+    #[cfg(test)]
+    thread_local! {
+        static PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    #[cfg(test)]
+    pub(super) fn count_parse() {
+        let _ = PARSES.try_with(|p| p.set(p.get() + 1));
+    }
+
+    /// Parses done on this thread so far (tests only).
+    #[cfg(test)]
+    pub(super) fn parses() -> usize {
+        PARSES.try_with(std::cell::Cell::get).unwrap_or(0)
+    }
+
+    /// Empties this thread's cache (tests only).
+    #[cfg(test)]
+    pub(super) fn clear() {
+        let _ = CACHE.try_with(|c| c.borrow_mut().clear());
+    }
+}
+
+impl NumberFormat {
+    /// Like [`NumberFormat::parse`], but remembers recently parsed codes (per thread, bounded) so
+    /// formatting many values with one code parses it once. Same result as `parse`.
+    pub fn parse_cached(code: &str) -> NumberFormat {
+        parse_cache::get(code)
+    }
+}
+
 /// The `TEXT()` worksheet function: formats a value with a format code. Numeric text is
 /// converted to a number first; other text and booleans (as `TRUE`/`FALSE`) go through the text
 /// section, or are returned as is.
@@ -302,7 +376,7 @@ pub fn text_function(v: &Value, code: &str, sys: DateSystem) -> Result<String, C
     if code.is_empty() {
         return Ok(String::new());
     }
-    let fmt = NumberFormat::parse(code);
+    let fmt = NumberFormat::parse_cached(code);
     let n = match v.scalar() {
         Value::Error(e) => return Err(e),
         Value::Empty => 0.0,

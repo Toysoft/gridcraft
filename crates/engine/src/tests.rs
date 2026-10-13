@@ -1059,6 +1059,36 @@ fn tables_and_structured_refs() {
 }
 
 #[test]
+fn structured_refs_to_columns_with_edge_spaces() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["Item", "Qty "], ["a", 2], ["b", 3]]})).unwrap();
+    s.execute("insert.table", json!({"range": "A1:B3", "hasHeaders": true})).unwrap();
+    s.execute("table.totalRow", json!({"on": true, "table": "Table1"})).unwrap();
+    assert_eq!(v(&s, "B4"), Value::Number(5.0));
+    for (cell, input) in [
+        ("F1", "=SUM(Table1[Qty ])"),
+        ("F2", "=Table1[[#Totals],[Qty ]]"),
+        ("F3", "=SUBTOTAL(109,Table1[Qty ])"),
+        ("F4", "=SUM(Table1[[Qty ]])"),
+        ("F5", "=SUM(Table1[Qty])"),
+        ("C2", "=Table1[@[Qty ]]*10"),
+    ] {
+        s.execute("cell.set", json!({"cell": cell, "input": input})).unwrap();
+    }
+    let n = Value::Number;
+    assert_eq!([v(&s, "F1"), v(&s, "F2"), v(&s, "F3"), v(&s, "F4")], [n(5.0), n(5.0), n(5.0), n(5.0)]);
+    assert_eq!(v(&s, "F5"), Value::Error(gridcraft_core::CellError::Ref));
+    assert_eq!(v(&s, "C2"), n(20.0));
+    assert_eq!(s.execute("cell.get", json!({"cell": "F3"})).unwrap()["formula"], "=SUBTOTAL(109,Table1[[Qty ]])");
+
+    let r = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap();
+    let b64 = r["base64"].as_str().unwrap().to_string();
+    s.execute("file.open", json!({"name": "x.xlsx", "base64": b64})).unwrap();
+    assert_eq!(s.execute("cell.get", json!({"cell": "F3"})).unwrap()["formula"], "=SUBTOTAL(109,Table1[[Qty ]])");
+    assert_eq!([v(&s, "F1"), v(&s, "F2"), v(&s, "F3")], [n(5.0), n(5.0), n(5.0)]);
+}
+
+#[test]
 fn table_rename_keeps_a_defined_name_with_the_same_name() {
     let mut s = s();
     s.execute("range.setValues", json!({"range": "A1", "values": [["Qty"], [7]]})).unwrap();
@@ -3011,6 +3041,22 @@ fn a_decrypted_workbook_never_overwrites_its_encrypted_original() {
     assert!(s.take_ui_requests().iter().any(|r| matches!(r, crate::UiRequest::Dialog(name, _) if name == "saveAs")));
     assert_eq!(std::fs::read(&path).unwrap(), bytes, "the encrypted original is untouched");
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn subtotal_109_recalculates_when_row_height_or_autofit_reveals_rows() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [[1], [2], [4], [8]]})).unwrap();
+    s.execute("cell.set", json!({"cell": "C1", "input": "=SUBTOTAL(109,A1:A4)"})).unwrap();
+    s.execute("home.hideRows", json!({"rows": "2:3"})).unwrap();
+    assert_eq!(v(&s, "C1"), Value::Number(9.0));
+    // A non-zero height unhides the rows (the fuzz found the stale SUBTOTAL).
+    s.execute("home.rowHeight", json!({"rows": "2:3", "height": 60.0})).unwrap();
+    assert_eq!(v(&s, "C1"), Value::Number(15.0));
+    s.execute("home.hideRows", json!({"rows": "2:3"})).unwrap();
+    assert_eq!(v(&s, "C1"), Value::Number(9.0));
+    s.execute("home.autofitRowHeight", json!({"rows": "2:3"})).unwrap();
+    assert_eq!(v(&s, "C1"), Value::Number(15.0));
 }
 
 #[test]

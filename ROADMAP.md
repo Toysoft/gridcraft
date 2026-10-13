@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~25 points of "ready for real work" and ~160–240 h away
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (direct desktop printing through craft-print) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (editable ink survives XLSX saves) · **Target:** Microsoft Excel (Microsoft 365)
 
 GridCraft aims at full Microsoft Excel parity, and at being better in places: faster, open (XLSX
 is the native format), fully scriptable by agents (MCP, control channel, CLI), and on the web.
@@ -135,6 +135,14 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
+| 2026-10-12 | CSV and tab-separated export is capped at 512 MiB: a sheet whose used range would expand to more (two cells far apart, such as A1 and XFD1048576, are 16 GiB of commas) is refused with the rows, columns and limit, before anything is allocated or written (#528) |
+| 2026-10-12 | PDF writer hardening: text width cannot overflow, all-zero dash arrays and negative or NaN stroke widths are sanitised, non-finite sizes and positions draw nothing (#812) |
+| 2026-10-12 | PDF export writes the document title and author as UTF-16BE when they are not ASCII, so viewers show accents, currency signs and non-Latin text correctly (#813) |
+| 2026-10-12 | `TEXT()` over a range and chart labels parse each number format code once instead of once per value (#806) |
+| 2026-10-12 | SUBTOTAL(109) over hidden rows recalculates after Row Height, AutoFit Row Height and Ungroup reveal rows (found by the command-sequence fuzz) |
+| 2026-10-12 | Page Layout view: drag the margin edges on the rulers to set the page margins (resize cursor, live preview, value tooltip, one undo step, Esc cancels) (#792) |
+| 2026-10-12 | Forecast Sheet gets Forecast Start: begin the forecast inside the history to compare it with the actuals (#785) |
+| 2026-10-12 | Ink strokes save as unfilled DrawingML paths and reopen as editable ink with their points, colour and width; icons in #551 remain a follow-up |
 | 2026-10-12 | The selection outline stays visible when extended to the last row (Ctrl+Shift+Down): its sides are cut to the viewport instead of stroking a 20-million-point rectangle (#687) |
 | 2026-10-12 | File › Print selects a system printer, copies, duplex and grayscale, submits PDF jobs through craft-print on a worker and shows spooler errors; browser printing and PDF export remain available |
 | 2026-10-11 | Formulas in German, Brazilian Portuguese and Russian, and the full Spanish table: 403–459 local function names per language, local booleans, errors and table specifiers, each language's separators, Unicode autocomplete and Insert Function search; files and APIs keep English |
@@ -183,6 +191,9 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | trivial | Progress log: CSV export size cap (#528) |
+| 2026-10-12 | minor | Progress log: margins dragged on the Page Layout rulers (#792) |
+| 2026-10-12 | minor | Ink preservation across XLSX save/reopen (ink portion of #551) |
 | 2026-10-12 | minor | Desktop File > Print now discovers printers and submits PDF jobs through pinned craft-print with printer choice, copies, duplex and grayscale; browser printing and PDF export remain available. Remaining print parity includes page ranges and driver-specific tray/options UI; physical printer fidelity needs hardware validation. |
 | 2026-10-11 | minor | Languages: formulas follow the interface language in es, de, pt-BR and ru; progress log row |
 | 2026-10-11 | minor | Password-encrypted workbooks open (#11); progress log row |
