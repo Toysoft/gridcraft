@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (AutoFit reserves filter dropdown space, observed against Windows Excel) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (shared custom conditional-format controls and explicit default overrides) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Interaction, controls and feel, against Excel. Part of [target-app-parity.md](target-app-parity.md).
 **UI/UX fidelity: ~55% ready, 50–80 h** (estimated). Ribbon command coverage is measured
@@ -138,6 +138,16 @@ Seek, Scenario Manager, Data Analysis, Forecast Sheet and others exist. Missing 
 Solver, Power Query editor, Insert Object, Equation editor, Protect/Allow Edit Ranges,
 Workbook Links, Accessibility checker.
 
+Conditional Formatting's quick-rule dialogs include **Custom Format…**, with Number, Font,
+Border and Fill tabs, reusing Format Cells controls. Manage Rules can edit a rule’s format. Checked properties override the existing cell style; unchecked ones inherit.
+Font family/size, bold/italic/underline/strikethrough/vertical position, arbitrary RGB and palette
+colors, border styles/colors, patterned fills and custom number codes can be chosen. Explicit
+"off", automatic, no-fill, no-border and General overrides survive XLSX saving and reopening.
+The draft returns to the rule on OK or Cancel and does not format the worksheet directly.
+Inherited controls use the selected cell/table style. Invalid color text cannot be confirmed;
+rule edits retain ranges, priority and Stop If True, and reject a changed rule or another worksheet.
+Pattern fills retain the existing renderer's approximate blend; they are stored as full patterns.
+
 ## Accessibility
 
 AccessKit is enabled, but the grid, ribbon and dialogs are not exposed as an accessible tree with
@@ -160,6 +170,7 @@ scrollbar bugs 2–4 · pixel/feel pass against observed Excel 7–12.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Custom conditional-format editor and explicit default overrides |
 | 2026-10-11 | minor | AutoFit accounts for table and ordinary filter dropdowns, including low zoom; header text excludes the button area |
 | 2026-10-11 | minor | Outline band for grouped rows and columns, Show / Hide Detail on the Data tab, numpad navigation keys in shortcuts (#373) |
 | 2026-10-11 | minor | Shift+Space / Ctrl+Space no longer start an edit; Control+Space selects the column on Mac (#338) |
