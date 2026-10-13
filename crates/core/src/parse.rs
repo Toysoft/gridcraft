@@ -39,6 +39,16 @@ pub fn parse_input(s: &str, sys: DateSystem) -> Parsed {
     Parsed { value: Value::text(s), format: None }
 }
 
+/// Interprets a field read from a file (CSV import, Text to Columns): like [`parse_input`], except
+/// that a leading apostrophe is part of the text, as Excel keeps it (`'s-Hertogenbosch`, `'007`).
+/// Only typing uses the apostrophe to force text.
+pub fn parse_imported(s: &str, sys: DateSystem) -> Parsed {
+    if s.starts_with('\'') {
+        return Parsed { value: Value::text(s), format: None };
+    }
+    parse_input(s, sys)
+}
+
 /// Numeric text as arithmetic coerces it ("1,000", "50%", "$3", "1/2/2020", "10:00").
 pub fn parse_number_text(s: &str) -> Option<f64> {
     parse_number_text_in(s, DateSystem::D1900)
@@ -377,6 +387,10 @@ mod tests {
     fn texts_and_specials() {
         assert_eq!(p("hello").value, Value::text("hello"));
         assert_eq!(p("'123").value, Value::text("123"));
+        // Fields read from a file keep the apostrophe; typing uses it to force text.
+        assert_eq!(parse_imported("'123", DateSystem::D1900).value, Value::text("'123"));
+        assert_eq!(parse_imported("'s-Hertogenbosch", DateSystem::D1900).value, Value::text("'s-Hertogenbosch"));
+        assert_eq!(parse_imported("123", DateSystem::D1900).value, Value::Number(123.0));
         assert_eq!(p("true").value, Value::Bool(true));
         assert_eq!(p("#N/A").value, Value::Error(CellError::NA));
         assert_eq!(p("e").value, Value::text("e"));

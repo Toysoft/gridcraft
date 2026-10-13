@@ -837,7 +837,13 @@ fn text_to_columns(s: &mut Session, p: &Json) -> Result<Json> {
             }
         }
         for (c, t) in out {
-            let cell = super::edit::input_to_cell(&t, sheet, c, &mut cx.wb).unwrap_or(None);
+            // A leading apostrophe is part of the text here, as in Excel (typing uses it to force text).
+            let cell = if t.starts_with('\'') {
+                let style = cx.wb.sheet(sheet).map(|sh| sh.style_id(c)).unwrap_or_default();
+                Some(Cell { value: Value::text(t), formula: None, style })
+            } else {
+                super::edit::input_to_cell(&t, sheet, c, &mut cx.wb).unwrap_or(None)
+            };
             let shm = cx.sheet_mut(sheet)?;
             match cell {
                 Some(x) => shm.set_cell(c, x),
@@ -1498,5 +1504,20 @@ mod tests {
         assert_eq!(split_delimited("a,b,,c", &[','], false, '"'), ["a", "b", "", "c"]);
         assert_eq!(split_delimited("a,b,,c", &[','], true, '"'), ["a", "b", "c"]);
         assert_eq!(split_delimited("\"x,y\",z", &[','], false, '"'), ["x,y", "z"]);
+    }
+
+    #[test]
+    fn text_to_columns_keeps_a_leading_apostrophe() {
+        // Excel 365 keeps the apostrophe as part of the text (only typing uses it to force text).
+        // Typed with a doubled apostrophe, the cells hold `'s-Hertogenbosch,'007` and `'t Hooft,5`.
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("range.setValues", json!({"range": "A1", "values": [["''s-Hertogenbosch,'007"], ["''t Hooft,5"]]})).unwrap();
+        s.execute("data.textToColumns", json!({"range": "A1:A2", "delimiters": [","]})).unwrap();
+        let v = |s: &Session, a: &str| s.doc().unwrap().wb.sheet(0).unwrap().value(CellRef::parse(a).unwrap());
+        assert_eq!(v(&s, "A1"), Value::text("'s-Hertogenbosch"));
+        assert_eq!(v(&s, "B1"), Value::text("'007"));
+        assert_eq!(v(&s, "A2"), Value::text("'t Hooft"));
+        assert_eq!(v(&s, "B2"), Value::Number(5.0));
     }
 }

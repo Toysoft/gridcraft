@@ -37,7 +37,12 @@ fn values_and_formats() {
     let s = wb.sheet(0).unwrap();
     let st = wb.styles.get(s.cell(CellRef::new(0, 6)).unwrap().style);
     assert_ne!(st.num_fmt.as_str(), "General");
-    assert_eq!(v(&wb, 0, 8), Value::text("007"));
+    // A leading apostrophe is part of the field, as Excel keeps it (only typing uses it to force text).
+    assert_eq!(v(&wb, 0, 8), Value::text("'007"));
+    let wb4 = read_csv("City\n's-Hertogenbosch\n't Hooft\n'93".as_bytes(), &CsvOptions::default()).unwrap();
+    assert_eq!(v(&wb4, 1, 0), Value::text("'s-Hertogenbosch"));
+    assert_eq!(v(&wb4, 2, 0), Value::text("'t Hooft"));
+    assert_eq!(v(&wb4, 3, 0), Value::text("'93"));
     // 1904 dates differ from 1900 dates.
     let wb2 = read_csv(b"2026-03-04", &CsvOptions { date_system: DateSystem::D1904, ..Default::default() }).unwrap();
     assert_eq!(wb2.date_system, DateSystem::D1904);
