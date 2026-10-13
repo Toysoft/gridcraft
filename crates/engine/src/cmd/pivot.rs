@@ -1734,6 +1734,45 @@ mod tests {
     }
 
     #[test]
+    fn shares_and_running_totals_fill_intersections_without_data() {
+        // Region × Product, Sum of Units, laid out at E3 (rows 5-6 East/West, row 7 Grand Total;
+        // columns F Apple, G Pear, H Grand Total). Values as Excel 365 shows them.
+        let report = |rows: Json, show: &str| {
+            let mut s = Session::new();
+            s.new_workbook();
+            s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+            let p =
+                json!({"source": "Sheet1!$A$1:$C$4", "destination": "Sheet1!E3", "rows": ["Region"], "columns": ["Product"], "values": ["Units"]});
+            s.execute("insert.pivotTable", p).unwrap();
+            s.execute("pivot.valueSettings", json!({"field": "Units", "showAs": show})).unwrap();
+            s
+        };
+        let west_no_pear = json!([["Region", "Product", "Units"], ["East", "Apple", 10], ["East", "Pear", 5], ["West", "Apple", 20]]);
+        for show in ["percentOfGrandTotal", "percentOfColumnTotal", "percentOfRowTotal"] {
+            let s = report(west_no_pear.clone(), show);
+            assert_eq!(text(&s, "E6"), "West");
+            assert_eq!(val(&s, "G6"), Value::Number(0.0), "{show}");
+        }
+        let s = report(west_no_pear.clone(), "runningTotal");
+        assert_eq!(val(&s, "F6"), Value::Number(30.0));
+        assert_eq!(val(&s, "G6"), Value::Number(5.0), "carried forward");
+        assert_eq!(val(&s, "H6"), Value::Number(35.0));
+        // The grand total line of a running total stays empty.
+        assert_eq!(text(&s, "E7"), "Grand Total");
+        for c in ["F7", "G7", "H7"] {
+            assert_eq!(val(&s, c), Value::Empty, "{c}");
+        }
+        // Nothing before an empty first item: 0.
+        let east_no_pear = json!([["Region", "Product", "Units"], ["East", "Apple", 10], ["West", "Apple", 20], ["West", "Pear", 5]]);
+        let s = report(east_no_pear, "runningTotal");
+        assert_eq!(val(&s, "G5"), Value::Number(0.0));
+        assert_eq!(val(&s, "G6"), Value::Number(5.0));
+        // Shown normally, an empty intersection stays empty.
+        let s = report(west_no_pear, "normal");
+        assert_eq!(val(&s, "G6"), Value::Empty);
+    }
+
+    #[test]
     fn date_grouping_by_quarter_and_month() {
         let mut s = sales();
         s.execute("insert.pivotTable", json!({"rows": ["Date"], "values": ["Sales"]})).unwrap();

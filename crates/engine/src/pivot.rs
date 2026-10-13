@@ -1270,18 +1270,22 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
             let (Some(spec), Some(vi)) = (specs.get(*si), &line_vi) else { continue };
             let Some((_, vdef)) = vals.get(*vi) else { continue };
             let cp = spec.path.as_slice();
-            let Some(raw) = get(rp, cp, *vi) else { continue };
-            // Shown as a share or a running total, an item with only blank values counts as 0.
-            let raw = match (&raw, vdef.show_as) {
-                (Value::Empty, PivotShowAs::Normal | PivotShowAs::Rank) => raw,
-                (Value::Empty, _) => Value::Number(0.0),
-                _ => raw,
+            // Shown as a share or a running total, an intersection without records, or with only
+            // blank values, counts as 0 (Excel 365 shows 0 % and the carried running total there).
+            let counted = !matches!(vdef.show_as, PivotShowAs::Normal | PivotShowAs::Rank);
+            let raw = match get(rp, cp, *vi) {
+                Some(Value::Empty) if counted => Value::Number(0.0),
+                Some(v) => v,
+                None if counted => Value::Number(0.0),
+                None => continue,
             };
             let shown = match vdef.show_as {
                 PivotShowAs::Normal => raw,
                 PivotShowAs::PercentOfGrandTotal => ratio(raw, get(&[], &[], *vi)),
                 PivotShowAs::PercentOfColumnTotal => ratio(raw, get(&[], cp, *vi)),
                 PivotShowAs::PercentOfRowTotal => ratio(raw, get(rp, &[], *vi)),
+                // Excel leaves a running total's grand total line empty.
+                PivotShowAs::RunningTotal if line.kind == LineKind::Grand => Value::Empty,
                 PivotShowAs::RunningTotal => match (rp.first(), &raw) {
                     (Some(first), Value::Number(_)) => {
                         let mut acc = 0.0;
