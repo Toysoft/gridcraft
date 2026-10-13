@@ -263,7 +263,8 @@ pub(crate) fn paint_objects(app: &SheetApp, p: &Painter, geo: &Geo, wb: &Workboo
     let mut done = |start: egui::layers::ShapeIdx, rect: Rect| painted.push(PaintedObject { shapes: start.0..p.add(egui::Shape::Noop).0, rect });
     for sp in &sh.shapes {
         let r = anchor_rect(geo, sh, &sp.anchor);
-        if !r.intersects(p.clip_rect()) {
+        let clip_rect = r.expand(sp.ink.as_ref().map_or(0.0, |i| i.max_width() * 0.5 * geo.z));
+        if !clip_rect.intersects(p.clip_rect()) {
             continue;
         }
         let start = p.add(egui::Shape::Noop);
@@ -293,12 +294,14 @@ pub(crate) fn paint_objects(app: &SheetApp, p: &Painter, geo: &Geo, wb: &Workboo
                 p.add(PathShape::convex_polygon(vec![pos2(r.center().x, r.top()), r.right_bottom(), r.left_bottom()], fill, Stroke::new(1.0, line)));
             }
             ShapeKind::Ink => {
-                let w = gridcraft_engine::cmd::draw::ink_width(sp) * geo.z;
-                let pts: Vec<Pos2> =
-                    gridcraft_engine::cmd::draw::ink_points(sp).iter().map(|q| pos2(r.left() + q[0] * geo.z, r.top() + q[1] * geo.z)).collect();
-                if pts.len() >= 2 {
-                    let col = if w > 8.0 { line.gamma_multiply(0.45) } else { line };
-                    p.add(PathShape::line(pts, PathStroke::new(w, col)));
+                crate::ink_paint::paint_ink(p, sp, &wb.theme, r.left_top(), geo.z, false);
+                // While a lasso is being drawn, show what it would select.
+                let selected = match app.grid.ink_gesture {
+                    Some(crate::grid::InkGesture::Lasso) => app.grid.ink_preview.contains(&sp.id),
+                    _ => app.session.draw.selection.contains(&sp.id),
+                };
+                if selected {
+                    selection_frame(p, r);
                 }
                 label = false;
             }
@@ -387,6 +390,13 @@ pub(crate) fn paint_objects(app: &SheetApp, p: &Painter, geo: &Geo, wb: &Workboo
         }
     }
     paint_slicers(app, p, geo, wb, si, sh);
+    // The stroke being drawn, on top, placed like saved ink.
+    if let Some(sp) = &app.grid.ink_live {
+        let r = anchor_rect(geo, sh, &sp.anchor);
+        let start = p.add(egui::Shape::Noop);
+        crate::ink_paint::paint_ink(p, sp, &wb.theme, r.left_top(), geo.z, true);
+        done(start, r);
+    }
     painted
 }
 

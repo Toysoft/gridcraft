@@ -231,7 +231,8 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             let inner = card.shrink2(vec2(10.0, 6.0));
             ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
                 egui::ScrollArea::horizontal().scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
-                    ui.horizontal(|ui| {
+                    let align = if app.ui.ribbon_tab == "Draw" { egui::Align::Min } else { egui::Align::Center };
+                    ui.with_layout(egui::Layout::left_to_right(align), |ui| {
                         ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
                         match app.ui.ribbon_tab.as_str() {
                             "Home" => home(app, ui),
@@ -333,7 +334,7 @@ fn keytip(app: &SheetApp, ui: &Ui, sequence: &str, at: egui::Pos2) {
 }
 
 /// Paint the badge for a control that runs command `id`, when the armed prefix matches.
-fn control_keytip(app: &SheetApp, ui: &Ui, response: &egui::Response, id: &str) {
+pub(crate) fn control_keytip(app: &SheetApp, ui: &Ui, response: &egui::Response, id: &str) {
     if let Some(sequence) = keytip_table::control_badge(app.keytips.prefix().unwrap_or_default(), id) {
         keytip(app, ui, sequence, response.rect.center_bottom());
     }
@@ -1580,37 +1581,7 @@ fn insert(app: &mut SheetApp, ui: &mut Ui) {
 }
 
 fn draw(app: &mut SheetApp, ui: &mut Ui) {
-    let tool = app.session.draw_tool.clone();
-    let __k = big_button(ui, Icon::Shapes, "Select\nObjects", "Select and move ink and shapes", false);
-    control_keytip(app, ui, &__k, "draw.lasso");
-    if __k.clicked() {
-        act(app, "draw.lasso", json!({}));
-    }
-    sep(ui);
-    for (label, color) in [("Pen\nBlue", "#1F5FC9"), ("Pen\nBlack", "#000000"), ("Pen\nRed", "#D13B2F"), ("Highlighter", "#F2E33A")] {
-        let on = tool == "pen" && app.session.draw_color.eq_ignore_ascii_case(color);
-        let r = big_button(ui, Icon::Pen, label, "Draw with ink", false);
-        if on {
-            ui.painter().rect_stroke(r.rect, 5.0, Stroke::new(2.0, Tokens::get(ui.ctx()).accent), StrokeKind::Inside);
-        }
-        if r.clicked() {
-            let width = if label == "Highlighter" { 12.0 } else { 2.0 };
-            act(app, "draw.pen", json!({"on": !on, "color": color, "width": width}));
-        }
-    }
-    let er = big_button(ui, Icon::Eraser, "Eraser", "Erase ink strokes", false);
-    if tool == "eraser" {
-        ui.painter().rect_stroke(er.rect, 5.0, Stroke::new(2.0, Tokens::get(ui.ctx()).accent), StrokeKind::Inside);
-    }
-    if er.clicked() {
-        act(app, "draw.eraser", json!({}));
-    }
-    sep(ui);
-    let __k = big_button(ui, Icon::Shapes, "Ink to\nShape", "Convert the last ink stroke to a shape", false);
-    control_keytip(app, ui, &__k, "draw.inkToShape");
-    if __k.clicked() {
-        act(app, "draw.inkToShape", json!({}));
-    }
+    crate::draw_ribbon::show(app, ui);
 }
 
 fn page_layout(app: &mut SheetApp, ui: &mut Ui) {

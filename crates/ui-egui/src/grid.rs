@@ -14,6 +14,7 @@ use serde_json::json;
 use crate::SheetApp;
 use crate::editor::{EditState, REF_COLORS};
 use crate::theme::{self, Tokens};
+use gridcraft_engine::cmd::draw::DrawTool;
 
 pub const COL_HEADER_H: f32 = 21.0;
 /// Sheet units are 96-dpi pixels (as in XLSX); on screen one unit is drawn at this many points,
@@ -130,8 +131,16 @@ pub struct GridState {
     pub list_picker: Option<CellRef>,
     /// Open task pane: comments, watch, selection, formatChart.
     pub pane: Option<String>,
-    /// Ink stroke being drawn (sheet points).
+    /// Draw: the gesture in progress and its samples (sheet pixels, seconds).
+    pub ink_gesture: Option<InkGesture>,
     pub ink: Vec<[f32; 2]>,
+    pub ink_times: Vec<f64>,
+    /// What the lasso being drawn would select.
+    pub ink_preview: Vec<u32>,
+    /// The pen stroke being drawn, exactly as it will be saved.
+    pub ink_live: Option<gridcraft_engine::model::Shape>,
+    /// Dragging lasso-selected ink: the offset moved so far (sheet pixels).
+    pub ink_group_moved: Option<[f32; 2]>,
     /// Page ranges for Page Break Preview, cached per (doc uid, revision, sheet).
     pub pages: Option<((u64, u64, usize), Vec<(RangeRef, u32)>)>,
     pub header_menu: Option<(Pos2, bool)>,
@@ -175,6 +184,18 @@ impl WheelZoom {
         }
         w
     }
+}
+
+/// A Draw gesture, decided when the pointer goes down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InkGesture {
+    Pen,
+    Lasso,
+    /// Erasing: `undo_step` is the undo depth after this gesture's first erase, so the whole
+    /// gesture undoes as one step.
+    Erase {
+        undo_step: Option<usize>,
+    },
 }
 
 impl GridState {
@@ -750,8 +771,10 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
     }
     // Interaction.
     let previous_popups = (app.grid.filter_menu, app.grid.list_picker, app.grid.header_menu);
-    crate::paper_view::interact(app, ui, &resp, &geo, sh, &wb);
-    interact(app, ui, &resp, &geo, sh, &wb);
+    if !app.session.draw.trackpad {
+        crate::paper_view::interact(app, ui, &resp, &geo, sh, &wb);
+        interact(app, ui, &resp, &geo, sh, &wb);
+    }
     crate::text_box::show(app, ui, &geo, sh);
     if app.editor.as_ref().is_some_and(|e| !e.from_formula_bar) {
         in_cell_editor(app, ui, &geo, sh, &wb);
@@ -1846,48 +1869,25 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
         app.grid.hover_cell = in_cells.then(|| geo.cell_at(sh, p));
     }
 
-    // Draw tab tools: the pen records a stroke, the eraser deletes ink under the pointer.
-    if !app.session.draw_tool.is_empty() && in_cells {
-        ctx.set_cursor_icon(CursorIcon::Crosshair);
-        if app.session.draw_tool == "pen" {
-            if let Some(p) = pos
-                && resp.dragged()
-            {
-                // Through the cell under the pointer, so frozen panes and pages map right.
-                let c = geo.cell_at(sh, p);
-                let sx = sh.col_left(c.col) as f32 + (p.x - geo.x(sh, c.col)) / geo.z;
-                let sy = sh.row_top(c.row) as f32 + (p.y - geo.y(sh, c.row)) / geo.z;
-                app.grid.ink.push([sx, sy]);
-            }
-            if !app.grid.ink.is_empty() {
-                // Live preview.
-                let pts: Vec<Pos2> = app
-                    .grid
-                    .ink
-                    .iter()
-                    .map(|q| {
-                        let (col, row) = (sh.col_at(q[0].max(0.0) as f64), sh.row_at(q[1].max(0.0) as f64));
-                        geo.mirror_pos(pos2(
-                            geo.x(sh, col) + (q[0] - sh.col_left(col) as f32) * geo.z,
-                            geo.y(sh, row) + (q[1] - sh.row_top(row) as f32) * geo.z,
-                        ))
-                    })
-                    .collect();
-                ui.painter().add(egui::epaint::PathShape::line(pts, egui::epaint::PathStroke::new(2.0 * geo.z, Color32::from_rgb(0x1F, 0x5F, 0xC9))));
-            }
-            if resp.drag_stopped() && app.grid.ink.len() >= 2 {
-                let pts: Vec<[f32; 2]> = std::mem::take(&mut app.grid.ink);
-                let _ = app.run("draw.stroke", json!({"points": pts}));
-            }
+    if app.session.draw.tool != DrawTool::Select
+        && app.dialog.is_none()
+        && app.editor.is_none()
+        && ctx.memory(|m| m.focused()).is_none_or(|f| f == resp.id)
+    {
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            exit_draw(app);
+            app.selected_chart = None;
             return;
         }
-        if app.session.draw_tool == "eraser" && (primary_clicked || resp.dragged()) {
-            if let Some(p) = pos
-                && let Some(("shape", id, _)) = crate::chartview::hit(app, geo, sh, p)
-                && sh.shapes.iter().any(|s| s.id == id && s.kind == gridcraft_engine::model::ShapeKind::Ink)
-            {
-                let _ = app.run("object.delete", json!({"kind": "shape", "id": id}));
-            }
+        if has_ink_selection(app, sh) && ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
+            app.run_or_alert("draw.selection.delete", json!({}));
+            app.selected_chart = None;
+            return;
+        }
+    }
+    if !app.session.draw.trackpad && app.session.draw.tool != DrawTool::Select && (in_cells || app.grid.ink_gesture.is_some()) {
+        ctx.set_cursor_icon(CursorIcon::Crosshair);
+        if draw_input(app, ui, resp, geo, sh, &pointer, pos, in_cells, primary_clicked) {
             return;
         }
     }
@@ -1931,6 +1931,7 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
                 let a = object_anchor(sh, kind, id);
                 let resize = (p - rect.right_bottom()).length() < OBJECT_RESIZE_RADIUS;
                 if let Some(a) = a {
+                    app.grid.ink_group_moved = app.session.draw.selection.contains(&id).then_some([0.0, 0.0]);
                     app.grid.drag = Drag::Object { kind, id, start: p, orig: (a.cell, a.dx, a.dy, a.width, a.height), resize };
                 }
             }
@@ -2248,7 +2249,15 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
                     let nc = CellRef::new(sh.row_at(y0.max(0.0) as f64), sh.col_at(x0.max(0.0) as f64));
                     json!({"kind": kind, "id": id, "at": nc.a1(), "dx": x0.max(0.0) - sh.col_left(nc.col) as f32, "dy": y0.max(0.0) - sh.row_top(nc.row) as f32})
                 };
-                let _ = app.session.run("object.move", params);
+                if let Some(moved) = app.grid.ink_group_moved.filter(|_| !resize) {
+                    // Lasso-selected ink moves as a group, by what the pointer moved since last frame.
+                    let step = [d.x - moved[0], d.y - moved[1]];
+                    if step != [0.0, 0.0] && app.session.run("draw.selection.move", json!({"dx": step[0], "dy": step[1]})).is_ok() {
+                        app.grid.ink_group_moved = Some([d.x, d.y]);
+                    }
+                } else {
+                    let _ = app.session.run("object.move", params);
+                }
                 coalesce_last_undo(app);
             }
             Drag::None => {}
@@ -2366,6 +2375,150 @@ fn select_to_pointer(app: &mut SheetApp, geo: &Geo, sh: &Sheet, wb: &Workbook, p
         if let Some(d) = app.session.active_mut() {
             d.selection.anchor = anchor;
         }
+    }
+}
+
+/// Lasso-selected ink exists on this sheet.
+fn has_ink_selection(app: &SheetApp, sh: &Sheet) -> bool {
+    app.session.draw.selected_on(sh).next().is_some()
+}
+
+/// Leaves Draw mode (Escape): no tool, no trackpad, no ink selection, no gesture.
+fn exit_draw(app: &mut SheetApp) {
+    let d = &app.session.draw;
+    if d.tool != DrawTool::Select || d.trackpad || !d.selection.is_empty() {
+        let _ = app.session.run("draw.exit", json!({}));
+    }
+    end_ink_gesture(app);
+}
+
+fn end_ink_gesture(app: &mut SheetApp) {
+    let g = &mut app.grid;
+    g.ink_gesture = None;
+    g.ink.clear();
+    g.ink_times.clear();
+    g.ink_preview.clear();
+    g.ink_live = None;
+}
+
+/// Pointer input for the Draw tools; true when it consumed the event.
+#[allow(clippy::too_many_arguments)]
+fn draw_input(
+    app: &mut SheetApp,
+    ui: &egui::Ui,
+    resp: &egui::Response,
+    geo: &Geo,
+    sh: &Sheet,
+    pointer: &egui::PointerState,
+    pos: Option<Pos2>,
+    in_cells: bool,
+    primary_clicked: bool,
+) -> bool {
+    let ctx = ui.ctx().clone();
+    // Through the cell under the pointer, so frozen panes and pages map right.
+    let sheet_point = |p: Pos2| {
+        let c = geo.cell_at(sh, p);
+        [sh.col_left(c.col) as f32 + (p.x - geo.x(sh, c.col)) / geo.z, sh.row_top(c.row) as f32 + (p.y - geo.y(sh, c.row)) / geo.z]
+    };
+    let now = ctx.input(|i| i.time);
+    // The gesture is decided once, where the pointer went down.
+    if app.grid.ink_gesture.is_none() && in_cells && (resp.drag_started() || primary_clicked) {
+        let at = if resp.drag_started() { pointer.press_origin().map(|p| geo.mirror_pos(p)).or(pos) } else { pos };
+        let on_selection = at.and_then(|p| crate::chartview::hit(app, geo, sh, p)).is_some_and(|(_, id, _)| app.session.draw.selection.contains(&id));
+        app.grid.ink_gesture = match app.session.draw.tool {
+            DrawTool::Pen => Some(InkGesture::Pen),
+            // Dragging the selection moves it (the object drag below).
+            DrawTool::Lasso if !on_selection => Some(InkGesture::Lasso),
+            DrawTool::Eraser => Some(InkGesture::Erase { undo_step: None }),
+            _ => None,
+        };
+        if matches!(app.grid.ink_gesture, Some(InkGesture::Pen | InkGesture::Lasso))
+            && let Some(p) = at
+        {
+            app.grid.ink.push(sheet_point(p));
+            app.grid.ink_times.push(now);
+        }
+    }
+    let released = resp.drag_stopped() || ctx.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
+    match app.grid.ink_gesture {
+        Some(gesture @ (InkGesture::Pen | InkGesture::Lasso)) => {
+            let lasso = gesture == InkGesture::Lasso;
+            let paused = ctx.input(|i| i.key_down(egui::Key::Space));
+            if let Some(p) = pos.filter(|_| in_cells && !paused && resp.dragged()) {
+                let q = sheet_point(p);
+                if app.grid.ink.len() < 5000 && app.grid.ink.last().is_none_or(|last| (last[0] - q[0]).hypot(last[1] - q[1]) > 0.15) {
+                    app.grid.ink.push(q);
+                    app.grid.ink_times.push(now);
+                }
+            }
+            if lasso {
+                app.grid.ink_preview = gridcraft_engine::cmd::draw::lasso_candidates(sh, &app.grid.ink).unwrap_or_default();
+                let to_screen = |q: &[f32; 2]| {
+                    let (col, row) = (sh.col_at(q[0].max(0.0) as f64), sh.row_at(q[1].max(0.0) as f64));
+                    geo.mirror_pos(pos2(
+                        geo.x(sh, col) + (q[0] - sh.col_left(col) as f32) * geo.z,
+                        geo.y(sh, row) + (q[1] - sh.row_top(row) as f32) * geo.z,
+                    ))
+                };
+                let path = app.grid.ink.iter().map(to_screen).collect();
+                ui.painter().add(egui::epaint::PathShape::line(path, egui::epaint::PathStroke::new(1.0, Tokens::get(&ctx).accent)));
+            } else {
+                let input = gridcraft_engine::cmd::draw::StrokeInput {
+                    points: app.grid.ink.iter().map(|q| [q[0] as f64, q[1] as f64]).collect(),
+                    times: app.grid.ink_times.clone(),
+                    pressures: Vec::new(),
+                    smooth: true,
+                };
+                app.grid.ink_live = gridcraft_engine::cmd::draw::stroke_shape(sh, &app.session.draw, &input);
+            }
+            ctx.request_repaint();
+            if released {
+                let mut points = std::mem::take(&mut app.grid.ink);
+                let mut times = std::mem::take(&mut app.grid.ink_times);
+                end_ink_gesture(app);
+                if lasso {
+                    if points.len() >= 3 {
+                        let _ = app.run("draw.select", json!({"points": points}));
+                        app.selected_chart = app.session.draw.selection.first().copied();
+                    }
+                } else {
+                    // A click is a dot.
+                    if let (1, Some(&p)) = (points.len(), points.first()) {
+                        points.push(p);
+                        times.push(times.first().copied().unwrap_or(0.0) + 0.016);
+                    }
+                    if points.len() >= 2 {
+                        let _ = app.run("draw.stroke", json!({"points": points, "times": times, "smooth": true}));
+                    }
+                }
+            }
+            true
+        }
+        Some(InkGesture::Erase { undo_step }) => {
+            if let Some(p) = pos.filter(|_| in_cells && (resp.dragged() || resp.drag_started() || primary_clicked)) {
+                let undo_len = |app: &SheetApp| app.session.active().map_or(0, |d| d.undo.len());
+                let before = undo_len(app);
+                let q = sheet_point(p);
+                let _ = app.run("draw.erase", json!({"x": q[0], "y": q[1]}));
+                let after = undo_len(app);
+                if after > before {
+                    match undo_step {
+                        // Later erases in the same gesture fold into its first undo step.
+                        Some(step) if after == step + 1 => {
+                            if let Some(d) = app.session.active_mut() {
+                                d.undo.pop();
+                            }
+                        }
+                        _ => app.grid.ink_gesture = Some(InkGesture::Erase { undo_step: Some(after) }),
+                    }
+                }
+            }
+            if released {
+                end_ink_gesture(app);
+            }
+            true
+        }
+        None => false,
     }
 }
 
@@ -2660,8 +2813,10 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
                     }
                     Key::Tab => app.move_after_enter(0, if shift { -1 } else { 1 }),
                     Key::F2 => app.begin_edit(None, false),
+                    Key::Delete if has_ink_selection(app, sh) => app.run_or_alert("draw.selection.delete", json!({})),
                     Key::Delete if delete_selected_object(app, sh) => {}
                     Key::Delete => app.run_or_alert("edit.clearContents", json!({})),
+                    Key::Backspace if has_ink_selection(app, sh) => app.run_or_alert("draw.selection.delete", json!({})),
                     Key::Backspace if delete_selected_object(app, sh) => {}
                     Key::Backspace => {
                         // Excel for Mac: Delete clears the cell and starts editing it.
@@ -2671,6 +2826,7 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
                         }
                     }
                     Key::Escape => {
+                        exit_draw(app);
                         app.session.clipboard = None;
                         app.session.format_painter = None;
                     }
