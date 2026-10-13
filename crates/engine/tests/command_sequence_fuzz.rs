@@ -230,8 +230,8 @@ fn fail(step: usize, kind: &'static str, what: impl Into<String>) -> Failure {
 
 /// Two rich-text cells under the grades table (A11: the #774 repro's three colour forms; B11: a
 /// bold+size lead with a red tail), in the shapes of the XLSX `runs_roundtrip` test. Seeded
-/// straight into the model because no command edits runs yet; every edit, structural change and
-/// undo/redo round them must keep the side-table whole.
+/// straight into the model (the seeding itself is not a command); every edit, structural change
+/// and undo/redo round them must keep the side-table whole.
 fn seed_runs_cells(s: &mut Session) {
     let none = || RunFont { name: None, size: None, bold: None, italic: None, underline: None, strike: None, color: None, vert: None };
     let cells = [
@@ -284,7 +284,7 @@ impl Harness {
     fn new(sample: &str) -> Harness {
         let mut s = Session::new();
         // The `runs` fixture is the grades sample with two rich-text cells seeded into the model
-        // (samples are built from commands, and no command edits runs yet).
+        // (samples are built from commands, and the seeding is direct model manipulation).
         let opens = if sample == "runs" { "grades" } else { sample };
         s.execute("file.new", json!({"sample": opens})).expect("sample opens");
         if sample == "runs" {
@@ -781,6 +781,28 @@ fn chart_ids(wb: &Workbook) -> Vec<u32> {
     wb.sheets.iter().flat_map(|s| s.charts.iter().map(|c| c.id)).collect()
 }
 
+/// A `chars` form for the Font commands: a one-cell `range` (with its `sheet`) that holds plain
+/// text right now, and a `chars: [start, len]` window within the text's current length (never
+/// empty — zero-length ranges are rejected by design). `None` when no sheet has a plain-text
+/// cell; callers fall back to the range form rather than emit a guaranteed error.
+fn chars_params(rng: &mut Rng, wb: &Workbook) -> Option<Json> {
+    let texts: Vec<(usize, CellRef, &str)> = wb
+        .sheets
+        .iter()
+        .enumerate()
+        .flat_map(|(i, sh)| {
+            sh.cells.iter().filter_map(move |(c, cell)| {
+                let text = (cell.formula.is_none()).then(|| cell.value.as_text()).flatten()?;
+                (!text.is_empty()).then_some((i, c, text))
+            })
+        })
+        .collect();
+    let (sheet, at, text) = *texts.get(rng.below(texts.len()))?;
+    let n = text.chars().count() as i64;
+    let start = rng.below(n as usize) as i64;
+    Some(json!({"sheet": sheet, "range": at.a1(), "chars": [start, rng.int(1, n - start)]}))
+}
+
 /// Curated state-changing commands and their weights.
 const CURATED: &[(&str, usize)] = &[
     ("cell.set", 22),
@@ -800,6 +822,9 @@ const CURATED: &[(&str, usize)] = &[
     ("edit.autoFill", 2),
     ("edit.fillSeries", 1),
     ("home.bold", 1),
+    ("home.fontColor", 1),
+    ("home.underline", 1),
+    ("home.superscript", 1),
     ("home.fillColor", 1),
     ("home.numberFormat", 1),
     ("home.borders", 1),
@@ -897,6 +922,27 @@ fn curated_params(rng: &mut Rng, wb: &Workbook, id: &str) -> Json {
         }
         "edit.fillSeries" => json!({"range": near_range(rng).a1(), "type": rng.pick(&["linear", "growth", "autofill"]), "step": rng.int(-2, 3)}),
         "home.bold" => json!({"range": range(rng)}),
+        "home.fontColor" => {
+            // The range form, or the run-level `chars` form on a plain-text cell.
+            if rng.chance(50)
+                && let Some(mut p) = chars_params(rng, wb)
+            {
+                p["color"] = json!(color(rng));
+                return p;
+            }
+            json!({"range": range(rng), "color": color(rng)})
+        }
+        "home.underline" | "home.superscript" => {
+            // Run-level: format a character range within one cell's text (`on` left to the
+            // all-covered rule half the time).
+            if let Some(mut p) = chars_params(rng, wb) {
+                if rng.chance(50) {
+                    p["on"] = json!(rng.chance(50));
+                }
+                return p;
+            }
+            json!({"range": range(rng)})
+        }
         "home.fillColor" => json!({"range": range(rng), "color": color(rng)}),
         "home.numberFormat" => json!({"range": range(rng), "format": rng.pick(&["Currency", "Percentage", "Short Date", "Text", "General"])}),
         "home.borders" => json!({"range": range(rng), "preset": rng.pick(&["all", "outside", "none", "thickBottom"])}),
