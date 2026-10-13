@@ -226,7 +226,6 @@ fn html_cell_css(wb: &Workbook, sh: &Sheet, c: CellRef) -> String {
 /// fields, in a fixed order, each declaration ending in `;`. The surrounding `<td>` already
 /// carries the cell-level style, so an all-`None` delta produces nothing (the run needs only
 /// its delta, never the merged font).
-#[allow(dead_code)] // wired into `range_html` by the next commit of this branch (issue #907) — remove then
 fn run_span_css(delta: &RunFont, wb: &Workbook) -> String {
     let mut css = String::new();
     if let Some(c) = &delta.color
@@ -311,23 +310,23 @@ pub(crate) fn range_html(wb: &Workbook, sheet: usize, r: RangeRef, plain_text: &
             // Use the visible selected cell, even when the merge's original anchor
             // is outside the range or hidden. This matches the plain-text copy.
             let text = crate::display::cell_text(wb, sh, c);
-            let mut chars = text.chars().peekable();
-            while let Some(ch) = chars.next() {
-                match ch {
-                    '&' => out.write_str("&amp;"),
-                    '<' => out.write_str("&lt;"),
-                    '>' => out.write_str("&gt;"),
-                    '"' => out.write_str("&quot;"),
-                    '\r' => {
-                        if chars.peek() == Some(&'\n') {
-                            chars.next();
-                        }
-                        out.write_str("<br>")
+            // Rich runs become spans inside the cell. Runs that don't line up with the displayed
+            // text copy flat — never partial spans — as does a cell without runs.
+            let rich: Option<Vec<(&str, String)>> = sh.cell_runs.get(&c).filter(|runs| runs.valid_for(&text)).and_then(|runs| {
+                runs.runs.iter().enumerate().map(|(i, run)| Some((runs.run_text(&text, i)?, run_span_css(&run.font, wb)))).collect()
+            });
+            if let Some(spans) = rich {
+                for (segment, css) in spans {
+                    if !css.is_empty() {
+                        write!(out, "<span style=\"{css}\">").ok()?;
                     }
-                    '\n' => out.write_str("<br>"),
-                    _ => out.write_char(ch),
+                    esc_html(&mut out, segment).ok()?;
+                    if !css.is_empty() {
+                        out.write_str("</span>").ok()?;
+                    }
                 }
-                .ok()?;
+            } else {
+                esc_html(&mut out, &text).ok()?;
             }
             out.write_str("</td>").ok()?;
         }
@@ -348,6 +347,29 @@ impl std::fmt::Write for ClipboardHtml {
         self.0.push_str(s);
         Ok(())
     }
+}
+
+/// Escapes `s` into `out` as cell text: `&`, `<`, `>`, `"` as entities, `\r\n` and `\n` as `<br>`.
+/// Shared by the flat and rich-run paths, so the budget aborts the whole copy either way.
+fn esc_html(out: &mut ClipboardHtml, s: &str) -> std::fmt::Result {
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '&' => out.write_str("&amp;"),
+            '<' => out.write_str("&lt;"),
+            '>' => out.write_str("&gt;"),
+            '"' => out.write_str("&quot;"),
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                out.write_str("<br>")
+            }
+            '\n' => out.write_str("<br>"),
+            _ => out.write_char(ch),
+        }?;
+    }
+    Ok(())
 }
 
 /// A sheet as a standalone HTML table (Save as Web Page).
@@ -482,6 +504,8 @@ pub fn image_size(data: &[u8]) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gridcraft_core::{CellRef, Value};
+    use gridcraft_model::{Cell, CellRuns, MAX_RUNS_PER_CELL, Run, StyleId};
     use gridcraft_model::{Color, RunFont, Underline, VertAlign};
 
     #[test]
@@ -703,5 +727,91 @@ mod tests {
         let wb = Workbook::new();
         let delta = RunFont { name: Some("Bad\"Name&".into()), ..RunFont::default() };
         assert_eq!(run_span_css(&delta, &wb), "font-family:\"Bad&quot;Name&amp;\";");
+    }
+
+    /// Seeds a rich-text cell straight into the model, the way the XLSX reader does.
+    fn rich_cell(text: &str, runs: Vec<(u32, u32, RunFont)>) -> Workbook {
+        let mut wb = Workbook::new();
+        let sh = wb.sheet_mut(0).unwrap();
+        let c = CellRef::new(0, 0);
+        sh.cells.set(c, Cell { value: Value::text(text), formula: None, style: StyleId::DEFAULT });
+        sh.cell_runs.insert(c, CellRuns { runs: runs.into_iter().map(|(start, len, font)| Run { start, len, font }).collect() });
+        wb
+    }
+
+    #[test]
+    fn range_html_wraps_each_run_in_a_span() {
+        let plain = RunFont::default();
+        let red = RunFont { color: Some(Color::rgb(255, 0, 0)), ..RunFont::default() };
+        let text = "plain red plain";
+        let wb = rich_cell(text, vec![(0, 6, plain.clone()), (6, 3, red), (9, 6, plain)]);
+        let html = range_html(&wb, 0, RangeRef::cell(CellRef::new(0, 0)), text).unwrap();
+        assert!(html.contains(">plain <span style=\"color:#FF0000;\">red</span> plain</td>"), "got: {html}");
+    }
+
+    #[test]
+    fn range_html_drops_runs_that_do_not_match_the_text() {
+        // A gap: runs cover 0..6 and 7..12 of a 12-byte text.
+        let text = "plain red plain";
+        let wb = rich_cell(text, vec![(0, 6, RunFont::default()), (7, 5, RunFont::default())]);
+        let html = range_html(&wb, 0, RangeRef::cell(CellRef::new(0, 0)), text).unwrap();
+        assert!(!html.contains("<span"), "misaligned runs must copy flat, got: {html}");
+        assert!(html.contains(">plain red plain</td>"));
+    }
+
+    #[test]
+    fn range_html_keeps_escapes_and_line_breaks_inside_runs() {
+        let text = "a<b&\nc";
+        let red = RunFont { color: Some(Color::rgb(255, 0, 0)), ..RunFont::default() };
+        let wb = rich_cell(text, vec![(0, 6, red)]);
+        let html = range_html(&wb, 0, RangeRef::cell(CellRef::new(0, 0)), text).unwrap();
+        assert!(html.contains("<span style=\"color:#FF0000;\">a&lt;b&amp;<br>c</span>"), "got: {html}");
+    }
+
+    #[test]
+    fn range_html_emits_no_spans_for_uniform_runs() {
+        let text = "plain red plain";
+        let wb = rich_cell(text, vec![(0, 6, RunFont::default()), (6, 3, RunFont::default()), (9, 6, RunFont::default())]);
+        let html = range_html(&wb, 0, RangeRef::cell(CellRef::new(0, 0)), text).unwrap();
+        assert!(!html.contains("<span"), "all-None deltas copy byte-identical to flat, got: {html}");
+    }
+
+    #[test]
+    fn range_html_handles_multibyte_run_boundaries() {
+        let text = "日本語"; // three 3-byte chars
+        let red = RunFont { color: Some(Color::rgb(255, 0, 0)), ..RunFont::default() };
+        let wb = rich_cell(text, vec![(0, 3, RunFont::default()), (3, 3, red), (6, 3, RunFont::default())]);
+        let html = range_html(&wb, 0, RangeRef::cell(CellRef::new(0, 0)), text).unwrap();
+        assert!(html.contains(">日<span style=\"color:#FF0000;\">本</span>語</td>"), "got: {html}");
+    }
+
+    #[test]
+    fn range_html_survives_the_run_count_cap() {
+        let text = "a".repeat(MAX_RUNS_PER_CELL);
+        let red = RunFont { color: Some(Color::rgb(255, 0, 0)), ..RunFont::default() };
+        let runs: Vec<(u32, u32, RunFont)> = (0..MAX_RUNS_PER_CELL).map(|i| (i as u32, 1, red.clone())).collect();
+        let wb = rich_cell(&text, runs);
+        let html = range_html(&wb, 0, RangeRef::cell(CellRef::new(0, 0)), &text).unwrap();
+        assert_eq!(html.matches("<span").count(), MAX_RUNS_PER_CELL);
+    }
+
+    #[test]
+    fn range_html_keeps_a_plain_cell_flat() {
+        // No runs entry at all: output identical to today's flat format.
+        let mut wb = Workbook::new();
+        wb.sheet_mut(0).unwrap().cells.set(CellRef::new(0, 0), Cell { value: Value::text("Ada"), formula: None, style: StyleId::DEFAULT });
+        let html = range_html(&wb, 0, RangeRef::cell(CellRef::new(0, 0)), "Ada").unwrap();
+        assert!(!html.contains("<span"));
+        assert!(html.contains("white-space:pre-wrap;"));
+        assert!(html.contains(">Ada</td>"));
+    }
+
+    #[test]
+    fn range_html_maps_single_accounting_like_single_and_ignores_strike_false() {
+        let text = "account";
+        let delta = RunFont { underline: Some(Underline::SingleAccounting), strike: Some(false), ..RunFont::default() };
+        let wb = rich_cell(text, vec![(0, 7, delta)]);
+        let html = range_html(&wb, 0, RangeRef::cell(CellRef::new(0, 0)), text).unwrap();
+        assert!(html.contains("<span style=\"text-decoration:underline;\">account</span>"), "got: {html}");
     }
 }
