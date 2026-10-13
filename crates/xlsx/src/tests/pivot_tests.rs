@@ -125,7 +125,7 @@ fn workbook() -> Workbook {
         source: "SalesTbl".into(),
         anchor: at("K4"),
         rows: vec![
-            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Years, sort: PivotSort::None, collapsed_items: vec!["2024".into()] },
+            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Years, sort: PivotSort::Desc, collapsed_items: vec!["2024".into()] },
             PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Months, sort: PivotSort::Asc, collapsed_items: vec![] },
         ],
         columns: vec![PivotField { sort: PivotSort::Desc, ..field("Product") }],
@@ -592,6 +592,32 @@ fn two_values_without_column_fields_hide_the_values_row() {
     // Read back unchanged.
     let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
     assert_eq!(back.sheet(1).unwrap().pivots[2], wb.sheet(1).unwrap().pivots[2]);
+}
+
+#[test]
+fn date_groups_sorted_ascending_are_written_without_sort_type() {
+    // Excel sorts the labels of a day group with sortType="ascending" as text (1-Aug before
+    // 1-Jan); without the attribute it keeps the items' date order. A date group sorted ascending
+    // is written without it and read back as ascending; descending is still written.
+    let mut wb = workbook();
+    {
+        let p = wb.sheet_mut(1).unwrap().pivots.get_mut(1).unwrap();
+        p.rows[0].sort = PivotSort::None;
+        p.rows[1].date_group = PivotDateGroup::Days;
+    }
+    let bytes = write_xlsx(&wb).unwrap();
+    let t2 = String::from_utf8(unzip(&bytes).get("xl/pivotTables/pivotTable2.xml").unwrap().clone()).unwrap();
+    assert!(!t2.contains("sortType=\"ascending\""), "{t2}");
+    assert!(t2.contains("sortType=\"descending\""), "{t2}");
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    let rows = &back.sheet(1).unwrap().pivots[1].rows;
+    assert_eq!(rows[1].date_group, PivotDateGroup::Days);
+    assert_eq!(rows[1].sort, PivotSort::Asc);
+    // A date group has no source order in the file: it reads back in date order.
+    assert_eq!(rows[0].sort, PivotSort::Asc);
+    // Other fields keep sortType="ascending".
+    let t1 = String::from_utf8(unzip(&bytes).get("xl/pivotTables/pivotTable1.xml").unwrap().clone()).unwrap();
+    assert!(t1.contains("sortType=\"ascending\""), "{t1}");
 }
 
 #[test]

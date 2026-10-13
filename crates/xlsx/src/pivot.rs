@@ -913,6 +913,10 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
         s.push_str(" showAll=\"0\"");
         if let Some(af) = axis_field(i) {
             match af.sort {
+                // A date group's items are written in date order. Excel sorts the labels of a
+                // sortType="ascending" day group as text ("1-Aug" before "1-Jan"), so ascending is
+                // left to that order, as Excel writes a date group it hasn't been asked to sort.
+                PivotSort::Asc if af.date_group != PivotDateGroup::None => {}
                 PivotSort::Asc => s.push_str(" sortType=\"ascending\""),
                 PivotSort::Desc => s.push_str(" sortType=\"descending\""),
                 PivotSort::None => {}
@@ -1307,12 +1311,15 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
             let i = i as usize;
             let Some((name, group)) = field_ref(cx, cache, i) else { continue };
             let labels = cache.fields.get(i).map(|f| f.labels().to_vec()).unwrap_or_default();
-            let mut f = PivotField { source_col: name.clone(), date_group: group, sort: PivotSort::None, collapsed_items: vec![] };
+            // Without sortType a field keeps its items' order; for a date group that is the dates'
+            // order, which is ascending (the writer leaves the attribute out for it, as Excel does).
+            let unsorted = if group == PivotDateGroup::None { PivotSort::None } else { PivotSort::Asc };
+            let mut f = PivotField { source_col: name.clone(), date_group: group, sort: unsorted, collapsed_items: vec![] };
             if let Some(e) = pf(i) {
                 f.sort = match e.attr("sortType") {
                     Some("ascending") => PivotSort::Asc,
                     Some("descending") => PivotSort::Desc,
-                    _ => PivotSort::None,
+                    _ => unsorted,
                 };
                 let items = items_of(e);
                 let lab = |it: &El| it.attr_u32("x").and_then(|k| labels.get(k as usize)).cloned();
