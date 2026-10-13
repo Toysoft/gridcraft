@@ -506,12 +506,11 @@ impl PassHost<'_> {
         }
         self.taint |= outer_taint;
         // A blank cell shows as 0 in a formula's result, inside an array as well (`=A1:A3`,
-        // FILTER or SORT of a range with blanks). GROUPBY and PIVOTBY lay out blank cells
-        // of their own, which stay blank.
-        let keep_blanks = matches!(&*expr, Expr::Call(n, _) if matches!(n.as_str(), "GROUPBY" | "PIVOTBY"));
+        // FILTER or SORT of a range with blanks, a blank GROUPBY key). GROUPBY and PIVOTBY fill
+        // the cells they lay out without a value with empty text, which stays.
         let v = match v {
             Value::Array(a) => {
-                let a = if keep_blanks || !a.data.iter().any(|x| matches!(x, Value::Empty)) {
+                let a = if !a.data.iter().any(|x| matches!(x, Value::Empty)) {
                     a
                 } else {
                     let data = a.data.iter().map(|x| if matches!(x, Value::Empty) { Value::Number(0.0) } else { x.clone() }).collect();

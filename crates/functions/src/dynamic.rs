@@ -575,8 +575,9 @@ fn parse_agg(v: &Value) -> R<Agg> {
 }
 
 fn aggregate(f: Agg, vals: &[&Value]) -> Value {
+    // COUNTA counts every row of the group, blank value cells included, as Excel does.
     if f == Agg::CountA {
-        return Value::Number(vals.iter().filter(|v| !matches!(v, Value::Empty)).count() as f64);
+        return Value::Number(vals.len() as f64);
     }
     let mut xs = Vec::new();
     for v in vals {
@@ -698,6 +699,18 @@ fn key_row(a: &Array, r: usize) -> Vec<Value> {
     (0..a.cols).map(|c| a.get(r, c).cloned().unwrap_or(Value::Empty)).collect()
 }
 
+/// A key as GROUPBY / PIVOTBY show it: a blank key groups and sorts as blank (last) but shows as
+/// 0, as a reference to a blank cell does.
+fn shown_key(v: &Value) -> Value {
+    if matches!(v, Value::Empty) { Value::Number(0.0) } else { v.clone() }
+}
+
+/// The empty text Excel puts in the cells GROUPBY / PIVOTBY lay out without a value: the key
+/// cells beside a total, the corner, combinations without data.
+fn gap() -> Value {
+    Value::from("")
+}
+
 /// Distinct keys in first-seen order, then sorted (by `sort` = ±column index within the key; 0
 /// keeps all keys ascending).
 fn distinct_keys(keys: &[Vec<Value>], sort: i64) -> Vec<Vec<Value>> {
@@ -780,7 +793,7 @@ pub fn groupby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
         .drain(..)
         .map(|k| {
             let rows = groups.get(&row_key(&k)).cloned().unwrap_or_default();
-            let mut line = k;
+            let mut line: Vec<Value> = k.iter().map(shown_key).collect();
             line.extend(agg_row(&rows));
             line
         })
@@ -798,7 +811,7 @@ pub fn groupby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
         out.push(h);
     }
     let mut total_line = vec![Value::from("Total")];
-    total_line.resize(rf.cols, Value::Empty);
+    total_line.resize(rf.cols, gap());
     total_line.extend(agg_row(&p.rows));
     if total < 0 {
         out.push(total_line);
@@ -845,8 +858,9 @@ pub fn pivotby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
         cell.entry((row_key(r), row_key(c))).or_default().push(i);
     }
     let mut agg_cell = |rows: &[usize], against: &[&Value], c: usize| -> Value {
+        // Excel fills the row / column combinations without data with empty text.
         if rows.is_empty() {
-            return Value::from("");
+            return gap();
         }
         let vs: Vec<&Value> = rows.iter().filter_map(|&r| vals.get(r, c)).collect();
         agg(&vs, against)
@@ -876,26 +890,24 @@ pub fn pivotby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
     if height.saturating_mul(width) > MAX_CELLS {
         return Err(CellError::Num);
     }
-    // Excel fills the corner and the row / column combinations without data with empty text.
-    let gap = Value::from("");
     let mut out: Vec<Vec<Value>> = Vec::new();
     // Column header rows: one per column field, plus value names when several value columns.
     for level in 0..cf.cols {
-        let mut line = vec![gap.clone(); lead];
+        let mut line = vec![gap(); lead];
         for c in &cols {
             for _ in 0..vals.cols {
                 line.push(match c {
-                    Some(k) => k.get(level).cloned().unwrap_or(Value::Empty),
+                    Some(k) => k.get(level).map_or_else(gap, shown_key),
                     None if level == 0 => Value::from("Total"),
-                    None => Value::Empty,
+                    None => gap(),
                 });
             }
         }
         out.push(line);
     }
     if value_row {
-        let mut line: Vec<Value> = if p.show_headers { p.field_headers.iter().take(lead).cloned().collect() } else { vec![gap.clone(); lead] };
-        line.resize(lead, Value::Empty);
+        let mut line: Vec<Value> = if p.show_headers { p.field_headers.iter().take(lead).cloned().collect() } else { vec![gap(); lead] };
+        line.resize(lead, gap());
         for _ in &cols {
             line.extend(p.value_headers.iter().cloned());
         }
@@ -912,10 +924,10 @@ pub fn pivotby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
         .collect();
     let mut body_line = |r: Option<&Vec<Value>>| -> Vec<Value> {
         let mut line: Vec<Value> = match r {
-            Some(k) => k.clone(),
+            Some(k) => k.iter().map(shown_key).collect(),
             None => {
                 let mut l = vec![Value::from("Total")];
-                l.resize(lead, Value::Empty);
+                l.resize(lead, gap());
                 l
             }
         };

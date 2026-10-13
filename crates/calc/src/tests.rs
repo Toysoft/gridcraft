@@ -669,6 +669,34 @@ fn groupby_and_pivotby_aggregate_with_a_lambda() {
     assert_eq!([t.num("F32"), t.num("G32"), t.num("H32"), t.num("F33"), t.num("H33"), t.num("F34")], [0.125, 1.0, 0.3, 0.875, 0.7, 1.0]);
 }
 
+/// GROUPBY / PIVOTBY with blank cells, as Excel (Microsoft 365) showed them: COUNTA counts every
+/// row of a group, a blank key groups and sorts last but shows as 0, and the cells laid out
+/// without a value (beside the total, the corner) are empty text.
+#[test]
+fn groupby_and_pivotby_blank_keys_and_values() {
+    let mut t = T::new();
+    for (i, (k, v, c)) in [("a", "1", "x"), ("a", "", "y"), ("b", "3", "x"), ("", "4", "x"), ("b", "5", "y")].iter().enumerate() {
+        if !k.is_empty() {
+            t.set(&format!("A{}", i + 1), k);
+        }
+        if !v.is_empty() {
+            t.set(&format!("B{}", i + 1), v);
+        }
+        t.set(&format!("C{}", i + 1), c);
+    }
+    t.set("E1", "=GROUPBY(A1:A5,B1:B5,COUNTA)");
+    assert_eq!([t.get("E1"), t.get("E2"), t.get("E3"), t.get("E4")], [Value::from("a"), Value::from("b"), Value::Number(0.0), Value::from("Total")]);
+    assert_eq!([t.num("F1"), t.num("F2"), t.num("F3"), t.num("F4")], [2.0, 2.0, 1.0, 5.0]);
+    t.set("H1", "=GROUPBY(A1:A5,B1:B5,SUM)");
+    assert_eq!([t.num("I1"), t.num("I2"), t.num("H3"), t.num("I3"), t.num("I4")], [1.0, 8.0, 0.0, 4.0, 13.0]);
+    // Two key columns: the total's second key cell is empty text, not 0.
+    t.set("O1", "=GROUPBY(HSTACK(A1:A5,C1:C5),B1:B5,SUM)");
+    assert_eq!((t.get("O5"), t.get("P5"), t.num("Q5")), (Value::Number(0.0), Value::from("x"), 4.0));
+    assert_eq!((t.get("O6"), t.get("P6"), t.num("Q6")), (Value::from("Total"), Value::from(""), 13.0));
+    t.set("S1", "=PIVOTBY(A1:A5,C1:C5,B1:B5,SUM)");
+    assert_eq!((t.get("S1"), t.get("S4"), t.num("T4")), (Value::from(""), Value::Number(0.0), 4.0));
+}
+
 #[test]
 fn lambda_argument_count() {
     let mut t = T::new();
