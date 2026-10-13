@@ -3,6 +3,8 @@
 
 use egui::Color32;
 use gridcraft_engine::core::{CellRef, RangeRef};
+use gridcraft_engine::model::CellRuns;
+use serde_json::{Value as Json, json};
 
 /// Colours for references in a formula being edited (our own palette).
 pub const REF_COLORS: [Color32; 8] = [
@@ -23,11 +25,17 @@ pub struct EditState {
     pub locale: gridcraft_engine::formula::FormulaLocale,
     pub cell: CellRef,
     pub text: String,
+    /// Rich-text runs over `text` (byte ranges), translated through every text change; `None` is
+    /// flat text.
+    pub runs: Option<CellRuns>,
     /// Started by typing (Enter mode: arrows commit) rather than F2 (Edit mode: arrows move the caret).
     pub enter_mode: bool,
     pub from_formula_bar: bool,
     /// Caret position (char index), mirrored from the text widget.
     pub caret: usize,
+    /// The selection as char indices `(min, max)`, mirrored from the text widget; `None` when the
+    /// caret is not a selection.
+    pub sel: Option<(usize, usize)>,
     /// The reference most recently inserted by point mode (byte range) — arrows/clicks replace it.
     pub point: Option<(usize, usize)>,
     /// Where point mode's keyboard cursor is.
@@ -44,16 +52,18 @@ pub struct EditState {
 }
 
 impl EditState {
-    pub fn new(sheet: usize, cell: CellRef, text: String, enter_mode: bool, from_formula_bar: bool) -> EditState {
+    pub fn new(sheet: usize, cell: CellRef, text: String, enter_mode: bool, from_formula_bar: bool, runs: Option<CellRuns>) -> EditState {
         let caret = text.chars().count();
         EditState {
             sheet,
             locale: Default::default(),
             cell,
             text,
+            runs,
             enter_mode,
             from_formula_bar,
             caret,
+            sel: None,
             point: None,
             point_cell: None,
             autocomplete: vec![],
@@ -63,6 +73,13 @@ impl EditState {
             caret_to_end: true,
             completion: None,
         }
+    }
+
+    /// The single text-mutation point: translates the runs through the change (dropping them when
+    /// the result is flat) and replaces the text.
+    pub fn set_text(&mut self, new: String) {
+        self.runs = self.runs.take().and_then(|r| r.edited(&self.text, &new));
+        self.text = new;
     }
 
     pub fn is_formula(&self) -> bool {
@@ -99,7 +116,7 @@ impl EditState {
             _ => (caret_b, caret_b),
         };
         let (Some(a), Some(b)) = (self.text.get(..start), self.text.get(end..)) else { return };
-        self.text = format!("{a}{r}{b}");
+        self.set_text(format!("{a}{r}{b}"));
         let new_end = start + r.len();
         self.point = Some((start, new_end));
         self.caret = self.text.get(..new_end).map(|s| s.chars().count()).unwrap_or(0);
@@ -136,7 +153,7 @@ impl EditState {
         let wlen: usize = before.chars().rev().take_while(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '_').map(char::len_utf8).sum();
         let start = caret_b - wlen;
         let (Some(a), Some(b)) = (self.text.get(..start), self.text.get(caret_b..)) else { return false };
-        self.text = format!("{a}{name}({b}");
+        self.set_text(format!("{a}{name}({b}"));
         self.caret = self.text.get(..start + name.len() + 1).map(|s| s.chars().count()).unwrap_or(0);
         self.autocomplete.clear();
         self.caret_to_end = false;
@@ -191,6 +208,28 @@ impl EditState {
         }
         None
     }
+}
+
+/// The selection as a byte range on `ed.text`: `None` without a selection (caret only). Char
+/// indices map through `char_indices`; one at or past the end maps to the text end.
+pub fn sel_bytes(ed: &EditState) -> Option<std::ops::Range<usize>> {
+    let (from, to) = ed.sel?;
+    if from >= to {
+        return None;
+    }
+    let byte = |at: usize| ed.text.char_indices().nth(at).map(|(i, _)| i).unwrap_or(ed.text.len());
+    Some(byte(from)..byte(to))
+}
+
+/// The `cell.set` params committing `ed`: the cell, the text, and the runs when present.
+pub fn commit_params(ed: &EditState) -> Json {
+    let mut params = json!({ "cell": ed.cell.a1(), "input": ed.text });
+    if let Some(runs) = &ed.runs
+        && let Ok(value) = serde_json::to_value(runs)
+    {
+        params["runs"] = value;
+    }
+    params
 }
 
 /// References in formula text with their byte spans and colour index (same reference text ⇒
@@ -284,10 +323,21 @@ pub fn column_completion(sheet: &gridcraft_engine::model::Sheet, at: CellRef, ty
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gridcraft_engine::model::{CellRuns, Color, Run, RunFont};
+
+    /// Two runs over "black red": "black" bold, " red" red.
+    fn black_red_runs() -> CellRuns {
+        CellRuns {
+            runs: vec![
+                Run { start: 0, len: 5, font: RunFont { bold: Some(true), ..RunFont::default() } },
+                Run { start: 5, len: 4, font: RunFont { color: Some(Color::rgb(0xFF, 0, 0)), ..RunFont::default() } },
+            ],
+        }
+    }
 
     #[test]
     fn point_mode() {
-        let mut e = EditState::new(0, CellRef::new(0, 0), "=SUM(".into(), true, false);
+        let mut e = EditState::new(0, CellRef::new(0, 0), "=SUM(".into(), true, false, None);
         assert!(e.can_point());
         e.insert_ref("A1");
         assert_eq!(e.text, "=SUM(A1");
@@ -297,20 +347,68 @@ mod tests {
         e.caret += 1;
         e.point = None;
         assert!(e.can_point());
-        let e2 = EditState::new(0, CellRef::new(0, 0), "hello".into(), true, false);
+        let e2 = EditState::new(0, CellRef::new(0, 0), "hello".into(), true, false, None);
         assert!(!e2.can_point());
     }
 
     #[test]
     fn autocomplete_and_hints() {
         let names: Vec<String> = ["SUM", "SUMIF", "SUMPRODUCT", "AVERAGE"].iter().map(|s| s.to_string()).collect();
-        let mut e = EditState::new(0, CellRef::new(0, 0), "=su".into(), true, false);
+        let mut e = EditState::new(0, CellRef::new(0, 0), "=su".into(), true, false, None);
         e.update_autocomplete(&names);
         assert_eq!(e.autocomplete.len(), 3);
         assert!(e.accept_autocomplete());
         assert_eq!(e.text, "=SUM(");
-        let e = EditState::new(0, CellRef::new(0, 0), "=IF(A1>0,SUM(B1,".into(), true, false);
+        let e = EditState::new(0, CellRef::new(0, 0), "=IF(A1>0,SUM(B1,".into(), true, false, None);
         assert_eq!(e.current_function(), Some(("SUM".into(), 1)));
+    }
+
+    #[test]
+    fn set_text_translates_runs() {
+        let mut e = EditState::new(0, CellRef::new(0, 0), "black red".into(), true, false, Some(black_red_runs()));
+        e.set_text("blackx red".into());
+        assert!(e.runs.as_ref().is_some_and(|r| r.valid_for("blackx red")));
+        // The " red" run shifted past the inserted `x`.
+        assert_eq!(e.runs.as_ref().and_then(|r| r.runs.get(1)).map(|run| run.start), Some(6));
+    }
+
+    #[test]
+    fn set_text_delete_all_drops_runs() {
+        let mut e = EditState::new(0, CellRef::new(0, 0), "black red".into(), true, false, Some(black_red_runs()));
+        e.set_text(String::new());
+        assert!(e.runs.is_none());
+        assert!(e.text.is_empty());
+    }
+
+    #[test]
+    fn commit_params_includes_runs_when_present() {
+        let e = EditState::new(0, CellRef::new(0, 0), "black red".into(), true, false, Some(black_red_runs()));
+        let p = commit_params(&e);
+        assert_eq!(p.get("cell"), Some(&json!("A1")));
+        assert_eq!(p.get("input"), Some(&json!("black red")));
+        assert_eq!(p.get("runs").and_then(|r| r.get("runs")).and_then(|r| r.as_array()).map(|a| a.len()), Some(2));
+    }
+
+    #[test]
+    fn commit_params_omits_runs_when_none() {
+        let e = EditState::new(0, CellRef::new(0, 0), "black red".into(), true, false, None);
+        let p = commit_params(&e);
+        assert_eq!(p.get("cell"), Some(&json!("A1")));
+        assert_eq!(p.get("input"), Some(&json!("black red")));
+        assert!(p.get("runs").is_none());
+    }
+
+    #[test]
+    fn sel_bytes_maps_chars_to_bytes() {
+        let mut e = EditState::new(0, CellRef::new(0, 0), "é ok".into(), true, false, None);
+        e.sel = Some((1, 3));
+        assert_eq!(sel_bytes(&e), Some(2..4));
+    }
+
+    #[test]
+    fn sel_bytes_none_when_caret_only() {
+        let e = EditState::new(0, CellRef::new(0, 0), "é ok".into(), true, false, None);
+        assert_eq!(sel_bytes(&e), None);
     }
 
     #[test]

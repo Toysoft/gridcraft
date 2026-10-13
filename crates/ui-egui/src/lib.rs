@@ -779,7 +779,14 @@ impl SheetApp {
             Some(t) => (t, true),
             None => (current.clone(), false),
         };
-        let mut ed = editor::EditState::new(d.wb.active_sheet, at, text, replace, from_formula_bar);
+        // Rich-text runs join the edit when they describe the committed text value — and only
+        // when they describe exactly the text being edited (an F2 edit of a text cell); a typed
+        // replacement starts from different text, so it starts flat.
+        let runs = match sh.value(at) {
+            gridcraft_engine::core::Value::Text(t) => sh.cell_runs.get(&at).filter(|r| r.valid_for(&t)).cloned(),
+            _ => None,
+        };
+        let mut ed = editor::EditState::new(d.wb.active_sheet, at, text.clone(), replace, from_formula_bar, runs.filter(|r| r.valid_for(&text)));
         ed.locale = locale;
         if replace && !ed.is_formula() {
             ed.completion = editor::column_completion(sh, at, &ed.text);
@@ -790,7 +797,7 @@ impl SheetApp {
 
     /// Commits the edit; `then` moves the selection (dr, dc) afterwards.
     pub fn commit_edit(&mut self, dr: i64, dc: i64, array: bool, fill_selection: bool) -> bool {
-        let Some(ed) = self.editor.take() else { return true };
+        let Some(mut ed) = self.editor.take() else { return true };
         self.session.mode = gridcraft_engine::Mode::Ready;
         let text = match &ed.completion {
             Some(full) if full.to_lowercase().starts_with(&ed.text.to_lowercase()) => full.clone(),
@@ -806,6 +813,15 @@ impl SheetApp {
             }
             None => text,
         };
+        let mut params = editor::commit_params(&ed);
+        // Runs must describe exactly the committed text: a column completion or locale
+        // canonicalisation that changed it drops them and commits the final text instead (the
+        // engine refuses runs that don't match).
+        if text != ed.text {
+            ed.runs = None;
+            params["input"] = json!(text);
+        }
+        params["array"] = json!(array);
         // Data validation.
         if let Some(d) = self.session.active()
             && let Some((dv, msg)) = gridcraft_engine::cmd::data::check_validation(&d.wb, ed.sheet, ed.cell, &text)
@@ -819,11 +835,7 @@ impl SheetApp {
             }
             self.toast = Some((msg, now_ms()));
         }
-        let r = if fill_selection {
-            self.session.run("range.fill", json!({"input": text}))
-        } else {
-            self.session.run("cell.set", json!({"cell": ed.cell.a1(), "input": text, "array": array}))
-        };
+        let r = if fill_selection { self.session.run("range.fill", json!({"input": text})) } else { self.session.run("cell.set", params) };
         match r {
             Ok(_) => {
                 if dr != 0 || dc != 0 {

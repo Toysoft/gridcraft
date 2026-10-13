@@ -177,7 +177,9 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
         });
         if alt_enter {
             let b = ed.text.char_indices().nth(ed.caret).map(|(i, _)| i).unwrap_or(ed.text.len());
-            ed.text.insert(b, '\n');
+            let mut broken = ed.text.clone();
+            broken.insert(b, '\n');
+            ed.set_text(broken);
             ed.caret += 1;
             ed.caret_to_end = false;
             ed.sync_caret = true;
@@ -273,6 +275,9 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
         job.wrap.max_width = if multiline { wrap_width } else { f32::INFINITY };
         ui.fonts_mut(|f| f.layout_job(job))
     };
+    // The widget binds `&mut ed.text`, so the pre-edit text is snapshotted to translate the runs
+    // through whatever the widget writes into it.
+    let old = ed.text.clone();
     let edit = if multiline || ed.text.contains('\n') { TextEdit::multiline(&mut ed.text) } else { TextEdit::singleline(&mut ed.text) };
     let mut output = edit
         .id(id)
@@ -284,6 +289,11 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
         .event_filter(egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true })
         .show(ui);
     let resp = output.response.clone();
+    // The widget wrote into `ed.text` directly: keep the runs following it (they drop when the
+    // result is flat).
+    if ed.text != old {
+        ed.runs = ed.runs.take().and_then(|r| r.edited(&old, &ed.text));
+    }
     let synced = mine && (ed.request_focus || ed.sync_caret);
     if synced {
         if ed.request_focus {
@@ -291,6 +301,7 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
         }
         ed.request_focus = false;
         ed.sync_caret = false;
+        ed.sel = None;
         let cursor = egui::text::CCursor::new(ed.caret);
         output.state.cursor.set_char_range(Some(egui::text::CCursorRange::one(cursor)));
         output.state.store(ui.ctx(), id);
@@ -302,6 +313,10 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
     }
     if !synced && let Some(r) = output.cursor_range {
         ed.caret = r.primary.index.into();
+        // Mirror the widget's selection: char indices `(min, max)`; `None` when the caret is not
+        // a selection (the two ends are equal).
+        let (a, b): (usize, usize) = (r.primary.index.into(), r.secondary.index.into());
+        ed.sel = if a == b { None } else { Some((a.min(b), a.max(b))) };
     }
     if resp.changed() {
         ed.completion = None;
@@ -436,7 +451,7 @@ fn cycle_anchor(ed: &mut crate::editor::EditState) {
                 .collect::<Vec<_>>()
                 .join(":");
             let (Some(x), Some(y)) = (ed.text.get(..a), ed.text.get(b..)) else { return };
-            ed.text = format!("{x}{cycled}{y}");
+            ed.set_text(format!("{x}{cycled}{y}"));
             ed.caret = ed.text.get(..a + cycled.len()).map(|s| s.chars().count()).unwrap_or(ed.caret);
             ed.caret_to_end = false;
             ed.request_focus = true;
