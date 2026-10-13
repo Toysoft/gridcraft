@@ -94,7 +94,7 @@ and German (266–268 labels each, ~12% of ~2,200 strings; merged 10-10 in #31, 
 added 10-11), the
 interface follows the system language, and CJK, Thai and Hebrew text falls back to system fonts
 (#38). Dialogs, menus and messages are English. Formulas follow the interface language in
-Spanish, German, Brazilian Portuguese and Russian (function names, booleans, errors, table
+Spanish, German, Brazilian Portuguese, Russian and French (function names, booleans, errors, table
 specifiers and separators at the editor; files keep English: [formula-input.md](docs/formula-input.md));
 number formats are en-US only. PR #163 (German formulas and numbers) is open. Detail:
 [localization-parity.md](docs/localization-parity.md).
@@ -135,6 +135,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
+| 2026-10-13 | Formulas in French: 398 local function names, `VRAI`/`FAUX`, French errors and table specifiers, `;` arguments and `.` array columns; separators checked in French Excel 2013 (#191) |
 | 2026-10-12 | Rows auto-fit oversized fonts: opening a file and whole-row/column formatting grow non-custom rows to their tallest font (#833) |
 | 2026-10-12 | Number formats: parsing a format code is linear in its length (long runs of `[`, `,` or `/` no longer take quadratic time), and an unclosed `[` is a literal when splitting sections as well as when tokenizing (#810) |
 | 2026-10-12 | Number formats: a fraction denominator with 65,536 zeros no longer crashes; format codes are capped at 255 characters like Excel (longer codes display as General, `TEXT` gives `#VALUE!`) (#807) |
@@ -197,6 +198,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Languages: French formula table; progress log row |
 | 2026-10-12 | minor | Rows auto-fit oversized fonts on open and whole-row/column formatting (#833); progress log row |
 | 2026-10-12 | minor | Progress log: multi-area row/column delete (#758) |
 | 2026-10-12 | trivial | Progress log: XLSX chart sheets kept on save (#727) |

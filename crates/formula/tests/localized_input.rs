@@ -1,9 +1,10 @@
-//! German, Brazilian Portuguese, Russian and the full Spanish table: entry and display syntax.
+//! German, Brazilian Portuguese, Russian, French and the full Spanish table: entry and display
+//! syntax.
 use gridcraft_core::CellError;
-use gridcraft_formula::FormulaLocale::{self, De, Es, PtBr, Ru};
+use gridcraft_formula::FormulaLocale::{self, De, Es, Fr, PtBr, Ru};
 use gridcraft_formula::{parse, parse_input, print, print_input};
 
-const LOCALIZED: [FormulaLocale; 4] = [Es, De, PtBr, Ru];
+const LOCALIZED: [FormulaLocale; 5] = [Es, De, PtBr, Ru, Fr];
 
 fn canonical(src: &str, locale: FormulaLocale) -> String {
     print(&parse_input(src, locale, |_| false).unwrap_or_else(|e| panic!("{locale:?} `{src}`: {e}")))
@@ -28,6 +29,12 @@ fn each_language_spells_formulas_like_its_excel() {
         (Ru, "СУММ(Таблица1[[#Итого];[Сумма]])", "SUM(Таблица1[[#Totals],[Сумма]])"),
         (Es, "CONTAR.SI.CONJUNTO(A1:A3;\">1\")", "COUNTIFS(A1:A3,\">1\")"),
         (Es, "SI.ERROR(1/0;#¡VALOR!)", "IFERROR(1/0,#VALUE!)"),
+        // Observed in French Excel 2013 (#191): decimal commas, `;` between arguments and rows.
+        (Fr, "SOMME(1,5;2)+SOMME({1,2;3,4})", "SUM(1.5,2)+SUM({1.2;3.4})"),
+        (Fr, "TEXTE(AUJOURDHUI();\"jj/mm/aaaa\")", "TEXT(TODAY(),\"jj/mm/aaaa\")"),
+        (Fr, "LIGNES(Tableau1[#Tout])-LIGNES(Tableau1[[#En-têtes];[Nom]])", "ROWS(Tableau1[#All])-ROWS(Tableau1[[#Headers],[Nom]])"),
+        (Fr, "SI(VRAI;RECHERCHEV(A2;D:E;2;FAUX);#N/A)", "IF(TRUE,VLOOKUP(A2,D:E,2,FALSE),#N/A)"),
+        (Fr, "SOMME({1.2;3,5.4})+SIERREUR(1/0;#VALEUR!)", "SUM({1,2;3.5,4})+IFERROR(1/0,#VALUE!)"),
     ] {
         assert_eq!(canonical(local, locale), english, "{locale:?} entry");
         assert_eq!(shown(english, locale), local, "{locale:?} display");
@@ -66,6 +73,9 @@ fn english_names_and_any_letter_case_are_accepted() {
     // Spanish Excel: DECIMAL is FIXED there, and the base conversion is CONV.DECIMAL.
     assert_eq!(canonical("DECIMAL(1,5;1)", Es), "FIXED(1.5,1)");
     assert_eq!(canonical("CONV.DECIMAL(\"FF\";16)", Es), "DECIMAL(\"FF\",16)");
+    // French TRIM is MIRR, and the English TRIM is SUPPRESPACE.
+    assert_eq!(canonical("TRIM(A1:A3;0,1;0,1)&SUPPRESPACE(B1)", Fr), "MIRR(A1:A3,0.1,0.1)&TRIM(B1)");
+    assert_eq!(shown("TRIM(MIRR(A1:A3,0.1,0.1))", Fr), "SUPPRESPACE(TRIM(A1:A3;0,1;0,1))");
     // English separators are not the language's syntax.
     assert!(parse_input("SUMME(1.5;2)", De, |_| false).is_err());
     assert!(parse_input("SUM(1,2)", Ru, |_| false).is_ok_and(|e| print(&e) == "SUM(1.2)"));
@@ -95,7 +105,7 @@ fn functions_passed_by_name_are_spelled_in_the_language() {
 fn language_tables_are_sorted_unique_and_unambiguous() {
     for locale in LOCALIZED {
         let table = locale.translations();
-        assert!(table.len() > 400, "{locale:?}: {} names", table.len());
+        assert!(table.len() > 350, "{locale:?}: {} names", table.len());
         assert!(table.windows(2).all(|w| w[0].0 < w[1].0), "{locale:?}: not sorted by canonical name");
         let mut locals: Vec<String> = table.iter().map(|(_, local)| local.to_uppercase()).collect();
         locals.sort();

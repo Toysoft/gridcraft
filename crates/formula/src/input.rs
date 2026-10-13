@@ -11,12 +11,13 @@ use crate::{Expr, ParseError, parser};
 
 mod de;
 mod es;
+mod fr;
 mod pt;
 mod ru;
 
 /// Formula-entry syntax selected by the interface language. Interface languages without a
-/// formula table (Japanese, Chinese and Korean Excel use English names; Czech, French and Serbian
-/// have no table yet) use [`FormulaLocale::En`].
+/// formula table (Japanese, Chinese and Korean Excel use English names; Czech and Serbian have no
+/// table yet) use [`FormulaLocale::En`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FormulaLocale {
     #[default]
@@ -25,6 +26,7 @@ pub enum FormulaLocale {
     De,
     PtBr,
     Ru,
+    Fr,
 }
 
 /// One formula language's words and separators.
@@ -48,7 +50,7 @@ pub(crate) struct Dialect {
 const TABLE_ITEMS: [&str; 5] = ["#All", "#Data", "#Headers", "#Totals", "#This Row"];
 
 impl FormulaLocale {
-    pub const ALL: [Self; 5] = [Self::En, Self::Es, Self::De, Self::PtBr, Self::Ru];
+    pub const ALL: [Self; 6] = [Self::En, Self::Es, Self::De, Self::PtBr, Self::Ru, Self::Fr];
 
     fn dialect(self) -> Option<&'static Dialect> {
         match self {
@@ -57,6 +59,7 @@ impl FormulaLocale {
             Self::De => Some(&de::DIALECT),
             Self::PtBr => Some(&pt::DIALECT),
             Self::Ru => Some(&ru::DIALECT),
+            Self::Fr => Some(&fr::DIALECT),
         }
     }
 
