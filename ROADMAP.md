@@ -147,6 +147,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 | 2026-10-12 | Forecast Sheet gets Forecast Start: begin the forecast inside the history to compare it with the actuals (#785) |
 | 2026-10-12 | Ink strokes save as unfilled DrawingML paths and reopen as editable ink with their points, colour and width; icons in #551 remain a follow-up |
 | 2026-10-12 | The selection outline stays visible when extended to the last row (Ctrl+Shift+Down): its sides are cut to the viewport instead of stroking a 20-million-point rectangle (#687) |
+| 2026-10-12 | Draw: typed ink model (points, pen, effect) with legacy upgrade; Segment Eraser cuts at crossings; one undo step per eraser drag; live stroke matches the saved one; translucent ink in PDF and XLSX fallbacks; trackpad probed on first use |
 | 2026-10-12 | File › Print selects a system printer, copies, duplex and grayscale, submits PDF jobs through craft-print on a worker and shows spooler errors; browser printing and PDF export remain available |
 | 2026-10-11 | Command-sequence fuzzing: random command sequences checked against undo/redo, XLSX round-trip and full recalculation; fixes for the table, legacy-array, spill, AutoSum, Watch Window and sheet-copy bugs it found |
 | 2026-10-11 | Password-protected workbooks open: GridCraft asks for the password and decrypts Agile and Standard encryption (#11) |
@@ -182,6 +183,8 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 | 2026-10-11 | PivotCharts (`insert.pivotChart`): charts bound to a PivotTable's report, following refreshes and layout changes (#311) |
 | 2026-10-11 | FORECAST.ETS, FORECAST.ETS.CONFINT, FORECAST.ETS.SEASONALITY, FORECAST.ETS.STAT: AAA exponential smoothing forecasts (#314) |
 | 2026-10-11 | File tab Backstage view (Home, New, Open, Info, Save As, Print preview, Export, Options) and `file.options` (#174) |
+| 2026-10-11 | Draw fixes: physical trackpad capture with capability checks; uniform highlighter, stable erased effects, full-enclosure lasso preview and localized settings |
+| 2026-10-11 | Draw: native Excel InkML import/export, pressure thickness, smoothed speed-dependent strokes, editable pen gallery, colours/effects, erasers and lasso selection |
 | 2026-10-10 | Ribbon translated into Japanese, Chinese, Korean, Brazilian Portuguese and Russian with system-language default (#31, #104, #82); CJK/Thai/Hebrew font fallback (#38); clear messages for encrypted and `.xls` files (#17); smooth line charts (#62). Progress docs restructured to the craftrules standard; full re-measure (this page). Initial ribbon key tips (#43), in-place text box editing (#84), copy as HTML table (#36). ODS and XLSB data import (#100, #101); recalc linear in the number of range formulas (#66); RISC-V Linux build; Flatpak repository on Pages; web cell-commit trap fixed |
 | 2026-10-09 | Community fixes: spill range operator `A1#`, sheet-scoped names, protection refuses locked-cell edits, Insert/Delete Cells adjust references, `DATE(1900,2,29)`, SUMIF sizing, `ROUND` at 15 digits, `_xlpm.` LAMBDA parameters in XLSX, vertical scrollbar, system appearance, border previews; v0.4.0 |
 | 2026-10-08 | v0.2.0 and v0.3.0 releases; Flatpak, AppImage zsync, branded DMG; desktop log file; DirectX 12 default on Windows |
@@ -212,6 +215,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 | 2026-10-11 | minor | Catalog 258 → 259 / 290: Allow Edit Ranges (#307) |
 | 2026-10-11 | minor | Worksheet functions 505 / 523 (FORECAST.ETS family); progress log row |
 | 2026-10-11 | minor | Czech (cs) listed under other shipped languages: ribbon only, ~12% |
+| 2026-10-11 | minor | Draw import/export compatibility fix; readiness estimates unchanged |
 | 2026-10-10 | minor | Readiness-by-audience table with hours to ~95% per audience; full number unchanged (additive weighted sum) |
 | 2026-10-10 | minor | Added Mainstream practitioner (~50%) and Essentials user (~63%); languages updated for the 10-10 merges (ribbon in ja, zh, ko, pt-BR, ru); localization 5%→10%; full number re-checked (51.6, unchanged) |
 | 2026-10-10 | minor | Checked against the alpha gate (six core workflows pass): stays alpha |

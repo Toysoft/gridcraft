@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (XLSX chart sheets are kept on save (#727); previously minor: CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (native Excel InkML read/write; ink keeps its pen and effect in the DrawingML fallback; XLSX chart sheets are kept on save (#727); CSV save keeps the separator it was opened with; threaded comments and protected ranges preserved) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -81,6 +81,31 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 | CSV/text: encoding choice, `.prn`, `.dif`, `.slk`, XML Spreadsheet 2003 | 4–7 |
 | PDF: embed subsetted system fonts so every script exports | (counted in [localization](localization-parity.md) script work) |
 
+## Freehand drawings
+
+GridCraft writes native Excel archival InkML parts, `contentPart` relationships and an
+AlternateContent DrawingML fallback. InkML keeps centerlines, colour, fractional nominal
+width, force samples, pen/highlighter/pencil kind and the eight supported ink effects.
+On 2026-10-11 Excel for Mac opened a synthetic export without repair and its Stroke Eraser
+removed the stroke; Excel-save → GridCraft-import returned editable ink without duplicate
+fallback images. Excel may round force and nominal-width values when saving.
+
+The supplied Excel workbook imports 14 editable strokes. The bounded reader supports
+absolute and differential coordinates, channel ordering, local context/brush references,
+trace groups, physical resolution, force ranges and content-part positioning. Unsupported
+mappings, continuations, effects or damaged/oversized ink retain the image fallback with a
+warning. `ignorePressure` keeps width constant. DrawingML fallbacks preserve geometry;
+effect textures are original procedural approximations in GridCraft, not copied Excel artwork.
+The fallback's `urn:gridcraft:ink:v1` extension also keeps the pen kind and effect, and
+highlighter/pencil fallbacks are translucent, so a file whose InkML part was dropped still
+reads back as the same stroke. Ink read from one workbook is capped at two million points
+(many anchors can share one ink part). Workbook JSON written before ink had its own data
+(points as text, width in the fill colour) is upgraded on read. The 2026-10-12 writer change
+(no point rescaling, the extension on every fallback) has not yet been re-opened in Excel.
+Screen and PDF use the same bounded stroke geometry. These checks do not establish full
+Draw parity across all Excel versions or physical pen/trackpad hardware.
+Regression: `ink_exports_as_unfilled_geometry_and_roundtrips`, `tests/inkml.rs`, engine Draw tests.
+
 ## Revision history
 
 | Date | Change | Summary |
@@ -98,7 +123,12 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 | 2026-10-11 | minor | Password-encrypted workbooks open with their password (Agile and Standard encryption, #11) |
 | 2026-10-11 | minor | `.xls` (BIFF8) import: values, formulas, number formats, merges, sizes, names (#121) |
 | 2026-10-11 | minor | XLSX pass-through: custom XML, external links, connections, query tables, printer settings, form/ActiveX controls, OLE objects, sheet backgrounds kept on save (#330, #324) |
+| 2026-10-12 | minor | Ink fallback keeps pen kind/effect and translucency; workbook-wide ink point budget; legacy ink JSON upgraded on read |
+| 2026-10-11 | minor | Native Excel InkML export, effects and live speed/smoothing support |
 | 2026-10-11 | minor | XLSX: threaded comments and persons parts written (they came back as notes before); note visibility read from VML (#300) |
 | 2026-10-11 | minor | XLSX: Allow Edit Ranges (`protectedRanges`) read and written with their password hashes (#307) |
+| 2026-10-11 | minor | Added per-point pressure thickness, ignorePressure and XLSX/PDF preservation |
+| 2026-10-11 | minor | Added bounded Excel InkML import with editable strokes and image fallback |
+| 2026-10-11 | minor | Fixed ink export: coordinate text and filled rectangles replaced with freehand paths |
 | 2026-10-10 | minor | Encrypted and `.xls` files are now recognised and refused with a message (#17) |
 | 2026-10-10 | major | Created: every Excel format with our read/write support; XLSB and ODS values-only imports recorded; `.xls`, encryption and large files flagged as beta gates |

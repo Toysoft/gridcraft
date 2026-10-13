@@ -1,6 +1,6 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Format Cells dialog looks its labels up in the catalog) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Format Cells dialog looks its labels up in the catalog; Draw palette and capture labels in every supported interface language) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Per-language status against Excel, which ships its UI in dozens of languages (Windows language
 packs cover 100+), with localized function names, argument separators, number and date formats,
@@ -18,6 +18,7 @@ right-to-left sheets and full complex-script support. Part of
   dialog, every dialog title and the shared OK/Cancel buttons; the other dialogs, menus,
   context menus, task panes, status messages, command labels and function descriptions are still
   English literals. Untranslated labels fall back to English.
+- **Draw vocabulary** now covers pen kinds, erasers, colors/effects, custom-color picker and trackpad canvas/capability messages in all nine interface languages. IDs and workbook content are unchanged.
 - **About 2,200 user-visible strings** in all (heuristic source scan: ~1,700 UI and command
   strings plus ~500 function descriptions), so each shipped language covers **~12%** (measured
   count / estimated total).
@@ -80,6 +81,7 @@ language (none so far) and of localized function names.
 |---|---|---|
 | 2026-10-12 | minor | Format Cells looks up its tabs, labels, options and note through `Language::tr` (Fill tab keyed `Format Cells\|Fill`); dialog titles and OK/Cancel too. Labels already in a table (Number, Currency, Fill…) show translated; the rest fall back to English until the tables add them |
 | 2026-10-12 | minor | Brazilian Portuguese catalog (`i18n/pt.rs`) grows from 377 to 923 entries: every key the other catalogs translate, including the dialog strings #669 starts looking up (~42%) |
+| 2026-10-11 | minor | Draw toolbox, colors/effects, erasers and trackpad capture labels localized |
 | 2026-10-11 | minor | German ribbon catalog (`i18n/de.rs`, 266 labels, ~12%); `de` locale tags (de-DE, de-AT, de-CH…) resolve to German. PR #163 (localized German formulas/numbers) still open |
 | 2026-10-11 | minor | Sheet Right-to-Left mirrors the grid (#146) |
 | 2026-10-11 | minor | Czech (cs) ribbon table: 266 labels (~12%), menus only |

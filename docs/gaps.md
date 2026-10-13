@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (rows auto-fit oversized fonts on open and whole-row/column formatting) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-14 · **Change:** minor (Draw pressure/speed support, Force Touch pressure in Draw with Trackpad; hardware input gaps narrowed; previously: rows auto-fit oversized fonts) · **Target:** Microsoft Excel (Microsoft 365)
 
 Every known shortfall against Excel, one entry each, ranked by user impact (what blocks someone
 using GridCraft for real work first). This is the work list: pick from the top, check the open
@@ -146,7 +146,7 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
   **Estimate:** 15–23 h.
 
 ### 20. Multiple windows; pen pressure (H)
-- One window (#162, PR #171); no pressure or tilt in ink. **Estimate:** 10–14 h.
+- One window (#162, PR #171); live stylus pressure/tilt absent; native trackpad capture has capability-gated AppKit/evdev/HID paths, physical Windows/Linux verification pending; imported InkML pressure and speed-dependent thickness supported. **Estimate:** 10–14 h.
   [hardware-parity.md](hardware-parity.md)
 
 ### 21. Automation and add-ins (F)
