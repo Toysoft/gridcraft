@@ -527,12 +527,12 @@ pub enum ShapeKind {
     TextBox,
     /// An icon from GridCraft's own icon set; `Shape::text` holds the icon name.
     Icon,
-    /// A freehand ink stroke; `Shape::text` holds the points as `x,y;x,y;…` relative to the
-    /// anchor (sheet points), `Shape::line` the ink colour and `fill` unused.
+    /// A freehand ink stroke: `Shape::ink` holds it and `Shape::line` is its colour.
     Ink,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(from = "crate::ink::ShapeRepr")]
 pub struct Shape {
     pub id: u32,
     pub kind: ShapeKind,
@@ -543,6 +543,9 @@ pub struct Shape {
     /// Outline visibility and text formatting (DrawingML `a:ln`, `a:bodyPr`, `a:pPr`, `a:rPr`).
     #[serde(default)]
     pub format: ShapeFormat,
+    /// The stroke of a [`ShapeKind::Ink`] shape (`None` for every other kind).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ink: Option<crate::Ink>,
 }
 
 /// Horizontal alignment of a shape's text (`a:pPr algn`).
