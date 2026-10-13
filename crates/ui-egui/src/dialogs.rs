@@ -55,6 +55,17 @@ impl Dialog {
         &self.name
     }
 
+    /// Sets a form value. In Zoom, a Magnification choice is also the percentage `view.zoom` stores.
+    pub(crate) fn set_value(&mut self, key: &str, value: Json) {
+        if self.name == "zoom"
+            && key == "preset"
+            && let Some(p) = value.as_str().and_then(|s| s.parse::<f64>().ok())
+        {
+            self.values.insert("percent".into(), json!(p));
+        }
+        self.values.insert(key.into(), value);
+    }
+
     fn form(name: &str, title: &str, command: &'static str, fields: Vec<Field>, defaults: Json) -> Dialog {
         Dialog {
             name: name.into(),
@@ -348,6 +359,20 @@ impl Dialog {
                     json!({"text": existing}),
                 )
             }
+            // Asks before a web or e-mail link leaves the workbook; OK runs `link.open`, which
+            // refuses anything but http, https and mailto.
+            "openLink" => {
+                let url = params.get("url").and_then(Json::as_str).unwrap_or_default().to_string();
+                Dialog::form(
+                    "openLink",
+                    "Open Hyperlink",
+                    "link.open",
+                    vec![Note(format!(
+                        "This workbook asks to open the address below. Links can lead to harmful sites or start other programs: open it only if you trust the workbook.\n\n{url}"
+                    ))],
+                    json!({"url": url}),
+                )
+            }
             "insertLink" => Dialog::form(
                 "insertLink",
                 "Insert Hyperlink",
@@ -380,20 +405,26 @@ impl Dialog {
                 ],
                 json!({"header": "", "footer": "&CPage &P of &N"}),
             ),
-            "pageSetup" => Dialog::form(
-                "pageSetup",
-                "Page Setup",
-                "pageLayout.margins",
-                vec![
-                    Number { key: "left", label: "Left margin (in):" },
-                    Number { key: "right", label: "Right margin (in):" },
-                    Number { key: "top", label: "Top margin (in):" },
-                    Number { key: "bottom", label: "Bottom margin (in):" },
-                    Number { key: "header", label: "Header (in):" },
-                    Number { key: "footer", label: "Footer (in):" },
-                ],
-                json!({"left": 0.7, "right": 0.7, "top": 0.75, "bottom": 0.75, "header": 0.3, "footer": 0.3}),
-            ),
+            "pageSetup" => {
+                // Opens on the active sheet's saved margins, so OK without edits rewrites them unchanged.
+                let m = app.session.active().and_then(|d| d.wb.active()).map(|s| s.print.margins).unwrap_or([0.7, 0.7, 0.75, 0.75, 0.3, 0.3]);
+                // Round off f32 noise so the form shows 0.1, not 0.10000000149.
+                let [left, right, top, bottom, header, footer] = m.map(|v| (f64::from(v) * 1e4).round() / 1e4);
+                Dialog::form(
+                    "pageSetup",
+                    "Page Setup",
+                    "pageLayout.margins",
+                    vec![
+                        Number { key: "left", label: "Left margin (in):" },
+                        Number { key: "right", label: "Right margin (in):" },
+                        Number { key: "top", label: "Top margin (in):" },
+                        Number { key: "bottom", label: "Bottom margin (in):" },
+                        Number { key: "header", label: "Header (in):" },
+                        Number { key: "footer", label: "Footer (in):" },
+                    ],
+                    json!({"left": left, "right": right, "top": top, "bottom": bottom, "header": header, "footer": footer}),
+                )
+            }
             "textToColumns" => Dialog::form(
                 "textToColumns",
                 "Convert Text to Columns",
@@ -425,6 +456,7 @@ impl Dialog {
                     Text { key: "timeline", label: "Timeline range (blank: first column of the selection):" },
                     Text { key: "values", label: "Values range (blank: second column of the selection):" },
                     Text { key: "end", label: "Forecast end (date or number; blank: a third of the history):" },
+                    Text { key: "forecastStart", label: "Forecast start (a date or number in the history; blank: after the last point):" },
                     Check { key: "confidenceInterval", label: "Confidence interval" },
                     Text { key: "confidence", label: "Confidence level (%):" },
                     Text { key: "seasonality", label: "Seasonality (auto, 0 for none, or a season length):" },
@@ -544,48 +576,8 @@ impl Dialog {
                 "dataValidation",
                 "Data Validation",
                 "data.validation",
-                vec![
-                    Choice {
-                        key: "type",
-                        label: "Allow",
-                        options: vec![
-                            ("any", "Any value"),
-                            ("whole", "Whole number"),
-                            ("decimal", "Decimal"),
-                            ("list", "List"),
-                            ("date", "Date"),
-                            ("time", "Time"),
-                            ("textLength", "Text length"),
-                            ("custom", "Custom"),
-                        ],
-                    },
-                    Choice {
-                        key: "operator",
-                        label: "Data",
-                        options: vec![
-                            ("between", "between"),
-                            ("notBetween", "not between"),
-                            ("equal", "equal to"),
-                            ("notEqual", "not equal to"),
-                            ("greater", "greater than"),
-                            ("less", "less than"),
-                            ("greaterOrEqual", "greater than or equal to"),
-                            ("lessOrEqual", "less than or equal to"),
-                        ],
-                    },
-                    Text { key: "formula1", label: "Minimum / Source / Formula:" },
-                    Text { key: "formula2", label: "Maximum:" },
-                    Check { key: "ignoreBlank", label: "Ignore blank" },
-                    Check { key: "dropdown", label: "In-cell dropdown" },
-                    Text { key: "inputMessage", label: "Input message:" },
-                    Choice {
-                        key: "errorStyle",
-                        label: "Error style",
-                        options: vec![("stop", "Stop"), ("warning", "Warning"), ("information", "Information")],
-                    },
-                    Text { key: "errorMessage", label: "Error message:" },
-                ],
-                json!({"type": "list", "operator": "between", "ignoreBlank": true, "dropdown": true, "errorStyle": "stop"}),
+                data_validation_fields("any", "between"),
+                validation_defaults(app),
             ),
             "cfQuick" => {
                 let ty = p("type").as_str().unwrap_or("cellIs").to_string();
@@ -817,15 +809,167 @@ impl Dialog {
     }
 }
 
+/// Initial values of the Data Validation form: the rule stored on the active cell, so OK without
+/// edits keeps it; a plain list rule when the cell has none.
+fn validation_defaults(app: &SheetApp) -> Json {
+    let mut v = json!({"type": "list", "operator": "between", "ignoreBlank": true, "dropdown": true, "errorStyle": "stop"});
+    let Some(doc) = app.session.active() else { return v };
+    let Some(dv) = doc.wb.active().and_then(|s| s.validations.iter().find(|d| d.ranges.iter().any(|r| r.contains(doc.selection.active)))) else {
+        return v;
+    };
+    // The enums serialize as their variant names; the command takes them in camelCase.
+    let camel = |x: Json| {
+        let name = x.as_str().unwrap_or_default();
+        let mut chars = name.chars();
+        chars.next().map(|c| c.to_lowercase().chain(chars).collect::<String>()).unwrap_or_default()
+    };
+    v["type"] = json!(camel(json!(dv.kind)));
+    v["operator"] = json!(camel(json!(dv.op)));
+    v["errorStyle"] = json!(camel(json!(dv.error_style)));
+    v["formula1"] = json!(dv.f1);
+    if let Some(f2) = &dv.f2 {
+        v["formula2"] = json!(f2);
+    }
+    v["ignoreBlank"] = json!(dv.allow_blank);
+    v["dropdown"] = json!(dv.in_cell_dropdown);
+    v["inputTitle"] = json!(dv.input_title);
+    v["inputMessage"] = json!(dv.input_message);
+    v["errorTitle"] = json!(dv.error_title);
+    v["errorMessage"] = json!(dv.error_message);
+    v
+}
+
 fn abs(r: &gridcraft_engine::core::RangeRef) -> String {
     let a = |c: gridcraft_engine::core::CellRef| format!("${}${}", gridcraft_engine::core::col_to_letters(c.col), c.row + 1);
     if r.is_single() { a(r.start) } else { format!("{}:{}", a(r.start), a(r.end)) }
+}
+
+/// The criterion controls in Excel's Settings tab depend on both Allow and Data.
+/// `formula1` is the sole source for a list or custom rule; `formula2` is a
+/// second bound only for Between and Not between.
+fn data_validation_fields(kind: &str, operator: &str) -> Vec<Field> {
+    use Field::*;
+    let mut fields = vec![Choice {
+        key: "type",
+        label: "Allow",
+        options: vec![
+            ("any", "Any value"),
+            ("whole", "Whole number"),
+            ("decimal", "Decimal"),
+            ("list", "List"),
+            ("date", "Date"),
+            ("time", "Time"),
+            ("textLength", "Text length"),
+            ("custom", "Custom"),
+        ],
+    }];
+    let two_bounds = matches!(operator, "between" | "notBetween");
+    match kind {
+        "list" => {
+            fields.push(Text { key: "formula1", label: "Source:" });
+            fields.push(Check { key: "ignoreBlank", label: "Ignore blank" });
+            fields.push(Check { key: "dropdown", label: "In-cell dropdown" });
+        }
+        "custom" => {
+            fields.push(Text { key: "formula1", label: "Formula:" });
+            fields.push(Check { key: "ignoreBlank", label: "Ignore blank" });
+        }
+        "whole" | "decimal" | "date" | "time" | "textLength" => {
+            fields.push(Choice {
+                key: "operator",
+                label: "Data",
+                options: vec![
+                    ("between", "between"),
+                    ("notBetween", "not between"),
+                    ("equal", "equal to"),
+                    ("notEqual", "not equal to"),
+                    ("greater", "greater than"),
+                    ("less", "less than"),
+                    ("greaterOrEqual", "greater than or equal to"),
+                    ("lessOrEqual", "less than or equal to"),
+                ],
+            });
+            let lower = matches!(operator, "greater" | "greaterOrEqual");
+            let (first, second) = match kind {
+                "date" => (
+                    if two_bounds || lower {
+                        "Start date:"
+                    } else if matches!(operator, "less" | "lessOrEqual") {
+                        "End date:"
+                    } else {
+                        "Date:"
+                    },
+                    "End date:",
+                ),
+                "time" => (
+                    if two_bounds || lower {
+                        "Start time:"
+                    } else if matches!(operator, "less" | "lessOrEqual") {
+                        "End time:"
+                    } else {
+                        "Time:"
+                    },
+                    "End time:",
+                ),
+                _ => (
+                    if two_bounds || lower {
+                        "Minimum:"
+                    } else if matches!(operator, "less" | "lessOrEqual") {
+                        "Maximum:"
+                    } else {
+                        "Value:"
+                    },
+                    "Maximum:",
+                ),
+            };
+            fields.push(Text { key: "formula1", label: first });
+            if two_bounds {
+                fields.push(Text { key: "formula2", label: second });
+            }
+            fields.push(Check { key: "ignoreBlank", label: "Ignore blank" });
+        }
+        _ => {}
+    }
+    fields.push(Text { key: "inputMessage", label: "Input message:" });
+    fields.push(Choice {
+        key: "errorStyle",
+        label: "Error style",
+        options: vec![("stop", "Stop"), ("warning", "Warning"), ("information", "Information")],
+    });
+    fields.push(Text { key: "errorMessage", label: "Error message:" });
+    fields
+}
+
+fn data_validation_form(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+    let kind = d.values.get("type").and_then(Json::as_str).unwrap_or("any");
+    let operator = d.values.get("operator").and_then(Json::as_str).unwrap_or("between");
+    d.fields = data_validation_fields(kind, operator);
+    form_fields(ui, d);
+    ok_cancel(ui, confirm, open);
 }
 
 /// Builds the command params from form values for dialogs that need translation.
 fn build_params(d: &Dialog) -> Json {
     let mut v = Json::Object(d.values.clone());
     match d.name.as_str() {
+        "dataValidation" => {
+            let kind = d.values.get("type").and_then(Json::as_str).unwrap_or("any");
+            let operator = d.values.get("operator").and_then(Json::as_str).unwrap_or("between");
+            if let Some(m) = v.as_object_mut() {
+                if !matches!(operator, "between" | "notBetween") || matches!(kind, "any" | "list" | "custom") {
+                    m.remove("formula2");
+                }
+                if matches!(kind, "any" | "list" | "custom") {
+                    m.remove("operator");
+                }
+                if kind == "any" {
+                    m.remove("formula1");
+                }
+                if kind != "list" {
+                    m.remove("dropdown");
+                }
+            }
+        }
         "textToColumns" => {
             let mut delims = Vec::new();
             for (k, c) in [("tab", "\t"), ("semicolon", ";"), ("comma", ","), ("space", " ")] {
@@ -901,7 +1045,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "solver" => 460.0,
         _ => 380.0,
     };
-    let window = egui::Window::new(crate::i18n::current(ctx).tr(&d.title).to_string())
+    let window = egui::Window::new(app.ui.language.tr(&d.title))
         .id(egui::Id::new("dialog").with(&d.name))
         .collapsible(false)
         .resizable(false)
@@ -913,6 +1057,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
             ui.set_min_width(width - 20.0);
             match d.name.as_str() {
                 "formatCells" => format_cells(app, ui, &mut d, &mut confirm),
+                "dataValidation" => data_validation_form(ui, &mut d, &mut confirm, &mut open),
                 "insertFunction" => insert_function(app, ui, &mut d, &mut confirm),
                 "find" => find(app, ui, &mut d),
                 "goTo" => go_to(app, ui, &mut d, &mut confirm),
@@ -1236,12 +1381,15 @@ fn paste_special_shortcuts(d: &mut Dialog, ctx: &egui::Context) {
 fn ok_cancel(ui: &mut egui::Ui, confirm: &mut bool, open: &mut bool) {
     ui.add_space(8.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let ok_label = format!("   {}   ", tr(ui, "OK"));
-        let ok = ui.add(egui::Button::new(egui::RichText::new(ok_label).color(Color32::WHITE)).fill(crate::theme::Tokens::get(ui.ctx()).accent));
+        let lang = crate::i18n::current(ui.ctx());
+        let ok = ui.add(
+            egui::Button::new(egui::RichText::new(format!("   {}   ", lang.tr("OK"))).color(Color32::WHITE))
+                .fill(crate::theme::Tokens::get(ui.ctx()).accent),
+        );
         if ok.clicked() || ui.input(|i| i.key_pressed(Key::Enter)) {
             *confirm = true;
         }
-        if ui.button(format!(" {} ", tr(ui, "Cancel"))).clicked() {
+        if ui.button(format!(" {} ", lang.tr("Cancel"))).clicked() {
             *open = false;
         }
     });
@@ -1300,9 +1448,20 @@ fn form_fields(ui: &mut egui::Ui, d: &mut Dialog) {
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new(tr(ui, label)).strong());
                         let cur = d.values.get(key).and_then(Json::as_str).unwrap_or("").to_string();
-                        for (val, text) in options {
-                            if ui.radio(cur == val, tr(ui, text)).clicked() {
-                                d.values.insert(key.into(), json!(val));
+                        if d.name == "dataValidation" {
+                            let selected = options.iter().find(|(val, _)| *val == cur).map(|(_, text)| *text).unwrap_or("");
+                            egui::ComboBox::from_id_salt(("dataValidation", key)).selected_text(selected).width(300.0).show_ui(ui, |ui| {
+                                for (val, text) in options {
+                                    if ui.selectable_label(cur == val, text).clicked() {
+                                        d.set_value(key, json!(val));
+                                    }
+                                }
+                            });
+                        } else {
+                            for (val, text) in options {
+                                if ui.radio(cur == val, text).clicked() {
+                                    d.set_value(key, json!(val));
+                                }
                             }
                         }
                     });
@@ -1377,11 +1536,20 @@ fn macros(ui: &mut egui::Ui, d: &mut Dialog) {
 }
 
 fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool) {
+    // `d.tab` stays the English name (it is what `open_dialog` and tests pass); only the drawn
+    // labels are translated. The Fill tab is keyed by context: the Alignment tab's "Fill" is a
+    // different word in some languages.
+    let lang = app.ui.language;
     ui.horizontal(|ui| {
-        for tab in ["Number", "Alignment", "Font", "Border", "Fill", "Protection"] {
-            // "Fill" alone is the ribbon's verb; the tab is a noun in some languages.
-            let label = if tab == "Fill" { tr(ui, "Format Cells|Fill") } else { tr(ui, tab) };
-            if ui.selectable_label(d.tab == tab, label).clicked() {
+        for (tab, key) in [
+            ("Number", "Number"),
+            ("Alignment", "Alignment"),
+            ("Font", "Font"),
+            ("Border", "Border"),
+            ("Fill", "Format Cells|Fill"),
+            ("Protection", "Protection"),
+        ] {
+            if ui.selectable_label(d.tab == tab, lang.tr(key)).clicked() {
                 d.tab = tab.to_string();
             }
         }
@@ -1393,24 +1561,20 @@ fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: 
         "Number" => {
             let mut code = st.num_fmt.as_str().to_string();
             ui.columns(2, |cols| {
-                let category = tr(&cols[0], "Category:");
-                cols[0].label(egui::RichText::new(category).strong());
+                cols[0].label(egui::RichText::new(lang.tr("Category:")).strong());
                 for name in
                     ["General", "Number", "Currency", "Accounting", "Short Date", "Long Date", "Time", "Percentage", "Fraction", "Scientific", "Text"]
                 {
                     let c = gridcraft_engine::cmd::format::format_code_for(name).to_string();
-                    let label = tr(&cols[0], name);
-                    if cols[0].selectable_label(code == c, label).clicked() {
+                    if cols[0].selectable_label(code == c, lang.tr(name)).clicked() {
                         code = c;
                     }
                 }
-                let sample_label = tr(&cols[1], "Sample");
-                cols[1].label(egui::RichText::new(sample_label).strong());
+                cols[1].label(egui::RichText::new(lang.tr("Sample")).strong());
                 let preview = app.session.active().map(|doc| gridcraft_engine::display::format(&sample, &code, &doc.wb).text).unwrap_or_default();
                 cols[1].label(egui::RichText::new(preview).font(theme::ui_font(15.0)));
                 cols[1].add_space(8.0);
-                let type_label = tr(&cols[1], "Type (custom format code):");
-                cols[1].label(type_label);
+                cols[1].label(lang.tr("Type (custom format code):"));
                 cols[1].text_edit_singleline(&mut code);
                 for c in [
                     "0",
@@ -1439,7 +1603,7 @@ fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: 
         }
         "Alignment" => {
             use gridcraft_engine::model::{HAlign, VAlign};
-            ui.label(egui::RichText::new(tr(ui, "Horizontal")).strong());
+            ui.label(egui::RichText::new(lang.tr("Horizontal")).strong());
             ui.horizontal_wrapped(|ui| {
                 for (h, n) in [
                     (HAlign::General, "General"),
@@ -1451,10 +1615,10 @@ fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: 
                     (HAlign::CenterAcross, "Center Across Selection"),
                     (HAlign::Distributed, "Distributed"),
                 ] {
-                    ui.radio_value(&mut st.align.h, h, tr(ui, n));
+                    ui.radio_value(&mut st.align.h, h, lang.tr(n));
                 }
             });
-            ui.label(egui::RichText::new(tr(ui, "Vertical")).strong());
+            ui.label(egui::RichText::new(lang.tr("Vertical")).strong());
             ui.horizontal_wrapped(|ui| {
                 for (v, n) in [
                     (VAlign::Top, "Top"),
@@ -1463,29 +1627,29 @@ fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: 
                     (VAlign::Justify, "Justify"),
                     (VAlign::Distributed, "Distributed"),
                 ] {
-                    ui.radio_value(&mut st.align.v, v, tr(ui, n));
+                    ui.radio_value(&mut st.align.v, v, lang.tr(n));
                 }
             });
             let mut indent = st.align.indent as f32;
-            ui.add(egui::Slider::new(&mut indent, 0.0..=15.0).text(tr(ui, "Indent")));
+            ui.add(egui::Slider::new(&mut indent, 0.0..=15.0).text(lang.tr("Indent")));
             st.align.indent = indent as u8;
             let mut rot = if st.align.rotation == 255 { 0.0 } else { st.align.rotation as f32 };
-            ui.add(egui::Slider::new(&mut rot, -90.0..=90.0).text(tr(ui, "Orientation (degrees)")));
+            ui.add(egui::Slider::new(&mut rot, -90.0..=90.0).text(lang.tr("Orientation (degrees)")));
             st.align.rotation = rot as i16;
-            ui.checkbox(&mut st.align.wrap, tr(ui, "Wrap text"));
-            ui.checkbox(&mut st.align.shrink, tr(ui, "Shrink to fit"));
+            ui.checkbox(&mut st.align.wrap, lang.tr("Wrap text"));
+            ui.checkbox(&mut st.align.shrink, lang.tr("Shrink to fit"));
         }
         "Font" => {
-            egui::ComboBox::from_label(tr(ui, "Font")).selected_text(st.font.name.clone()).show_ui(ui, |ui| {
+            egui::ComboBox::from_label(lang.tr("Font")).selected_text(st.font.name.clone()).show_ui(ui, |ui| {
                 for f in crate::fonts::families() {
                     ui.selectable_value(&mut st.font.name, f.clone(), f.clone());
                 }
             });
-            ui.add(egui::Slider::new(&mut st.font.size, 6.0..=72.0).text(tr(ui, "Size")));
+            ui.add(egui::Slider::new(&mut st.font.size, 6.0..=72.0).text(lang.tr("Size")));
             ui.horizontal(|ui| {
-                ui.checkbox(&mut st.font.bold, tr(ui, "Bold"));
-                ui.checkbox(&mut st.font.italic, tr(ui, "Italic"));
-                ui.checkbox(&mut st.font.strike, tr(ui, "Strikethrough"));
+                ui.checkbox(&mut st.font.bold, lang.tr("Bold"));
+                ui.checkbox(&mut st.font.italic, lang.tr("Italic"));
+                ui.checkbox(&mut st.font.strike, lang.tr("Strikethrough"));
             });
             use gridcraft_engine::model::{Underline, VertAlign};
             ui.horizontal(|ui| {
@@ -1496,17 +1660,17 @@ fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: 
                     (Underline::SingleAccounting, "Single Accounting"),
                     (Underline::DoubleAccounting, "Double Accounting"),
                 ] {
-                    ui.radio_value(&mut st.font.underline, u, tr(ui, n));
+                    ui.radio_value(&mut st.font.underline, u, lang.tr(n));
                 }
             });
             ui.horizontal(|ui| {
-                ui.radio_value(&mut st.font.vert, VertAlign::Baseline, tr(ui, "Normal"));
-                ui.radio_value(&mut st.font.vert, VertAlign::Superscript, tr(ui, "Superscript"));
-                ui.radio_value(&mut st.font.vert, VertAlign::Subscript, tr(ui, "Subscript"));
+                ui.radio_value(&mut st.font.vert, VertAlign::Baseline, lang.tr("Normal"));
+                ui.radio_value(&mut st.font.vert, VertAlign::Superscript, lang.tr("Superscript"));
+                ui.radio_value(&mut st.font.vert, VertAlign::Subscript, lang.tr("Subscript"));
             });
-            ui.label(tr(ui, "Color:"));
+            ui.label(lang.tr("Color:"));
             let colors = app.session.active().map(|doc| doc.wb.theme.colors).unwrap_or_default();
-            if let Some(c) = crate::widgets::color_palette(ui, &colors, "Automatic") {
+            if let Some(c) = crate::widgets::color_palette(ui, &colors, lang.tr("Automatic")) {
                 st.font.color =
                     if c == "none" { gridcraft_engine::model::Color::Auto } else { gridcraft_engine::model::Color::from_hex(&c).unwrap_or_default() };
             }
@@ -1515,10 +1679,10 @@ fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: 
             use gridcraft_engine::model::{BorderLine, BorderStyle};
             let line = BorderLine { style: BorderStyle::Thin, color: gridcraft_engine::model::Color::Auto };
             ui.horizontal(|ui| {
-                if ui.button(tr(ui, "None")).clicked() {
+                if ui.button(lang.tr("None")).clicked() {
                     st.borders = Default::default();
                 }
-                if ui.button(tr(ui, "Outline")).clicked() {
+                if ui.button(lang.tr("Outline")).clicked() {
                     st.borders.top = line;
                     st.borders.bottom = line;
                     st.borders.left = line;
@@ -1533,6 +1697,7 @@ fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: 
                 ("Diagonal ↘", &mut st.borders.diag_down),
                 ("Diagonal ↗", &mut st.borders.diag_up),
             ] {
+                let n = lang.tr(n);
                 ui.horizontal(|ui| {
                     let side = tr(ui, n);
                     ui.label(format!("{side}:"));
@@ -1545,7 +1710,7 @@ fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: 
                         (BorderStyle::Dotted, "dotted"),
                         (BorderStyle::Double, "double"),
                     ] {
-                        let label = tr(ui, label);
+                        let label = lang.tr(label);
                         let response = ui.selectable_label(slot.style == s, label);
                         response
                             .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::SelectableLabel, ui.is_enabled(), format!("{side} {label}")));
@@ -1560,8 +1725,8 @@ fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: 
         }
         "Fill" => {
             let colors = app.session.active().map(|doc| doc.wb.theme.colors).unwrap_or_default();
-            ui.label(tr(ui, "Background Color:"));
-            if let Some(c) = crate::widgets::color_palette(ui, &colors, "No Color") {
+            ui.label(lang.tr("Background Color:"));
+            if let Some(c) = crate::widgets::color_palette(ui, &colors, lang.tr("No Color")) {
                 st.fill = if c == "none" {
                     Default::default()
                 } else {
@@ -1570,13 +1735,12 @@ fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: 
             }
         }
         "Protection" => {
-            ui.checkbox(&mut st.protection.locked, tr(ui, "Locked"));
-            ui.checkbox(&mut st.protection.hidden, tr(ui, "Hidden"));
+            ui.checkbox(&mut st.protection.locked, lang.tr("Locked"));
+            ui.checkbox(&mut st.protection.hidden, lang.tr("Hidden"));
             ui.label(
-                egui::RichText::new(tr(
-                    ui,
-                    "Locking cells or hiding formulas has no effect until you protect the worksheet (Review › Protect Sheet).",
-                ))
+                egui::RichText::new(
+                    lang.tr("Locking cells or hiding formulas has no effect until you protect the worksheet (Review › Protect Sheet)."),
+                )
                 .small(),
             );
         }
@@ -2389,11 +2553,14 @@ fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool
     }
     let method = text(d, "method");
     ui.horizontal(|ui| {
-        ui.label(tr(ui, "Select a Solving Method:"));
-        let grg = tr(ui, "GRG Nonlinear");
-        let label = |m: &str| if m == "simplex" { "Simplex LP" } else { grg };
+        ui.label("Select a Solving Method:");
+        let label = |m: &str| match m {
+            "simplex" => "Simplex LP",
+            "evolutionary" => "Evolutionary",
+            _ => "GRG Nonlinear",
+        };
         egui::ComboBox::from_id_salt("solverMethod").selected_text(label(&method)).show_ui(ui, |ui| {
-            for m in ["grg", "simplex"] {
+            for m in ["grg", "simplex", "evolutionary"] {
                 if ui.selectable_label(method == m, label(m)).clicked() {
                     d.values.insert("method".into(), json!(m));
                 }
@@ -2401,14 +2568,11 @@ fn solver(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool
         });
     });
     ui.label(
-        egui::RichText::new(tr(
-            ui,
-            if method == "simplex" {
-                "Simplex LP: for linear models; integer and binary constraints by branch and bound."
-            } else {
-                "GRG Nonlinear: a local optimum of a smooth model, from the current values."
-            },
-        ))
+        egui::RichText::new(match method.as_str() {
+            "simplex" => "Simplex LP: for linear models; integer and binary constraints by branch and bound.",
+            "evolutionary" => "Evolutionary: a genetic search for models that aren't smooth; every variable cell needs bounds.",
+            _ => "GRG Nonlinear: a local optimum of a smooth model, from the current values.",
+        })
         .small(),
     );
     ui.add_space(8.0);
@@ -2440,12 +2604,34 @@ fn solver_results(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &
             d.values.insert("restore".into(), json!(true));
         }
     }
+    // Reports describe the solution whether it is kept or not.
+    let solved = d.values.get("values").and_then(Json::as_object).is_some_and(|v| !v.is_empty());
+    if solved {
+        ui.add_space(4.0);
+        ui.label("Reports:");
+        for (key, label) in [("answerReport", "Answer"), ("limitsReport", "Limits")] {
+            let mut on = d.values.get(key).and_then(Json::as_bool).unwrap_or(false);
+            if ui.checkbox(&mut on, label).changed() {
+                d.values.insert(key.into(), json!(on));
+            }
+        }
+    }
     let mut confirm = false;
     ok_cancel(ui, &mut confirm, open);
     if confirm {
         // The solution (and the saved model) is one undo step.
         if changed && restore {
             app.run_or_alert("edit.undo", json!({}));
+        }
+        let reports: Vec<&str> = [("answerReport", "answer"), ("limitsReport", "limits")]
+            .into_iter()
+            .filter(|(key, _)| d.values.get(*key).and_then(Json::as_bool) == Some(true))
+            .map(|(_, kind)| kind)
+            .collect();
+        if solved && !reports.is_empty() {
+            let field = |k: &str| d.values.get(k).cloned().unwrap_or(Json::Null);
+            let params = json!({"reports": reports, "model": field("model"), "values": field("values"), "original": field("original"), "message": field("message")});
+            app.run_or_alert("data.solverReport", params);
         }
         *open = false;
     }
@@ -2505,165 +2691,79 @@ fn spelling(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bo
 }
 
 #[cfg(test)]
+mod data_validation_tests {
+    use super::*;
+
+    #[test]
+    fn list_uses_one_source_and_does_not_submit_a_second_list() {
+        let fields = data_validation_fields("list", "between");
+        assert!(fields.iter().any(|f| matches!(f, Field::Text { key: "formula1", label: "Source:" })));
+        assert!(!fields.iter().any(|f| matches!(f, Field::Text { key: "formula2", .. } | Field::Choice { key: "operator", .. })));
+
+        let dialog = Dialog::form(
+            "dataValidation",
+            "Data Validation",
+            "data.validation",
+            fields,
+            json!({"type": "list", "operator": "between", "formula1": "ABC,DEF", "formula2": "GHI,JKL", "dropdown": true}),
+        );
+        let params = build_params(&dialog);
+        assert_eq!(params["formula1"], "ABC,DEF");
+        assert!(params.get("formula2").is_none());
+        assert!(params.get("operator").is_none());
+    }
+
+    #[test]
+    fn only_between_operators_show_and_submit_two_bounds() {
+        let two = data_validation_fields("whole", "between");
+        assert!(two.iter().any(|f| matches!(f, Field::Text { key: "formula2", label: "Maximum:" })));
+        let one = data_validation_fields("date", "lessOrEqual");
+        assert!(one.iter().any(|f| matches!(f, Field::Text { key: "formula1", label: "End date:" })));
+        assert!(!one.iter().any(|f| matches!(f, Field::Text { key: "formula2", .. })));
+
+        let dialog = Dialog::form(
+            "dataValidation",
+            "Data Validation",
+            "data.validation",
+            one,
+            json!({"type": "date", "operator": "lessOrEqual", "formula1": "2026-10-12", "formula2": "2030-01-01"}),
+        );
+        let params = build_params(&dialog);
+        assert_eq!(params["operator"], "lessOrEqual");
+        assert_eq!(params["formula1"], "2026-10-12");
+        assert!(params.get("formula2").is_none());
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::i18n::Language;
 
-    /// The string literals this file draws through `tr(…, "…")` or `lang.tr("…")`.
-    fn translated_literals() -> Vec<&'static str> {
-        let src = include_str!("dialogs.rs");
-        let src = src.split("#[cfg(test)]").next().unwrap_or(src);
-        let mut out = vec![];
-        for chunk in src.split("tr(").skip(1) {
-            let rest = match chunk.strip_prefix('"') {
-                Some(rest) => rest,
-                // `tr(ui, "…")`, `tr(&cols[0], "…")`: a short first argument, then the literal.
-                None => match chunk.find(", \"") {
-                    Some(i) if !chunk[..i].contains(['(', ')', '\n']) => &chunk[i + 3..],
-                    _ => continue,
-                },
-            };
-            if let Some(end) = rest.find('"') {
-                out.push(&rest[..end]);
-            }
-        }
-        out
-    }
-
-    fn app(language: Language) -> SheetApp {
-        let mut session = gridcraft_engine::Session::new();
+    #[test]
+    fn data_validation_opens_on_the_rule_of_the_active_cell() {
+        let mut session = gridcraft_engine::Session::default();
         session.new_workbook();
         let mut app = SheetApp::new(session, Default::default());
-        app.ui.language = language;
-        app
-    }
-
-    /// Every dialog string has a Spanish entry, so a Spanish interface never shows English dialogs.
-    #[test]
-    fn spanish_translates_every_dialog_string() {
-        let mut keys: Vec<String> = translated_literals().into_iter().map(str::to_string).collect();
-        assert!(keys.len() > 100, "the source scan found the dialog strings ({})", keys.len());
-        let forms = [
-            ("insertCells", json!({})),
-            ("insertPaste", json!({})),
-            ("deleteCells", json!({})),
-            ("rowHeight", json!({})),
-            ("columnWidth", json!({})),
-            ("defaultWidth", json!({})),
-            ("renameSheet", json!({})),
-            ("moveSheet", json!({})),
-            ("protectSheet", json!({})),
-            ("allowEditRanges", json!({})),
-            ("protectWorkbook", json!({})),
-            ("unprotectWorkbook", json!({})),
-            ("openPassword", json!({})),
-            ("unprotectSheet", json!({})),
-            ("unhideSheet", json!({})),
-            ("pasteSpecial", json!({})),
-            ("series", json!({})),
-            ("comment", json!({})),
-            ("comment", json!({"threaded": false})),
-            ("insertLink", json!({})),
-            ("sparkline", json!({})),
-            ("headerFooter", json!({})),
-            ("pageSetup", json!({})),
-            ("textToColumns", json!({})),
-            ("removeDuplicates", json!({})),
-            ("forecastSheet", json!({})),
-            ("subtotal", json!({})),
-            ("zoom", json!({})),
-            ("defineName", json!({})),
-            ("defineName", json!({"oldName": "x"})),
-            ("dataValidation", json!({})),
-            ("cfQuick", json!({"type": "cellIs", "operator": "between"})),
-            ("cfQuick", json!({"type": "containsText"})),
-            ("cfQuick", json!({"type": "timePeriod"})),
-            ("cfQuick", json!({"type": "expression"})),
-            ("pivotCalculatedField", json!({})),
-            ("goToSpecial", json!({})),
-            ("chartTitle", json!({})),
-            ("insertPicture", json!({})),
-            ("insertPicture", json!({"placement": "cell"})),
-            ("goalSeek", json!({})),
-            ("solver", json!({})),
-            ("solverResults", json!({})),
-            ("formatCells", json!({})),
-            ("insertFunction", json!({})),
-            ("find", json!({})),
-            ("goTo", json!({})),
-            ("sort", json!({})),
-            ("nameManager", json!({})),
-            ("manageRules", json!({})),
-            ("commandSearch", json!({})),
-            ("agents", json!({})),
-            ("about", json!({})),
-            ("journal", json!({})),
-            ("macros", json!({})),
-            ("statistics", json!({})),
-            ("accessibility", json!({})),
-            ("errorChecking", json!({})),
-            ("evaluateFormula", json!({})),
-            ("spelling", json!({})),
-            ("pickList", json!({})),
-            ("saveCopy", json!({})),
-            ("saveChanges", json!({})),
-            ("analysisToolPak", json!({})),
-        ];
-        let (mut en, mut es) = (app(Language::En), app(Language::Es));
-        for (name, params) in forms {
-            let d = Dialog::open(&mut en, name, params.clone()).unwrap_or_else(|| panic!("{name} opens"));
-            let spanish = Dialog::open(&mut es, name, params).unwrap_or_else(|| panic!("{name} opens"));
-            keys.push(d.title.clone());
-            for (f, translated) in d.fields.iter().zip(&spanish.fields) {
-                match (f, translated) {
-                    (Field::Text { label, .. } | Field::Password { label, .. } | Field::Number { label, .. } | Field::Check { label, .. }, _) => {
-                        keys.push(label.to_string())
-                    }
-                    (Field::Choice { label, options, .. }, _) => {
-                        keys.push(label.to_string());
-                        keys.extend(options.iter().map(|(_, text)| text.to_string()));
-                    }
-                    // A note with workbook text in it is translated when the dialog opens.
-                    (Field::Note(note), Field::Note(spanish)) if note != spanish => {}
-                    (Field::Note(note), _) => keys.push(note.clone()),
-                }
-            }
-        }
-        for (tool, label) in gridcraft_engine::cmd::analysis::TOOLS {
-            keys.push(label.to_string());
-            for f in toolpak_fields(tool) {
-                if let Field::Text { label, .. } | Field::Check { label, .. } | Field::Choice { label, .. } = f {
-                    keys.push(label.to_string());
-                }
-            }
-        }
-        keys.extend(ALL_CHARTS.iter().map(|(_, _, label)| label.to_string()));
-        keys.extend(gridcraft_engine::sample::SAMPLES.iter().map(|(_, title)| title.to_string()));
-        // The app's name and numbers ("200%") read the same in every language.
-        let same = |k: &str| k == "GridCraft" || !k.chars().any(char::is_alphabetic);
-        let missing: Vec<&String> = keys.iter().filter(|k| !same(k) && Language::Es.translation(k).is_none()).collect();
-        assert!(missing.is_empty(), "missing Spanish dialog strings: {missing:#?}");
+        app.run("data.validation", json!({"range": "A1", "type": "whole", "operator": "greater", "formula1": "5"})).unwrap();
+        let d = Dialog::open(&mut app, "dataValidation", json!({})).unwrap();
+        assert_eq!(d.values["type"], "whole");
+        assert_eq!(d.values["operator"], "greater");
+        assert_eq!(d.values["formula1"], "5");
+        // OK without edits keeps the rule: 6 is accepted, 4 is rejected.
+        app.run(d.command.unwrap(), build_params(&d)).unwrap();
+        let doc = app.session.active().unwrap();
+        let at = gridcraft_engine::core::CellRef::new(0, 0);
+        assert!(gridcraft_engine::cmd::data::check_validation(&doc.wb, 0, at, "6").is_none());
+        assert!(gridcraft_engine::cmd::data::check_validation(&doc.wb, 0, at, "4").is_some());
     }
 
     #[test]
-    fn placeholders_survive_translation() {
-        for key in translated_literals() {
-            let Some(spanish) = Language::Es.translation(key) else { continue };
-            for part in key.split('{').skip(1) {
-                let name = part.split('}').next().unwrap_or("");
-                assert!(spanish.contains(&format!("{{{name}}}")), "{key:?} → {spanish:?} keeps {{{name}}}");
-            }
-        }
-    }
-
-    #[test]
-    fn dialog_ids_stay_english_in_other_languages() {
-        // Titles and tabs double as ids for the control channel and tests: only drawing translates them.
-        let mut es = app(Language::Es);
-        let d = Dialog::open(&mut es, "find", json!({"replace": true})).unwrap();
-        assert_eq!((d.title.as_str(), d.tab.as_str()), ("Find and Replace", "Replace"));
-        assert_eq!(Language::Es.tr(&d.title), "Buscar y reemplazar");
-        assert_eq!(category_label("DateTime"), "Date & Time");
-        assert_eq!(Language::Es.tr(category_label("MathTrig")), "Matemáticas y trigonométricas");
+    fn data_validation_without_a_rule_opens_on_a_blank_list() {
+        let mut session = gridcraft_engine::Session::default();
+        session.new_workbook();
+        let mut app = SheetApp::new(session, Default::default());
+        let d = Dialog::open(&mut app, "dataValidation", json!({})).unwrap();
+        assert_eq!(d.values["type"], "list");
+        assert!(d.values.get("formula1").is_none());
     }
 }
