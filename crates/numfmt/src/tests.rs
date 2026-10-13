@@ -864,3 +864,85 @@ fn closed_brackets_still_hold_their_semicolons() {
     assert_eq!(f("0\\[0", 5.0), "0[5");
     assert_eq!(f("\"[\"0;0", 5.0), "[5");
 }
+
+/// CELL("format") codes as Excel 365 reports them (a German Excel, its codes mapped to the English
+/// ones: S → G, `.` → `,`, W → C, E → S, U1–U4 → D6–D9). `$` is the en-US currency symbol.
+#[test]
+fn cell_format_codes_match_excel() {
+    let cases = [
+        ("General", "G"),
+        ("[Red]General", "G"),
+        ("@", "G"),
+        ("0", "F0"),
+        ("0.00", "F2"),
+        ("0.0#", "F2"),
+        ("#.##", "F2"),
+        ("0.###", "F3"),
+        ("000", "F0"),
+        ("#,##0", ",0"),
+        ("#,##0.000", ",3"),
+        ("#,##0.0#", ",2"),
+        ("$#,##0_);($#,##0)", "C0"),
+        ("$#,##0_);[Red]($#,##0)", "C0-"),
+        ("$#,##0.00_);[Red]($#,##0.00)", "C2-"),
+        ("$0.00", "C2"),
+        ("#,##0.00 \"€\"", ",2"),
+        ("0%", "P0"),
+        ("0.00%", "P2"),
+        ("0.00E+00", "S2"),
+        ("##0.0E+0", "S1"),
+        ("# ?/?", "G"),
+        ("?/8", "G"),
+        ("m/d/yy", "D4"),
+        ("m/d/yy h:mm", "D4"),
+        ("mmm d, yyyy", "D4"),
+        ("d-mmm-yy", "D1"),
+        ("dd.mm.yyyy", "D1"),
+        ("d/m/yy", "D1"),
+        ("d-mmm", "D2"),
+        ("dd/mm", "D2"),
+        ("dddd, mmmm d, yyyy", "D2"),
+        ("mmm-yy", "D3"),
+        ("mmmm yyyy", "D3"),
+        ("m/yyyy", "D3"),
+        ("mm/dd", "D5"),
+        ("yyyy-mm-dd", "G"),
+        ("ddd", "G"),
+        ("mmmm", "G"),
+        ("yyyy", "G"),
+        ("h:mm:ss AM/PM", "D6"),
+        ("h:mm AM/PM", "D7"),
+        ("h:mm:ss", "D8"),
+        ("h:mm:ss.0", "D8"),
+        ("h:mm", "D9"),
+        ("h AM/PM", "G"),
+        ("[h]:mm:ss", "G"),
+        ("mm:ss", "G"),
+        ("mm:ss.0", "G"),
+        ("[Red]0", "F0"),
+        ("[Blue]0.00", "F2"),
+        ("[Color10]0", "F0"),
+        ("0;[Red]0", "F0-"),
+        ("0;[Red]-0", "F0-"),
+        ("0;0;[Red]0", "F0"),
+        ("[Green]0;[Red]0", "F0-"),
+        ("0;[Color10]0", "F0-"),
+        ("0;-0", "F0"),
+        ("0_);(0)", "F0"),
+        ("0_);[Red](0)", "F0-"),
+        ("0.00;(0.00)", "F2"),
+        ("(0)", "F0()"),
+        ("(0);(0)", "F0()"),
+        ("\"(\"0\")\"", "F0"),
+        ("#,##0.00;[Red]#,##0.00", ",2-"),
+        ("\"x\"0", "F0"),
+        ("[<100]0;0.00", "F0"),
+        ("0;0;0;@", "F0"),
+    ];
+    for (code, want) in cases {
+        let info = NumberFormat::parse(code).cell_info();
+        assert_eq!(info.code, want, "CELL(\"format\") for {code}");
+        assert_eq!(info.color, want.contains('-'), "CELL(\"color\") for {code}");
+        assert_eq!(info.parentheses, want.ends_with("()"), "CELL(\"parentheses\") for {code}");
+    }
+}

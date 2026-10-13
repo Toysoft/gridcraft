@@ -179,12 +179,14 @@ impl Pattern {
             let nums: Vec<f64> = vals.iter().filter_map(Value::as_f64).collect();
             let first = nums.first().copied().unwrap_or(0.0);
             let last = nums.last().copied().unwrap_or(0.0);
-            let is_date = fmt.contains('d') || fmt.contains('y') || (fmt.contains('m') && !fmt.contains('h'));
+            // Classified by the format parser: `[Red]0` has a `d` but is no date.
+            let kind = NumberFormat::parse(fmt).kind();
+            let is_date = kind == FormatKind::Date;
             if nums.len() == 1 {
                 // A single number copies; a single date increments by a day, a single time by an hour.
                 return if is_date {
                     Pattern::Linear { last, first, step: 1.0 }
-                } else if NumberFormat::parse(fmt).kind() == FormatKind::Time {
+                } else if kind == FormatKind::Time {
                     Pattern::Linear { last, first, step: 1.0 / 24.0 }
                 } else {
                     Pattern::Copy
@@ -639,6 +641,31 @@ mod tests {
             fill(serde_json::json!([["Product 1"], ["On backorder"]]), "E1:E2", "E1:E6"),
             ["Product 1", "On backorder", "Product 2", "On backorder", "Product 3", "On backorder"]
         );
+    }
+
+    #[test]
+    fn a_single_number_copies_unless_its_format_is_a_date_or_time() {
+        // Excel 365: 5 formatted [Red]0 fills 5, 5, 5 (the "d" in "Red" is no day); a date steps by a
+        // day, a time by an hour.
+        let mut s = crate::Session::new();
+        s.new_workbook();
+        for (col, code) in [("A", "[Red]0"), ("B", "[Blue]0.00"), ("C", "d-mmm-yy"), ("D", "h:mm"), ("E", "mm:ss")] {
+            s.execute("range.setValues", serde_json::json!({"range": format!("{col}1"), "values": [[5]]})).unwrap();
+            s.execute("home.numberFormat", serde_json::json!({"range": format!("{col}1"), "code": code})).unwrap();
+            s.execute("edit.autoFill", serde_json::json!({"source": format!("{col}1"), "target": format!("{col}1:{col}3")})).unwrap();
+        }
+        let d = s.doc().unwrap();
+        let sh = d.wb.active().unwrap();
+        let col = |c: u32| (0..3).map(|r| sh.value(CellRef::new(r, c)).as_f64().unwrap_or(f64::NAN)).collect::<Vec<_>>();
+        assert_eq!(col(0), [5.0, 5.0, 5.0]);
+        assert_eq!(col(1), [5.0, 5.0, 5.0]);
+        assert_eq!(col(2), [5.0, 6.0, 7.0]);
+        for (got, want) in col(3).iter().zip([5.0, 5.0 + 1.0 / 24.0, 5.0 + 2.0 / 24.0]) {
+            assert!((got - want).abs() < 1e-9, "h:mm: {got} vs {want}");
+        }
+        for (got, want) in col(4).iter().zip([5.0, 5.0 + 1.0 / 24.0, 5.0 + 2.0 / 24.0]) {
+            assert!((got - want).abs() < 1e-9, "mm:ss: {got} vs {want}");
+        }
     }
 
     #[test]

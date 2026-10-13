@@ -1186,6 +1186,28 @@ fn cell_width_is_the_column_width_dialog_value_rounded() {
     assert_eq!([t.num("H1"), t.num("H2"), t.num("H3"), t.num("H4"), t.num("H5")], [8.0, 11.0, 12.0, 11.0, 3.0]);
 }
 
+#[test]
+fn cell_format_color_and_parentheses_follow_the_number_format() {
+    // Excel 365: a 5 formatted [Red]0 is "F0" (no negative colour), not scientific; a red negative
+    // section appends "-" and sets CELL("color"); parentheses around positives append "()".
+    let mut t = T::new();
+    for (i, code) in ["[Red]0", "$#,##0_);[Red]($#,##0)", "(0)", "d-mmm-yy", "h:mm"].iter().enumerate() {
+        let style = t.wb.styles.intern(gridcraft_model::Style { num_fmt: gridcraft_model::NumFmt::new(code), ..Default::default() });
+        let at = CellRef::new(i as u32, 0);
+        if let Some(sh) = t.wb.sheet_mut(0) {
+            sh.set_style(at, style);
+        }
+        let a = at.a1();
+        t.set(&format!("B{}", i + 1), &format!("=CELL(\"format\",{a})"));
+        t.set(&format!("C{}", i + 1), &format!("=CELL(\"color\",{a})"));
+        t.set(&format!("D{}", i + 1), &format!("=CELL(\"parentheses\",{a})"));
+    }
+    let codes: Vec<Value> = (1..=5).map(|r| t.get(&format!("B{r}"))).collect();
+    assert_eq!(codes, ["F0", "C0-", "F0()", "D1", "D9"].map(Value::from));
+    assert_eq!([t.num("C1"), t.num("C2"), t.num("C3")], [0.0, 1.0, 0.0]);
+    assert_eq!([t.num("D1"), t.num("D2"), t.num("D3")], [0.0, 0.0, 1.0]);
+}
+
 /// Expected results are Excel's, from Apache POI's `DGet.xls` (rows 46-49): a criteria cell holding
 /// a formula under a label that names no field is evaluated for every record.
 #[test]

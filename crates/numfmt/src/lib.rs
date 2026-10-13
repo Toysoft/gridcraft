@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 mod builtin;
+mod cell_info;
 mod decimal;
 mod parse;
 mod render;
@@ -13,6 +14,7 @@ use std::sync::Arc;
 use gridcraft_core::{CellError, DateSystem, Value};
 
 pub use builtin::{builtin_format, builtin_id};
+pub use cell_info::CellFormatInfo;
 pub use decimal::format_general_fit;
 
 use parse::{SecKind, Section, Tok};
