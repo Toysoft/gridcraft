@@ -103,10 +103,16 @@ pub struct Backstage {
     pub save_format: &'static str,
     /// Home and Open: when the recent workbooks were last changed.
     recent: RecentFiles,
+    /// Open: the folder This computer is showing; `None` while Recent is chosen.
+    local: Option<craft_ui::places::local::LocalFolder>,
 }
 
 /// Save As file types: (extension, label). The first is the workbook itself; the others are
 /// exports that leave the workbook's own file and unsaved state alone.
+/// The kinds of file This computer lists on the Open page: the ones the system dialog's
+/// Spreadsheets filter offers (`apps/gridcraft/src/main.rs`).
+const OPEN_KINDS: [&str; 9] = ["xlsx", "xlsm", "xls", "xlsb", "ods", "csv", "tsv", "txt", "json"];
+
 pub const SAVE_TYPES: [(&str, &str); 4] =
     [("xlsx", "Excel Workbook (*.xlsx)"), ("csv", "CSV UTF-8 (Comma delimited) (*.csv)"), ("html", "Web Page (*.html)"), ("pdf", "PDF (*.pdf)")];
 
@@ -121,6 +127,7 @@ impl Backstage {
             preview: None,
             save_format: "xlsx",
             recent: RecentFiles::default(),
+            local: None,
         }
     }
 }
@@ -545,10 +552,14 @@ fn new_page(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
 }
 
 /// File › Open: the shared places panel (storytold/craft-libs#49). Recent lists the workbooks
-/// opened lately, each with its folder and when it was last changed; Browse shows the system's
-/// dialog. Remote storage adds one place per account here; there is none yet.
+/// opened lately, each with its folder and when it was last changed; This computer lists folders
+/// and workbooks right here, starting from the home folder, through craft-ui's `LocalFolder`;
+/// Browse shows the system's dialog. Remote storage adds one place per account; there is none yet.
 fn open_page(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) {
-    use craft_ui::places::{Place, PlaceEntry, PlaceKind, PlacesAction, PlacesContent, PlacesLabels, PlacesPanel, PlacesStyle};
+    use craft_ui::places::local::{LocalFolder, LocalLabels, LocalOutcome};
+    use craft_ui::places::{
+        Place, PlaceEntry, PlaceKind, PlacesAction, PlacesContent, PlacesIcon, PlacesLabels, PlacesNotice, PlacesPanel, PlacesStyle,
+    };
     let lang = app.ui.language;
     let t = Tokens::get(ui.ctx());
     let style = PlacesStyle {
@@ -568,8 +579,64 @@ fn open_page(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outc
     };
     let labels =
         PlacesLabels { places: lang.tr("Places"), add_place: lang.tr("Add a place"), browse: lang.tr("Browse…"), loading: lang.tr("Loading…") };
-    let places = [Place { kind: PlaceKind::Recent, label: lang.tr("Recent"), detail: None }];
-    // What the file system has said so far; the rest arrives in later frames (see `RecentFiles`).
+    let mut places = vec![Place { kind: PlaceKind::Recent, label: lang.tr("Recent"), detail: None }];
+    // The browser has no folders to list, so there the system's picker is the only way in.
+    if cfg!(not(target_arch = "wasm32")) {
+        places.push(Place { kind: PlaceKind::Local, label: lang.tr("This computer"), detail: None });
+    }
+    // Desktop pickers return at once; the web picker delivers later (see `SheetApp::logic`).
+    let browse = |app: &mut SheetApp, out: &mut Outcome| {
+        let before = app.session.active().map(|d| d.uid);
+        app.open_dialog("open", json!({}));
+        if app.session.active().map(|d| d.uid) != before {
+            out.close = true;
+        }
+    };
+    let open = |app: &mut SheetApp, out: &mut Outcome, path: &str| {
+        app.open_path(path);
+        if app.session.active().and_then(|d| d.path.as_deref()) == Some(path) {
+            out.close = true;
+        }
+    };
+
+    // This computer is showing a folder: the shared helper lists it and says what a choice means.
+    if let Some(folder) = bs.local.as_mut() {
+        // A folder the system keeps closed (macOS guards Documents, Desktop and Downloads) still
+        // opens through Browse: a workbook the user picks there is theirs to open. macOS asks once
+        // whether the app may read such a folder, and stays silent after a No.
+        let no_access = lang.tr("GridCraft has no permission to read this folder. Use Browse to open a workbook from it.");
+        let denied = if cfg!(target_os = "macos") {
+            format!("{no_access} {}", lang.tr("To list it here, allow GridCraft in System Settings, under Privacy & Security, Files and Folders."))
+        } else {
+            no_access.to_string()
+        };
+        let words = LocalLabels {
+            empty: lang.tr("This folder is empty."),
+            no_access: lang.tr("No access to this folder"),
+            no_access_detail: &denied,
+            browse: lang.tr("Browse…"),
+            gone: lang.tr("This folder is no longer there."),
+            gone_detail: lang.tr("It may have been moved or deleted."),
+            unreadable: lang.tr("This folder can't be read."),
+        };
+        let entries = folder.entries();
+        let crumbs = folder.crumbs(lang.tr("This computer"));
+        let crumbs: Vec<&str> = crumbs.iter().map(String::as_str).collect();
+        let action = PlacesPanel::new(&places, Some(1), folder.content(&entries, words), &style, labels).crumbs(&crumbs).show(ui).action;
+        match action {
+            Some(PlacesAction::Select(0)) => bs.local = None,
+            Some(action) => match folder.act(action) {
+                LocalOutcome::Open(path) => open(app, out, &path.to_string_lossy()),
+                LocalOutcome::Browse => browse(app, out),
+                LocalOutcome::Stay => {}
+            },
+            None => {}
+        }
+        return;
+    }
+
+    // Recent. What the file system has said so far; the rest arrives in later frames (see
+    // `RecentFiles`).
     let known = bs.recent.known(ui.ctx(), &app.ui.recent);
     let now = crate::now_ms() / 1000.0;
     // Each workbook: its path, name, "folder · when it was last changed", and whether it is away.
@@ -590,25 +657,24 @@ fn open_page(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outc
         .collect();
     let entries: Vec<PlaceEntry<'_>> =
         recent.iter().map(|(_, name, detail, away)| PlaceEntry { name, folder: false, detail, attention: *away, remote: false }).collect();
-    let content = if entries.is_empty() { PlacesContent::Message(lang.tr("No recent workbooks yet.")) } else { PlacesContent::Entries(&entries) };
+    let content = if entries.is_empty() {
+        PlacesContent::Notice(PlacesNotice { icon: PlacesIcon::Recent, title: lang.tr("No recent workbooks yet."), body: "", action: None })
+    } else {
+        PlacesContent::Entries(&entries)
+    };
     let crumbs = [lang.tr("Recent")];
     match PlacesPanel::new(&places, Some(0), content, &style, labels).crumbs(&crumbs).show(ui).action {
         Some(PlacesAction::Activate(i)) => {
             if let Some((path, ..)) = recent.get(i) {
-                app.open_path(path);
-                if app.session.active().and_then(|d| d.path.as_deref()) == Some(path.as_str()) {
-                    out.close = true;
-                }
+                open(app, out, path);
             }
         }
-        Some(PlacesAction::Browse) => {
-            let before = app.session.active().map(|d| d.uid);
-            app.open_dialog("open", json!({}));
-            // Desktop pickers return at once; the web picker delivers later (see `SheetApp::logic`).
-            if app.session.active().map(|d| d.uid) != before {
-                out.close = true;
+        Some(PlacesAction::Select(1)) => {
+            if let Some(home) = LocalFolder::home() {
+                bs.local = Some(LocalFolder::open(home, &OPEN_KINDS));
             }
         }
+        Some(PlacesAction::Browse) => browse(app, out),
         _ => {}
     }
 }
@@ -1076,6 +1142,22 @@ mod tests {
             assert!(h.query_by_label_contains(name).is_some(), "{name} is on the Open page");
         }
         assert!(h.query_by_label("Add a place").is_none(), "there is no remote storage to add yet");
+    }
+
+    /// This computer lists folders in the page, through the shared helper, and opens no dialog.
+    #[test]
+    fn this_computer_lists_a_folder_in_the_page() {
+        use egui_kittest::kittest::Queryable;
+        let mut h = file_page(Page::Open, &["/home/ada/Budget.xlsx"]);
+        h.get_by_label("This computer").click();
+        h.run_steps(4);
+        let showing = |h: &egui_kittest::Harness<'_, SheetApp>| h.state().backstage.as_ref().is_some_and(|b| b.local.is_some());
+        assert!(showing(&h), "This computer shows a folder");
+        assert!(h.state().dialog.is_none(), "and opens no dialog, unlike Browse");
+        assert!(h.query_by_label_contains("Budget.xlsx").is_none(), "the recent workbooks made way for the folder");
+        h.get_by_label("Recent").click();
+        h.run_steps(4);
+        assert!(!showing(&h) && h.query_by_label_contains("Budget.xlsx").is_some(), "Recent comes back");
     }
 
     /// The File page's column (storytold/craft-libs#53): every page is one click away, Options
