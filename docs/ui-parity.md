@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (horizontal scrollbar in the sheet tab bar, #840) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (shortcuts follow the interface language; German measured in Excel) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Interaction, controls and feel, against Excel. Part of [target-app-parity.md](target-app-parity.md).
 **UI/UX fidelity: ~55% ready, 50–80 h** (estimated). Ribbon command coverage is measured
@@ -131,6 +131,23 @@ otherwise. Number-format and border keys match the physical key (Ctrl+Shift+4, w
 On Windows, AltGr arrives as Ctrl+Alt: a Ctrl+Alt key that also types a character is treated as
 text, so AltGr symbols (e.g. `~` on a German layout) never trigger a shortcut.
 
+### Shortcuts per interface language
+
+Excel's shortcuts follow its interface language. `keymap.rs` holds the English ones; a language
+with its own has a file next to it (`keymap/de.rs`) listing only what differs, tried first, the
+same way `i18n` falls back to English labels. German is measured in Excel 365 (German interface
+and keyboard, each key pressed twice): Strg+Umschalt+F / K / U bold, italic, underline;
+Strg+U and Strg+< fill down, Strg+> fill right; Strg+. / Strg+: date / time; Strg+, / Strg+;
+formula / value from above; Strg+# date and Strg+^ time format; Strg+` (Umschalt+´) formulas;
+Strg++ insert, Strg+* current region, Strg+_ outline border; Strg+Umschalt+2 / 6 scientific /
+General; Strg+( / Strg+) unhide rows / columns; Strg+8 hide columns; Strg+Umschalt+A / P Format
+Cells › Font; Alt+= (Alt+Umschalt+0) AutoSum; Strg+Alt+= / - zoom. Keys German Excel leaves free
+keep the English binding (Strg+B bold), except Strg+Umschalt+0, which would open Insert.
+Missing in German as in English: Strg+7 outline symbols, Strg+6 objects, Strg+' (next corner).
+Spanish, French and Brazilian Portuguese Excel have their own shortcuts too, waiting for a
+measurement with that interface language; Czech and Russian keep the English shortcuts but have
+their own key tips. Ctrl with the numpad's + opens Insert in every language.
+
 ## Dialogs
 
 Format Cells, Insert Function/Formula Builder, Find and Replace, Go To and Go To Special, Sort,
@@ -161,6 +178,7 @@ scrollbar bugs 2–4 · pixel/feel pass against observed Excel 7–12.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Shortcuts follow the interface language like `i18n`: `keymap/de.rs` holds German Excel's shortcuts (measured in Excel 365), English is the fallback. Ctrl with the numpad's + opens Insert; text a shortcut types (Alt+= types `=`) no longer starts an entry |
 | 2026-10-12 | minor | The File view's recent list tells when each workbook was last changed, read off the UI thread |
 | 2026-10-13 | minor | Horizontal scrollbar in the sheet tab bar: drag, track click pages, frozen columns excluded from the page (#840) |
 | 2026-10-12 | minor | Ctrl+wheel zoom steps along a ladder of percentages about 20% apart that never skips 100%, gliding to each step with animations on, so a notch out undoes a notch in (it drifted: 100 → 122 → 101); Excel steps 15 points, see decisions.md |

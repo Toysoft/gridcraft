@@ -1,6 +1,6 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Format Cells dialog looks its labels up in the catalog) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (keyboard shortcuts per interface language; German) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Per-language status against Excel, which ships its UI in dozens of languages (Windows language
 packs cover 100+), with localized function names, argument separators, number and date formats,
@@ -73,11 +73,16 @@ language (none so far) and of localized function names.
 3. Text shaping and fallback: a shaping engine for grid, editor and PDF text (Arabic, Devanagari,
    Thai), system font fallback for CJK, bidirectional runs, right-to-left sheet tabs and printing;
    embedded subset fonts in PDF.
+4. Keyboard shortcuts and key tips per interface language, as Excel has them: `keymap/de.rs`
+   (German, measured in Excel) on top of the English table. Spanish, French and Brazilian
+   Portuguese Excel have their own shortcuts and need a measurement in Excel with that interface
+   language; Czech and Russian Excel have their own key tips (`keytips.json` is English only).
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Keyboard shortcuts follow the interface language (`keymap/de.rs`, English fallback): German measured in Excel 365. Spanish, French and Brazilian Portuguese have their own Excel shortcuts and need a measurement; Czech and Russian differ only in key tips |
 | 2026-10-12 | minor | Format Cells looks up its tabs, labels, options and note through `Language::tr` (Fill tab keyed `Format Cells\|Fill`); dialog titles and OK/Cancel too. Labels already in a table (Number, Currency, Fill…) show translated; the rest fall back to English until the tables add them |
 | 2026-10-12 | minor | Brazilian Portuguese catalog (`i18n/pt.rs`) grows from 377 to 923 entries: every key the other catalogs translate, including the dialog strings #669 starts looking up (~42%) |
 | 2026-10-11 | minor | German ribbon catalog (`i18n/de.rs`, 266 labels, ~12%); `de` locale tags (de-DE, de-AT, de-CH…) resolve to German. PR #163 (localized German formulas/numbers) still open |

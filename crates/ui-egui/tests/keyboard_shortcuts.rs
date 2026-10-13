@@ -5,7 +5,8 @@ use gridcraft_engine::Session;
 use gridcraft_engine::core::CellRef;
 use gridcraft_engine::model::BorderStyle;
 use gridcraft_ui_egui::SheetApp;
-use gridcraft_ui_egui::keymap::{Shortcut, lookup};
+use gridcraft_ui_egui::i18n::Language;
+use gridcraft_ui_egui::keymap::{Shortcut, lookup, lookup_in};
 use serde_json::json;
 
 type Harness = egui_kittest::Harness<'static, SheetApp>;
@@ -213,4 +214,104 @@ fn alt_down_only_opens_enabled_table_filter_buttons() {
         assert_eq!(h.state().grid.filter_menu.map(|(column, _, _)| column), enabled.then_some(1));
         assert_eq!(h.state().session.active().unwrap().selection.active.a1(), "B1");
     }
+}
+
+/// A key press as a German keyboard reports it: `key` is what the layout types (egui falls back to
+/// the key's position when it has no name for the character, as for `#` or `(`), `physical` the
+/// position named after a US keyboard, `text` what the press types.
+fn de_key(h: &mut Harness, key: Key, physical: Key, m: Modifiers, text: Option<&str>) {
+    h.input_mut().events.push(Event::Key { key, physical_key: Some(physical), pressed: true, repeat: false, modifiers: m });
+    if let Some(t) = text {
+        h.input_mut().events.push(Event::Text(t.into()));
+    }
+    h.input_mut().events.push(Event::Key { key, physical_key: Some(physical), pressed: false, repeat: false, modifiers: m });
+    h.run_steps(2);
+}
+
+fn german(session: Session) -> Harness {
+    let mut h = harness(session);
+    h.state_mut().ui.language = Language::De;
+    h.run_steps(2);
+    h
+}
+
+fn dialog(h: &Harness) -> Option<String> {
+    h.state().dialog.as_ref().map(|d| d.name.clone())
+}
+
+fn sheet(h: &Harness) -> &gridcraft_engine::model::Sheet {
+    h.state().session.active().unwrap().wb.active().unwrap()
+}
+
+#[test]
+fn german_interface_uses_excels_german_shortcuts() {
+    use gridcraft_engine::core::Value;
+    let mut h = german(book("A1:B2"));
+    // Strg+Umschalt+F and Strg+Umschalt+K: bold and italic, and off again on the second press.
+    de_key(&mut h, Key::F, Key::F, CTRL_SHIFT, None);
+    assert!(style(&h, "B2").font.bold);
+    assert_eq!(dialog(&h), None);
+    de_key(&mut h, Key::F, Key::F, CTRL_SHIFT, None);
+    assert!(!style(&h, "B2").font.bold);
+    de_key(&mut h, Key::K, Key::K, CTRL_SHIFT, None);
+    assert!(style(&h, "A1").font.italic);
+    assert_eq!(dialog(&h), None);
+    // Strg+U fills down instead of underlining.
+    de_key(&mut h, Key::U, Key::U, CTRL, None);
+    assert_eq!(sheet(&h).value(CellRef::parse("A2").unwrap()), Value::Number(1.5));
+    assert_eq!(style(&h, "A2").font.underline, gridcraft_engine::model::Underline::None);
+    // Strg+# (no egui name: the key left of Enter) applies the date format.
+    de_key(&mut h, Key::Backslash, Key::Backslash, CTRL, None);
+    assert_eq!(style(&h, "B2").num_fmt.as_str(), "d-mmm-yy");
+    // Strg+8 hides the columns, Strg+) (Umschalt+9) shows them again; Strg+9 and Strg+( rows.
+    de_key(&mut h, Key::Num8, Key::Num8, CTRL, None);
+    assert!(sheet(&h).is_col_hidden(0) && sheet(&h).is_col_hidden(1));
+    de_key(&mut h, Key::Num9, Key::Num9, CTRL_SHIFT, Some(")"));
+    assert!(!sheet(&h).is_col_hidden(0));
+    de_key(&mut h, Key::Num9, Key::Num9, CTRL, None);
+    assert!(sheet(&h).is_row_hidden(0));
+    de_key(&mut h, Key::Num8, Key::Num8, CTRL_SHIFT, Some("("));
+    assert!(!sheet(&h).is_row_hidden(0));
+    // Strg+Umschalt+0 types `=` and does nothing; Strg++ opens Insert.
+    de_key(&mut h, Key::Equals, Key::Num0, CTRL_SHIFT, Some("="));
+    assert_eq!(dialog(&h), None);
+    de_key(&mut h, Key::Plus, Key::CloseBracket, CTRL, Some("+"));
+    assert_eq!(dialog(&h).as_deref(), Some("insertCells"));
+
+    // Strg+. starts an entry with today's date.
+    let mut h = german(book("D1"));
+    de_key(&mut h, Key::Period, Key::Period, CTRL, None);
+    assert!(h.state().editor.as_ref().is_some_and(|e| e.text.contains('/')));
+
+    // Alt+= (Alt+Umschalt+0, which also types `=`) is AutoSum, not the start of an entry.
+    let mut h = german(book("A1:A3"));
+    let alt_shift = Modifiers { alt: true, shift: true, ..Modifiers::NONE };
+    de_key(&mut h, Key::Equals, Key::Num0, alt_shift, Some("="));
+    assert!(h.state().editor.is_none());
+    assert_eq!(sheet(&h).input_text(CellRef::parse("A4").unwrap()), "=SUM(A1:A3)");
+
+    // The English interface keeps Ctrl+Shift+F for Format Cells › Font; Ctrl with the numpad's +
+    // inserts in every language.
+    let mut h = harness(book("A1:B2"));
+    de_key(&mut h, Key::F, Key::F, CTRL_SHIFT, None);
+    assert_eq!(dialog(&h).as_deref(), Some("formatCells"));
+    h.state_mut().dialog = None;
+    de_key(&mut h, Key::Plus, Key::Plus, CTRL, None);
+    assert_eq!(dialog(&h).as_deref(), Some("insertCells"));
+}
+
+#[test]
+fn shortcuts_follow_the_interface_language() {
+    let bold = Some(Shortcut::Run("home.bold", json!({})));
+    let font = Some(Shortcut::Dialog("formatCells", json!({"tab": "Font"})));
+    assert_eq!(lookup_in(Language::De, Key::F, Some(Key::F), CTRL_SHIFT, false), bold);
+    assert_eq!(lookup_in(Language::En, Key::F, Some(Key::F), CTRL_SHIFT, false), font);
+    // Languages without their own table yet keep the English shortcuts, and so does Excel for Mac.
+    assert_eq!(lookup_in(Language::Fr, Key::F, Some(Key::F), CTRL_SHIFT, false), font);
+    let mac_cmd_shift = Modifiers { mac_cmd: true, command: true, shift: true, ..Modifiers::NONE };
+    assert_eq!(lookup_in(Language::De, Key::F, Some(Key::F), mac_cmd_shift, true), lookup(Key::F, Some(Key::F), mac_cmd_shift, true));
+    // Keys German Excel binds like English Excel come from the English table.
+    assert_eq!(lookup_in(Language::De, Key::Num4, Some(Key::Num4), CTRL, false), Some(Shortcut::Run("home.underline", json!({}))));
+    // A key German Excel leaves free doesn't fall through to English.
+    assert_eq!(lookup_in(Language::De, Key::Equals, Some(Key::Num0), CTRL_SHIFT, false), Some(Shortcut::Unbound));
 }

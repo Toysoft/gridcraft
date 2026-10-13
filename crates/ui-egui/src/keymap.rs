@@ -2,6 +2,12 @@
 //! number-format and border combinations, F-keys, Alt/Option combinations and the Excel for Mac
 //! variants. Every entry maps to an existing command or dialog. `docs/ui-parity.md` holds the
 //! audit against Microsoft's published Windows and Mac shortcut lists.
+//!
+//! Excel's shortcuts follow its interface language, like the labels in [`crate::i18n`]: German
+//! Excel makes text bold with Strg+Umschalt+F. A language with its own shortcuts has a file here
+//! that lists only what differs from English ([`lookup_in`] tries it first, then English). German
+//! is measured in Excel; Spanish, French and Brazilian Portuguese have their own shortcuts too but
+//! wait for a measurement in Excel with that interface language.
 
 use egui::{Key, Modifiers};
 use gridcraft_engine::core::{CellRef, RangeRef};
@@ -10,6 +16,9 @@ use serde_json::{Value as Json, json};
 
 use crate::SheetApp;
 use crate::grid::Geo;
+use crate::i18n::Language;
+
+mod de;
 
 /// What a shortcut does.
 #[derive(Clone, Debug, PartialEq)]
@@ -39,6 +48,19 @@ pub enum Shortcut {
     DropDown,
     /// Ctrl+Alt+= / Ctrl+Alt+-: zoom in / out.
     Zoom(i32),
+    /// A key the interface language leaves free: nothing happens, and the English binding of the
+    /// same key doesn't run either.
+    Unbound,
+}
+
+/// The shortcut for a key press in the interface `language`: its own binding first, then the
+/// English one ([`lookup`]).
+pub fn lookup_in(language: Language, key: Key, physical: Option<Key>, m: Modifiers, mac: bool) -> Option<Shortcut> {
+    let own = match language {
+        Language::De if !mac => de::lookup(key, physical, m),
+        _ => None,
+    };
+    own.or_else(|| lookup(key, physical, m, mac))
 }
 
 fn run(id: &'static str) -> Shortcut {
@@ -121,6 +143,8 @@ pub fn lookup(key: Key, physical: Option<Key>, m: Modifiers, mac: bool) -> Optio
         // Ctrl+Alt / Cmd+Option combinations.
         V if ctrl_alt || (mac && m.ctrl && m.command) => Shortcut::Dialog("pasteSpecial", json!({})),
         Equals | Plus if ctrl_alt => Shortcut::Zoom(10),
+        // Ctrl with the numpad's +: Insert (the main keyboard's + is Shift+= on a US layout).
+        Plus if cmd && !s => Shortcut::Dialog("insertCells", json!({})),
         Minus if ctrl_alt && !mac => Shortcut::Zoom(-10),
         F9 if ctrl_alt => run("formulas.calculateNow"),
         R if ctrl_alt && mac => run("view.collapseRibbon"),
@@ -170,7 +194,7 @@ pub(crate) fn dispatch(app: &mut SheetApp, ctx: &egui::Context, key: Key, physic
     if !mac && m.alt && m.ctrl && ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Text(_)))) {
         return false;
     }
-    let Some(shortcut) = lookup(key, physical, m, mac) else { return false };
+    let Some(shortcut) = lookup_in(app.ui.language, key, physical, m, mac) else { return false };
     let (active, anchor) = app.session.active().map(|d| (d.selection.active, d.selection.anchor)).unwrap_or_default();
     match shortcut {
         Shortcut::Run(id, params) => {
@@ -230,6 +254,7 @@ pub(crate) fn dispatch(app: &mut SheetApp, ctx: &egui::Context, key: Key, physic
             let percent = (i32::from(sh.zoom).saturating_add(step)).clamp(10, 400);
             app.run_or_alert("view.zoom", json!({"percent": percent}));
         }
+        Shortcut::Unbound => {}
     }
     true
 }

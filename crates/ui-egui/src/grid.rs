@@ -2590,6 +2590,8 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
             if !m.alt && (m.ctrl || m.command || (m.shift && *key == egui::Key::Space)))
     });
     let page = ((geo.cells.height() / geo.z) / sh.default_row_height).floor().max(1.0) as i64;
+    // Text a shortcut typed doesn't edit (German Alt+= arrives as Alt+Shift+0 and the text `=`).
+    let mut shortcut_ran = false;
     for ev in events {
         match ev {
             egui::Event::Copy => {
@@ -2599,7 +2601,7 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
                 app.copy_to_clipboard(ctx, "edit.cut");
             }
             egui::Event::Paste(text) => app.paste_external(text),
-            egui::Event::Text(_) if shortcut_pressed => {}
+            egui::Event::Text(_) if shortcut_pressed || shortcut_ran => {}
             egui::Event::Text(text) if text.chars().all(|c| !c.is_control()) && !text.is_empty() => {
                 app.begin_edit(Some(text), false);
                 if let Some(ed) = app.editor.as_mut() {
@@ -2610,6 +2612,7 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
             egui::Event::Key { key, physical_key, pressed: true, modifiers: m, .. } => {
                 use egui::Key;
                 if crate::keymap::dispatch(app, ctx, key, physical_key, m, geo, sh) {
+                    shortcut_ran = true;
                     continue;
                 }
                 let cmd = m.command;
