@@ -352,6 +352,31 @@ impl SheetApp {
         if let Some(r) = self.run_ui_command(id, &params) {
             return r;
         }
+        // A Font-group command while editing hits the edit buffer, not the engine (Excel parity:
+        // you format the characters you're typing). Caret-only swallows; formula edits and the
+        // programmatic `cell`/`range`/`chars` forms flow to the engine as usual.
+        if editor::RUN_FONT_IDS.contains(&id)
+            && params.get("cell").is_none()
+            && params.get("range").is_none()
+            && params.get("chars").is_none()
+            && let Some(ed) = self.editor.as_mut()
+            && !ed.is_formula()
+        {
+            if editor::sel_bytes(ed).is_none() {
+                return Ok(Json::Null);
+            }
+            let base = edit_base_font(&self.session, ed);
+            match editor::intercept_run_delta(id, &params, ed, &base) {
+                // Fall through to the engine (e.g. a missing `color`/`name` param it validates).
+                None => {}
+                Some(Err(e)) => return Err(e),
+                Some(Ok(apps)) => {
+                    editor::apply_run_fonts(ed, apps)?;
+                    // Only the buffer changed: the engine has nothing to recalculate.
+                    return Ok(Json::Null);
+                }
+            }
+        }
         let r = self.session.run(id, params);
         self.after_engine();
         if id == "file.exportPdf"
@@ -1141,6 +1166,13 @@ pub fn clean_error(e: &str) -> String {
         return rest.to_string();
     }
     e.to_string()
+}
+
+/// The base font an active edit's Font-group commands format over: the edited cell's style font
+/// (the default when there is no document, so interception then only ever sees all-default
+/// merges). Field-disjoint from `SheetApp::editor`, so the interception can borrow both.
+fn edit_base_font(session: &Session, ed: &editor::EditState) -> gridcraft_engine::model::Font {
+    session.active().and_then(|d| d.wb.sheet(ed.sheet).map(|sh| d.wb.styles.get(sh.style_id(ed.cell)).font.clone())).unwrap_or_default()
 }
 
 #[allow(clippy::disallowed_methods)] // the clock is read only off wasm
