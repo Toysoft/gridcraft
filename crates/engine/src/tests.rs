@@ -1885,6 +1885,25 @@ fn set_with_mismatched_runs_fails_atomically() {
 }
 
 #[test]
+fn set_with_over_cap_runs_fails_atomically() {
+    let mut s = s();
+    // Runs that match the text exactly (valid_for holds) but exceed the per-cell run cap: the
+    // length half of the runs validation refuses them.
+    let len = gridcraft_model::MAX_RUNS_PER_CELL + 1;
+    let text = "a".repeat(len);
+    let runs: Vec<Run> = (0..len as u32).map(|i| Run { start: i, len: 1, font: runs_none_font() }).collect();
+    let before = s.doc().unwrap().wb.clone();
+    let e = s
+        .execute("cell.set", json!({"cell": "A1", "input": text, "runs": serde_json::to_value(CellRuns { runs }).unwrap()}))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("cell.set"), "{e}");
+    assert_eq!(s.doc().unwrap().wb, before, "the refused edit leaves the workbook as it was");
+    assert_eq!(v(&s, "A1"), Value::Empty, "the refused edit leaves the cell empty");
+    assert!(runs_of(&s, "A1").is_none(), "the refused edit stores no runs");
+}
+
+#[test]
 fn set_without_runs_still_drops_entry() {
     let mut s = s();
     add_runs_cell(&mut s, "A3", repro_runs());

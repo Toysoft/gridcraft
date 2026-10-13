@@ -440,10 +440,12 @@ fn default_runs(len: usize) -> CellRuns {
 /// Applies intercepted `(byte range, delta)` pairs to the edit buffer's runs, in order. A flat
 /// result — or a buffer without runs — behaves like one all-default run for the next pair; a
 /// final flat result leaves `ed.runs` `None`. `Err` carries the alert message (the per-cell run
-/// cap).
+/// cap) and leaves `ed.runs` exactly as it was.
 pub fn apply_run_fonts(ed: &mut EditState, apps: Vec<(std::ops::Range<usize>, RunFont)>) -> Result<(), String> {
     for (range, delta) in apps {
-        let current = ed.runs.take().unwrap_or_else(|| default_runs(ed.text.len()));
+        // Compute-then-assign: a refused press (the cap) must not flatten the buffer by taking
+        // the runs before the result is known.
+        let current = ed.runs.clone().unwrap_or_else(|| default_runs(ed.text.len()));
         ed.runs = current.format_range(&ed.text, range, &delta).map_err(|_| "too many runs".to_string())?;
     }
     Ok(())
@@ -768,6 +770,23 @@ mod tests {
         assert_eq!(apps[0].1.vert, Some(VertAlign::Superscript));
         apply_run_fonts(&mut e, apps).unwrap();
         assert!(e.runs.as_ref().is_some_and(|r| r.runs.iter().all(|run| run.font.vert == Some(VertAlign::Superscript))));
+    }
+
+    #[test]
+    fn apply_run_fonts_cap_error_keeps_runs() {
+        // A buffer already at the per-cell run cap (alternating fonts so nothing coalesces) plus
+        // a two-byte tail: one more split is refused, and the refused press must surface `Err`
+        // and leave the buffer's runs exactly as they were — not flattened to `None`.
+        let cap = gridcraft_engine::model::MAX_RUNS_PER_CELL;
+        let mut runs: Vec<Run> = (0..cap as u32)
+            .map(|i| Run { start: i, len: 1, font: if i % 2 == 0 { RunFont { bold: Some(true), ..RunFont::default() } } else { RunFont::default() } })
+            .collect();
+        runs.push(Run { start: cap as u32, len: 2, font: RunFont { bold: Some(true), ..RunFont::default() } });
+        let at_cap = CellRuns { runs };
+        let mut e = EditState::new(0, CellRef::new(0, 0), "a".repeat(cap + 2), true, false, Some(at_cap.clone()));
+        let apps = vec![((cap + 1)..(cap + 2), RunFont { color: Some(Color::rgb(0xFF, 0, 0)), ..RunFont::default() })];
+        assert_eq!(apply_run_fonts(&mut e, apps).unwrap_err(), "too many runs");
+        assert_eq!(e.runs, Some(at_cap), "the refused press leaves the buffer's runs unchanged");
     }
 
     #[test]

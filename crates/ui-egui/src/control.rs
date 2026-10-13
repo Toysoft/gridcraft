@@ -279,7 +279,9 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
         }
         "ui.edit.text" => match app.editor.as_mut() {
             Some(e) => {
-                e.text = s("text").unwrap_or("").to_string();
+                // Through `set_text`, so the loaded runs translate with the text (and drop on a
+                // formula transition) instead of going stale against it.
+                e.set_text(s("text").unwrap_or("").to_string());
                 e.caret = e.text.chars().count();
                 ok(Json::Null)
             }
@@ -495,6 +497,20 @@ mod tests {
         v.iter().filter_map(|c| c.get("id").and_then(Json::as_str)).collect()
     }
 
+    /// Two runs over "black red": "black" bold, " red" red.
+    fn black_red() -> gridcraft_engine::model::CellRuns {
+        gridcraft_engine::model::CellRuns {
+            runs: vec![
+                gridcraft_engine::model::Run { start: 0, len: 5, font: gridcraft_engine::model::RunFont { bold: Some(true), ..Default::default() } },
+                gridcraft_engine::model::Run {
+                    start: 5,
+                    len: 4,
+                    font: gridcraft_engine::model::RunFont { color: Some(gridcraft_engine::model::Color::rgb(0xFF, 0, 0)), ..Default::default() },
+                },
+            ],
+        }
+    }
+
     #[test]
     fn search_filters_case_insensitively() {
         assert_eq!(ids(&filter_commands(sample(), Some("border"))), ["home.borders"]);
@@ -503,6 +519,42 @@ mod tests {
         assert_eq!(ids(&filter_commands(sample(), Some("font"))), ["home.borders", "home.bold"]);
         assert!(filter_commands(sample(), Some("catalog_no_match_7391")).is_empty());
         assert_eq!(filter_commands(sample(), None).len(), 3);
+    }
+
+    #[test]
+    fn edit_text_then_commit_keeps_runs_matching_the_new_text() {
+        // The three-call control flow over a rich cell: begin (loads the cell's runs), replace
+        // the text, commit. The commit must succeed and carry runs describing the new text —
+        // assigning the text directly used to strand the loaded runs against it and the engine
+        // refused the commit ("runs do not match the text").
+        let mut session = gridcraft_engine::Session::new();
+        session.new_workbook();
+        let runs = black_red();
+        session
+            .run("cell.set", json!({"cell": "A1", "input": "black red", "runs": serde_json::to_value(&runs).unwrap()}))
+            .unwrap();
+        let mut app = SheetApp::new(session, crate::Services::default());
+        let ctx = egui::Context::default();
+        for (method, params) in [
+            ("ui.edit.begin", json!({})),
+            ("ui.edit.text", json!({"text": "blackx red"})),
+            ("ui.edit.commit", json!({})),
+        ] {
+            let Outcome::Done(reply) = handle(&mut app, &ctx, method, &params) else {
+                panic!("{method} must answer immediately");
+            };
+            assert_eq!(reply["ok"], true, "{method}: {}", reply["error"]);
+        }
+        let got = app.session.run("cell.get", json!({"cell": "A1"})).unwrap();
+        assert_eq!(got["text"], "blackx red");
+        let sh = app.session.active().map(|d| d.wb.active()).unwrap().unwrap();
+        let at = CellRef::parse("A1").unwrap();
+        let stored = sh.cell_runs.get(&at);
+        assert!(stored.is_some_and(|r| r.valid_for("blackx red")), "the committed runs match the new text: {stored:?}");
+        // The loaded runs translated through the insertion: the run covering the inserted byte
+        // absorbs it ("blackx"), " red" shifted to byte 6.
+        let spans: Vec<(u32, u32)> = stored.map(|r| r.runs.iter().map(|run| (run.start, run.len)).collect()).unwrap_or_default();
+        assert_eq!(spans, vec![(0, 6), (6, 4)]);
     }
 
     #[test]
