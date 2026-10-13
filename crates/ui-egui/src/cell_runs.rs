@@ -52,6 +52,20 @@ pub fn job(text: &str, runs: &CellRuns, base: &Font, base_color: Color32, theme:
     Some(j)
 }
 
+/// The editing widget's runs job ([`job`] adapted to the TextEdit): the zoom is computed so the
+/// sections come out at the widget's own pixel size (`font_px`) over the cell style's point
+/// size, keeping the editor's type size while the runs paint their colours and fonts. `None` as
+/// [`job`] (invalid runs) — the widget then lays the text out flat, in one format.
+pub fn buffer_job(text: &str, runs: &CellRuns, base: &Font, base_color: Color32, theme: &Theme, font_px: f32) -> Option<LayoutJob> {
+    // A hostile file can carry a zero or negative base size (or NaN): no zoom recovers that, so
+    // lay flat.
+    if !base.size.is_finite() || base.size <= 0.0 {
+        return None;
+    }
+    let z = font_px / (base.size * 96.0 / 72.0);
+    job(text, runs, base, base_color, theme, z, None)
+}
+
 /// A copy of `job` limited to its first line (the text before the first `\n`), for single-line
 /// cell rendering: sections starting past the cut are dropped, the straddling one is clipped, so
 /// the sections still concatenate to the text.
@@ -165,6 +179,26 @@ mod tests {
         assert_eq!(j.sections[0].byte_range.end.0, 5);
         assert_eq!(j.sections[1].byte_range.end.0, 9);
         assert_eq!(j.sections[2].byte_range.end.0, text.len());
+    }
+
+    /// The editing widget's job: the same three sections/colours as `job_segments_and_colors`,
+    /// sized to the widget's pixel size (13 px) over the cell style's 11 pt base.
+    #[test]
+    fn buffer_job_sections_follow_runs() {
+        let base = Font::default();
+        let theme = Theme::default();
+        let text = "black red green";
+        let red = Color32::from_rgb(255, 0, 0);
+        let j = buffer_job(text, &three_runs(), &base, red, &theme, 13.0).unwrap();
+        assert_eq!(j.text, text);
+        assert_eq!(j.sections.len(), 3);
+        assert_eq!(j.sections[0].format.color, red);
+        assert_eq!(j.sections[1].format.color, Color32::BLACK);
+        assert_eq!(j.sections[2].format.color, Color32::from_rgb(0x00, 0xB0, 0x50));
+        // The zoom makes the merged point sizes land on the widget's pixel size.
+        for s in &j.sections {
+            assert!((s.format.font_id.size - 13.0).abs() < 0.01);
+        }
     }
 
     #[test]

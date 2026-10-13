@@ -256,8 +256,41 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
     let refs = formula_refs(&ed.text);
     let text_color = Tokens::get(ui.ctx()).text;
     let cell_text_color = if id == egui::Id::new("gridcraft.cell_editor") { Color32::BLACK } else { text_color };
+    // Rich text paints with the editing cell's resolved style as the base — the same lookups the
+    // grid's overlay uses for its font — so inherited run colours and sizes match the sheet. Runs
+    // and reference colouring never compose: formulas never have runs.
+    let runs_look = if !ed.is_formula() {
+        ed.runs.as_ref().and_then(|runs| {
+            let d = app.session.active()?;
+            let sh = d.wb.sheet(ed.sheet)?;
+            let st = d.wb.styles.get(sh.style_id(ed.cell));
+            Some((
+                runs.clone(),
+                st.font.clone(),
+                st.font.color.resolve(&d.wb.theme).map(crate::theme::color32).unwrap_or(Color32::BLACK),
+                d.wb.theme.clone(),
+            ))
+        })
+    } else {
+        None
+    };
     let font2 = font.clone();
+    let font_px = font.size;
     let mut layouter = move |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+        if let Some((runs, base, base_color, theme)) = &runs_look {
+            let s = buf.as_str();
+            let mut job = crate::cell_runs::buffer_job(s, runs, base, *base_color, theme, font_px).unwrap_or_else(|| {
+                // Runs that no longer fit the text (invalid): the widget's own plain layout.
+                let mut j = egui::text::LayoutJob::default();
+                j.append(s, 0.0, egui::TextFormat::simple(font2.clone(), cell_text_color));
+                j
+            });
+            // The runs job is built no-wrap (for cell painting); the widget wraps and breaks
+            // lines exactly like the reference path below (multi-line buffers keep their \n).
+            job.wrap.max_width = if multiline { wrap_width } else { f32::INFINITY };
+            job.break_on_newline = true;
+            return ui.fonts_mut(|f| f.layout_job(job));
+        }
         let s = buf.as_str();
         let mut job = egui::text::LayoutJob::default();
         let mut pos = 0usize;
