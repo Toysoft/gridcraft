@@ -946,3 +946,26 @@ fn cell_format_codes_match_excel() {
         assert_eq!(info.parentheses, want.ends_with("()"), "CELL(\"parentheses\") for {code}");
     }
 }
+
+/// The colours Excel 365 paints for colour tags (`DisplayFormat.Font.Color`).
+#[test]
+fn format_colors_are_excels_palette() {
+    let rgb = |code: &str| full(code, Value::Number(5.0)).color.map(FormatColor::rgb);
+    assert_eq!(rgb("[Black]0"), Some(0x000000));
+    assert_eq!(rgb("[White]0"), Some(0xFFFFFF));
+    assert_eq!(rgb("[Red]0"), Some(0xFF0000));
+    assert_eq!(rgb("[Green]0"), Some(0x00FF00));
+    assert_eq!(rgb("[Blue]0"), Some(0x0000FF));
+    assert_eq!(rgb("[Yellow]0"), Some(0xFFFF00));
+    assert_eq!(rgb("[Magenta]0"), Some(0xFF00FF));
+    assert_eq!(rgb("[Cyan]0"), Some(0x00FFFF));
+    assert_eq!(rgb("[Color1]0"), Some(0x000000));
+    assert_eq!(rgb("[Color3]0"), Some(0xFF0000));
+    assert_eq!(rgb("[Color 3]0"), Some(0xFF0000));
+    assert_eq!(rgb("[COLOR5]0"), Some(0x0000FF));
+    assert_eq!(rgb("[Color10]0"), Some(0x008000));
+    assert_eq!(rgb("[Color17]0"), Some(0x9999FF));
+    assert_eq!(rgb("[Color46]0"), Some(0xFF6600));
+    assert_eq!(rgb("[Color56]0"), Some(0x333333));
+    assert_eq!(rgb("0"), None);
+}

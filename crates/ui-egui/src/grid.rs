@@ -432,18 +432,8 @@ fn col32(c: Color, wb: &Workbook, default: Color32) -> Color32 {
 }
 
 fn numfmt_color(c: gridcraft_engine::numfmt::FormatColor) -> Color32 {
-    use gridcraft_engine::numfmt::FormatColor as F;
-    match c {
-        F::Black => Color32::BLACK,
-        F::Blue => Color32::from_rgb(0, 0, 255),
-        F::Cyan => Color32::from_rgb(0, 255, 255),
-        F::Green => Color32::from_rgb(0, 128, 0),
-        F::Magenta => Color32::from_rgb(255, 0, 255),
-        F::Red => Color32::from_rgb(255, 0, 0),
-        F::White => Color32::WHITE,
-        F::Yellow => Color32::from_rgb(255, 255, 0),
-        F::Indexed(_) => Color32::BLACK,
-    }
+    let [_, r, g, b] = c.rgb().to_be_bytes();
+    Color32::from_rgb(r, g, b)
 }
 
 /// Last column of a Center Across Selection run starting at `start`: it extends over following columns (up to `limit`) while `continues` holds.

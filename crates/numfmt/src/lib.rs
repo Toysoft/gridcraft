@@ -40,6 +40,24 @@ pub enum FormatColor {
     Indexed(u8),
 }
 
+impl FormatColor {
+    /// The colour Excel paints, RRGGBB. The named colours are palette entries 1–8 (`[Green]` is
+    /// `00FF00`, the same as `[Color4]`); `[ColorN]` is entry N of the legacy palette.
+    pub fn rgb(self) -> u32 {
+        gridcraft_core::palette::color_n(match self {
+            FormatColor::Black => 1,
+            FormatColor::White => 2,
+            FormatColor::Red => 3,
+            FormatColor::Green => 4,
+            FormatColor::Blue => 5,
+            FormatColor::Yellow => 6,
+            FormatColor::Magenta => 7,
+            FormatColor::Cyan => 8,
+            FormatColor::Indexed(n) => n,
+        })
+    }
+}
+
 /// Best guess at the ribbon's number-format category.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FormatKind {

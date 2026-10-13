@@ -605,17 +605,8 @@ fn rgb_of(c: Color, wb: &Workbook) -> Option<Rgb> {
 }
 
 fn numfmt_rgb(c: gridcraft_numfmt::FormatColor) -> Rgb {
-    use gridcraft_numfmt::FormatColor as F;
-    match c {
-        F::Black | F::Indexed(_) => [0, 0, 0],
-        F::Blue => [0, 0, 255],
-        F::Cyan => [0, 255, 255],
-        F::Green => [0, 128, 0],
-        F::Magenta => [255, 0, 255],
-        F::Red => [255, 0, 0],
-        F::White => [255, 255, 255],
-        F::Yellow => [255, 255, 0],
-    }
+    let [_, r, g, b] = c.rgb().to_be_bytes();
+    [r, g, b]
 }
 
 fn blend(fg: [u8; 4]) -> Rgb {
