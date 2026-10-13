@@ -44,7 +44,6 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
         // Dragging the empty title area moves the window.
         let bg = ui.interact(rect, ui.id().with("drag_title"), Sense::click_and_drag());
         if bg.drag_started() {
-            log::debug!("title-bar background: starting window drag");
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
         if bg.double_clicked() {
@@ -136,9 +135,6 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                 // drawn icon (a miss here lands on the window drag instead, which feels broken).
                 let grab = icon_rect.expand(6.0);
                 let icon = ui.interact(grab, ui.id().with("doc_icon"), Sense::click_and_drag());
-                if icon.drag_started() {
-                    log::debug!("document icon: handing the file to the native drag");
-                }
                 if icon.drag_started()
                     && let Some(p) = app.session.active().and_then(|d| d.path.clone())
                 {

@@ -101,7 +101,7 @@ impl eframe::App for App {
         // The native document drag took the mouse over: deliver the release egui will never see,
         // and drop the pointer, so no leftover drag state re-enters a drag on the next move.
         #[cfg(target_os = "macos")]
-        if self.3.take_synthetical_up() {
+        if self.3.take_pending_release() {
             let pos = raw
                 .events
                 .iter()

@@ -13,8 +13,7 @@
 //! it, in a title bar AppKit owns. An app that paints its own title bar (GridCraft's does,
 //! `ribbon.rs` in `gridcraft-ui-egui`) instead leaves the represented file unset, draws the
 //! file's real Finder icon wherever its design puts it ([`file_icon_png`]), and turns a drag of
-//! that icon into a native drag of the file ([`begin_file_drag`]). [`set_titlebar_transparent`]
-//! goes with a painted bar that keeps the native traffic lights.
+//! that icon into a native drag of the file ([`begin_file_drag`]).
 //!
 //! Call on the main thread (winit windows are main-thread on macOS anyway); every other thread
 //! returns an error. The `unsafe` is confined to the Objective-C message sends behind these
@@ -30,7 +29,7 @@ use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send, runtime::NSObject, runtime::NSObjectProtocol};
 use objc2_app_kit::{
     NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSDragOperation, NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource,
-    NSEvent, NSEventMask, NSEventType, NSWindow, NSWorkspace,
+    NSEvent, NSEventMask, NSEventType, NSWorkspace,
 };
 use objc2_core_foundation::{CGPoint, CGSize};
 use objc2_foundation::{NSArray, NSDictionary, NSPoint, NSRect, NSString, NSURL};
@@ -55,7 +54,6 @@ pub fn watch_mouse_gestures() -> Result<(), Error> {
     // The handler observes the event and returns it unchanged (returning nil would swallow it).
     let handler = RcBlock::new(move |event: NonNull<NSEvent>| {
         if let Some(owned) = unsafe { Retained::retain_autoreleased(event.as_ptr()) } {
-            log::debug!("gesture watch: event at {:?}", owned.locationInWindow());
             GESTURE.with(|g| *g.borrow_mut() = Some(owned));
         }
         event.as_ptr()
@@ -124,20 +122,6 @@ pub fn set_represented_filename(window: &impl HasWindowHandle, path: Option<&str
     Ok(())
 }
 
-/// Makes the title bar transparent so the app's own drawing shows through it.
-///
-/// Pairs with a full-size content view and a shown (but app-painted) title bar: the traffic
-/// lights stay native, while the background becomes the app's. winit has this
-/// (`WindowAttributes::with_titlebar_transparent`) but eframe's `ViewportBuilder` cannot express
-/// it, so call this once the window exists.
-pub fn set_titlebar_transparent(window: &impl HasWindowHandle, transparent: bool) -> Result<(), Error> {
-    let ns_window = ns_window(window)?;
-    unsafe {
-        let _: () = msg_send![ns_window, setTitlebarAppearsTransparent: transparent];
-    }
-    Ok(())
-}
-
 define_class!(
     // The drag source AppKit calls back on. Every callback the protocol offers is optional and
     // irrelevant for a file drag out of a painted icon, except the operation mask, which answers
@@ -168,20 +152,26 @@ define_class!(
         #[unsafe(method(draggingSession:endedAtPoint:operation:))]
         fn draggingSession_endedAtPoint_operation(&self, _session: &NSDraggingSession, point: NSPoint, operation: NSDragOperation) {
             log::debug!("drag session ended at {point:?}, operation {:?}", operation);
-            // The session is over, the gesture is back with the system (the mouse may still be
-            // down when the drag was cancelled — by the app losing focus, say): let the window be
-            // moved again.
-            if let Some(w) = DRAG_WINDOW.with(|w| w.borrow_mut().take()) {
-                w.setMovable(true);
-            }
         }
     }
 );
 
-// The window of the live drag, held so its movability can be restored when the session ends (see
-// the ended callback above).
-thread_local! {
-    static DRAG_WINDOW: std::cell::RefCell<Option<Retained<NSWindow>>> = const { std::cell::RefCell::new(None) };
+/// Makes the window system-unmovable: the window server stops treating drags that begin in its
+/// title-bar band as window moves.
+///
+/// GridCraft's windows paint their own title bar (`ribbon.rs`), but the window keeps AppKit's
+/// `titled` style mask (the traffic lights come with it), so a drag starting in the band is
+/// otherwise taken as a native title-bar move by the window server — silently, with no event
+/// reaching the app, decided at the mouse-down. That competes with the app's own drags: pressing
+/// the document icon dragged both the file and the window. The app still moves the window itself
+/// where its design wants (empty title-bar areas, through egui's window-drag command); this only
+/// takes the server's silent move out of the way.
+pub fn set_movable(window: &impl HasWindowHandle, movable: bool) -> Result<(), Error> {
+    let ns_window = ns_window(window)?;
+    unsafe {
+        let _: () = msg_send![ns_window, setMovable: movable];
+    }
+    Ok(())
 }
 
 // Keeps the drag sources of recent drags alive. AppKit holds the source only for the session, and
@@ -205,14 +195,9 @@ pub fn begin_file_drag(window: &impl HasWindowHandle, path: &str) -> Result<(), 
     let event = GESTURE.with(|g| g.borrow_mut().take()).filter(|e| matches!(e.r#type(), NSEventType::LeftMouseDown | NSEventType::LeftMouseDragged));
     let event = match event {
         Some(e) => e,
-        None => {
-            let e = NSApplication::sharedApplication(mtm).currentEvent().ok_or(Error::Window)?;
-            log::debug!("gesture watch missed it; falling back to current event");
-            e
-        }
+        None => NSApplication::sharedApplication(mtm).currentEvent().ok_or(Error::Window)?,
     };
     log::debug!("beginning file drag of {path}");
-
     let file = NSString::from_str(path);
     let url = NSURL::fileURLWithPath_isDirectory(&file, false);
     let item = NSDraggingItem::initWithPasteboardWriter(mtm.alloc::<NSDraggingItem>(), ProtocolObject::from_ref(&*url));
@@ -232,11 +217,6 @@ pub fn begin_file_drag(window: &impl HasWindowHandle, path: &str) -> Result<(), 
     let _session = unsafe {
         // Cast: the window was found through its AppKit view, on the main thread.
         let w = &*(ns_window as *mut objc2_app_kit::NSWindow);
-        // While the session owns the mouse the window must not move: when the drag is cancelled
-        // under the held button (the app losing focus, say) the gesture falls back to the system,
-        // which would otherwise drag the window along with the cursor. Restored when the session
-        // ends (see `FileDragSource`).
-        w.setMovable(false);
         w.beginDraggingSessionWithItems_event_source(&items, &event, ProtocolObject::from_ref(&*source))
     };
     DRAG_SOURCES.with(|s| {
@@ -246,12 +226,6 @@ pub fn begin_file_drag(window: &impl HasWindowHandle, path: &str) -> Result<(), 
         }
         s.push(source);
     });
-    DRAG_WINDOW.with(|w| {
-        // Retain the window for the session's lifetime (+1; released when replaced or dropped).
-        let retained_ptr: *mut NSWindow = unsafe { msg_send![ns_window, retain] };
-        *w.borrow_mut() = Some(unsafe { Retained::from_raw(retained_ptr).ok_or(Error::Window)? });
-        Ok::<(), Error>(())
-    })?;
     Ok(())
 }
 
