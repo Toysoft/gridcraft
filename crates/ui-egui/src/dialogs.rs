@@ -1455,11 +1455,73 @@ fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: 
             ui.checkbox(&mut st.align.shrink, "Shrink to fit");
         }
         "Font" => {
-            egui::ComboBox::from_label("Font").selected_text(st.font.name.clone()).show_ui(ui, |ui| {
-                for f in crate::fonts::families() {
-                    ui.selectable_value(&mut st.font.name, f.clone(), f.clone());
-                }
-            });
+            egui::ComboBox::from_label("Font")
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .selected_text(crate::fonts::display_name(&st.font.name))
+                .show_ui(ui, |ui| {
+                    let favorites = app.ui.favorite_fonts.clone();
+                    let mut previous_group = None;
+                    let mut previous_favorite = None;
+                    for (position, item) in crate::fonts::ordered_families(&favorites).into_iter().enumerate() {
+                        let favorite = crate::fonts::is_favorite(&favorites, &item.family);
+                        if position == 0 && favorite {
+                            ui.label(egui::RichText::new(crate::i18n::current(ui.ctx()).tr("Favorites")).strong());
+                        }
+                        if previous_favorite == Some(true) && !favorite {
+                            ui.separator();
+                            previous_group = None;
+                        }
+                        previous_favorite = Some(favorite);
+                        if !favorite {
+                            if previous_group.is_some_and(|previous| previous != item.group) {
+                                ui.separator();
+                            }
+                            previous_group = Some(item.group);
+                        }
+                        let variants = crate::fonts::variants_of(&item.family);
+                        if variants.is_empty() {
+                            ui.horizontal(|ui| {
+                                if ui.selectable_value(&mut st.font.name, item.family.clone(), &item.display).clicked() {
+                                    ui.close();
+                                }
+                                if crate::fonts::favorite_button(ui, &item.family, &item.display, &favorites) {
+                                    app.run_or_alert("app.font.favorite", json!({"name": item.family}));
+                                    ui.ctx().request_repaint();
+                                }
+                            });
+                        } else {
+                            let state_id = ui.make_persistent_id(("format_font_family", &item.family));
+                            let state = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), state_id, false);
+                            let mut toggle = false;
+                            let mut header = state.show_header(ui, |ui| {
+                                toggle = ui.selectable_label(st.font.name == item.family, &item.display).clicked();
+                                if crate::fonts::favorite_button(ui, &item.family, &item.display, &favorites) {
+                                    app.run_or_alert("app.font.favorite", json!({"name": item.family}));
+                                    ui.ctx().request_repaint();
+                                }
+                            });
+                            if toggle {
+                                header.toggle();
+                            }
+                            header.body(|ui| {
+                                for variant in variants {
+                                    if ui
+                                        .selectable_label(
+                                            st.font.name == variant.name && st.font.bold == variant.bold && st.font.italic == variant.italic,
+                                            variant.label,
+                                        )
+                                        .clicked()
+                                    {
+                                        st.font.name = variant.name;
+                                        st.font.bold = variant.bold;
+                                        st.font.italic = variant.italic;
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        }
+                    }
+                });
             ui.add(egui::Slider::new(&mut st.font.size, 6.0..=72.0).text("Size"));
             ui.horizontal(|ui| {
                 ui.checkbox(&mut st.font.bold, "Bold");

@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (AutoFit reserves filter dropdown space, observed against Windows Excel) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (installed-font picker, native names, family styles and favorites) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Interaction, controls and feel, against Excel. Part of [target-app-parity.md](target-app-parity.md).
 **UI/UX fidelity: ~55% ready, 50–80 h** (estimated). Ribbon command coverage is measured
@@ -9,6 +9,14 @@ separately in [parity-checklist.md](parity-checklist.md) (274 / 290).
 Sources: `crates/ui-egui/src` (ribbon, grid, editor, formula bar, dialogs, panes),
 `crates/engine/src/cmd` (shortcuts in command specs), the owner's black-box notes
 (`plan/excel/observed-ui.md`, local only) and user issues.
+
+## Installed-font picker (2026-10-13)
+
+- Desktop startup scans the host's system and user font folders in the background; macOS font assets are included. The ribbon and Format Cells use the installed catalog, with existing compatibility names as fallback. Browser builds do not scan local font files.
+- The picker groups families from OpenType coverage/name metadata, uses separators without language headings, and shows localized names where supplied. Empty localized records fall back to the original name; dot-prefixed private families are omitted from the picker but remain available internally. Coverage grouping is a heuristic, not a guarantee of complete language support or shaping.
+- Families expand to installed face styles. Search accepts original/native family names and face names. Regular/bold/italic choices retain normal workbook flags; other weights resolve via full-name/PostScript metadata. Exact-face binding and XLSX roundtrips are tested.
+- Favorite stars move families to the top, shared with Format Cells and persisted in `ui.json`. Collecting a font does not modify workbook data. The font list grows to at most 540 UI points, within available viewport space.
+- Validated on macOS with automated interaction/layout tests and visual snapshots. Windows/Linux discovery paths remain supported but were not visually tested here; no full Photoshop/Excel picker parity is claimed.
 
 ## Window and chrome
 
@@ -160,6 +168,7 @@ scrollbar bugs 2–4 · pixel/feel pass against observed Excel 7–12.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Wired installed-font discovery into the ribbon; added metadata grouping/native names, expandable face styles, exact-face persistence and shared favorites; fixed picker height and search-field overlap. |
 | 2026-10-11 | minor | AutoFit accounts for table and ordinary filter dropdowns, including low zoom; header text excludes the button area |
 | 2026-10-11 | minor | Outline band for grouped rows and columns, Show / Hide Detail on the Data tab, numpad navigation keys in shortcuts (#373) |
 | 2026-10-11 | minor | Shift+Space / Ctrl+Space no longer start an edit; Control+Space selects the column on Mac (#338) |

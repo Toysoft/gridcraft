@@ -247,6 +247,18 @@ fn home_fonts(file: &str) -> String {
     format!("{home}/Library/Fonts/{file}")
 }
 
+/// macOS keeps PingFang in an optional system font asset on newer releases.
+/// Use the shared installed-font catalog, never fixed collection indices or asset paths.
+#[cfg(target_os = "macos")]
+fn mac_ui_candidates(language: crate::i18n::Language, role: &str) -> Vec<(String, u32)> {
+    let family = if language == crate::i18n::Language::ZhTw { "PingFang TC" } else { "PingFang SC" };
+    let wanted = if role == UI_BOLD { 600.0 } else { 400.0 };
+    let mut faces = crate::fonts::faces_of(family);
+    faces.retain(|face| !face.italic);
+    faces.sort_by(|a, b| (a.weight - wanted).abs().total_cmp(&(b.weight - wanted).abs()));
+    faces.into_iter().map(|face| (face.path.to_string_lossy().into_owned(), face.index)).collect()
+}
+
 /// Candidate font files per role, in preference order.
 fn candidates(role: &str) -> Vec<(String, u32)> {
     let mac_sys = "/System/Library/Fonts";
@@ -394,7 +406,14 @@ pub fn font_definitions_with(language: crate::i18n::Language, used: &[String]) -
     // and epaint picks the first face that has the glyph, so they only catch their own scripts.
     let fallback = load_fallback(&mut fonts, HanOrder::of(language));
     for role in [UI, UI_BOLD, CELL, CELL_BOLD, CELL_ITALIC, CELL_BOLD_ITALIC, SERIF, MONO] {
-        let paths = candidates(role);
+        #[allow(unused_mut)]
+        let mut paths = candidates(role);
+        #[cfg(target_os = "macos")]
+        if matches!(role, UI | UI_BOLD) && matches!(language, crate::i18n::Language::Zh | crate::i18n::Language::ZhTw) {
+            let mut native = mac_ui_candidates(language, role);
+            native.append(&mut paths);
+            paths = native;
+        }
         let refs: Vec<(&str, u32)> = paths.iter().map(|(p, i)| (p.as_str(), *i)).collect();
         let mut chain: Vec<String> = Vec::new();
         if let Some(fd) = try_load(&refs) {
@@ -807,6 +826,28 @@ mod tests {
             assert!(at.is_some(), "{family:?} lacks the cell face: {chain:?}");
             let first_fb = chain.iter().position(|k| fb.contains(k)).unwrap_or(chain.len());
             assert!(at.unwrap_or(usize::MAX) < first_fb, "{family:?}: cell face must precede the script faces");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_chinese_ui_uses_the_matching_native_face() {
+        use skrifa::{MetadataProvider, string::StringId};
+        crate::fonts::catalog();
+        for (language, region) in [(Language::ZhTw, "TC"), (Language::Zh, "SC")] {
+            let fonts = font_definitions_for_language(language);
+            for (role, weight) in [(UI, "Regular"), (UI_BOLD, "Semibold")] {
+                if mac_ui_candidates(language, role).is_empty() {
+                    continue; // PingFang is optional on some macOS installations.
+                }
+                let chain = &fonts.families[&FontFamily::Name(role.into())];
+                assert_eq!(chain.first().map(String::as_str), Some(format!("sys-{role}").as_str()));
+                let data = &fonts.font_data[&format!("sys-{role}")];
+                let font = skrifa::FontRef::from_index(&data.font, data.index).unwrap();
+                let name = font.localized_strings(StringId::POSTSCRIPT_NAME).english_or_first().unwrap().to_string();
+                assert_eq!(name, format!("PingFang{region}-{weight}"));
+                assert_ne!(font.charmap().map('儲'), None);
+            }
         }
     }
 

@@ -52,7 +52,7 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
         ui.horizontal_centered(|ui| {
             ui.add_space(TITLE_LEFT_PAD);
             // AutoSave toggle (saves after each change when the workbook has a file).
-            ui.label(egui::RichText::new("AutoSave").font(theme::ui_font(12.5)).color(t.text_dim));
+            ui.label(egui::RichText::new(app.ui.language.tr("AutoSave")).font(theme::ui_font(12.5)).color(t.text_dim));
             let on = app.grid.autosave();
             let (r, resp) = ui.allocate_exact_size(vec2(30.0, 16.0), Sense::click());
             ui.painter().rect_filled(r, 8.0, if on { t.accent } else { Color32::TRANSPARENT });
@@ -373,6 +373,12 @@ enum ComboResult {
     Picked(String),
     /// Enter with free text that matches no row (e.g. a custom font size).
     Entered(String),
+    FavoriteToggled(String),
+}
+
+struct ComboOptions<'a> {
+    forced: bool,
+    favorites: &'a [String],
 }
 
 /// Excel-style dropdown: a filter field (type to narrow the list) plus arrow/Enter selection.
@@ -384,8 +390,9 @@ fn editable_combo(
     salt: &'static str,
     current_value: &str,
     items: &[(&str, String)],
-    forced: bool,
+    options: ComboOptions<'_>,
 ) -> ComboResult {
+    let ComboOptions { forced, favorites } = options;
     let popup_id = anchor.id.with("popup");
     let state_id = anchor.id.with(salt).with("__combo_state");
     let mut st = ui.data_mut(|d| d.get_temp::<ComboState>(state_id)).unwrap_or_default();
@@ -399,72 +406,199 @@ fn editable_combo(
     }
     st.was_open = open_now;
     let mut result = ComboResult::None;
-    egui::Popup::menu(anchor).open_memory(popup_command(forced, anchor.clicked())).show(|ui| {
-        // Arrows and Enter navigate the list, not the filter field's cursor. Capture them and
-        // strip them from the input so the TextEdit never sees them.
-        let (mut down, mut up, mut enter) = (false, false, false);
-        ui.input(|i| {
-            down = i.key_pressed(egui::Key::ArrowDown);
-            up = i.key_pressed(egui::Key::ArrowUp);
-            enter = i.key_pressed(egui::Key::Enter);
-        });
-        if down || up || enter {
-            ui.ctx().input_mut(|i| {
-                i.events.retain(|e| {
-                    !matches!(e, egui::Event::Key { key: egui::Key::ArrowDown | egui::Key::ArrowUp | egui::Key::Enter, pressed: true, .. })
-                });
+    egui::Popup::menu(anchor)
+        .close_behavior(if salt == "font" { egui::PopupCloseBehavior::CloseOnClickOutside } else { egui::PopupCloseBehavior::CloseOnClick })
+        .open_memory(popup_command(forced, anchor.clicked()))
+        .show(|ui| {
+            // Set the container limit before laying out the search field: changing it later
+            // resets egui's layout cursor and would overlap the field with the font rows.
+            if salt == "font" {
+                let available = (ui.ctx().content_rect().bottom() - ui.next_widget_position().y - 24.0).max(0.0);
+                ui.set_max_height(available.min(600.0));
+            }
+            // Arrows and Enter navigate the list, not the filter field's cursor. Capture them and
+            // strip them from the input so the TextEdit never sees them.
+            let (mut down, mut up, mut enter) = (false, false, false);
+            ui.input(|i| {
+                down = i.key_pressed(egui::Key::ArrowDown);
+                up = i.key_pressed(egui::Key::ArrowUp);
+                enter = i.key_pressed(egui::Key::Enter);
             });
-        }
-        let text_id = anchor.id.with(salt).with("__combo_text");
-        let te = ui.add(egui::TextEdit::singleline(&mut st.text).id(text_id).desired_width(220.0).hint_text("Type to filter…"));
-        if open_now && !te.has_focus() {
-            ui.ctx().memory_mut(|m| m.request_focus(text_id));
-            // Select all once focus lands so typing replaces the filter.
-            if let Some(mut s) = egui::text_edit::TextEditState::load(ui.ctx(), text_id) {
-                let len = st.text.chars().count();
-                s.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(len))));
-                s.store(ui.ctx(), text_id);
+            if down || up || enter {
+                ui.ctx().input_mut(|i| {
+                    i.events.retain(|e| {
+                        !matches!(e, egui::Event::Key { key: egui::Key::ArrowDown | egui::Key::ArrowUp | egui::Key::Enter, pressed: true, .. })
+                    });
+                });
             }
-        }
-        let lower = st.text.to_lowercase();
-        let filtered: Vec<usize> = items.iter().enumerate().filter(|(_, (_, d))| d.to_lowercase().contains(&lower)).map(|(i, _)| i).collect();
-        if !filtered.is_empty() {
-            let n = filtered.len() as i32;
-            if down {
-                st.sel = (st.sel + 1).rem_euclid(n);
+            let previous_filter = st.text.clone();
+            let text_id = anchor.id.with(salt).with("__combo_text");
+            let te = ui.add(
+                egui::TextEdit::singleline(&mut st.text)
+                    .id(text_id)
+                    .desired_width(220.0)
+                    .hint_text(crate::i18n::current(ui.ctx()).tr("Type to filter…")),
+            );
+            if open_now && !te.has_focus() {
+                ui.ctx().memory_mut(|m| m.request_focus(text_id));
+                // Select all once focus lands so typing replaces the filter.
+                if let Some(mut s) = egui::text_edit::TextEditState::load(ui.ctx(), text_id) {
+                    let len = st.text.chars().count();
+                    s.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(len))));
+                    s.store(ui.ctx(), text_id);
+                }
             }
-            if up {
-                st.sel = (st.sel - 1).rem_euclid(n);
+            // The highlighted row indexes the filtered list, not the full list.
+            // Reset it when typing changes which entries are visible.
+            if st.text != previous_filter {
+                st.sel = 0;
             }
-        }
-        if enter {
+            let lower = st.text.to_lowercase();
+            let filtered: Vec<usize> = items
+                .iter()
+                .enumerate()
+                .filter(|(_, (value, display))| {
+                    display.to_lowercase().contains(&lower)
+                        || value.to_lowercase().contains(&lower)
+                        || salt == "font"
+                            && crate::fonts::variants_of(value)
+                                .iter()
+                                .any(|variant| variant.label.to_lowercase().contains(&lower) || variant.source_name.to_lowercase().contains(&lower))
+                })
+                .map(|(i, _)| i)
+                .collect();
+            if !filtered.is_empty() {
+                let n = filtered.len() as i32;
+                if down {
+                    st.sel = (st.sel + 1).rem_euclid(n);
+                }
+                if up {
+                    st.sel = (st.sel - 1).rem_euclid(n);
+                }
+            }
+            if enter {
+                if filtered.is_empty() {
+                    let t = st.text.trim().to_string();
+                    if !t.is_empty() {
+                        result = ComboResult::Entered(t);
+                    }
+                } else {
+                    let idx = filtered[st.sel.clamp(0, filtered.len() as i32 - 1) as usize];
+                    let (value, display) = &items[idx];
+                    let matching_style = if salt == "font"
+                        && !lower.is_empty()
+                        && !display.to_lowercase().contains(&lower)
+                        && !value.to_lowercase().contains(&lower)
+                    {
+                        crate::fonts::variants_of(value)
+                            .into_iter()
+                            .find(|variant| variant.label.to_lowercase().contains(&lower) || variant.source_name.to_lowercase().contains(&lower))
+                    } else {
+                        None
+                    };
+                    result = ComboResult::Picked(matching_style.map(|variant| variant.key).unwrap_or_else(|| value.to_string()));
+                }
+            }
+            ui.separator();
             if filtered.is_empty() {
-                let t = st.text.trim().to_string();
-                if !t.is_empty() {
-                    result = ComboResult::Entered(t);
-                }
-            } else {
-                let idx = filtered[st.sel.clamp(0, filtered.len() as i32 - 1) as usize];
-                result = ComboResult::Picked(items[idx].0.to_string());
+                ui.label(crate::i18n::current(ui.ctx()).tr("No matching fonts"));
             }
-        }
-        ui.separator();
-        egui::ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
-            for i in &filtered {
-                let (value, disp) = &items[*i];
-                let row = ui.add(egui::Button::selectable(*i as i32 == st.sel, egui::RichText::new(disp)).min_size(vec2(220.0, 20.0)));
-                if row.clicked() {
-                    result = ComboResult::Picked(value.to_string());
+            let font_groups: std::collections::HashMap<String, crate::fonts::FontLanguage> = if salt == "font" {
+                crate::fonts::grouped_families().into_iter().map(|item| (item.family, item.group)).collect()
+            } else {
+                Default::default()
+            };
+            let max_height = if salt == "font" {
+                let available = (ui.ctx().content_rect().bottom() - ui.next_widget_position().y - 24.0).max(0.0);
+                available.min(540.0)
+            } else {
+                300.0
+            };
+            egui::ScrollArea::vertical().max_height(max_height).show(ui, |ui| {
+                let mut previous_group = None;
+                let mut previous_favorite = None;
+                for (position, i) in filtered.iter().enumerate() {
+                    let (value, disp) = &items[*i];
+                    let favorite = salt == "font" && crate::fonts::is_favorite(favorites, value);
+                    if position == 0 && favorite {
+                        ui.label(egui::RichText::new(crate::i18n::current(ui.ctx()).tr("Favorites")).strong());
+                    }
+                    if previous_favorite == Some(true) && !favorite {
+                        ui.separator();
+                        previous_group = None;
+                    }
+                    previous_favorite = Some(favorite);
+                    if !favorite && let Some(group) = font_groups.get(*value) {
+                        if previous_group.is_some_and(|previous| previous != *group) {
+                            ui.separator();
+                        }
+                        previous_group = Some(*group);
+                    }
+                    let variants = if salt == "font" { crate::fonts::variants_of(value) } else { Vec::new() };
+                    if !variants.is_empty() {
+                        let family_match = disp.to_lowercase().contains(&lower) || value.to_lowercase().contains(&lower);
+                        let state_id = ui.make_persistent_id((salt, value));
+                        let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), state_id, false);
+                        if !lower.is_empty() && !family_match {
+                            state.set_open(true);
+                        }
+                        let mut toggle = false;
+                        let mut header = state.show_header(ui, |ui| {
+                            let label = ui.selectable_label(position as i32 == st.sel, disp);
+                            toggle = label.clicked();
+                            if label.double_clicked() {
+                                result = ComboResult::Picked(value.to_string());
+                            }
+                            if label.hovered() {
+                                st.sel = position as i32;
+                            }
+                            if crate::fonts::favorite_button(ui, value, disp, favorites) {
+                                result = ComboResult::FavoriteToggled(value.to_string());
+                            }
+                        });
+                        if toggle {
+                            header.toggle();
+                        }
+                        header.body(|ui| {
+                            for variant in &variants {
+                                if !family_match
+                                    && !variant.label.to_lowercase().contains(&lower)
+                                    && !variant.source_name.to_lowercase().contains(&lower)
+                                {
+                                    continue;
+                                }
+                                if ui.selectable_label(current_value == variant.key, &variant.label).clicked() {
+                                    result = ComboResult::Picked(variant.key.clone());
+                                }
+                            }
+                        });
+                        continue;
+                    }
+                    let row = if salt == "font" {
+                        ui.horizontal(|ui| {
+                            let row =
+                                ui.add(egui::Button::selectable(position as i32 == st.sel, egui::RichText::new(disp)).min_size(vec2(220.0, 20.0)));
+                            if crate::fonts::favorite_button(ui, value, disp, favorites) {
+                                result = ComboResult::FavoriteToggled(value.to_string());
+                            }
+                            row
+                        })
+                        .inner
+                    } else {
+                        ui.add(egui::Button::selectable(position as i32 == st.sel, egui::RichText::new(disp)).min_size(vec2(220.0, 20.0)))
+                    };
+                    if row.clicked() {
+                        result = ComboResult::Picked(value.to_string());
+                    }
+                    if row.hovered() {
+                        st.sel = position as i32;
+                    }
                 }
-                if row.hovered() {
-                    st.sel = *i as i32;
-                }
+            });
+            if matches!(result, ComboResult::Picked(_) | ComboResult::Entered(_)) {
+                ui.close();
             }
         });
-        if !matches!(result, ComboResult::None) {
-            ui.close();
-        }
-    });
     ui.data_mut(|d| d.insert_temp(state_id, st));
     result
 }
@@ -1055,12 +1189,23 @@ fn home(app: &mut SheetApp, ui: &mut Ui) {
 
 fn font_combo(app: &mut SheetApp, ui: &mut Ui, st: &Style) {
     let name = st.font.name.clone();
-    let resp = ui.add_sized([150.0, 24.0], egui::Button::new(egui::RichText::new(&name).font(theme::ui_font(12.5))));
+    let resp = ui.add_sized([150.0, 24.0], egui::Button::new(egui::RichText::new(crate::fonts::display_name(&name)).font(theme::ui_font(12.5))));
     control_keytip(app, ui, &resp, "home.fontName");
     let forced = invoke(app, "home.fontName");
-    let items: Vec<(&str, String)> = FONTS.iter().map(|f| (*f, f.to_string())).collect();
-    if let ComboResult::Picked(value) = editable_combo(ui, &resp, "font", &name, &items, forced) {
-        act(app, "home.fontName", json!({"name": value}));
+    let families = crate::fonts::ordered_families(&app.ui.favorite_fonts);
+    let items: Vec<(&str, String)> = families.iter().map(|f| (f.family.as_str(), f.display.clone())).collect();
+    let selected = crate::fonts::variant_key_for_selection(&name, st.font.bold, st.font.italic).unwrap_or_else(|| name.clone());
+    let outcome = editable_combo(ui, &resp, "font", &selected, &items, ComboOptions { forced, favorites: &app.ui.favorite_fonts });
+    if let ComboResult::FavoriteToggled(family) = &outcome {
+        act(app, "app.font.favorite", json!({"name": family}));
+        ui.ctx().request_repaint();
+    }
+    if let ComboResult::Picked(value) = outcome {
+        if let Some(variant) = crate::fonts::variant_for_key(&value) {
+            act(app, "home.formatCells", json!({"style": {"font": {"name": variant.name, "bold": variant.bold, "italic": variant.italic}}}));
+        } else {
+            act(app, "home.fontName", json!({"name": value}));
+        }
     }
 }
 
@@ -1099,7 +1244,7 @@ fn size_combo(app: &mut SheetApp, ui: &mut Ui, st: &Style) {
             act(app, "home.fontSize", json!({"size": v}));
         }
     };
-    match editable_combo(ui, &resp, "size", &current, &items, forced) {
+    match editable_combo(ui, &resp, "size", &current, &items, ComboOptions { forced, favorites: &[] }) {
         ComboResult::Picked(value) => apply(&value),
         ComboResult::Entered(text) => apply(&text),
         _ => {}
@@ -1125,7 +1270,7 @@ fn number_combo(app: &mut SheetApp, ui: &mut Ui, st: &Style) {
         })
         .chain(std::iter::once(("__more", format!("{:>12}", lang.tr("More Number Formats…")))))
         .collect();
-    if let ComboResult::Picked(value) = editable_combo(ui, &resp, "number", &current, &items, forced) {
+    if let ComboResult::Picked(value) = editable_combo(ui, &resp, "number", &current, &items, ComboOptions { forced, favorites: &[] }) {
         match value.as_str() {
             "__more" => app.open_dialog("formatCells", json!({"tab": "Number"})),
             n => act(app, "home.numberFormat", json!({"format": n})),
@@ -2480,5 +2625,92 @@ mod title_bar_tests {
         let margin = (MAC_TITLE_BAR - MAC_LIGHT) / 2.0;
         let lights_end = MAC_LIGHTS_LEFT + 2.0 * MAC_LIGHT_PITCH + MAC_LIGHT;
         assert_eq!(MAC_CONTENT_LEFT - lights_end, margin);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod font_picker_tests {
+    use super::*;
+    use egui_kittest::kittest::Queryable;
+
+    #[test]
+    fn favorite_star_keeps_picker_open_without_changing_cell_font() {
+        let _guard = crate::fonts::TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        crate::fonts::catalog();
+        if crate::fonts::faces_of("PingFang TC").is_empty() {
+            return;
+        }
+        let family = crate::fonts::display_name("PingFang TC");
+        let mut session = gridcraft_engine::Session::new();
+        session.new_workbook();
+        let mut app = SheetApp::new(session, Default::default());
+        app.ui.language = crate::i18n::Language::ZhTw;
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 800.0)).with_max_steps(20).build_ui_state(
+            |ui, app: &mut SheetApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            app,
+        );
+        harness.run_steps(8);
+        harness.get_by_label("Calibri").click();
+        harness.run_steps(8);
+        harness.event(egui::Event::Text("PingFang TC".into()));
+        harness.run_steps(8);
+        harness.get_by_label(&format!("加入我的最愛 {family}")).click();
+        harness.run_steps(8);
+        assert_eq!(harness.state().ui.favorite_fonts, ["PingFang TC"]);
+        assert!(harness.query_by_label("我的最愛").is_some());
+        assert!(!harness.state().session.active().unwrap().is_dirty());
+        let ordered = crate::fonts::ordered_families(&harness.state().ui.favorite_fonts);
+        assert_eq!(ordered.first().unwrap().family, "PingFang TC");
+        harness.get_by_label(&format!("移除我的最愛 {family}")).click();
+        harness.run_steps(8);
+        assert!(harness.state().ui.favorite_fonts.is_empty());
+        assert!(harness.query_by_label("我的最愛").is_none());
+        assert!(harness.query_by_label(&family).is_some(), "starring never closes the picker");
+        let workbook = &harness.state().session.active().unwrap().wb;
+        assert_eq!(workbook.styles.get(workbook.active().unwrap().style_id(Default::default())).font.name, "Calibri");
+    }
+
+    #[test]
+    fn family_expands_below_search_and_applies_selected_face() {
+        let _guard = crate::fonts::TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        crate::fonts::catalog();
+        let variants = crate::fonts::variants_of("PingFang TC");
+        let Some(light) = variants.iter().find(|variant| variant.source_name.ends_with(" Light")) else { return };
+        let family = crate::fonts::display_name("PingFang TC");
+        let mut session = gridcraft_engine::Session::new();
+        session.new_workbook();
+        let mut app = SheetApp::new(session, Default::default());
+        app.ui.language = crate::i18n::Language::ZhTw;
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 800.0)).with_max_steps(20).build_ui_state(
+            |ui, app: &mut SheetApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            app,
+        );
+        harness.run_steps(8);
+        harness.get_by_label("Calibri").click();
+        harness.run_steps(8);
+        harness.event(egui::Event::Text("PingFang TC".into()));
+        harness.run_steps(8);
+        let filter_rect = harness.get_all_by_value("PingFang TC").map(|node| node.rect()).max_by(|a, b| a.height().total_cmp(&b.height())).unwrap();
+        let family_rect = harness.get_by_label(&family).rect();
+        assert!(family_rect.top() >= filter_rect.bottom(), "family rows must not overlap the search field");
+        harness.get_by_label(&family).click();
+        harness.run_steps(12);
+        harness.get_by_label(&light.label).click();
+        harness.run_steps(8);
+        let workbook = &harness.state().session.active().unwrap().wb;
+        let sheet = workbook.active().unwrap();
+        let font = &workbook.styles.get(sheet.style_id(Default::default())).font;
+        assert_eq!(font.name, light.name);
+        assert_eq!(font.bold, light.bold);
+        assert_eq!(font.italic, light.italic);
+        assert!(harness.query_by_label(&family).is_none(), "selecting a style closes the popup");
     }
 }

@@ -16,7 +16,7 @@ mod fr;
 mod ko;
 mod pt;
 mod ru;
-mod zh;
+mod zh_cn;
 mod zh_tw;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +25,7 @@ pub enum Language {
     #[default]
     En,
     Es,
+    #[serde(rename = "zh-CN", alias = "zh")]
     Zh,
     #[serde(rename = "zh-TW")]
     ZhTw,
@@ -63,7 +64,7 @@ impl Language {
         match self {
             Self::En => "en",
             Self::Es => "es",
-            Self::Zh => "zh",
+            Self::Zh => "zh-CN",
             Self::ZhTw => "zh-TW",
             Self::Ja => "ja",
             Self::Ko => "ko",
@@ -134,7 +135,7 @@ impl Language {
             Self::En => None,
             Self::Es => es::translate(text),
             Self::Ja => JAPANESE.iter().find(|(english, _)| *english == text).map(|(_, translated)| *translated),
-            Self::Zh => zh::translate(text),
+            Self::Zh => zh_cn::translate(text),
             Self::ZhTw => zh_tw::translate(text),
             Self::Ko => ko::translate(text),
             Self::Ru => ru::translate(text),
@@ -598,7 +599,7 @@ mod tests {
             assert_eq!(Language::En.tr(en), en.rsplit_once('|').map_or(*en, |(_, label)| label));
         }
         for (english, _) in JAPANESE {
-            assert!(zh::translate(english).is_some_and(|text| !text.is_empty()), "missing Simplified Chinese: {english}");
+            assert!(zh_cn::translate(english).is_some_and(|text| !text.is_empty()), "missing Simplified Chinese: {english}");
             assert!(ko::translate(english).is_some_and(|text| !text.is_empty()), "missing Korean: {english}");
             assert!(ru::translate(english).is_some_and(|text| !text.is_empty()), "missing Russian: {english}");
             assert!(pt::translate(english).is_some_and(|text| !text.is_empty()), "missing Portuguese: {english}");
@@ -710,12 +711,42 @@ mod traditional_chinese_tests {
 
     #[test]
     fn traditional_chinese_preference_roundtrips() {
-        // 原本的測試...
+        let ui = crate::UiState { language: Language::ZhTw, dark: true, ..Default::default() };
+        let saved = serde_json::to_value(&ui).unwrap();
+        assert_eq!(saved["language"], "zh-TW");
+        assert_eq!(super::saved_language(&saved), Some(Language::ZhTw));
+        let restored: crate::UiState = serde_json::from_value(saved).unwrap();
+        assert_eq!(restored.language, Language::ZhTw);
+        assert!(restored.dark);
     }
 
     #[test]
     fn distinguishes_traditional_and_simplified_chinese() {
-        // 原本的測試...
+        for tag in ["zh-TW", "zh_TW", "zh-Hant", "zh-Hant-TW"] {
+            assert_eq!(Language::parse(tag), Some(Language::ZhTw));
+        }
+        for tag in ["zh", "zh-CN", "zh-Hans", "zh-Hans-CN"] {
+            assert_eq!(Language::parse(tag), Some(Language::Zh));
+        }
+        assert_eq!(Language::ZhTw.tr("Home"), "常用");
+        assert_eq!(Language::ZhTw.tr("General"), "一般");
+        assert_ne!(Language::ZhTw, Language::Zh);
+    }
+
+    #[test]
+    fn simplified_chinese_uses_zh_cn_and_accepts_legacy_zh() {
+        assert_eq!(Language::Zh.code(), "zh-CN");
+        assert_eq!(serde_json::to_string(&Language::Zh).unwrap(), r#""zh-CN""#);
+        for code in ["zh", "zh-CN", "zh-cn", "zh_CN", "zh-Hans-CN"] {
+            assert_eq!(Language::parse(code), Some(Language::Zh));
+            let ui: crate::UiState = serde_json::from_value(serde_json::json!({"language": code})).unwrap();
+            assert_eq!(ui.language, Language::Zh);
+            assert_eq!(serde_json::to_value(ui).unwrap()["language"], "zh-CN");
+        }
+        assert_eq!(serde_json::from_str::<Language>(r#""zh""#).unwrap(), Language::Zh);
+        assert_eq!(serde_json::from_str::<Language>(r#""zh-CN""#).unwrap(), Language::Zh);
+        assert_eq!(Language::Zh.tr("Paste"), "粘贴");
+        assert_eq!(Language::parse("zh-TW"), Some(Language::ZhTw));
     }
 
     #[test]

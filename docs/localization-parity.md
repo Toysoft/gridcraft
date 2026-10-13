@@ -1,11 +1,18 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (German ribbon catalog added) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (Taiwan Traditional Chinese and explicit Chinese locale codes) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Per-language status against Excel, which ships its UI in dozens of languages (Windows language
 packs cover 100+), with localized function names, argument separators, number and date formats,
 right-to-left sheets and full complex-script support. Part of
 [target-app-parity.md](target-app-parity.md). **Localization: ~10% ready, 100–165 h** (estimated).
+
+## Taiwan Traditional Chinese (2026-10-13)
+
+- `zh-TW` has 405 translated interface labels, including ribbon, common spreadsheet terms and font favorites. Missing labels still fall back to English; workbook text and command identifiers remain unchanged.
+- Simplified Chinese now uses `zh-CN` and `i18n/zh_cn.rs`; legacy `zh` preferences and command inputs remain supported. Traditional tags (`zh-TW`, `zh_Hant`) select the Taiwan catalog.
+- Desktop language selection survives normal quit/restart. Mixed English during testing came from stale executables, not the label lookup. Installed older builds must be rebuilt to support this locale.
+- macOS Chinese UI faces are selected from the shared installed-font catalog: PingFang TC for Taiwan, PingFang SC for Simplified Chinese. Fonts remain system-provided. Complex-script shaping and regional number/formula localization remain outside this change.
 
 ## Where we are (measured from source on `main`, after the 2026-10-10 merges)
 
@@ -77,6 +84,7 @@ language (none so far) and of localized function names.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Added 405 Taiwan Traditional Chinese labels; standardized Simplified Chinese as zh-CN with legacy zh compatibility; tested preference and tag parsing. |
 | 2026-10-11 | minor | German ribbon catalog (`i18n/de.rs`, 266 labels, ~12%); `de` locale tags (de-DE, de-AT, de-CH…) resolve to German. PR #163 (localized German formulas/numbers) still open |
 | 2026-10-11 | minor | Sheet Right-to-Left mirrors the grid (#146) |
 | 2026-10-11 | minor | Czech (cs) ribbon table: 266 labels (~12%), menus only |

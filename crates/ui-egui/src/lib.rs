@@ -58,6 +58,9 @@ pub struct UiState {
     /// Motion in the UI: the selection outline glides to a new selection (View ▸ Animations).
     pub animations: bool,
     pub recent: Vec<String>,
+    /// Favorite installed font-family identifiers, independent of workbook formatting.
+    #[serde(deserialize_with = "lenient_favorite_fonts")]
+    pub favorite_fonts: Vec<String>,
     /// One-shot keytip request for a ribbon control: set when a keytip action resolves to
     /// [`keytips::Action::Control`], consumed (and cleared) by the control's render site.
     #[serde(skip)]
@@ -89,6 +92,19 @@ fn lenient_interface_scale<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u16
     Ok(v.as_f64().and_then(clamp_interface_scale).unwrap_or(100))
 }
 
+fn lenient_favorite_fonts<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    let value = Json::deserialize(d)?;
+    let mut names: Vec<String> = Vec::new();
+    if let Some(values) = value.as_array() {
+        for name in values.iter().filter_map(Json::as_str).map(str::trim).filter(|name| !name.is_empty()) {
+            if !names.iter().any(|saved| saved.eq_ignore_ascii_case(name)) {
+                names.push(name.to_string());
+            }
+        }
+    }
+    Ok(names)
+}
+
 impl Default for UiState {
     fn default() -> Self {
         UiState {
@@ -100,6 +116,7 @@ impl Default for UiState {
             status_bar: true,
             animations: true,
             recent: vec![],
+            favorite_fonts: vec![],
             keytip_invoke: None,
             language: i18n::Language::En,
             interface_scale: 100,
@@ -232,9 +249,8 @@ pub struct SheetApp {
     /// Set while a font-set change is pending activation: skip this frame's paint, like the
     /// startup `fonts_ready` gate (egui applies new definitions at the next pass).
     fonts_rebind: bool,
-    /// Han face order the installed fonts were built with; a language switch rebuilds the fonts
-    /// only when it changes this (see `theme::HanOrder`).
-    fonts_han: Option<theme::HanOrder>,
+    /// Interface language the font set was built for, including regional Chinese faces.
+    fonts_language: Option<i18n::Language>,
     effective_dark: bool,
     /// The desktop's light/dark choice, watched while the app runs (Linux has no winit answer).
     desktop_theme: desktop_theme::DesktopTheme,
@@ -279,7 +295,7 @@ impl SheetApp {
             fonts_bound: Vec::new(),
             fonts_seen: (0, 0),
             fonts_rebind: false,
-            fonts_han: None,
+            fonts_language: None,
             effective_dark: false,
             desktop_theme: desktop_theme::DesktopTheme::default(),
             desktop_dark: None,
@@ -296,12 +312,12 @@ impl SheetApp {
     ///
     /// [`logic`]: SheetApp::logic
     pub fn setup_context(ctx: &egui::Context, dark: bool) {
-        fonts::start_scan();
         Self::setup_context_for_language(ctx, dark, i18n::Language::En);
     }
 
     /// Sets up fonts and visuals for a specific persisted interface language.
     pub fn setup_context_for_language(ctx: &egui::Context, dark: bool, language: i18n::Language) {
+        fonts::start_scan();
         ctx.set_fonts(theme::font_definitions_for_language(language));
         theme::apply(ctx, dark);
     }
@@ -511,6 +527,19 @@ impl SheetApp {
                     }
                     None => Err(format!("missing `percent` ({INTERFACE_SCALE_MIN}–{INTERFACE_SCALE_MAX}, or \"auto\")")),
                 }
+            }
+            "app.font.favorite" => {
+                let Some(name) = p.get("name").and_then(Json::as_str).map(str::trim).filter(|name| !name.is_empty()) else {
+                    return Some(Err("missing font family name".into()));
+                };
+                let current = self.ui.favorite_fonts.iter().any(|saved| saved.eq_ignore_ascii_case(name));
+                let on = p.get("on").and_then(Json::as_bool).unwrap_or(!current);
+                if on && !current {
+                    self.ui.favorite_fonts.push(name.to_string());
+                } else if !on {
+                    self.ui.favorite_fonts.retain(|saved| !saved.eq_ignore_ascii_case(name));
+                }
+                Ok(json!({"name": name, "favorite": on}))
             }
             "app.language.set" => {
                 // `{"language": "ja"}`; `code` is accepted as an alias.
@@ -882,7 +911,7 @@ impl SheetApp {
         // A keytip control request lives one frame: the ribbon consumes it during `ui`, and
         // anything that never reached a control (collapsed ribbon, tab switch) is dropped.
         self.ui.keytip_invoke = None;
-        if self.fonts_han.is_some_and(|han| han != theme::HanOrder::of(self.ui.language)) {
+        if self.fonts_language.is_some_and(|language| language != self.ui.language) {
             self.fonts_ready = false;
             self.fonts_set = false;
         }
@@ -896,7 +925,7 @@ impl SheetApp {
                 // The rebuilt set has no workbook fonts yet: bind them again once it is active.
                 self.fonts_bound.clear();
                 self.fonts_seen = (0, 0);
-                self.fonts_han = Some(theme::HanOrder::of(self.ui.language));
+                self.fonts_language = Some(self.ui.language);
                 ctx.request_repaint();
             }
         } else if self.fonts_rebind {
@@ -1145,4 +1174,32 @@ pub fn now_ms() -> f64 {
 
 pub fn cell(r: u32, c: u32) -> CellRef {
     CellRef::new(r, c)
+}
+
+#[cfg(test)]
+mod font_favorite_tests {
+    use super::*;
+
+    #[test]
+    fn favorites_roundtrip_toggle_and_keep_old_preferences_compatible() {
+        let mut session = Session::new();
+        session.new_workbook();
+        let mut app = SheetApp::new(session, Default::default());
+        app.run("app.font.favorite", json!({"name": "PingFang TC", "on": true})).unwrap();
+        app.run("app.font.favorite", json!({"name": "pingfang tc", "on": true})).unwrap();
+        assert_eq!(app.ui.favorite_fonts, ["PingFang TC"]);
+        let saved = serde_json::to_vec(&app.ui).unwrap();
+        let restored: UiState = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(restored.favorite_fonts, ["PingFang TC"]);
+        assert!(!app.session.active().unwrap().is_dirty(), "collecting a font does not modify the workbook");
+        app.run("app.font.favorite", json!({"name": "PingFang TC"})).unwrap();
+        assert!(app.ui.favorite_fonts.is_empty());
+        assert!(app.run("app.font.favorite", json!({"name": " "})).is_err());
+        let old: UiState = serde_json::from_str(r#"{"dark":true,"language":"zh-TW"}"#).unwrap();
+        assert!(old.favorite_fonts.is_empty());
+        let malformed: UiState = serde_json::from_str(r#"{"dark":true,"favoriteFonts":7}"#).unwrap();
+        assert!(malformed.dark && malformed.favorite_fonts.is_empty());
+        let mixed: UiState = serde_json::from_str(r#"{"favoriteFonts":[" PingFang TC ","pingfang tc",7,""]}"#).unwrap();
+        assert_eq!(mixed.favorite_fonts, ["PingFang TC"]);
+    }
 }
