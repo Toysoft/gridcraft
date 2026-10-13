@@ -166,7 +166,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let collapsed = app.ui.ribbon_collapsed;
     let h = if collapsed { 34.0 } else { 34.0 + 92.0 };
-    egui::Panel::top("ribbon")
+    let ribbon = egui::Panel::top("ribbon")
         .exact_size(h)
         .frame(egui::Frame::NONE.fill(t.window).inner_margin(egui::Margin { left: 10, right: 10, top: 0, bottom: 6 }))
         .show(ui, |ui| {
@@ -252,6 +252,43 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 });
             });
         });
+    wheel_switches_tab(app, ui, ribbon.response.rect);
+}
+
+/// The mouse wheel over the tab row or the ribbon card switches tabs, as in Excel (#897): down for
+/// the next tab, up for the previous one, stopping at the ends. It runs after the ribbon has drawn,
+/// so a scroll area inside it (the overflow scroll on a narrow window) that took the wheel keeps it.
+/// One tab per notch: smooth and trackpad deltas add up until half a notch, and the switch then
+/// spends a whole one, so a notch's tail or a long swipe doesn't race through the tabs.
+fn wheel_switches_tab(app: &mut SheetApp, ui: &mut Ui, ribbon: Rect) {
+    let acc_id = egui::Id::new("ribbon_wheel_tabs");
+    let over = ui.rect_contains_pointer(ribbon) && !egui::Popup::is_any_open(ui.ctx());
+    let (delta, scrolling) = ui.input(|i| (i.smooth_scroll_delta, i.is_scrolling()));
+    let notch = ui.ctx().options(|o| o.input_options.line_scroll_speed).max(1.0);
+    if !over || !scrolling || delta.x.abs() > delta.y.abs() {
+        ui.data_mut(|d| d.remove::<f32>(acc_id));
+        return;
+    }
+    let acc = ui.data(|d| d.get_temp::<f32>(acc_id)).unwrap_or(0.0) + delta.y;
+    ui.input_mut(|i| i.smooth_scroll_delta.y = 0.0);
+    let mut tabs: Vec<&str> = TABS.to_vec();
+    tabs.extend(contextual_tabs(app));
+    let step = if acc < -notch / 2.0 {
+        1
+    } else if acc > notch / 2.0 {
+        -1
+    } else {
+        0
+    };
+    let acc = acc + step as f32 * notch;
+    ui.data_mut(|d| d.insert_temp(acc_id, acc));
+    if step == 0 {
+        return;
+    }
+    let Some(at) = tabs.iter().position(|t| *t == app.ui.ribbon_tab) else { return };
+    if let Some(next) = at.checked_add_signed(step).and_then(|n| tabs.get(n)) {
+        app.ui.ribbon_tab = next.to_string();
+    }
 }
 
 /// The File tab opens the Backstage view (New, Open, Info, Save As, Print, Export, Options…), like
