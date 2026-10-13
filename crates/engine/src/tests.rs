@@ -3302,3 +3302,26 @@ fn from_text_csv_detects_the_delimiter_like_file_open() {
     assert_eq!(v(&s, "B2"), Value::Number(2.0));
     assert!(s.execute("data.fromTextCsv", json!({"text": "a,b", "delimiter": "tab"})).is_err());
 }
+
+#[test]
+fn from_text_csv_keeps_field_text_and_number_formats() {
+    let mut s = s();
+    let text = "Name,Formula,When,Share,Price,Big\r\na,=1+1,2024-03-04,12.5%,$1234.50,\"1,234,567.89\"\r\nb,\"=HYPERLINK(\"\"http://example.com\"\",\"\"click\"\")\",,,,\r\n";
+    s.execute("data.fromTextCsv", json!({"text": text, "sheet": "Imp"})).unwrap();
+    // A field that looks like a formula stays text, as File › Open and Excel's From Text/CSV keep it.
+    assert_eq!(v(&s, "B2"), Value::text("=1+1"));
+    assert_eq!(v(&s, "B3"), Value::text("=HYPERLINK(\"http://example.com\",\"click\")"));
+    let d = s.doc().unwrap();
+    let sh = d.wb.active().unwrap();
+    assert!(sh.cells.iter().all(|(_, c)| c.formula.is_none()));
+    // Dates, percentages, currency and digit grouping keep the formats File › Open gives them.
+    let fmt = |a: &str| d.wb.styles.get(sh.style_id(CellRef::parse(a).unwrap())).num_fmt.as_str().to_string();
+    assert_eq!(v(&s, "C2"), Value::Number(45355.0));
+    assert_eq!(fmt("C2"), "yyyy-mm-dd");
+    assert_eq!(v(&s, "D2"), Value::Number(0.125));
+    assert_eq!(fmt("D2"), "0.00%");
+    assert_eq!(v(&s, "E2"), Value::Number(1234.5));
+    assert_eq!(fmt("E2"), "\"$\"#,##0.00");
+    assert_eq!(v(&s, "F2"), Value::Number(1_234_567.89));
+    assert_eq!(fmt("F2"), "#,##0.00");
+}

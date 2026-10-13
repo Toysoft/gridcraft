@@ -1,7 +1,7 @@
 //! More ribbon commands: Chart Design and Format, object arrangement, workbook views, table
 //! tools, Get Data, scripts (Automate), cell checkboxes, theme colours and fonts.
 
-use gridcraft_core::{CellRef, RangeRef, Value};
+use gridcraft_core::{CellRef, DateSystem, MAX_COLS, MAX_ROWS, RangeRef, Value};
 use gridcraft_model::*;
 use serde_json::{Value as Json, json};
 
@@ -864,62 +864,116 @@ fn from_csv(s: &mut Session, p: &Json) -> Result<Json> {
         return ok();
     };
     let text = String::from_utf8_lossy(&bytes);
-    // JSON array of objects → rows.
-    let rows: Vec<Vec<Json>> =
-        if text.trim_start().starts_with('[') {
-            let arr: Vec<Json> = serde_json::from_str(&text).map_err(|e| bad("data.getData", e.to_string()))?;
-            let mut keys: Vec<String> = Vec::new();
-            for o in &arr {
-                if let Some(m) = o.as_object() {
-                    for k in m.keys() {
-                        if !keys.contains(k) {
-                            keys.push(k.clone());
-                        }
-                    }
-                }
-            }
-            let mut out = vec![keys.iter().map(|k| json!(k)).collect::<Vec<_>>()];
-            for o in &arr {
-                out.push(keys.iter().map(|k| o.get(k).cloned().unwrap_or(Json::Null)).collect());
-            }
-            out
-        } else {
-            // No delimiter given: detected as File › Open does (a `sep=` line, else comma, semicolon or tab).
-            let delimiter = match str_param(p, "delimiter").map(|d| (d.chars().next(), d.chars().nth(1))) {
-                None => '\0',
-                Some((Some(d), None)) => d,
-                Some(_) => return Err(bad("data.fromTextCsv", "`delimiter` must be one character")),
-            };
-            let opts = gridcraft_xlsx::CsvOptions { delimiter, ..Default::default() };
-            let wb = gridcraft_xlsx::read_csv(&bytes, &opts).map_err(|e| EngineError::Other(e.to_string()))?;
-            let sh = wb.sheet(0).ok_or(EngineError::NoDocument)?;
-            let Some(u) = sh.used_range() else { return Err(EngineError::Other("The file is empty.".into())) };
-            (u.start.row..=u.end.row)
-                .map(|r| {
-                    (u.start.col..=u.end.col)
-                        .map(|c| match sh.value(CellRef::new(r, c)) {
-                            Value::Number(n) => json!(n),
-                            Value::Bool(b) => json!(b),
-                            Value::Empty => Json::Null,
-                            v => json!(v.display()),
-                        })
-                        .collect()
-                })
-                .collect()
+    let sys = s.doc()?.wb.date_system;
+    let block = if text.trim_start().starts_with('[') {
+        // JSON array of objects → rows.
+        let arr: Vec<Json> = serde_json::from_str(&text).map_err(|e| bad("data.getData", e.to_string()))?;
+        json_block(&arr, sys)
+    } else {
+        // No delimiter given: detected as File › Open does (a `sep=` line, else comma, semicolon or tab).
+        let delimiter = match str_param(p, "delimiter").map(|d| (d.chars().next(), d.chars().nth(1))) {
+            None => '\0',
+            Some((Some(d), None)) => d,
+            Some(_) => return Err(bad("data.fromTextCsv", "`delimiter` must be one character")),
         };
-    if rows.is_empty() || rows.len() > 1_048_576 {
+        csv_block(&bytes, delimiter, sys)?
+    };
+    if block.rows == 0 || block.rows > MAX_ROWS {
         return Err(EngineError::Other("Nothing to import.".into()));
     }
     let name = str_param(p, "sheet").map(str::to_string).or_else(|| {
         str_param(p, "path").and_then(|x| std::path::Path::new(x).file_stem().and_then(|f| f.to_str()).map(|f| f.chars().take(31).collect()))
     });
     let r = s.execute("home.insertSheet", json!({"name": name})).or_else(|_| s.execute("home.insertSheet", json!({})))?;
-    let w = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
-    s.execute("range.setValues", json!({"range": "A1", "values": rows}))?;
-    let range = RangeRef::new(CellRef::new(0, 0), CellRef::new(rows.len() as u32 - 1, w as u32 - 1));
+    let si = r["index"].as_u64().map(|i| i as usize).ok_or(EngineError::NoDocument)?;
+    let (rows, w) = (block.rows, block.cols.max(1));
+    // The cells as read, with their number formats: never through typing, so a field like
+    // `=1+1` stays text, as File › Open (and Excel's From Text/CSV) keep it.
+    edit(s, |cx| {
+        let mut styles: Vec<(String, StyleId)> = Vec::new();
+        for (at, value, fmt) in block.cells {
+            let style = match fmt {
+                Some(code) => match styles.iter().find(|(c, _)| *c == code) {
+                    Some((_, id)) => *id,
+                    None => {
+                        let id = cx.wb.styles.derive(StyleId::DEFAULT, |st| st.num_fmt = NumFmt::new(&code));
+                        styles.push((code, id));
+                        id
+                    }
+                },
+                None => StyleId::DEFAULT,
+            };
+            cx.sheet_mut(si)?.set_cell(at, Cell { value, formula: None, style });
+            cx.touch(si, at);
+        }
+        Ok(())
+    })?;
+    let range = RangeRef::new(CellRef::new(0, 0), CellRef::new(rows - 1, w - 1));
     let _ = s.execute("insert.table", json!({"range": range.a1(), "header": true}));
-    let _ = s.execute("home.autofitColumnWidth", json!({"cols": RangeRef::cols(0, w as u32 - 1).a1()}));
-    Ok(json!({"sheet": r["name"], "rows": rows.len(), "cols": w}))
+    let _ = s.execute("home.autofitColumnWidth", json!({"cols": RangeRef::cols(0, w - 1).a1()}));
+    Ok(json!({"sheet": r["name"], "rows": rows, "cols": w}))
+}
+
+/// Cells From Text/CSV or Get Data imports, from A1: values with their number formats (`None`
+/// is General), and the size of the block.
+struct Imported {
+    cells: Vec<(CellRef, Value, Option<String>)>,
+    rows: u32,
+    cols: u32,
+}
+
+/// CSV or tab-separated text, typed as File › Open types it (numbers, dates, percentages and
+/// currency with their formats; a field like `=1+1` stays text).
+fn csv_block(bytes: &[u8], delimiter: char, date_system: DateSystem) -> Result<Imported> {
+    let opts = gridcraft_xlsx::CsvOptions { delimiter, date_system, ..Default::default() };
+    let wb = gridcraft_xlsx::read_csv(bytes, &opts).map_err(|e| EngineError::Other(e.to_string()))?;
+    let sh = wb.sheet(0).ok_or(EngineError::NoDocument)?;
+    let Some(u) = sh.used_range() else { return Err(EngineError::Other("The file is empty.".into())) };
+    let cells = sh
+        .cells
+        .iter()
+        .filter(|(_, c)| !matches!(c.value, Value::Empty))
+        .map(|(at, c)| {
+            let fmt = wb.styles.get(c.style).num_fmt.as_str();
+            let to = CellRef::new(at.row.saturating_sub(u.start.row), at.col.saturating_sub(u.start.col));
+            (to, c.value.clone(), (fmt != "General").then(|| fmt.to_string()))
+        })
+        .collect();
+    let rows = u.end.row.saturating_sub(u.start.row).saturating_add(1);
+    let cols = u.end.col.saturating_sub(u.start.col).saturating_add(1);
+    Ok(Imported { cells, rows, cols })
+}
+
+/// A JSON array of objects: one column per key (in first-seen order) under a header row of
+/// keys. Strings are read as CSV fields are; numbers and booleans as they are.
+fn json_block(arr: &[Json], date_system: DateSystem) -> Imported {
+    let mut keys: Vec<&str> = Vec::new();
+    for m in arr.iter().filter_map(Json::as_object) {
+        for k in m.keys() {
+            if !keys.contains(&k.as_str()) && keys.len() < MAX_COLS as usize {
+                keys.push(k);
+            }
+        }
+    }
+    let mut cells: Vec<(CellRef, Value, Option<String>)> =
+        keys.iter().enumerate().map(|(c, k)| (CellRef::new(0, c as u32), Value::text(*k), None)).collect();
+    for (r, o) in arr.iter().enumerate().take(MAX_ROWS as usize - 1) {
+        for (c, k) in keys.iter().enumerate() {
+            let (value, fmt) = match o.get(*k) {
+                None | Some(Json::Null) => continue,
+                Some(Json::Number(n)) => (Value::number(n.as_f64().unwrap_or(0.0)), None),
+                Some(Json::Bool(b)) => (Value::Bool(*b), None),
+                Some(Json::String(t)) => {
+                    let p = gridcraft_core::parse::parse_imported(t, date_system);
+                    (p.value, p.format.map(str::to_string))
+                }
+                Some(other) => (Value::text(other.to_string()), None),
+            };
+            cells.push((CellRef::new(r as u32 + 1, c as u32), value, fmt));
+        }
+    }
+    let rows = u32::try_from(arr.len()).unwrap_or(MAX_ROWS).saturating_add(1).min(MAX_ROWS);
+    Imported { cells, rows, cols: keys.len() as u32 }
 }
 
 fn from_table_range(s: &mut Session, p: &Json) -> Result<Json> {
