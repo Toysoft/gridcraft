@@ -47,25 +47,7 @@ impl Source {
     }
 }
 
-/// `'My Sheet'!A1` → (`Some("My Sheet")`, `A1`).
-fn split_sheet(r: &str) -> (Option<String>, &str) {
-    match r.rsplit_once('!') {
-        Some((sh, body)) => (Some(sh.trim_matches('\'').replace("''", "'")), body),
-        None => (None, r),
-    }
-}
-
-/// Quotes a sheet name for a reference when needed.
-pub fn quote_sheet(name: &str) -> String {
-    if !name.is_empty()
-        && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.')
-        && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
-    {
-        name.to_string()
-    } else {
-        format!("'{}'", name.replace('\'', "''"))
-    }
-}
+pub use gridcraft_core::addr::{quote_sheet, split_sheet};
 
 /// Absolute reference text for a range on a sheet: `Sheet1!$A$1:$E$20`.
 pub fn range_text(sheet_name: &str, r: RangeRef) -> String {
@@ -1511,7 +1493,7 @@ pub fn parse_chart_link(link: &str) -> Option<(String, String)> {
     };
     let (sheet, name) = t.rsplit_once('!')?;
     let sheet = sheet.trim();
-    let sheet = sheet.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')).map(|x| x.replace("''", "'")).unwrap_or_else(|| sheet.to_string());
+    let sheet = gridcraft_core::addr::unquote_sheet(sheet);
     let name = name.trim();
     if sheet.is_empty() || name.is_empty() {
         return None;

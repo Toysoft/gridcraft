@@ -230,6 +230,73 @@ impl fmt::Display for RangeRef {
     }
 }
 
+// ---------------------------------------------------------------- sheet names in references
+
+/// Whether a sheet name needs quotes in a reference (`'My Sheet'!A1`), as Excel 365 writes
+/// formulas. It does when the name:
+/// - starts with a digit or `.` (`1Sheet`, `.x`), or holds anything but letters, digits, `_` and
+///   `.` (`Sheet 1`, `a-b`, `Bob's`);
+/// - reads as an A1 cell (`A1`, `XFD1`, `AB1048576`; not `XFE1` or `AB1048577`, which are off the
+///   sheet);
+/// - reads as an R1C1 reference (`R`, `C`, `RC`, `R1`, `C1`, `R1C`, `RC1`, `R1C1`, in any case);
+/// - is a boolean (`TRUE`, `false`).
+///
+/// Letters of any script stay bare (`Ärger`, `日本`, `Σ`).
+pub fn sheet_needs_quotes(name: &str) -> bool {
+    let Some(first) = name.chars().next() else { return true };
+    if first.is_ascii_digit() || first == '.' || name.chars().any(|c| !(c.is_alphanumeric() || c == '_' || c == '.')) {
+        return true;
+    }
+    CellRef::parse(name).is_some() || is_r1c1_reference(name) || name.eq_ignore_ascii_case("TRUE") || name.eq_ignore_ascii_case("FALSE")
+}
+
+/// `R`, `C`, `RC`, `R1`, `C1`, `R1C`, `RC1`, `R1C1` (any case): what Excel reads as an R1C1 row,
+/// column or cell.
+fn is_r1c1_reference(name: &str) -> bool {
+    let b = name.as_bytes();
+    let mut i = 0;
+    let digits = |i: &mut usize| {
+        while b.get(*i).is_some_and(u8::is_ascii_digit) {
+            *i += 1;
+        }
+    };
+    let r = b.first().is_some_and(|c| c.eq_ignore_ascii_case(&b'R'));
+    if r {
+        i += 1;
+        digits(&mut i);
+    }
+    let c = b.get(i).is_some_and(|c| c.eq_ignore_ascii_case(&b'C'));
+    if c {
+        i += 1;
+        digits(&mut i);
+    }
+    (r || c) && i == b.len()
+}
+
+/// A sheet name as a reference writes it: quoted when [`sheet_needs_quotes`], with each `'`
+/// doubled (`Bob's` → `'Bob''s'`).
+pub fn quote_sheet(name: &str) -> String {
+    if sheet_needs_quotes(name) { format!("'{}'", name.replace('\'', "''")) } else { name.to_string() }
+}
+
+/// The sheet name a reference's sheet part stands for: quotes taken off and `''` read as `'`
+/// (`'Bob''s'` → `Bob's`); a bare name stays as it is.
+pub fn unquote_sheet(text: &str) -> String {
+    match text.strip_prefix('\'').and_then(|t| t.strip_suffix('\'')) {
+        Some(inner) => inner.replace("''", "'"),
+        None => text.to_string(),
+    }
+}
+
+/// `'My Sheet'!A1` → (`Some("My Sheet")`, `A1`); `A1` → (`None`, `A1`). The sheet part is split
+/// at the last `!`, so a quoted name may hold one (`'a!b'!A1`).
+pub fn split_sheet(reference: &str) -> (Option<String>, &str) {
+    match reference.rsplit_once('!') {
+        Some((sheet, body)) => (Some(unquote_sheet(sheet)), body),
+        None => (None, reference),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,5 +358,46 @@ mod tests {
     fn offsets() {
         assert_eq!(CellRef::new(0, 0).offset(-1, 0), None);
         assert_eq!(CellRef::new(0, 0).offset_clamped(-5, 3), CellRef::new(0, 3));
+    }
+
+    /// Excel 365's quoting of sheet names in formulas (`='name'!A1` typed, `.Formula` read back).
+    #[test]
+    fn sheet_names_are_quoted_like_excel() {
+        for q in [
+            "A1",
+            "XFD1",
+            "AB1048576",
+            "R",
+            "C",
+            "RC",
+            "R1",
+            "C1",
+            "R1C",
+            "RC1",
+            "R1C1",
+            "r2c3",
+            "TRUE",
+            "false",
+            "1Sheet",
+            ".x",
+            "Sheet 1",
+            "a-b",
+            "Bob's",
+            "a#b",
+            "a(b",
+            "",
+        ] {
+            assert!(sheet_needs_quotes(q), "{q} needs quotes");
+        }
+        for b in ["A", "ABC", "XFE1", "AB1048577", "A1A", "x1y", "Sheet1", "Sheet.1", "_x", "x_", "Ärger", "日本", "Σ"] {
+            assert!(!sheet_needs_quotes(b), "{b} stays bare");
+        }
+        assert_eq!(quote_sheet("Bob's"), "'Bob''s'");
+        assert_eq!(quote_sheet("Sheet1"), "Sheet1");
+        assert_eq!(unquote_sheet("'Bob''s'"), "Bob's");
+        assert_eq!(unquote_sheet("Sheet1"), "Sheet1");
+        assert_eq!(split_sheet("'a!b'!A1"), (Some("a!b".to_string()), "A1"));
+        assert_eq!(split_sheet("'Bob''s'!$A$1:$B$2"), (Some("Bob's".to_string()), "$A$1:$B$2"));
+        assert_eq!(split_sheet("A1"), (None, "A1"));
     }
 }

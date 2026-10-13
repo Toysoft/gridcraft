@@ -814,6 +814,27 @@ fn insert_delete_cells_adjust() {
     assert_eq!(v(&s, "E3"), Value::Number(8.0));
 }
 
+/// One rule quotes sheet names everywhere (Excel 365's): a PivotTable on sheet `A1` names its
+/// source `'A1'!$A$1:$B$3`, and a formula into sheet `.x` keeps its quotes, which Excel needs to
+/// open the file at all.
+#[test]
+fn sheet_names_are_quoted_by_excels_rule_everywhere() {
+    let mut s = s();
+    s.execute("home.insertSheet", json!({"name": "A1"})).unwrap();
+    s.execute("range.setValues", json!({"range": "'A1'!A1", "values": [["K", "V"], ["a", 1], ["b", 2]]})).unwrap();
+    // From the current region, the engine writes the source text itself.
+    s.execute("selection.set", json!({"cell": "A2"})).unwrap();
+    s.execute("insert.pivotTable", json!({"rows": ["K"], "values": ["V"]})).unwrap();
+    let list = s.execute("pivot.list", json!({})).unwrap();
+    assert_eq!(list[0]["source"], "'A1'!$A$1:$B$3", "{list}");
+    s.execute("home.insertSheet", json!({"name": ".x"})).unwrap();
+    s.execute("cell.set", json!({"cell": "A1", "sheet": ".x", "input": "5"})).unwrap();
+    s.execute("home.insertSheet", json!({"name": "R1C1"})).unwrap();
+    s.execute("cell.set", json!({"cell": "'A1'!C1", "input": "='.x'!A1+'R1C1'!A1"})).unwrap();
+    let got = s.execute("cell.get", json!({"cell": "'A1'!C1"})).unwrap();
+    assert_eq!(got["formula"], "='.x'!A1+'R1C1'!A1");
+}
+
 #[test]
 fn sort_and_filter() {
     let mut s = s();

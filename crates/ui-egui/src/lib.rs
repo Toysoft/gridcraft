@@ -1219,11 +1219,8 @@ impl SheetApp {
         if let Some(sh) = sh {
             for n in &d.wb.names {
                 let target = n.formula.replace('$', "");
-                let (sheet, body) = match target.rsplit_once('!') {
-                    Some((s, b)) => (Some(s.trim_matches('\'').to_string()), b.to_string()),
-                    None => (None, target.clone()),
-                };
-                if sheet.as_deref().is_none_or(|s| s.eq_ignore_ascii_case(&sh.name)) && RangeRef::parse(&body) == Some(cur) {
+                let (sheet, body) = gridcraft_engine::core::addr::split_sheet(&target);
+                if sheet.as_deref().is_none_or(|s| s.eq_ignore_ascii_case(&sh.name)) && RangeRef::parse(body) == Some(cur) {
                     return n.name.clone();
                 }
             }

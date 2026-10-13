@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (XLSX chart sheets are kept on save (#727); previously minor: CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (sheet names in formulas are quoted by one rule, Excel 365's; a formula into a sheet named .x no longer makes the file unopenable in Excel) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -85,6 +85,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Sheet names: one quoting rule (`gridcraft_core::addr`: `quote_sheet`, `split_sheet`, `unquote_sheet`), Excel 365's: names that read as A1 cells, R1C1 references (`R`, `RC`, `R1C1`…) or booleans, or start with a digit or `.`, are quoted. A formula into a sheet named `.x` was written `.x!A1`, which Excel 365 couldn't open even with repair; a PivotTable on sheet `A1` named its source `A1!$A$1:$B$3`. |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |
 | 2026-10-12 | trivial | CSV and TSV export is capped at 512 MiB and refuses a larger used range with an error (#528) |
 | 2026-10-12 | minor | `.xls` import reads the calculation settings (CalcMode, CalcIter, CalcCount, CalcDelta, CalcPrecision), so circular models calculate instead of showing `#CIRC!` (#724) |

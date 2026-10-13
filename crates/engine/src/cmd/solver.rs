@@ -364,7 +364,7 @@ fn parse_model(s: &Session, p: &Json) -> Result<Model> {
 // ---------------------------------------------------------------- saved model
 
 fn ref_text(sheet_name: &str, cells: &str) -> String {
-    let q = crate::pivot::quote_sheet(sheet_name);
+    let q = gridcraft_core::quote_sheet(sheet_name);
     cells
         .split(',')
         .map(str::trim)
@@ -491,7 +491,7 @@ pub fn saved_model(wb: &Workbook, sheet: usize) -> Option<Json> {
 /// The model as `data.solver` params, in the form [`saved_model`] returns (the objective
 /// qualified by its sheet).
 fn model_params(wb: &Workbook, m: &Model) -> Json {
-    let sheet = wb.sheet(m.sheet).map(|s| crate::pivot::quote_sheet(&s.name)).unwrap_or_default();
+    let sheet = wb.sheet(m.sheet).map(|s| gridcraft_core::quote_sheet(&s.name)).unwrap_or_default();
     let (goal, value) = match m.goal {
         Goal::Max => ("max", 0.0),
         Goal::Min => ("min", 0.0),
