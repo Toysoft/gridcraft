@@ -132,6 +132,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
+| 2026-10-13 | Rich-text runs travel with copy-paste and fill: pasting all/allExceptBorders repeats them (tiled, transposed, cross-sheet; values/formats/link pastes stay flat), fill repeats them on identical text and re-bases them when a series changes it ("Item 1" → "Item 2" keeps the bold digit); the sequence fuzz checks every run stays valid for its cell text (#906) |
 | 2026-10-13 | Rich text is editable: `cell.set` accepts runs, and the Home ▸ Font group (colour, bold, italic, underline, strikethrough, super/subscript, font, size) formats the selected characters while editing, in the cell and in the formula bar; runs stay aligned through typing, undo and structural moves, and the command-sequence fuzz covers them (#776) |
 | 2026-10-12 | Rich text in cells: shared-string runs with per-run font colours are read from XLSX, drawn per run, written back, and move with their cells through edits, sorting and row/column changes (#774) |
 | 2026-10-12 | File › Print selects a system printer, copies, duplex and grayscale, submits PDF jobs through craft-print on a worker and shows spooler errors; browser printing and PDF export remain available |

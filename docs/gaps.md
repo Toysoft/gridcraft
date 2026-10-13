@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (run-level rich-text editing for #776) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (copy/fill run propagation for #906) · **Target:** Microsoft Excel (Microsoft 365)
 
 Every known shortfall against Excel, one entry each, ranked by user impact (what blocks someone
 using GridCraft for real work first). This is the work list: pick from the top, check the open
@@ -42,7 +42,10 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
   Shared-string rich-text runs are no longer dropped: per-run font colours are read, rendered,
   written and translated with structural edits (landed for #774), and run-level editing landed
   for #776: `cell.set` accepts runs, and the Home ▸ Font group formats the selected characters
-  while editing.
+  while editing. Copy-paste and fill also carry runs (#906): pasting all/allExceptBorders
+  repeats them (tiled, transposed, cross-sheet; values/formats/link pastes stay flat), and
+  fill repeats them on identical text or re-bases them positionally when a series changes it
+  ("Item 1" bold digit → "Item 2" bold digit); values/formats fill modes carry none.
 - **Impact:** open-edit-save still simplifies workbooks with slicers, timelines or Power Pivot.
 - **Estimate:** 6–10 h. [file-format-parity.md](file-format-parity.md)
 
@@ -164,6 +167,7 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | §3: rich-text runs propagate through copy-paste and fill (#906) |
 | 2026-10-13 | minor | §3: run-level rich-text editing (#776) — `cell.set` accepts runs, Home ▸ Font formats the character selection while editing, runs stay aligned through edits and undo |
 | 2026-10-12 | minor | §3: shared-string rich-text runs (per-run font colours) read, rendered, written and translated with structural edits (#774) |
 | 2026-10-12 | minor | Desktop File > Print now discovers printers and submits PDF jobs through pinned craft-print with printer choice, copies, duplex and grayscale; browser printing and PDF export remain available. Remaining print parity includes page ranges and driver-specific tray/options UI; physical printer fidelity needs hardware validation. |
