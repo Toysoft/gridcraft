@@ -98,36 +98,37 @@ impl Tokens {
     pub fn dark() -> Tokens {
         Tokens {
             dark: true,
-            window: Color32::from_rgb(0x29, 0x29, 0x29),
-            ribbon: Color32::from_rgb(0x33, 0x33, 0x33),
-            ribbon_border: Color32::from_rgb(0x40, 0x40, 0x40),
-            text: Color32::from_rgb(0xEE, 0xEE, 0xEE),
-            text_dim: Color32::from_rgb(0xB0, 0xB0, 0xB0),
-            text_disabled: Color32::from_rgb(0x70, 0x70, 0x70),
-            accent: Color32::from_rgb(0x5C, 0xC5, 0x87),
-            accent_dark: Color32::from_rgb(0x3F, 0xA8, 0x6C),
-            accent_soft: Color32::from_rgb(0x23, 0x45, 0x31),
-            hover: Color32::from_rgb(0x42, 0x42, 0x42),
-            pressed: Color32::from_rgb(0x4D, 0x4D, 0x4D),
-            separator: Color32::from_rgb(0x48, 0x48, 0x48),
+            // Standard ArtCraft dark chrome; worksheet and notice colors remain separate.
+            window: Color32::from_rgb(0x12, 0x13, 0x16),
+            ribbon: Color32::from_rgb(0x10, 0x10, 0x14),
+            ribbon_border: Color32::from_rgb(0x36, 0x37, 0x3A),
+            text: Color32::from_rgb(0xF2, 0xF1, 0xEE),
+            text_dim: Color32::from_rgb(0xA6, 0xA6, 0xA8),
+            text_disabled: Color32::from_rgb(0x71, 0x71, 0x76),
+            accent: Color32::from_rgb(0x2D, 0x81, 0xFF),
+            accent_dark: Color32::from_rgb(0x74, 0xAA, 0xFF),
+            accent_soft: Color32::from_rgb(0x20, 0x3B, 0x65),
+            hover: Color32::from_rgb(0x32, 0x33, 0x37),
+            pressed: Color32::from_rgb(0x41, 0x42, 0x46),
+            separator: Color32::from_rgb(0x36, 0x37, 0x3A),
             grid_bg: Color32::WHITE,
-            desk: Color32::from_rgb(0x3A, 0x3A, 0x3A),
+            desk: Color32::from_rgb(0x12, 0x13, 0x16),
             gridline: Color32::from_rgb(0xE1, 0xE1, 0xE1),
-            header_bg: Color32::from_rgb(0x30, 0x30, 0x30),
-            header_text: Color32::from_rgb(0xCC, 0xCC, 0xCC),
-            header_line: Color32::from_rgb(0x45, 0x45, 0x45),
-            header_sel_bg: Color32::from_rgb(0x45, 0x45, 0x45),
-            header_sel_text: Color32::from_rgb(0x5C, 0xC5, 0x87),
-            header_all_bg: Color32::from_rgb(0x2E, 0x55, 0x3E),
-            sel_fill: Color32::from_rgba_unmultiplied(0x10, 0x7C, 0x41, 0x24),
-            sel_border: Color32::from_rgb(0x10, 0x7C, 0x41),
-            input_bg: Color32::from_rgb(0x1F, 0x1F, 0x1F),
-            input_border: Color32::from_rgb(0x50, 0x50, 0x50),
-            tab_bar: Color32::from_rgb(0x29, 0x29, 0x29),
-            tab_active: Color32::from_rgb(0x3A, 0x3A, 0x3A),
-            status_bar: Color32::from_rgb(0x29, 0x29, 0x29),
+            header_bg: Color32::from_rgb(0x10, 0x10, 0x14),
+            header_text: Color32::from_rgb(0xA6, 0xA6, 0xA8),
+            header_line: Color32::from_rgb(0x36, 0x37, 0x3A),
+            header_sel_bg: Color32::from_rgb(0x20, 0x3B, 0x65),
+            header_sel_text: Color32::from_rgb(0xF2, 0xF1, 0xEE),
+            header_all_bg: Color32::from_rgb(0x20, 0x3B, 0x65),
+            sel_fill: Color32::from_rgba_unmultiplied(0x2D, 0x81, 0xFF, 0x24),
+            sel_border: Color32::from_rgb(0x2D, 0x81, 0xFF),
+            input_bg: Color32::from_rgb(0x06, 0x06, 0x07),
+            input_border: Color32::from_rgb(0x77, 0x78, 0x7C),
+            tab_bar: Color32::from_rgb(0x0A, 0x0A, 0x0C),
+            tab_active: Color32::from_rgb(0x1E, 0x1F, 0x22),
+            status_bar: Color32::from_rgb(0x0A, 0x0A, 0x0C),
             cell_text: Color32::BLACK,
-            menu_bg: Color32::from_rgb(0x30, 0x30, 0x30),
+            menu_bg: Color32::from_rgb(0x10, 0x10, 0x14),
             shadow: Color32::from_black_alpha(90),
             danger: Color32::from_rgb(0xF1, 0x70, 0x5F),
             notice_warn_bg: Color32::from_rgb(0x4A, 0x3F, 0x1E),
@@ -693,6 +694,20 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
         v.widgets.hovered.weak_bg_fill = t.hover;
         v.widgets.active.weak_bg_fill = t.pressed;
         v.widgets.inactive.bg_stroke = Stroke::new(1.0, t.input_border);
+        if dark {
+            v.selection.stroke = Stroke::new(1.0, t.text);
+            v.widgets.noninteractive.bg_fill = t.ribbon;
+            v.widgets.noninteractive.weak_bg_fill = t.ribbon;
+            v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, t.ribbon_border);
+            v.widgets.inactive.bg_fill = t.tab_active;
+            v.widgets.hovered.bg_fill = t.hover;
+            v.widgets.hovered.bg_stroke = Stroke::new(1.0, t.input_border);
+            v.widgets.active.bg_fill = t.pressed;
+            v.widgets.active.bg_stroke = Stroke::new(1.0, t.input_border);
+            v.widgets.open.bg_fill = t.pressed;
+            v.widgets.open.weak_bg_fill = t.pressed;
+            v.widgets.open.bg_stroke = Stroke::new(1.0, t.input_border);
+        }
         v.window_corner_radius = egui::CornerRadius::same(10);
         v.menu_corner_radius = egui::CornerRadius::same(8);
         v.popup_shadow = egui::epaint::Shadow { offset: [0, 4], blur: 16, spread: 0, color: t.shadow };
@@ -715,6 +730,40 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
 /// Model colour → egui colour.
 pub fn color32(rgb: [u8; 3]) -> Color32 {
     Color32::from_rgb(rgb[0], rgb[1], rgb[2])
+}
+
+#[cfg(test)]
+mod palette_tests {
+    use super::*;
+
+    #[test]
+    fn dark_interface_is_blue_and_the_worksheet_keeps_its_document_colors() {
+        let t = Tokens::dark();
+        assert_eq!(t.window, Color32::from_rgb(0x12, 0x13, 0x16));
+        assert_eq!(t.ribbon, Color32::from_rgb(0x10, 0x10, 0x14));
+        assert_eq!(t.accent, Color32::from_rgb(0x2D, 0x81, 0xFF));
+        assert_eq!(t.header_sel_bg, t.accent_soft);
+        assert_eq!(t.header_sel_text, t.text);
+        assert_eq!(t.grid_bg, Color32::WHITE);
+        assert_eq!(t.cell_text, Color32::BLACK);
+        assert_eq!(t.gridline, Tokens::light().gridline);
+    }
+
+    #[test]
+    fn switching_appearance_installs_distinct_dark_and_light_widget_styles() {
+        let ctx = egui::Context::default();
+        apply(&ctx, true);
+        let dark = ctx.style_of(egui::Theme::Dark);
+        assert_eq!(dark.visuals.panel_fill, Tokens::dark().window);
+        assert_eq!(dark.visuals.widgets.inactive.bg_fill, Tokens::dark().tab_active);
+        assert_eq!(dark.visuals.selection.stroke.color, Tokens::dark().text);
+
+        apply(&ctx, false);
+        let light = ctx.style_of(egui::Theme::Light);
+        assert_eq!(light.visuals.panel_fill, Tokens::light().window);
+        assert_ne!(light.visuals.widgets.inactive.bg_fill, dark.visuals.widgets.inactive.bg_fill);
+        assert!(!light.visuals.dark_mode);
+    }
 }
 
 #[cfg(test)]
