@@ -56,7 +56,9 @@ pub fn open_bytes(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
 /// quote the password.
 pub fn open_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>) -> Result<(Workbook, Vec<String>)> {
     if gridcraft_xlsx::sniff(bytes) != gridcraft_xlsx::Format::Encrypted {
-        return open_plain(name, bytes);
+        let (mut wb, warnings) = open_plain(name, bytes)?;
+        fit_imported_rows(&mut wb);
+        return Ok((wb, warnings));
     }
     // A scheme no password opens is said straight away, rather than after asking for one.
     let decrypt_error = |e: gridcraft_xlsx::DecryptError| EngineError::Other(decrypt_message(name, e));
@@ -68,9 +70,34 @@ pub fn open_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>
     if gridcraft_xlsx::sniff(&plain) == gridcraft_xlsx::Format::Encrypted {
         return Err(EngineError::Other(format!("We can't open '{name}': the encrypted file is damaged (it holds another encrypted file).")));
     }
-    let (wb, mut warnings) = open_plain(name, &plain)?;
+    let (mut wb, mut warnings) = open_plain(name, &plain)?;
+    fit_imported_rows(&mut wb);
     warnings.insert(0, DECRYPTED_NOTICE.into());
     Ok((wb, warnings))
+}
+
+/// Excel auto-fits rows to their tallest font when opening a file: rows without a user-set
+/// height grow to fit their content. Rows the file made taller keep their height — our
+/// line-height estimate can differ from Excel's, and shrinking files that already look
+/// right would be a visible regression. Custom-height rows are left alone entirely.
+fn fit_imported_rows(wb: &mut Workbook) {
+    for si in 0..wb.sheets.len() {
+        let Some(sh) = wb.sheet(si) else { continue };
+        let mut rows: Vec<u32> = sh.cells.iter().map(|(c, _)| c.row).collect();
+        rows.sort_unstable();
+        rows.dedup();
+        for row in rows {
+            let before = wb.sheet(si).and_then(|sh| sh.rows.get(&row)).and_then(|i| i.size);
+            crate::cmd::auto_row_height(wb, si, row);
+            let Some(before) = before else { continue };
+            let after = wb.sheet(si).and_then(|sh| sh.rows.get(&row)).and_then(|i| i.size);
+            if after.is_none_or(|a| before > a + 0.5)
+                && let Some(sh) = wb.sheet_mut(si)
+            {
+                sh.rows.entry(row).or_default().size = Some(before);
+            }
+        }
+    }
 }
 
 /// What to tell the user when an encrypted workbook can't be decrypted. Never quotes the password.

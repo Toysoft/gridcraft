@@ -57,6 +57,9 @@ pub struct UiState {
     pub status_bar: bool,
     /// Motion in the UI: the selection outline glides to a new selection (View ▸ Animations).
     pub animations: bool,
+    /// Enable AutoComplete for cell values (File ▸ Options ▸ Editing): typed text is completed
+    /// from the one matching entry in the same column.
+    pub autocomplete: bool,
     pub recent: Vec<String>,
     /// One-shot keytip request for a ribbon control: set when a keytip action resolves to
     /// [`keytips::Action::Control`], consumed (and cleared) by the control's render site.
@@ -99,6 +102,7 @@ impl Default for UiState {
             formula_bar_expanded: false,
             status_bar: true,
             animations: true,
+            autocomplete: true,
             recent: vec![],
             keytip_invoke: None,
             language: i18n::Language::En,
@@ -600,6 +604,10 @@ impl SheetApp {
                 self.ui.animations = p.get("on").and_then(Json::as_bool).unwrap_or(!self.ui.animations);
                 Ok(json!({"on": self.ui.animations}))
             }
+            "options.autoComplete" => {
+                self.ui.autocomplete = p.get("on").and_then(Json::as_bool).unwrap_or(!self.ui.autocomplete);
+                Ok(json!({"on": self.ui.autocomplete}))
+            }
             "view.interfaceScale" => {
                 // `{"percent": 125}` or `{"percent": "auto"}`; out-of-range values are clamped.
                 let percent = match p.get("percent") {
@@ -883,7 +891,7 @@ impl SheetApp {
         };
         let mut ed = editor::EditState::new(d.wb.active_sheet, at, text, replace, from_formula_bar);
         ed.locale = locale;
-        if replace && !ed.is_formula() {
+        if replace && self.ui.autocomplete && !ed.is_formula() {
             ed.completion = editor::column_completion(sh, at, &ed.text);
         }
         self.editor = Some(ed);

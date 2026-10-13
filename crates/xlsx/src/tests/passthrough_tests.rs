@@ -484,6 +484,80 @@ fn kept_vml_drawings_are_charged_to_the_kept_total() {
     assert!(wb.sheets.iter().all(|s| s.preserved.as_ref().is_some_and(|p| p.vml.is_some())));
 }
 
+const XML_MAPS: &str = r#"<?xml version="1.0"?><MapInfo xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" SelectionNamespaces=""><Schema ID="Schema1"><xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema"><xsd:element name="DataList"><xsd:complexType><xsd:sequence><xsd:element name="ItemList"><xsd:complexType><xsd:sequence><xsd:element name="TableID" type="xsd:integer"/><xsd:element name="Item" maxOccurs="unbounded"><xsd:complexType><xsd:sequence><xsd:element name="No" type="xsd:string"/><xsd:element name="Blocked" type="xsd:boolean"/></xsd:sequence></xsd:complexType></xsd:element></xsd:sequence></xsd:complexType></xsd:element></xsd:sequence></xsd:complexType></xsd:element></xsd:schema></Schema><Map ID="1" Name="DataList_Map" RootElement="DataList" SchemaID="Schema1" ShowImportExportValidationErrors="0" AutoFit="1" Append="0" PreserveSortAFLayout="1" PreserveFormat="1"><DataBinding FileBinding="1" ConnectionID="1" DataBindingLoadMode="1"/></Map></MapInfo>"#;
+const SINGLE_CELLS: &str = r#"<?xml version="1.0"?><singleXmlCells xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><singleXmlCell id="3" r="C1" connectionId="1"><xmlCellPr id="1" uniqueName="TableID"><xmlPr mapId="1" xpath="/DataList/ItemList/TableID" xmlDataType="integer"/></xmlCellPr></singleXmlCell></singleXmlCells>"#;
+const XML_CONNECTION: &str = r#"<?xml version="1.0"?><connections xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><connection id="1" name="DataList" type="4" refreshedVersion="0" background="1"><webPr xml="1" sourceData="1" url="C:\temp\datalist.xml" htmlTables="1"/></connection></connections>"#;
+
+/// A workbook bound to an XML map, shaped like a Business Central configuration package: the map,
+/// an XML table whose columns carry XPaths, a single mapped cell and the XML connection.
+fn xml_map_package() -> Vec<u8> {
+    let types = r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/xmlMaps.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.xmlMaps+xml"/><Override PartName="/xl/connections.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.connections+xml"/><Override PartName="/xl/tables/table1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/><Override PartName="/xl/tables/tableSingleCells1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.tableSingleCells+xml"/></Types>"#;
+    let workbook = format!(
+        r#"<?xml version="1.0"?><workbook xmlns="{NS_MAIN}" xmlns:r="{NS_R}"><sheets><sheet name="Item" sheetId="1" r:id="rId1"/></sheets></workbook>"#
+    );
+    let sheet = format!(
+        r#"<?xml version="1.0"?><worksheet xmlns="{NS_MAIN}" xmlns:r="{NS_R}"><sheetData><row r="1"><c r="C1"><v>27</v></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>No.</t></is></c><c r="B3" t="inlineStr"><is><t>Blocked</t></is></c></row><row r="4"><c r="A4" t="inlineStr"><is><t>1000</t></is></c><c r="B4" t="b"><v>0</v></c></row></sheetData><tableParts count="1"><tablePart r:id="rId2"/></tableParts></worksheet>"#
+    );
+    let table = format!(
+        r#"<?xml version="1.0"?><table xmlns="{NS_MAIN}" id="1" name="Table1" displayName="Table1" ref="A3:B4" tableType="xml" connectionId="1" totalsRowShown="0"><autoFilter ref="A3:B4"/><tableColumns count="2"><tableColumn id="1" uniqueName="No" name="No."><xmlColumnPr mapId="1" xpath="/DataList/ItemList/Item/No" xmlDataType="string"/></tableColumn><tableColumn id="2" uniqueName="Blocked" name="Blocked"><xmlColumnPr mapId="1" xpath="/DataList/ItemList/Item/Blocked" xmlDataType="boolean"/></tableColumn></tableColumns><tableStyleInfo name="TableStyleMedium2" showRowStripes="1"/></table>"#
+    );
+    let root_rels = rels(&[("rId1", "officeDocument", "xl/workbook.xml")]);
+    let wb_rels =
+        rels(&[("rId1", "worksheet", "worksheets/sheet1.xml"), ("rId2", "xmlMaps", "xmlMaps.xml"), ("rId3", "connections", "connections.xml")]);
+    let sheet_rels = rels(&[("rId1", "tableSingleCells", "../tables/tableSingleCells1.xml"), ("rId2", "table", "../tables/table1.xml")]);
+    make_zip(&[
+        ("[Content_Types].xml", types.as_bytes()),
+        ("_rels/.rels", root_rels.as_bytes()),
+        ("xl/workbook.xml", workbook.as_bytes()),
+        ("xl/_rels/workbook.xml.rels", wb_rels.as_bytes()),
+        ("xl/worksheets/sheet1.xml", sheet.as_bytes()),
+        ("xl/worksheets/_rels/sheet1.xml.rels", sheet_rels.as_bytes()),
+        ("xl/tables/table1.xml", table.as_bytes()),
+        ("xl/tables/tableSingleCells1.xml", SINGLE_CELLS.as_bytes()),
+        ("xl/connections.xml", XML_CONNECTION.as_bytes()),
+        ("xl/xmlMaps.xml", XML_MAPS.as_bytes()),
+    ])
+}
+
+#[test]
+fn xml_maps_and_their_bindings_survive_a_round_trip() {
+    let (wb, rep) = read_xlsx(&xml_map_package()).unwrap();
+    assert!(!rep.warnings.iter().any(|w| w.contains("dropped")), "{:?}", rep.warnings);
+    let out = write_xlsx(&wb).unwrap();
+    let u = Unpacked::new(&out);
+    u.assert_valid();
+    // The map keeps its name (its ids are what the bindings point at) and its relationship.
+    assert_eq!(u.parts.get("xl/xmlMaps.xml").map(|b| String::from_utf8_lossy(b)).as_deref(), Some(XML_MAPS));
+    assert!(u.rels("xl/workbook.xml").iter().any(|r| r.1.ends_with("/xmlMaps") && r.2 == "xl/xmlMaps.xml"));
+    let types = u.text("[Content_Types].xml");
+    assert!(
+        types.contains(r#"PartName="/xl/xmlMaps.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.xmlMaps+xml""#),
+        "{types}"
+    );
+    // The single mapped cell hangs off the sheet.
+    let sheet = sheet_part(&u, "Item");
+    assert!(u.rels(&sheet).iter().any(|r| r.1.ends_with("/tableSingleCells") && u.parts.get(&r.2).is_some_and(|b| b == SINGLE_CELLS.as_bytes())));
+    // The table stays an XML table, its columns keep their XPaths.
+    let (_, table) = u.rels(&sheet).into_iter().map(|r| (r.1, r.2)).find(|(ty, _)| ty.ends_with("/table")).unwrap();
+    let t = xml::parse(u.text(&table).as_bytes()).unwrap();
+    assert_eq!((t.attr("tableType"), t.attr("connectionId")), (Some("xml"), Some("1")));
+    let cols: Vec<_> = t.child("tableColumns").unwrap().kids("tableColumn").collect();
+    let mapped: Vec<_> = cols
+        .iter()
+        .map(|c| {
+            let x = c.child("xmlColumnPr").unwrap();
+            (c.attr("uniqueName"), x.attr("mapId"), x.attr("xpath"), x.attr("xmlDataType"))
+        })
+        .collect();
+    assert_eq!(
+        mapped,
+        [
+            (Some("No"), Some("1"), Some("/DataList/ItemList/Item/No"), Some("string")),
+            (Some("Blocked"), Some("1"), Some("/DataList/ItemList/Item/Blocked"), Some("boolean")),
+        ]
+    );
+}
+
 /// Where a link with `target`, in a workbook read from `from`, points once saved into `to`.
 #[cfg(unix)]
 fn rebased(target: &str, from: &str, to: &str) -> String {

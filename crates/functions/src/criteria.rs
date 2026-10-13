@@ -138,9 +138,10 @@ impl Criterion {
                 match self.op {
                     Op::Eq => blank,
                     Op::Ne => !blank,
-                    // "<" / ">" with nothing: Excel compares against "" for text cells.
+                    // "<" / ">" with nothing: Excel compares against "" for text cells, but an
+                    // empty string never matches ("<=" and ">=" count it in neither).
                     _ => match &v {
-                        Value::Text(t) => cmp_op(self.op, compare_text(t, "")),
+                        Value::Text(t) if !t.is_empty() => cmp_op(self.op, compare_text(t, "")),
                         _ => false,
                     },
                 }
@@ -361,6 +362,9 @@ mod tests {
         assert!(m("<>", Value::from("a")));
         assert!(!m("<>", Value::Empty));
         assert!(m("TRUE", Value::Bool(true)));
+        // A bare "<=" or ">=" never matches an empty string (Excel 365: COUNTIF(="", "<=") is 0).
+        assert!(!m("<=", Value::from("")));
+        assert!(!m(">=", Value::from("")));
         assert!(m("<b", Value::from("apple")));
         assert!(!m("<b", Value::Number(1.0)));
         assert!(m("#N/A", Value::Error(CellError::NA)));

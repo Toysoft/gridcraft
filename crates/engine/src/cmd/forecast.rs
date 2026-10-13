@@ -386,7 +386,10 @@ fn forecast_sheet(s: &mut Session, p: &Json) -> Result<Json> {
             range,
             header_row: true,
             totals_row: false,
-            columns: headers.iter().map(|h| TableColumn { name: h.clone(), totals: TotalsFn::None, totals_label: None, formula: None }).collect(),
+            columns: headers
+                .iter()
+                .map(|h| TableColumn { name: h.clone(), totals: TotalsFn::None, totals_label: None, formula: None, unique_name: None, xml: None })
+                .collect(),
             style: "TableStyleMedium2".into(),
             banded_rows: true,
             banded_cols: false,
@@ -394,6 +397,8 @@ fn forecast_sheet(s: &mut Session, p: &Json) -> Result<Json> {
             last_col: false,
             filter_button: true,
             filter: vec![],
+            table_type: None,
+            connection_id: None,
         });
         let q = gridcraft_formula::quote_sheet(&sheet_name);
         let col_ref = |c: u32| format!("{q}!${0}$2:${0}${end_row}", col_letters(c));

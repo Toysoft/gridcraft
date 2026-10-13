@@ -845,6 +845,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             fixed
         ),
         f!("DOLLAR", 1, 2, Text, S, "DOLLAR(number, [decimals])", "Formats a number as currency text.", dollar),
+        f!("USDOLLAR", 1, 2, Compatibility, S, "USDOLLAR(number, [decimals])", "Formats a number as currency text, like DOLLAR.", dollar),
         f!("BAHTTEXT", 1, 1, Text, S, "BAHTTEXT(number)", "Spells out a number in Thai words with Baht.", bahttext),
         f!("T", 1, 1, Text, S, "T(value)", "Returns the value if it is text, otherwise empty text.", t_fn),
         f!(
@@ -1104,6 +1105,8 @@ mod tests {
         is_text(ev("DOLLAR", vec![n(1234.567)]), "$1,234.57");
         is_text(ev("DOLLAR", vec![n(-1234.567), n(1.0)]), "($1,234.6)");
         is_text(ev("DOLLAR", vec![n(0.5), n(0.0)]), "$1");
+        is_text(ev("USDOLLAR", vec![n(1.0)]), "$1.00");
+        is_text(ev("USDOLLAR", vec![n(-1234.567), n(1.0)]), "($1,234.6)");
         is_text(ev("T", vec![t("x")]), "x");
         is_text(ev("T", vec![n(1.0)]), "");
     }

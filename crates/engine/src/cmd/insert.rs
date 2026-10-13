@@ -319,7 +319,10 @@ fn insert_table(s: &mut Session, p: &Json) -> Result<Json> {
             range: r,
             header_row: true,
             totals_row: false,
-            columns: names.into_iter().map(|n| TableColumn { name: n, totals: TotalsFn::None, totals_label: None, formula: None }).collect(),
+            columns: names
+                .into_iter()
+                .map(|n| TableColumn { name: n, totals: TotalsFn::None, totals_label: None, formula: None, unique_name: None, xml: None })
+                .collect(),
             style,
             banded_rows: true,
             banded_cols: false,
@@ -327,6 +330,8 @@ fn insert_table(s: &mut Session, p: &Json) -> Result<Json> {
             last_col: false,
             filter_button: true,
             filter: vec![],
+            table_type: None,
+            connection_id: None,
         });
         cx.structural = true;
         Ok(json!({"table": name, "range": r.a1()}))

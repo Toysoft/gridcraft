@@ -3,11 +3,11 @@
 //! On read, the raw bytes of unmodelled parts are kept with their content type and their
 //! relationship graph, per owner: the package root (custom document properties, ribbon
 //! customisation, add-in task panes), the workbook (custom XML, links to external workbooks with
-//! their `<externalReferences>`, data connections) and each sheet (query tables, form controls,
-//! ActiveX controls, OLE objects, the sheet background and printer settings, with the sheet's
-//! `<picture>`, `<oleObjects>` and `<controls>` XML, the `r:id` of `<pageSetup>` and the legacy
-//! VML shapes those controls need). The workbook also keeps its `<fileVersion>` and the
-//! calcFeatures extension, which Excel needs to trust the saved values.
+//! their `<externalReferences>`, data connections, XML maps) and each sheet (query tables, cells
+//! mapped to XML elements, form controls, ActiveX controls, OLE objects, the sheet background and
+//! printer settings, with the sheet's `<picture>`, `<oleObjects>` and `<controls>` XML, the `r:id`
+//! of `<pageSetup>` and the legacy VML shapes those controls need). The workbook also keeps its
+//! `<fileVersion>` and the calcFeatures extension, which Excel needs to trust the saved values.
 //!
 //! On write, kept parts get fresh part names where needed and new relationship ids; the `r:id`s in
 //! kept XML are rewritten to match. Kept content is conservative:
@@ -18,8 +18,8 @@
 //!   opened, followed or refreshed. A relative path to a linked workbook is rewritten when the
 //!   workbook is saved into another folder ([`rebase_links`]), so it still names the same file.
 //! - Sheet content lives on the sheet: deleting the sheet drops it, Copy Sheet doesn't copy it.
-//!   Cell references inside kept parts (a control's linked cell, a query table's range) are kept
-//!   as they were, not adjusted to inserted or deleted rows.
+//!   Cell references inside kept parts (a control's linked cell, a query table's range, a cell
+//!   mapped to an XML element) are kept as they were, not adjusted to inserted or deleted rows.
 //! - Strict Open XML files are not passed through (their namespaces differ from what we write).
 //! - Sizes are bounded: per part and per workbook.
 
@@ -81,9 +81,9 @@ const CT_VML: &str = "application/vnd.openxmlformats-officedocument.vmlDrawing";
 /// Relationship kinds (last segment of the type) kept from the package root.
 const PACKAGE_ROOTS: &[&str] = &["custom-properties", "extensibility", "webextensiontaskpanes"];
 /// Relationship kinds kept from the workbook without a workbook element.
-const WORKBOOK_ROOTS: &[&str] = &["customXml", "connections"];
+const WORKBOOK_ROOTS: &[&str] = &["customXml", "connections", "xmlMaps"];
 /// Relationship kinds kept from a sheet without a sheet element.
-const SHEET_ROOTS: &[&str] = &["queryTable"];
+const SHEET_ROOTS: &[&str] = &["queryTable", "tableSingleCells"];
 /// Sheet relationship kinds that mean the sheet XML may hold elements worth keeping.
 const SHEET_ELEMENT_KINDS: &[&str] = &["oleObject", "ctrlProp", "control", "image", "package", "printerSettings"];
 /// Attributes of `<fileVersion>` (CT_FileVersion).
@@ -151,6 +151,7 @@ const OWN_DIRS: &[&str] = &[
     "customui/",
     "xl/externallinks/",
     "xl/connections.xml",
+    "xl/xmlmaps.xml",
     "xl/querytables/",
     "xl/ctrlprops/",
     "xl/embeddings/",

@@ -1167,16 +1167,18 @@ impl<'h> Evaluator<'h> {
                 v.scalar().to_bool().unwrap_or(true)
             }
         };
-        let text = if a1 {
-            text
+        // With a1 = FALSE, text that isn't R1C1 can still be a name, but never an A1 reference.
+        let (text, a1_ok) = if a1 {
+            (text, true)
         } else {
             match r1c1_to_a1(&text, self.at) {
-                Ok(Some(a1_text)) => a1_text,
-                Ok(None) => text,
+                Ok(Some(a1_text)) => (a1_text, true),
+                Ok(None) => (text, false),
                 Err(e) => return err(e),
             }
         };
         match gridcraft_formula::parse(&text) {
+            Ok(Expr::Ref(_)) if !a1_ok => err(CellError::Ref),
             Ok(e @ (Expr::Ref(_) | Expr::Name(_) | Expr::Struct(_))) => match self.eval(&e) {
                 r @ Ev::R(_) => r,
                 _ => err(CellError::Ref),
