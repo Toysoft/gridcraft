@@ -6,6 +6,22 @@ fn rt(src: &str) -> String {
 }
 
 #[test]
+fn intersection_with_deleted_operand_reparses() {
+    // Deleting the columns of an intersection operand prints `A1:B2 #REF!`; that text must parse back.
+    assert_eq!(rt("A1:B2 #REF!"), "A1:B2 #REF!");
+    assert_eq!(rt("#REF! A1:B2"), "#REF! A1:B2");
+    assert_eq!(parse("A1:B2 #REF!"), parse("A1:B2 (#REF!)").map(|e| strip_paren(&e)));
+}
+
+fn strip_paren(e: &Expr) -> Expr {
+    match e {
+        Expr::Binary(op, a, b) => Expr::Binary(*op, Box::new(strip_paren(a)), Box::new(strip_paren(b))),
+        Expr::Paren(x) => strip_paren(x),
+        other => other.clone(),
+    }
+}
+
+#[test]
 fn roundtrips() {
     for f in [
         "1+2*3",
@@ -300,4 +316,26 @@ fn trim_references_adjust() {
     assert_eq!(print(&shift_relative(parse("SUM(A1.:.B2)").unwrap(), 1, 1)), "SUM(B2.:.C3)");
     let refs: Vec<String> = parse("SUM(Sheet2!A1:.B5)").unwrap().references().iter().map(|r| printer::reference_a1(r)).collect();
     assert_eq!(refs, ["Sheet2!A1:B5"]);
+}
+
+#[test]
+fn prints_long_flat_chain_without_deep_recursion() {
+    // Small stack: a recursive printer overflows long before 20000 levels.
+    let handle = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(|| {
+            let mut e = Expr::Number(1.0);
+            for _ in 0..20000 {
+                e = Expr::Binary(BinOp::Add, Box::new(e), Box::new(Expr::Number(1.0)));
+            }
+            let text = print(&e);
+            let r1c1 = print_r1c1(&e, gridcraft_core::CellRef { row: 0, col: 0 });
+            // Dropping the deep tree recurses; leak it so only the printer is under test.
+            std::mem::forget(e);
+            (text, r1c1)
+        })
+        .expect("spawn");
+    let (text, r1c1) = handle.join().expect("printer must not overflow the stack");
+    assert_eq!(text, vec!["1"; 20001].join("+"));
+    assert_eq!(r1c1, text);
 }

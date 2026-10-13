@@ -1111,6 +1111,20 @@ fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
                                 }
                             }
                         }
+                        // The copied cell's validation rule replaces whatever rule the destination had.
+                        if !link && matches!(what, What::All | What::AllExceptBorders | What::Validation) {
+                            let rule = src_sheet.validations.iter().find(|dv| dv.ranges.iter().any(|r| r.contains(sc))).cloned();
+                            let sh = cx.sheet_mut(dest_sheet)?;
+                            super::data::remove_validation_cells(&mut sh.validations, &[RangeRef::new(dest, dest)]);
+                            if let Some(mut dv) = rule {
+                                // Relative references move with the rule, as pasted formulas do.
+                                let first = dv.ranges.first().map_or(sc, |r| r.start);
+                                dv.f1 = super::data::move_rule_formula(&dv.f1, first, dest);
+                                dv.f2 = dv.f2.map(|f| super::data::move_rule_formula(&f, first, dest));
+                                dv.ranges = vec![RangeRef::new(dest, dest)];
+                                sh.validations.push(dv);
+                            }
+                        }
                         match what {
                             What::Comments => {
                                 if let Some(cm) = src_sheet.comments.get(&sc).cloned() {

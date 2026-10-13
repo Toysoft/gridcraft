@@ -465,9 +465,22 @@ impl<'h> Evaluator<'h> {
                 }
             }
             _ => {
-                let x = self.value(a);
-                let y = self.value(b);
-                Ev::V(binary_values(op, &x, &y))
+                // A long chain such as A1+A2+…+A500 nests to the left: fold it in a loop instead
+                // of one level of recursion per operator (past the depth limit it was #CALC!).
+                let mut rest = vec![(op, b)];
+                let mut left = a;
+                while let Expr::Binary(o, l, r) = left
+                    && !matches!(o, BinOp::Range | BinOp::Union | BinOp::Intersect)
+                {
+                    rest.push((*o, r.as_ref()));
+                    left = l.as_ref();
+                }
+                let mut acc = self.value(left);
+                while let Some((o, r)) = rest.pop() {
+                    let y = self.value(r);
+                    acc = binary_values(o, &acc, &y);
+                }
+                Ev::V(acc)
             }
         }
     }
@@ -860,7 +873,12 @@ impl<'h> Evaluator<'h> {
     }
 
     pub fn apply_lambda(&mut self, l: &Lambda, args: &[Expr]) -> Ev {
-        if args.len() > l.params.len() {
+        // Too many or too few argument positions is #VALUE!. An explicitly empty position, as in
+        // `(1,)`, is `Expr::Missing` and still counts as a position (it binds as omitted). `f()`
+        // parses to no arguments, which for a one-parameter lambda can also be read as one empty
+        // position, so that call still binds the parameter as omitted.
+        let positions_ok = args.len() == l.params.len() || (args.is_empty() && l.params.len() == 1);
+        if !positions_ok {
             return err(CellError::Value);
         }
         let mut bound = Vec::with_capacity(l.params.len());
@@ -1054,10 +1072,10 @@ impl<'h> Evaluator<'h> {
         if h == 0 || w == 0 {
             return err(CellError::Ref);
         }
-        let r0 = base.range.start.row as i64 + rows;
-        let c0 = base.range.start.col as i64 + cols;
-        let (r0, r1) = if h > 0 { (r0, r0 + h - 1) } else { (r0 + h + 1, r0) };
-        let (c0, c1) = if w > 0 { (c0, c0 + w - 1) } else { (c0 + w + 1, c0) };
+        let r0 = (base.range.start.row as i64).saturating_add(rows);
+        let c0 = (base.range.start.col as i64).saturating_add(cols);
+        let (r0, r1) = if h > 0 { (r0, r0.saturating_add(h - 1)) } else { (r0.saturating_add(h + 1), r0) };
+        let (c0, c1) = if w > 0 { (c0, c0.saturating_add(w - 1)) } else { (c0.saturating_add(w + 1), c0) };
         if r0 < 0 || c0 < 0 || r1 >= MAX_ROWS as i64 || c1 >= MAX_COLS as i64 {
             return err(CellError::Ref);
         }
@@ -1081,7 +1099,15 @@ impl<'h> Evaluator<'h> {
                 v.scalar().to_bool().unwrap_or(true)
             }
         };
-        let text = if a1 { text } else { r1c1_to_a1(&text, self.at).unwrap_or(text) };
+        let text = if a1 {
+            text
+        } else {
+            match r1c1_to_a1(&text, self.at) {
+                Ok(Some(a1_text)) => a1_text,
+                Ok(None) => text,
+                Err(e) => return err(e),
+            }
+        };
         match gridcraft_formula::parse(&text) {
             Ok(e @ (Expr::Ref(_) | Expr::Name(_) | Expr::Struct(_))) => match self.eval(&e) {
                 r @ Ev::R(_) => r,
@@ -1152,7 +1178,8 @@ impl<'h> Evaluator<'h> {
         }
         match src {
             Ev::R(areas) => {
-                let Some(a) = areas.get((area_n - 1).max(0) as usize).copied() else { return err(CellError::Ref) };
+                let area = usize::try_from((area_n as u64).saturating_sub(1)).ok();
+                let Some(a) = area.and_then(|i| areas.get(i)).copied() else { return err(CellError::Ref) };
                 let r = a.range;
                 // A single row or column with one index picks along it.
                 let (row, col) = if two_args && r.height() == 1 { (1, row) } else { (row, col) };
@@ -1290,7 +1317,9 @@ impl<'h> Evaluator<'h> {
     }
 
     fn subtotal(&mut self, name: &str, args: &[Expr]) -> Ev {
-        if args.len() < 2 {
+        // SUBTOTAL needs function_num and ref1; AGGREGATE needs function_num, options and ref1.
+        let min_args = if name == "AGGREGATE" { 3 } else { 2 };
+        if args.len() < min_args {
             return err(CellError::Value);
         }
         let code = match self.arg_num(args, 0, 0.0) {
@@ -1315,7 +1344,8 @@ impl<'h> Evaluator<'h> {
         // SUBTOTAL documentation); 101-111 also leave out rows hidden by hand.
         let skip_filtered = name == "SUBTOTAL";
         let skip_errors = matches!(options, 2 | 3 | 6 | 7);
-        let skip_nested = options <= 3;
+        // SUBTOTAL always leaves out nested SUBTOTAL/AGGREGATE cells (101-111 too); AGGREGATE does so for options 0-3.
+        let skip_nested = name == "SUBTOTAL" || options <= 3;
         let mut values = Vec::new();
         let mut k = None;
         let refs = if name == "AGGREGATE" && func >= 14 { &rest[..1.min(rest.len())] } else { rest };
@@ -1406,37 +1436,42 @@ fn same_kind(a: &Value, b: &Value) -> bool {
     std::mem::discriminant(a) == std::mem::discriminant(b) || (a.is_empty() || b.is_empty())
 }
 
-/// Converts an R1C1 reference text to A1 (for INDIRECT(…, FALSE)).
-pub fn r1c1_to_a1(s: &str, at: CellRef) -> Option<String> {
+/// Converts an R1C1 reference text to A1 (for INDIRECT(…, FALSE)). `Ok(None)` means the text is
+/// not R1C1; `Err` means it is R1C1 but points past the sheet.
+pub fn r1c1_to_a1(s: &str, at: CellRef) -> Result<Option<String>, CellError> {
     let (sheet, body) = match s.rsplit_once('!') {
         Some((sh, b)) => (format!("{sh}!"), b),
         None => (String::new(), s),
     };
-    let conv = |part: &str| -> Option<String> {
+    let conv = |part: &str| -> Result<Option<String>, CellError> {
         let u = part.to_ascii_uppercase();
-        let rest = u.strip_prefix('R')?;
-        let (rpart, cpart) = rest.split_once('C')?;
-        let num = |p: &str, base: u32| -> Option<(u32, bool)> {
-            if p.is_empty() {
-                return Some((base, false));
-            }
-            if let Some(inner) = p.strip_prefix('[').and_then(|x| x.strip_suffix(']')) {
-                let d: i64 = inner.parse().ok()?;
-                let v = base as i64 + d;
-                return if v >= 0 { Some((v as u32, false)) } else { None };
-            }
-            let v: u32 = p.parse().ok()?;
-            Some((v.checked_sub(1)?, true))
+        let Some((rpart, cpart)) = u.strip_prefix('R').and_then(|rest| rest.split_once('C')) else { return Ok(None) };
+        // `None`: not R1C1. `Some(None)`: R1C1, but past the sheet.
+        let num = |p: &str, base: u32, max: u32| -> Option<Option<(u32, bool)>> {
+            let (v, absolute) = if p.is_empty() {
+                (Some(i64::from(base)), false)
+            } else if let Some(inner) = p.strip_prefix('[').and_then(|x| x.strip_suffix(']')) {
+                (i64::from(base).checked_add(inner.parse().ok()?), false)
+            } else {
+                (p.parse::<u32>().ok()?.checked_sub(1).map(i64::from), true)
+            };
+            Some(v.filter(|v| (0..i64::from(max)).contains(v)).map(|v| (v as u32, absolute)))
         };
-        let (r, ra) = num(rpart, at.row)?;
-        let (c, ca) = num(cpart, at.col)?;
-        Some(format!("{}{}{}{}", if ca { "$" } else { "" }, gridcraft_core::col_to_letters(c), if ra { "$" } else { "" }, r + 1))
+        let (Some(r), Some(c)) = (num(rpart, at.row, MAX_ROWS), num(cpart, at.col, MAX_COLS)) else { return Ok(None) };
+        let (Some((r, ra)), Some((c, ca))) = (r, c) else { return Err(CellError::Ref) };
+        Ok(Some(format!("{}{}{}{}", if ca { "$" } else { "" }, gridcraft_core::col_to_letters(c), if ra { "$" } else { "" }, r + 1)))
     };
     let out = match body.split_once(':') {
-        Some((a, b)) => format!("{}:{}", conv(a)?, conv(b)?),
-        None => conv(body)?,
+        Some((a, b)) => match (conv(a)?, conv(b)?) {
+            (Some(a), Some(b)) => format!("{a}:{b}"),
+            _ => return Ok(None),
+        },
+        None => match conv(body)? {
+            Some(x) => x,
+            None => return Ok(None),
+        },
     };
-    Some(format!("{sheet}{out}"))
+    Ok(Some(format!("{sheet}{out}")))
 }
 
 /// The aggregates that can fold a reference without building an array.

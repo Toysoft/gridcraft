@@ -1014,3 +1014,18 @@ fn package_kind_sets_workbook_content_type() {
     }
     assert_eq!(crate::XlsxKind::from_path("noext"), crate::XlsxKind::Workbook);
 }
+
+#[test]
+fn doc_props_keep_boundary_whitespace() {
+    let mut wb = Workbook::new();
+    wb.props = DocProps {
+        title: "  Title  ".into(),
+        subject: "\n".into(),
+        author: "\tMe\t".into(),
+        company: " Co ".into(),
+        keywords: " a, b ".into(),
+        description: "\n  d\n".into(),
+    };
+    let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
+    assert_eq!(back.props, wb.props);
+}
