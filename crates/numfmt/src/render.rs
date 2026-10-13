@@ -509,7 +509,9 @@ fn render_fraction(sec: &Section, x: f64, pieces: &mut [String], lits: &mut [Opt
         // Denominator digits are zero padded to the `0` placeholders, then left aligned; `?`
         // pads with spaces after them.
         let zeros = den_idx.iter().filter(|&&i| toks.get(i) == Some(&Tok::Digit('0'))).count();
-        let padded = format!("{den_s:0>zeros$}");
+        // No `{:0>zeros$}`: a format width above u16::MAX panics.
+        let mut padded = "0".repeat(zeros.saturating_sub(den_s.chars().count()));
+        padded.push_str(&den_s);
         let dc: Vec<char> = padded.chars().collect();
         let count = den_idx.len();
         for (k, &ti) in den_idx.iter().enumerate() {

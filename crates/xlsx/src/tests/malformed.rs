@@ -195,6 +195,24 @@ fn hostile_protected_ranges_stay_locked() {
 }
 
 #[test]
+fn an_overlong_number_format_code_does_not_stop_the_open() {
+    // A format code far over the 255-character cap: the file still opens, the format code is kept as
+    // stored (display falls back to General) and the cell keeps its value.
+    let code = format!("# ?/{}", "0".repeat(65_536));
+    let styles = format!(
+        r#"<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="{code}"/></numFmts>
+      <cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164"/></cellXfs></styleSheet>"#
+    );
+    let rels = r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>"#;
+    let body = r#"<sheetData><row r="1"><c r="A1" s="1"><v>0.5</v></c></row></sheetData>"#;
+    let (wb, _) = read_xlsx(&minimal(body, &[("xl/styles.xml", &styles)], rels, "")).unwrap();
+    let s = wb.sheet(0).unwrap();
+    let cell = s.cell(gridcraft_core::CellRef::parse("A1").unwrap()).unwrap();
+    assert_eq!(s.value(gridcraft_core::CellRef::parse("A1").unwrap()), gridcraft_core::Value::Number(0.5));
+    assert_eq!(wb.styles.get(cell.style).num_fmt.as_str(), code);
+}
+
+#[test]
 fn hyperlinks_past_the_cell_cap_are_reported() {
     // A styles part, so the only possible warning is the hyperlink one.
     let parts = [("xl/styles.xml", r#"<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>"#)];

@@ -58,6 +58,72 @@ fn vertical_scrollbar_pages_and_drags_without_changing_selection() {
     assert_eq!(h.state().session.active().unwrap().selection.active, CellRef::new(0, 0));
 }
 
+/// The first column painted right of the frozen ones.
+fn first_scrolled_col(h: &egui_kittest::Harness<'static, SheetApp>) -> u32 {
+    let app = h.state();
+    let sheet = app.session.active().unwrap().wb.active().unwrap();
+    let geo = app.grid.geo.as_ref().unwrap();
+    geo.col_at(sheet, geo.cells.left() + geo.frozen_w + 0.5)
+}
+
+fn click(h: &mut egui_kittest::Harness<'static, SheetApp>, p: egui::Pos2) {
+    h.input_mut().events.push(Event::PointerMoved(p));
+    h.input_mut().events.push(Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    h.input_mut().events.push(Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+}
+
+#[test]
+fn horizontal_scrollbar_pages_and_drags_across_a_wide_sheet() {
+    let mut wb = gridcraft_engine::model::Workbook::new();
+    let sh = wb.sheet_mut(0).unwrap();
+    for c in 0..26 {
+        sh.set_value(CellRef::new(0, c), Value::text(format!("col {}", c + 1)));
+    }
+    // Column A frozen: a page is the scrolling part only.
+    sh.freeze = Some((0, 1));
+    let mut s = Session::new();
+    s.add_document(gridcraft_engine::DocState::new(wb, None, "Book1".into()));
+    let mut h = harness(s);
+    let track = h.state().grid.hscroll.expect("the tab bar has a horizontal scrollbar");
+    assert!(track.width() >= 200.0, "the scrollbar gets a usable share of the tab bar: {track:?}");
+    assert_eq!(first_scrolled_col(&h), 1);
+
+    let page = {
+        let geo = h.state().grid.geo.as_ref().unwrap();
+        (geo.cells.width() - geo.frozen_w) / geo.z
+    };
+    click(&mut h, egui::pos2(track.right() - 6.0, track.center().y));
+    let scrolled = h.state().view().scroll.x;
+    assert!((scrolled - page).abs() < 0.5, "clicking the track right of the thumb scrolls one page: {scrolled} vs {page}");
+    assert!(first_scrolled_col(&h) > 1);
+    let geo = h.state().grid.geo.clone().unwrap();
+    let sheet = h.state().session.active().unwrap().wb.active().unwrap().clone();
+    assert_eq!(geo.x(&sheet, 0), geo.cells.left(), "the frozen column stays put");
+    click(&mut h, egui::pos2(track.right() - 6.0, track.center().y));
+    let further = h.state().view().scroll.x;
+    click(&mut h, egui::pos2(track.left() + 2.0, track.center().y));
+    assert!(h.state().view().scroll.x < further, "clicking left of the thumb scrolls back");
+
+    h.state_mut().view_mut().unwrap().scroll.x = 0.0;
+    h.run_steps(2);
+    let start = egui::pos2(track.left() + 6.0, track.center().y);
+    h.input_mut().events.push(Event::PointerMoved(start));
+    h.input_mut().events.push(Event::PointerButton { pos: start, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    let end = start + egui::vec2(120.0, 0.0);
+    h.input_mut().events.push(Event::PointerMoved(end));
+    h.run_steps(2);
+    let dragged = h.state().view().scroll.x;
+    assert!(first_scrolled_col(&h) > 1, "dragging the thumb right changes the first visible column");
+    h.run_steps(3);
+    assert_eq!(h.state().view().scroll.x, dragged, "holding the thumb still must not keep scrolling");
+    h.input_mut().events.push(Event::PointerButton { pos: end, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    h.run_steps(2);
+    assert_eq!(h.state().session.active().unwrap().selection.active, CellRef::new(0, 0));
+}
+
 fn key(h: &mut egui_kittest::Harness<'static, SheetApp>, k: Key, m: Modifiers) {
     h.input_mut().events.push(Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: m });
     h.input_mut().events.push(Event::Key { key: k, physical_key: None, pressed: false, repeat: false, modifiers: m });

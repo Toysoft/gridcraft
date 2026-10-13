@@ -170,8 +170,10 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
             }
         })),
         open_url: Some(Box::new(|url: &str| {
-            if let Some(w) = web_sys::window() {
-                let _ = w.open_with_url_and_target(url, "_blank");
+            if let Some(w) = web_sys::window()
+                && let gridcraft_engine::links::LinkKind::External(url) = gridcraft_engine::links::classify(url)
+            {
+                let _ = w.open_with_url_and_target(&url, "_blank");
             }
         })),
         inbox: Some(inbox),

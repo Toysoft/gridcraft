@@ -291,6 +291,26 @@ fn circular_references_without_iterative_calculation() {
 }
 
 #[test]
+fn date_text_coerces_in_the_workbook_date_system() {
+    for (sys, serial) in [(gridcraft_core::DateSystem::D1900, 1462.0), (gridcraft_core::DateSystem::D1904, 0.0)] {
+        let mut t = T::new();
+        t.wb.date_system = sys;
+        t.set("A1", "'1/1/1904");
+        t.set("B1", "=A1+0");
+        t.set("C1", "=VALUE(A1)");
+        t.set("D1", "=-A1");
+        t.set("E1", "=DATEVALUE(A1)");
+        t.set("F1", "=NUMBERVALUE(A1)");
+        assert_eq!(t.get("A1"), Value::from("1/1/1904"));
+        assert_eq!(t.num("B1"), serial, "{sys:?}");
+        assert_eq!(t.num("C1"), serial, "{sys:?}");
+        assert_eq!(t.num("D1"), -serial, "{sys:?}");
+        assert_eq!(t.num("E1"), serial, "{sys:?}");
+        assert_eq!(t.num("F1"), serial, "{sys:?}");
+    }
+}
+
+#[test]
 fn operators() {
     let mut t = T::new();
     t.set("A1", "=\"a\"&1&TRUE");
