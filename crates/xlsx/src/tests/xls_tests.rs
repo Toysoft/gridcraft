@@ -359,6 +359,21 @@ fn reads_values_formulas_formats_and_layout() {
 }
 
 #[test]
+fn text_result_of_a_formula_kept_as_its_value() {
+    // A what-if data table cell ({=TABLE(B1,)}) can't be imported as a formula, so its saved result
+    // is kept. With the default XF the cell is blank until the String record brings the text.
+    let table = cat(&[&[0x02], &u16s(&[0, 0])]);
+    let sheet = cat(&[&bof(0x0010), &formula(0, 0, special(0, 0), &table), &rec(0x0207, &xlstr("103a")), &eof()]);
+    let boundsheet = |pos: u32| rec(0x0085, &cat(&[&pos.to_le_bytes(), &[0, 0, 6, 0], b"Sheet1"]));
+    let len = cat(&[&bof(0x0005), &boundsheet(0), &eof()]).len() as u32;
+    let stream = cat(&[&bof(0x0005), &boundsheet(len), &eof(), &sheet]);
+    let (wb, report) = read_xls(&compound("Workbook", &stream)).unwrap();
+    assert!(report.warnings.iter().any(|w| w.contains("what-if data tables")), "{:?}", report.warnings);
+    assert_eq!(ftext(&wb, "A1"), None);
+    assert_eq!(v(&wb, 0, "A1"), Value::from("103a"));
+}
+
+#[test]
 fn refuses_encrypted_old_and_foreign_files() {
     // FILEPASS in the globals: an encrypted workbook.
     let mut stream = bof(0x0005);
@@ -475,4 +490,40 @@ fn sheets_share_one_record_budget() {
     dup.extend(eof());
     let err = read_xls(&compound("Workbook", &dup)).unwrap_err().to_string();
     assert!(err.contains("same substream"), "{err}");
+}
+
+#[test]
+fn a_format_shorter_than_its_count_keeps_its_characters() {
+    // A FORMAT whose cch is one more than the characters in the record (seen in real files):
+    // Excel opens them, the record's characters are the format code.
+    let short = rec(0x041E, &cat(&[&165u16.to_le_bytes(), &6u16.to_le_bytes(), &[0], b"0.000"]));
+    let xf = |ifmt: u16| rec(0x00E0, &cat(&[&u16s(&[0, ifmt, 0]), &[0; 14]]));
+    let globals = |pos: u32| {
+        cat(&[
+            &bof(0x0005),
+            &short,
+            &rec(0x041E, &cat(&[&164u16.to_le_bytes(), &xlstr("yyyy-mm-dd")])),
+            &xf(0),
+            &xf(164),
+            &xf(165),
+            &rec(0x0085, &cat(&[&pos.to_le_bytes(), &[0, 0, 6, 0], b"Sheet1"])),
+            &eof(),
+        ])
+    };
+    let sheet = cat(&[
+        &bof(0x0010),
+        &rec(0x0203, &cat(&[&cell(0, 0, 0), &7.0f64.to_le_bytes()])),
+        &rec(0x0203, &cat(&[&cell(1, 0, 1), &0.0f64.to_le_bytes()])),
+        &rec(0x0203, &cat(&[&cell(2, 0, 2), &1.25f64.to_le_bytes()])),
+        &eof(),
+    ]);
+    let stream = cat(&[&globals(globals(0).len() as u32), &sheet]);
+    let (wb, report) = read_xls(&compound("Workbook", &stream)).unwrap();
+    let sh = &wb.sheets[0];
+    let fmt = |a1: &str| wb.styles.get(sh.style_id(CellRef::parse(a1).unwrap())).num_fmt.as_str().to_string();
+    assert_eq!(v(&wb, 0, "A1"), Value::Number(7.0));
+    assert_eq!(v(&wb, 0, "A3"), Value::Number(1.25));
+    assert_eq!(fmt("A2"), "yyyy-mm-dd");
+    assert_eq!(fmt("A3"), "0.000");
+    assert!(report.warnings.iter().any(|w| w.contains("declared length")), "{:?}", report.warnings);
 }

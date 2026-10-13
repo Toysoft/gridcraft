@@ -261,7 +261,8 @@ impl NumberFormat {
         let Some(mut out) = out else {
             return (Formatted { text: OVERFLOW.into(), color: sec.color, fill: None, numeric: true }, true);
         };
-        if minus && sec.kind != SecKind::Text {
+        // Excel drops the minus sign when the first section shows a negative number as all zeros.
+        if minus && sec.kind != SecKind::Text && !out.zero {
             out.prepend("-");
         }
         (Formatted { text: out.text, color: sec.color, fill: out.fill, numeric: true }, false)

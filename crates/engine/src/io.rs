@@ -156,8 +156,19 @@ fn rename_first_sheet(wb: &mut Workbook, path: &str) {
 
 /// Encodes a workbook in the format chosen by `path`'s extension.
 pub fn save_bytes(wb: &Workbook, path: &str) -> Result<Vec<u8>> {
+    // An unknown or missing extension is refused rather than written as an XLSX under that name:
+    // a typo like `.cvs` would otherwise produce a file no other app recognises.
+    let Some(kind) = FileKind::from_path(path) else {
+        let name = std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(path);
+        return Err(EngineError::Other(format!("{name}: unknown file format. Save as .xlsx, .csv, .tsv, .json or .html.")));
+    };
+    save_bytes_as(wb, path, kind)
+}
+
+/// Encodes a workbook as `kind`, whatever `path`'s extension says.
+pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8>> {
     let sheet = wb.active_sheet;
-    match FileKind::from_path(path).unwrap_or(FileKind::Xlsx) {
+    match kind {
         // The extension picks the package kind; only the macro-enabled kinds (.xlsm, .xltm) carry
         // the VBA project, so any other name saves without it, as Excel does.
         FileKind::Xlsx => gridcraft_xlsx::write_xlsx_as(wb, gridcraft_xlsx::XlsxKind::from_path(path)).map_err(|e| EngineError::Other(e.to_string())),
@@ -170,7 +181,7 @@ pub fn save_bytes(wb: &Workbook, path: &str) -> Result<Vec<u8>> {
         FileKind::Csv => Ok(wb.sheet(sheet).map(|sh| csv(wb, sh, wb.csv_delimiter.unwrap_or(b','))).unwrap_or_default()),
         FileKind::Tsv => Ok(wb.sheet(sheet).map(|sh| csv(wb, sh, b'\t')).unwrap_or_default()),
         FileKind::Json => serde_json::to_vec_pretty(wb).map_err(|e| EngineError::Other(e.to_string())),
-        FileKind::Html => Ok(to_html(wb, sheet).into_bytes()),
+        FileKind::Html => to_html(wb, sheet).map(String::into_bytes),
     }
 }
 
@@ -299,9 +310,12 @@ impl std::fmt::Write for ClipboardHtml {
     }
 }
 
+/// Most rows Save as Web Page writes. A sheet whose used range is taller fails instead of losing cells.
+const HTML_EXPORT_MAX_ROWS: u32 = 100_001;
+
 /// A sheet as a standalone HTML table (Save as Web Page).
-pub fn to_html(wb: &Workbook, sheet: usize) -> String {
-    let Some(sh) = wb.sheet(sheet) else { return String::new() };
+pub fn to_html(wb: &Workbook, sheet: usize) -> Result<String> {
+    let Some(sh) = wb.sheet(sheet) else { return Ok(String::new()) };
     let mut out = String::new();
     let _ = write!(
         out,
@@ -309,7 +323,13 @@ pub fn to_html(wb: &Workbook, sheet: usize) -> String {
         esc(&sh.name)
     );
     if let Some(r) = sh.used_range() {
-        for row in r.start.row..=r.end.row.min(r.start.row + 100_000) {
+        if r.height() > HTML_EXPORT_MAX_ROWS {
+            return Err(EngineError::Other(format!(
+                "the sheet is too tall for a web page ({} rows, at most {HTML_EXPORT_MAX_ROWS}). Save as .xlsx or CSV instead.",
+                r.height()
+            )));
+        }
+        for row in r.start.row..=r.end.row {
             if sh.is_row_hidden(row) {
                 continue;
             }
@@ -332,7 +352,7 @@ pub fn to_html(wb: &Workbook, sheet: usize) -> String {
         }
     }
     out.push_str("</table></body></html>");
-    out
+    Ok(out)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -435,6 +455,20 @@ pub fn image_size(data: &[u8]) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn html_export_fails_instead_of_dropping_cells_past_the_row_limit() {
+        let mut wb = Workbook::new();
+        let sh = wb.sheet_mut(0).unwrap();
+        sh.set_value(CellRef::new(0, 0), gridcraft_core::Value::text("near"));
+        sh.set_value(CellRef::new(149_999, 0), gridcraft_core::Value::text("far"));
+        assert!(save_bytes(&wb, "book.html").is_err());
+        let sh = wb.sheet_mut(0).unwrap();
+        sh.remove_cell(CellRef::new(149_999, 0));
+        sh.set_value(CellRef::new(100_000, 0), gridcraft_core::Value::text("far"));
+        let html = String::from_utf8(save_bytes(&wb, "book.html").unwrap()).unwrap();
+        assert!(html.contains(">near</td>") && html.contains(">far</td>"));
+    }
 
     #[test]
     fn macros_are_saved_only_into_xlsm() {

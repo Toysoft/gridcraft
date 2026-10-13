@@ -91,6 +91,16 @@ fn range_r1c1(r: &Reference, at: CellRef, sep: &str) -> String {
 }
 
 pub fn struct_ref(s: &StructRef) -> String {
+    write_struct_ref(s, true)
+}
+
+/// Structured reference as files spell it: `[@Col]` is only Excel's display shorthand, files
+/// hold `[[#This Row],[Col]]` (and `[#This Row]` for `[@]`).
+pub fn struct_ref_file(s: &StructRef) -> String {
+    write_struct_ref(s, false)
+}
+
+fn write_struct_ref(s: &StructRef, at_shorthand: bool) -> String {
     let esc = |c: &str| c.replace('\'', "''").replace('[', "'[").replace(']', "']").replace('#', "'#");
     let item = |i: &StructItem| match i {
         StructItem::All => "#All",
@@ -99,7 +109,7 @@ pub fn struct_ref(s: &StructRef) -> String {
         StructItem::Totals => "#Totals",
         StructItem::ThisRow => "#This Row",
     };
-    let this_row = s.specifiers == [StructItem::ThisRow];
+    let this_row = at_shorthand && s.specifiers == [StructItem::ThisRow];
     let mut out = s.table.clone();
     let simple_col = |c: &str| !c.chars().any(|ch| matches!(ch, ' ' | '[' | ']' | '#' | '\'' | ',' | ':'));
     match (&s.col_start, &s.col_end) {

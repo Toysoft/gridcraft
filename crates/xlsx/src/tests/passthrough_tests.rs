@@ -483,3 +483,41 @@ fn kept_vml_drawings_are_charged_to_the_kept_total() {
     let (wb, _) = read_xlsx(&rich_package_with(CONTENT_TYPES, true)).unwrap();
     assert!(wb.sheets.iter().all(|s| s.preserved.as_ref().is_some_and(|p| p.vml.is_some())));
 }
+
+#[test]
+fn file_version_and_calc_features_survive_a_save() {
+    // Excel trusts the saved cell values only when workbook.xml carries both <fileVersion> and the
+    // calcFeatures extension; without them it recalculates everything on open (#799).
+    let calc_features = r#"<ext uri="{B58B0392-4F1F-4190-BB64-5DF3571DCE5F}" xmlns:xcalcf="http://schemas.microsoft.com/office/spreadsheetml/2018/calcfeatures"><xcalcf:calcFeatures><xcalcf:feature name="microsoft.com:RD"/><xcalcf:feature name="microsoft.com:Single"/><xcalcf:feature name="microsoft.com:FV"/><xcalcf:feature name="microsoft.com:CNMTM"/><xcalcf:feature name="microsoft.com:LET_WF"/><xcalcf:feature name="microsoft.com:ARRAYTEXT_WF"/></xcalcf:calcFeatures></ext>"#;
+    let workbook = format!(
+        r#"<?xml version="1.0"?><workbook xmlns="{NS_MAIN}" xmlns:r="{NS_R}"><fileVersion appName="xl" lastEdited="7" lowestEdited="7" rupBuild="11008"/><workbookPr/><sheets><sheet name="A" sheetId="1" r:id="rId1"/></sheets><calcPr calcId="191029"/><extLst><ext uri="{{140A7094-0E35-4892-8432-C4D2E57EDEB5}}" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main"><x15:workbookPr chartTrackingRefBase="1"/></ext>{calc_features}</extLst></workbook>"#
+    );
+    let sheet = format!(
+        r#"<?xml version="1.0"?><worksheet xmlns="{NS_MAIN}"><sheetData><row r="1"><c r="A1"><v>1</v></c><c r="B1"><f>A1*2</f><v>2</v></c></row></sheetData></worksheet>"#
+    );
+    let bytes = make_zip(&[
+        ("[Content_Types].xml", super::CT.as_bytes()),
+        ("_rels/.rels", super::ROOT_RELS.as_bytes()),
+        ("xl/workbook.xml", workbook.as_bytes()),
+        ("xl/_rels/workbook.xml.rels", rels(&[("rId1", "worksheet", "worksheets/sheet1.xml")]).as_bytes()),
+        ("xl/worksheets/sheet1.xml", sheet.as_bytes()),
+    ]);
+    let (wb, _) = read_xlsx(&bytes).unwrap();
+    // Twice: what was kept on the first save is read back and kept again.
+    let (again, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
+    for saved in [write_xlsx(&wb).unwrap(), write_xlsx(&again).unwrap()] {
+        let u = Unpacked::new(&saved);
+        u.assert_valid();
+        let text = u.text("xl/workbook.xml");
+        let root = xml::parse(text.as_bytes()).unwrap();
+        // Schema order: fileVersion is the first child of <workbook>, extLst the last.
+        assert_eq!(root.children.first().map(|e| e.name.as_str()), Some("fileVersion"), "{text}");
+        assert_eq!(root.children.last().map(|e| e.name.as_str()), Some("extLst"), "{text}");
+        assert!(text.contains(r#"<fileVersion appName="xl" lastEdited="7" lowestEdited="7" rupBuild="11008"/>"#), "{text}");
+        assert!(text.contains(&format!("<extLst>{calc_features}</extLst>")), "{text}");
+    }
+
+    // A workbook that had neither gets neither.
+    let plain = Unpacked::new(&write_xlsx(&gridcraft_model::Workbook::new()).unwrap()).text("xl/workbook.xml");
+    assert!(!plain.contains("fileVersion") && !plain.contains("extLst"), "{plain}");
+}

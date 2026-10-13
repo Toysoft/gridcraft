@@ -805,6 +805,46 @@ fn sort_and_filter() {
     assert_eq!(r["hiddenRows"], 1);
 }
 
+/// Top 10 keeps the top or bottom N items or percent, ties at the threshold included.
+#[test]
+fn filter_top10_items_and_percent() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["Score"], [5], [1], [9], [3], [9], [7], ["x"]]})).unwrap();
+    s.execute("selection.set", json!({"cell": "A1"})).unwrap();
+    s.execute("data.filter", json!({})).unwrap();
+    // Top 2 items: 9, 9 (the "x" text row is hidden too).
+    let r = s.execute("data.filterBy", json!({"column": "A", "top": {"count": 2}})).unwrap();
+    assert_eq!(r["hiddenRows"], 5);
+    // Bottom 2 items: 1, 3.
+    let r = s.execute("data.filterBy", json!({"column": "A", "top": {"count": 2, "bottom": true}})).unwrap();
+    assert_eq!(r["hiddenRows"], 5);
+    // Top 50 percent of 6 numbers = 3 items; the threshold 7 keeps 9, 9, 7.
+    let r = s.execute("data.filterBy", json!({"column": "A", "top": {"count": 50, "percent": true}})).unwrap();
+    assert_eq!(r["hiddenRows"], 4);
+}
+
+/// Two Top 10 criteria on one column (possible in a native JSON file) each keep their own
+/// cutoff: Top 3 and Bottom 4 of 1..5 keep 3 and 4.
+#[test]
+fn filter_top10_two_criteria_on_one_column() {
+    use gridcraft_model::FilterCriterion;
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["N"], [1], [2], [3], [4], [5]]})).unwrap();
+    s.execute("selection.set", json!({"cell": "A1"})).unwrap();
+    s.execute("data.filter", json!({})).unwrap();
+    let sh = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb).sheet_mut(0).unwrap();
+    if let Some(af) = sh.autofilter.as_mut() {
+        af.criteria = vec![
+            (0, FilterCriterion::Top10 { bottom: false, percent: false, count: 3 }),
+            (0, FilterCriterion::Top10 { bottom: true, percent: false, count: 4 }),
+        ];
+    }
+    s.execute("data.reapply", json!({})).unwrap();
+    let hidden: Vec<u32> = s.active().unwrap().wb.sheet(0).unwrap().rows.iter().filter(|(_, r)| r.hidden).map(|(k, _)| *k).collect();
+    // Rows are 0-based: values 1, 2 and 5 sit on rows 1, 2 and 5.
+    assert_eq!(hidden, vec![1, 2, 5]);
+}
+
 /// Turning the filter on with only the header row selected filters the data below it (#201).
 #[test]
 fn filter_on_a_selected_header_row_covers_the_data_below() {
@@ -1550,6 +1590,65 @@ fn saving_an_opened_semicolon_csv_keeps_semicolons() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// A typo like `report.cvs` must not quietly write an XLSX under that name and adopt it as the
+/// document's file.
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn saving_to_an_unknown_extension_is_refused() {
+    #[allow(clippy::disallowed_methods)] // native-only test: a unique temp dir name
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let dir = std::env::temp_dir().join(format!("gridcraft-unknown-ext-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&dir).unwrap();
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "1"})).unwrap();
+    for name in ["report.cvs", "report"] {
+        let path = dir.join(name);
+        let e = s.execute("file.save", json!({"path": path})).unwrap_err().to_string();
+        assert!(e.contains(".xlsx"), "{name}: {e}");
+        assert!(!path.exists(), "{name} was written");
+    }
+    let d = s.doc().unwrap();
+    assert!(d.path.is_none());
+    assert!(d.is_dirty());
+    assert!(s.execute("file.saveBytes", json!({"format": "foo"})).is_err());
+    s.execute("file.save", json!({"path": dir.join("report.csv")})).unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// An XLSX opened by its content under an unknown extension (`budget.dat`) saves back to its own
+/// file as XLSX; a Save As to another unknown extension is still refused.
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn an_xlsx_opened_under_an_unknown_extension_saves_back_as_xlsx() {
+    #[allow(clippy::disallowed_methods)] // native-only test: a unique temp dir name
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let dir = std::env::temp_dir().join(format!("gridcraft-dat-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&dir).unwrap();
+    let path = dir.join("budget.dat");
+    let mut src = s();
+    src.execute("cell.set", json!({"cell": "A1", "input": "1"})).unwrap();
+    std::fs::write(&path, crate::io::save_bytes(&src.doc().unwrap().wb, "book.xlsx").unwrap()).unwrap();
+    let mut s = s();
+    s.execute("file.open", json!({"path": path})).unwrap();
+    s.execute("cell.set", json!({"cell": "A1", "input": "2"})).unwrap();
+    s.execute("file.save", json!({})).unwrap();
+    assert!(!s.doc().unwrap().is_dirty());
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(gridcraft_xlsx::sniff(&bytes), gridcraft_xlsx::Format::Xlsx);
+    let (wb, _) = crate::io::open_bytes("book.xlsx", &bytes).unwrap();
+    assert_eq!(wb.active().unwrap().value(CellRef::parse("A1").unwrap()), Value::Number(2.0));
+    assert!(s.execute("file.saveAs", json!({"path": dir.join("copy.foo")})).is_err());
+    assert!(!dir.join("copy.foo").exists());
+    // A text file under an unknown extension opens as CSV: Save doesn't turn it into an XLSX.
+    let notes = dir.join("notes.dat");
+    std::fs::write(&notes, "a,b\r\n").unwrap();
+    s.execute("file.open", json!({"path": notes})).unwrap();
+    s.execute("cell.set", json!({"cell": "A1", "input": "c"})).unwrap();
+    assert!(s.execute("file.save", json!({})).is_err());
+    assert_eq!(std::fs::read_to_string(&notes).unwrap(), "a,b\r\n");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn validation_formulas_are_relative_and_see_the_new_value() {
     let mut s = s();
@@ -1736,6 +1835,23 @@ fn every_command_survives_empty_params() {
         let _ = s.execute(spec.id, json!([1, 2]));
         let _ = s.execute(spec.id, json!({"range": "ZZZ999999999", "cell": "", "sheet": 99}));
     }
+}
+
+#[test]
+fn non_object_params_do_not_panic_in_wrapper_commands() {
+    // Issue #516.
+    for cmd in ["pageLayout.themeColors", "pageLayout.background", "home.drawBorder"] {
+        for params in [json!([]), json!(5), json!("x"), json!(true)] {
+            let mut s = s();
+            let r = s.execute(cmd, params.clone());
+            assert!(!matches!(r, Err(crate::EngineError::Internal(..))), "{cmd} {params}: {r:?}");
+        }
+    }
+    // A saved script step forwards its params unchanged into the same call.
+    let mut s = s();
+    s.execute("automate.newScript", json!({"name": "bad", "commands": [{"command": "home.drawBorder", "params": []}]})).unwrap();
+    let r = s.execute("automate.runScript", json!({"name": "bad"}));
+    assert!(!matches!(r, Err(crate::EngineError::Internal(..))), "script: {r:?}");
 }
 
 fn fmt_of(s: &Session, a: &str) -> String {
@@ -2598,6 +2714,56 @@ fn notes_comments_and_links_survive_a_json_save() {
     assert_eq!(after.comments, before.comments);
     assert_eq!(after.hyperlinks, before.hyperlinks);
     assert_eq!(after.cells, before.cells);
+}
+
+/// Insert › Link sorts a target as Excel's dialog does: a sheet reference, a defined name or `#…` is
+/// a place in this document, anything else an existing file or web page. A file saved as a
+/// `location` opens nothing in Excel (#800).
+#[test]
+fn links_to_files_are_saved_as_external_relationships() {
+    use std::io::Read;
+    let mut s = s();
+    s.execute("formulas.defineName", json!({"name": "Price", "refersTo": "=Sheet1!$A$1"})).unwrap();
+    s.execute("insert.table", json!({"range": "F1:G3", "name": "Sales"})).unwrap();
+    s.execute("home.insertSheet", json!({"name": "Q#1"})).unwrap();
+    s.execute("sheet.activate", json!({"sheet": 0})).unwrap();
+    let links = [
+        ("A1", "Source.xlsx", true),
+        ("A2", r"C:\Temp\Book.xlsx", true),
+        ("A3", r"..\Reports\Q1.xlsx", true),
+        ("A4", "Other.xlsx#Sheet1!A2", true),
+        ("A5", "https://example.com/a.xlsx", true),
+        ("A6", "Sheet1!B2", false),
+        ("A7", "#Sheet1!B3", false),
+        ("A8", "Price", false),
+        ("A9", "'Sheet1'!C4:D5", false),
+        ("A10", "Sales", false),
+        ("A11", "'Q#1'!B2", false),
+    ];
+    for (cell, target, _) in links {
+        s.execute("insert.link", json!({"cell": cell, "target": target})).unwrap();
+    }
+    let bytes = gridcraft_xlsx::write_xlsx(&s.doc().unwrap().wb).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).unwrap();
+    let mut part = |name: &str| {
+        let mut text = String::new();
+        zip.by_name(name).unwrap().read_to_string(&mut text).unwrap();
+        text
+    };
+    let (sheet, rels) = (part("xl/worksheets/sheet1.xml"), part("xl/worksheets/_rels/sheet1.xml.rels"));
+    for (cell, target, external) in links {
+        let file = target.split_once('#').map_or(target, |(f, _)| f);
+        let as_rel = format!("Target=\"{file}\" TargetMode=\"External\"");
+        let as_location = format!("location=\"{}\"", target.trim_start_matches('#'));
+        assert_eq!(rels.contains(&as_rel), external, "{cell} {target}: {rels}");
+        assert_eq!(sheet.contains(&as_location), !external, "{cell} {target}: {sheet}");
+    }
+    assert!(sheet.contains("location=\"Sheet1!A2\""), "{sheet}");
+    let (back, _) = gridcraft_xlsx::read_xlsx(&bytes).unwrap();
+    for (cell, target, external) in links {
+        let h = &back.sheet(0).unwrap().hyperlinks[&CellRef::parse(cell).unwrap()];
+        assert_eq!((h.target.as_str(), h.external), (target.trim_start_matches('#'), external), "{cell}");
+    }
 }
 
 #[test]

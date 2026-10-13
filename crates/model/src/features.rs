@@ -304,9 +304,14 @@ pub struct Comment {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Hyperlink {
-    /// URL, `mailto:`, or an in-workbook location like `Sheet2!A1`.
+    /// URL, `mailto:`, a file path (`Book.xlsx`, `Book.xlsx#Sheet1!A2`), or an in-workbook location
+    /// like `Sheet2!A1`.
     pub target: String,
     pub tooltip: Option<String>,
+    /// The target is outside this workbook (Excel's "Existing File or Web Page"): a relationship in
+    /// the file, not a `location`. A bare file name can't be told from a defined name by its text.
+    #[serde(default)]
+    pub external: bool,
 }
 
 // ---------------------------------------------------------------- drawing objects
@@ -975,6 +980,12 @@ pub struct PivotTable {
     pub last_range: Option<RangeRef>,
     /// Calculated fields, usable in the Values area by name.
     pub calculated_fields: Vec<PivotCalcField>,
+    /// The Σ Values pseudo-field (it exists with two or more value fields) sits in Rows rather
+    /// than Columns (Excel's "values on rows").
+    pub values_on_rows: bool,
+    /// Position of Σ Values among the row fields (`None` = after the last). Only used with
+    /// `values_on_rows`: in Columns Σ Values always comes after the last column field.
+    pub values_position: Option<usize>,
 }
 
 /// A calculated field: a formula over other fields (`=Sales*0.1`, `='Unit Price'*Units`). As in
@@ -1007,6 +1018,8 @@ impl Default for PivotTable {
             show_headers: true,
             last_range: None,
             calculated_fields: vec![],
+            values_on_rows: false,
+            values_position: None,
         }
     }
 }

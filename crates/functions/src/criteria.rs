@@ -5,6 +5,10 @@ use std::cmp::Ordering;
 use gridcraft_core::parse::parse_number_text;
 use gridcraft_core::{CellError, Value, compare_numbers, compare_text};
 
+/// Longest text criterion COUNTIF and its relatives accept, in UTF-16 code units as Excel
+/// counts them (😀 is two units); a longer one is `#VALUE!`.
+const MAX_CRITERION_UTF16_UNITS: usize = 255;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Op {
     Eq,
@@ -22,6 +26,15 @@ enum Operand {
     Error(CellError),
     /// Text (lower-cased chars kept for wildcard matching).
     Text(String),
+    /// A criterion cut to its first 255 UTF-16 units in the middle of a surrogate pair: the
+    /// complete characters before the cut, followed (in Excel) by a lone high surrogate.
+    ///
+    /// No cell text holds a lone surrogate, so `=` matches nothing and `<>` everything, as
+    /// Excel gives 0 for SUMIFS with a criterion of 128 emoji. For `<`, `<=`, `>` and `>=` the
+    /// criterion sorts just above the kept text: a cell matches `>`/`>=` when it sorts above
+    /// that text, and `<`/`<=` otherwise. This is an approximation (Excel wasn't checked) and
+    /// only matters for comparison criteria over 255 units.
+    CutText(String),
     /// Nothing after the operator (`"="`, `"<>"`) or an empty criterion.
     Blank,
 }
@@ -48,25 +61,52 @@ impl Criterion {
         }
     }
 
-    fn parse_text(t: &str) -> Criterion {
-        let (op, rest) = if let Some(r) = t.strip_prefix(">=") {
-            (Op::Ge, r)
-        } else if let Some(r) = t.strip_prefix("<=") {
-            (Op::Le, r)
-        } else if let Some(r) = t.strip_prefix("<>") {
-            (Op::Ne, r)
-        } else if let Some(r) = t.strip_prefix('=') {
-            (Op::Eq, r)
-        } else if let Some(r) = t.strip_prefix('>') {
-            (Op::Gt, r)
-        } else if let Some(r) = t.strip_prefix('<') {
-            (Op::Lt, r)
-        } else {
-            if t.is_empty() {
-                return Criterion { op: Op::Eq, operand: Operand::Blank, bare_empty: true };
+    /// Parses the criteria argument of COUNTIF, SUMIF, AVERAGEIF and the single-pair *IFS
+    /// functions: like `parse`, but text longer than 255 UTF-16 code units is `#VALUE!`, as in
+    /// Excel (checked on Excel 2016 and Microsoft 365: `"a"×254 & "😀"` is 255 characters but
+    /// 256 units, and is `#VALUE!`).
+    pub(crate) fn parse_arg(v: &Value) -> Result<Criterion, CellError> {
+        match v {
+            Value::Array(a) => Criterion::parse_arg(a.data.first().unwrap_or(&Value::Empty)),
+            // A UTF-8 string has at least as many bytes as UTF-16 units, so short text skips the count.
+            Value::Text(t) if t.len() > MAX_CRITERION_UTF16_UNITS && t.encode_utf16().nth(MAX_CRITERION_UTF16_UNITS).is_some() => {
+                Err(CellError::Value)
             }
-            (Op::Eq, t)
-        };
+            other => Ok(Criterion::parse(other)),
+        }
+    }
+
+    /// Parses a criteria argument of an *IFS function with two or more criteria pairs. Excel
+    /// doesn't reject a longer text criterion there: it matches its first 255 UTF-16 code units
+    /// (checked on Excel 2016 and Microsoft 365 with COUNTIFS, SUMIFS, AVERAGEIFS, MAXIFS and
+    /// MINIFS). A cut through a surrogate pair matches nothing; see `Operand::CutText`.
+    pub(crate) fn parse_arg_truncated(v: &Value) -> Criterion {
+        match v {
+            Value::Array(a) => Criterion::parse_arg_truncated(a.data.first().unwrap_or(&Value::Empty)),
+            Value::Text(t) if t.len() > MAX_CRITERION_UTF16_UNITS => {
+                let mut units = 0;
+                for (i, c) in t.char_indices() {
+                    if units + c.len_utf16() > MAX_CRITERION_UTF16_UNITS {
+                        if units == MAX_CRITERION_UTF16_UNITS {
+                            return Criterion::parse_text(&t[..i]);
+                        }
+                        // The cut falls between the two halves of `c`.
+                        let (op, rest) = split_op(&t[..i]);
+                        return Criterion { op, operand: Operand::CutText(rest.to_string()), bare_empty: false };
+                    }
+                    units += c.len_utf16();
+                }
+                Criterion::parse_text(t)
+            }
+            other => Criterion::parse(other),
+        }
+    }
+
+    fn parse_text(t: &str) -> Criterion {
+        if t.is_empty() {
+            return Criterion { op: Op::Eq, operand: Operand::Blank, bare_empty: true };
+        }
+        let (op, rest) = split_op(t);
         let operand = if rest.is_empty() {
             Operand::Blank
         } else if let Some(n) = parse_number_text(rest) {
@@ -140,7 +180,32 @@ impl Criterion {
                     _ => false,
                 },
             },
+            Operand::CutText(kept) => match self.op {
+                Op::Eq => false,
+                Op::Ne => true,
+                Op::Lt | Op::Le => matches!(&v, Value::Text(t) if compare_text(t, kept) != Ordering::Greater),
+                Op::Gt | Op::Ge => matches!(&v, Value::Text(t) if compare_text(t, kept) == Ordering::Greater),
+            },
         }
+    }
+}
+
+/// Splits a leading comparison operator (`=` when there is none) off a text criterion.
+fn split_op(t: &str) -> (Op, &str) {
+    if let Some(r) = t.strip_prefix(">=") {
+        (Op::Ge, r)
+    } else if let Some(r) = t.strip_prefix("<=") {
+        (Op::Le, r)
+    } else if let Some(r) = t.strip_prefix("<>") {
+        (Op::Ne, r)
+    } else if let Some(r) = t.strip_prefix('=') {
+        (Op::Eq, r)
+    } else if let Some(r) = t.strip_prefix('>') {
+        (Op::Gt, r)
+    } else if let Some(r) = t.strip_prefix('<') {
+        (Op::Lt, r)
+    } else {
+        (Op::Eq, t)
     }
 }
 

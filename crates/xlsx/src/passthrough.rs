@@ -6,7 +6,8 @@
 //! their `<externalReferences>`, data connections) and each sheet (query tables, form controls,
 //! ActiveX controls, OLE objects, the sheet background and printer settings, with the sheet's
 //! `<picture>`, `<oleObjects>` and `<controls>` XML, the `r:id` of `<pageSetup>` and the legacy
-//! VML shapes those controls need).
+//! VML shapes those controls need). The workbook also keeps its `<fileVersion>` and the
+//! calcFeatures extension, which Excel needs to trust the saved values.
 //!
 //! On write, kept parts get fresh part names where needed and new relationship ids; the `r:id`s in
 //! kept XML are rewritten to match. Kept content is conservative:
@@ -83,6 +84,11 @@ const WORKBOOK_ROOTS: &[&str] = &["customXml", "connections"];
 const SHEET_ROOTS: &[&str] = &["queryTable"];
 /// Sheet relationship kinds that mean the sheet XML may hold elements worth keeping.
 const SHEET_ELEMENT_KINDS: &[&str] = &["oleObject", "ctrlProp", "control", "image", "package", "printerSettings"];
+/// Attributes of `<fileVersion>` (CT_FileVersion).
+const FILE_VERSION_ATTRS: &[&str] = &["appName", "lastEdited", "lowestEdited", "rupBuild", "codeName"];
+/// The workbook extension listing the calculation features the saved values were computed with.
+const CALC_FEATURES_URI: &str = "{B58B0392-4F1F-4190-BB64-5DF3571DCE5F}";
+const NS_CALC_FEATURES: &str = "http://schemas.microsoft.com/office/spreadsheetml/2018/calcfeatures";
 /// Kept sheet elements, in schema order (all after `<legacyDrawing>`, before `<tableParts>`).
 const SHEET_SLOTS: &[&str] = &["picture", "oleObjects", "controls"];
 
@@ -368,6 +374,30 @@ impl KeptReader {
                 }
                 Err(why) => cx.warn(format!("links to external workbooks were dropped: {why}")),
             }
+        }
+        // Excel trusts the saved cell values only when both are present; without them it
+        // recalculates everything on open, and links into closed workbooks come back as errors.
+        if let Some(v) = wb_xml.child("fileVersion") {
+            let mut x = String::from("<fileVersion");
+            for k in FILE_VERSION_ATTRS {
+                if let Some(a) = v.attr(k) {
+                    let _ = write!(x, " {k}=\"{}\"", esc_attr(a));
+                }
+            }
+            x.push_str("/>");
+            p.elements.push(PreservedXml { slot: "fileVersion".into(), xml: x });
+        }
+        let calc_features = wb_xml
+            .child("extLst")
+            .and_then(|l| l.kids("ext").find(|e| e.attr("uri").is_some_and(|u| u.eq_ignore_ascii_case(CALC_FEATURES_URI))))
+            .and_then(|e| e.child("calcFeatures"));
+        if let Some(c) = calc_features {
+            let mut x = format!("<ext uri=\"{CALC_FEATURES_URI}\" xmlns:xcalcf=\"{NS_CALC_FEATURES}\"><xcalcf:calcFeatures>");
+            for name in c.kids("feature").filter_map(|f| f.attr("name")) {
+                let _ = write!(x, "<xcalcf:feature name=\"{}\"/>", esc_attr(name));
+            }
+            x.push_str("</xcalcf:calcFeatures></ext>");
+            p.elements.push(PreservedXml { slot: "ext".into(), xml: x });
         }
         (!p.is_empty()).then(|| Arc::new(p))
     }
@@ -851,6 +881,12 @@ pub fn write_workbook(wb: &Workbook, wb_rels: &mut Rels, out: &mut Out) -> Strin
         }
     }
     p.elements.iter().filter(|e| e.slot == "externalReferences").filter_map(|e| remap(&e.xml, &ids)).collect()
+}
+
+/// The workbook's kept elements of `slot` that refer to no part (`fileVersion`, `ext`).
+pub fn workbook_elements(wb: &Workbook, slot: &str) -> String {
+    let Some(p) = wb.preserved.as_deref() else { return String::new() };
+    p.elements.iter().filter(|e| e.slot == slot).map(|e| e.xml.as_str()).collect()
 }
 
 /// Adds the kept package-root relationships (custom properties…) to `_rels/.rels`.
