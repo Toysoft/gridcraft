@@ -623,16 +623,24 @@ fn aggregate(f: Agg, vals: &[&Value]) -> Value {
 
 /// Shared input preparation for GROUPBY/PIVOTBY.
 struct Prepared {
-    /// Header text for each row field (or generated) when headers are shown.
-    field_headers: Vec<Value>,
+    /// Header text for each column of each field argument (row fields, then PIVOTBY's column
+    /// fields), read or generated, for when headers are shown.
+    field_headers: Vec<Vec<Value>>,
     value_headers: Vec<Value>,
     show_headers: bool,
     /// Indices of data rows that pass the filter.
     rows: Vec<usize>,
 }
 
+/// The name Excel generates for column `k` (1-based) of field argument `field` (0: row fields,
+/// 1: PIVOTBY's column fields) when `field_headers` is 2.
+fn generated_field_name(field: usize, k: usize) -> Value {
+    Value::from(if field == 0 { format!("Row Field {k}") } else { format!("Column Field {k}") })
+}
+
 /// field_headers: 0 none, 1 present but hidden, 2 generate, 3 present and shown; missing =
-/// automatic (headers when the first value row is all text and the next is not).
+/// automatic: when the first value row is all text and the next is not, that row is used as
+/// headers but not shown (Excel).
 fn prepare(fields: &[&Array], values: &Array, fh: Option<i64>, filter: Option<&Array>) -> R<Prepared> {
     let n = values.rows;
     for f in fields {
@@ -647,7 +655,7 @@ fn prepare(fields: &[&Array], values: &Array, fh: Option<i64>, filter: Option<&A
         Some(_) => return Err(CellError::Value),
         None => {
             if first_text && second_not {
-                3
+                1
             } else {
                 0
             }
@@ -655,14 +663,13 @@ fn prepare(fields: &[&Array], values: &Array, fh: Option<i64>, filter: Option<&A
     };
     let has_hdr = mode == 1 || mode == 3;
     let show = mode >= 2;
-    let mut field_headers = Vec::new();
-    let mut k = 0;
-    for f in fields {
-        for c in 0..f.cols {
-            k += 1;
-            field_headers.push(if has_hdr { f.get(0, c).cloned().unwrap_or(Value::Empty) } else { Value::from(format!("Field {k}")) });
-        }
-    }
+    let field_headers = fields
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            (0..f.cols).map(|c| if has_hdr { f.get(0, c).cloned().unwrap_or(Value::Empty) } else { generated_field_name(i, c + 1) }).collect()
+        })
+        .collect();
     let value_headers = (0..values.cols)
         .map(|c| if has_hdr { values.get(0, c).cloned().unwrap_or(Value::Empty) } else { Value::from(format!("Value {}", c + 1)) })
         .collect();
@@ -807,7 +814,7 @@ pub fn groupby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
     }
     let mut out = Vec::new();
     if p.show_headers {
-        let mut h = p.field_headers.clone();
+        let mut h = p.field_headers.first().cloned().unwrap_or_default();
         h.extend(p.value_headers.iter().cloned());
         out.push(h);
     }
@@ -885,8 +892,10 @@ pub fn pivotby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
         cols.insert(0, None);
     }
     let lead = rf.cols;
-    let value_row = vals.cols > 1 || p.show_headers;
-    let header_rows = cf.cols.saturating_add(usize::from(value_row));
+    // With headers shown, a row with the column fields' names above their items, and one with
+    // the row fields' and the values' names below them.
+    let show = p.show_headers;
+    let header_rows = cf.cols.saturating_add(2 * usize::from(show));
     let body_rows = rk.len().saturating_add(usize::from(row_total != 0));
     // Reject before building any header or body row: every column-field header row is as wide as the whole grid.
     let (height, width) = pivot_dims(header_rows, body_rows, cols.len(), vals.cols, lead);
@@ -894,7 +903,14 @@ pub fn pivotby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
         return Err(CellError::Num);
     }
     let mut out: Vec<Vec<Value>> = Vec::new();
-    // Column header rows: one per column field, plus value names when several value columns.
+    if show {
+        let names: Vec<String> = p.field_headers.get(1).map_or(&[][..], Vec::as_slice).iter().map(Value::display).collect();
+        let mut line = vec![gap(); lead];
+        line.push(Value::from(names.join(", ")));
+        line.resize(width, gap());
+        out.push(line);
+    }
+    // Column header rows: one per column field.
     for level in 0..cf.cols {
         let mut line = vec![gap(); lead];
         for c in &cols {
@@ -908,8 +924,8 @@ pub fn pivotby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
         }
         out.push(line);
     }
-    if value_row {
-        let mut line: Vec<Value> = if p.show_headers { p.field_headers.iter().take(lead).cloned().collect() } else { vec![gap(); lead] };
+    if show {
+        let mut line: Vec<Value> = p.field_headers.first().cloned().unwrap_or_default();
         line.resize(lead, gap());
         for _ in &cols {
             line.extend(p.value_headers.iter().cloned());
@@ -1263,16 +1279,11 @@ mod tests {
     #[test]
     fn groupby() {
         let (region, _, amt) = sales();
+        // Headers detected but not shown (field_headers omitted).
         let r = ev("GROUPBY", vec![rf(region.clone()), rf(amt.clone()), t("SUM")]);
         assert_eq!(
             rows_of(&r),
-            vec![
-                vec![tv("Region"), tv("Amount")],
-                vec![tv("East"), nv(15.0)],
-                vec![tv("North"), nv(1.0)],
-                vec![tv("West"), nv(27.0)],
-                vec![tv("Total"), nv(43.0)],
-            ]
+            vec![vec![tv("East"), nv(15.0)], vec![tv("North"), nv(1.0)], vec![tv("West"), nv(27.0)], vec![tv("Total"), nv(43.0)],]
         );
         let r = ev("GROUPBY", vec![rf(region.clone()), rf(amt.clone()), t("COUNT"), n(1.0), n(0.0), n(-1.0)]);
         assert_eq!(rows_of(&r), vec![vec![tv("West"), nv(2.0)], vec![tv("North"), nv(1.0)], vec![tv("East"), nv(2.0)]]);
@@ -1290,6 +1301,47 @@ mod tests {
         assert_eq!(rows_of(&r), vec![vec![tv("East"), nv(7.5)], vec![tv("North"), nv(1.0)], vec![tv("West"), nv(7.0)]]);
         is_err(ev("GROUPBY", vec![rf(region.clone()), rf(amt.clone()), t("BOGUS")]), CellError::Value);
         is_err(ev("GROUPBY", vec![rf(region), av(col(&[1.0])), t("SUM")]), CellError::Value);
+    }
+
+    /// Header rows as Excel (Microsoft 365) lays them out.
+    #[test]
+    fn groupby_and_pivotby_headers() {
+        let c = |v: Vec<Value>| av(arr(v.into_iter().map(|x| vec![x]).collect()));
+        // Detected headers are used but not shown.
+        let r = ev("GROUPBY", vec![c(vec![tv("Key"), tv("a"), tv("b")]), c(vec![tv("Val"), nv(1.0), nv(2.0)]), t("SUM")]);
+        assert_eq!(rows_of(&r), vec![vec![tv("a"), nv(1.0)], vec![tv("b"), nv(2.0)], vec![tv("Total"), nv(3.0)]]);
+        // Shown: the column field's name above its items, the row field's and value's below.
+        let r = ev(
+            "PIVOTBY",
+            vec![c(vec![tv("R"), tv("a"), tv("b")]), c(vec![tv("C"), tv("x"), tv("y")]), c(vec![tv("V"), nv(1.0), nv(2.0)]), t("SUM"), n(3.0)],
+        );
+        assert_eq!(
+            rows_of(&r),
+            vec![
+                vec![tv(""), tv("C"), tv(""), tv("")],
+                vec![tv(""), tv("x"), tv("y"), tv("Total")],
+                vec![tv("R"), tv("V"), tv("V"), tv("V")],
+                vec![tv("a"), nv(1.0), tv(""), nv(1.0)],
+                vec![tv("b"), tv(""), nv(2.0), nv(2.0)],
+                vec![tv("Total"), nv(1.0), nv(2.0), nv(3.0)],
+            ]
+        );
+        // Several value columns, headers not shown: no row of value names.
+        let vals = av(arr(vec![vec![nv(1.0), nv(10.0)], vec![nv(2.0), nv(20.0)], vec![nv(3.0), nv(30.0)]]));
+        let r = rows_of(&ev("PIVOTBY", vec![c(vec![tv("a"), tv("b"), tv("a")]), c(vec![tv("x"), tv("x"), tv("y")]), vals, t("SUM")]));
+        assert_eq!(r.len(), 4);
+        assert_eq!(r[0], vec![tv(""), tv("x"), tv("x"), tv("y"), tv("y"), tv("Total"), tv("Total")]);
+        assert_eq!(r[1][..5], [tv("a"), nv(1.0), nv(10.0), nv(3.0), nv(30.0)]);
+        // Generated names follow the field's role.
+        let r = rows_of(&ev("PIVOTBY", vec![c(vec![tv("a"), tv("b")]), c(vec![tv("x"), tv("y")]), c(vec![nv(1.0), nv(2.0)]), t("SUM"), n(2.0)]));
+        assert_eq!(r[0], vec![tv(""), tv("Column Field 1"), tv(""), tv("")]);
+        assert_eq!(r[2], vec![tv("Row Field 1"), tv("Value 1"), tv("Value 1"), tv("Value 1")]);
+        let r = ev("GROUPBY", vec![c(vec![tv("a"), tv("b")]), c(vec![nv(1.0), nv(2.0)]), t("SUM"), n(2.0)]);
+        assert_eq!(rows_of(&r)[0], vec![tv("Row Field 1"), tv("Value 1")]);
+        // Two column fields: their names in one cell.
+        let cf = av(arr(vec![vec![tv("C1"), tv("C2")], vec![tv("x"), tv("p")]]));
+        let r = ev("PIVOTBY", vec![c(vec![tv("R"), tv("a")]), cf, c(vec![tv("V"), nv(1.0)]), t("SUM"), n(3.0)]);
+        assert_eq!(rows_of(&r)[0][1], tv("C1, C2"));
     }
 
     /// Arguments Excel (Microsoft 365) rejects with #VALUE!.
@@ -1345,8 +1397,8 @@ mod tests {
 
     #[test]
     fn pivotby_size_check_counts_column_header_rows() {
-        // One row, n column fields and n value columns: n header rows + value-name row + body row + total row,
-        // each 1 + 2n wide. The size checked up front matches the grid PIVOTBY builds.
+        // One row, n column fields and n value columns: n header rows + body row + total row, each
+        // 1 + 2n wide. The size checked up front matches the grid PIVOTBY builds.
         let dims = |k: u32, totals: bool| {
             let fields: Vec<f64> = (0..k).map(f64::from).collect();
             let mut args = vec![av(row(&[1.0])), av(row(&fields)), av(row(&fields)), t("SUM")];
@@ -1356,13 +1408,13 @@ mod tests {
             let r = rows_of(&ev("PIVOTBY", args));
             (r.len(), r.first().map_or(0, Vec::len))
         };
-        assert_eq!(dims(2, true), super::pivot_dims(3, 2, 2, 2, 1));
-        assert_eq!(dims(10, true), (13, 21));
-        assert_eq!(dims(10, true), super::pivot_dims(11, 2, 2, 10, 1));
-        assert_eq!(dims(10, false), (12, 11));
-        assert_eq!(dims(10, false), super::pivot_dims(11, 1, 1, 10, 1));
+        assert_eq!(dims(2, true), super::pivot_dims(2, 2, 2, 2, 1));
+        assert_eq!(dims(10, true), (12, 21));
+        assert_eq!(dims(10, true), super::pivot_dims(10, 2, 2, 10, 1));
+        assert_eq!(dims(10, false), (11, 11));
+        assert_eq!(dims(10, false), super::pivot_dims(10, 1, 1, 10, 1));
         // n = 2300: the 2300 header rows alone are 10.58M cells, so the check must count them before any is built.
-        let (h, w) = super::pivot_dims(2301, 2, 2, 2300, 1);
+        let (h, w) = super::pivot_dims(2300, 2, 2, 2300, 1);
         assert!(2300 * w > crate::util::MAX_CELLS && h * w > crate::util::MAX_CELLS);
         let wide: Vec<f64> = (0..2300).map(f64::from).collect();
         is_err(ev("PIVOTBY", vec![av(row(&[1.0])), av(row(&wide)), av(row(&wide)), t("SUM")]), CellError::Num);
