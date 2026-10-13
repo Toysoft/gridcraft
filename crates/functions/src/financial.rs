@@ -1,7 +1,7 @@
 //! Financial functions: time value of money, cash-flow analysis, depreciation and securities.
 //!
 //! Sign convention follows Excel: money paid out is negative, money received is positive.
-//! Date arguments are serial numbers (truncated) in the 1900 date system.
+//! Date arguments use the workbook date system; calendar helpers receive canonical 1900 serials.
 
 use gridcraft_core::date::{datetime_from_serial, days_in_month, serial_from_ymd};
 use gridcraft_core::{CellError, DateSystem, Value};
@@ -1364,6 +1364,39 @@ fn euroconvert(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
     num_val(if full { out } else { round_half_away(out, tgt_prec) })
 }
 
+/// Calendar-based financial routines share a 1900-system implementation. Normalize only
+/// their date positions after scalar lifting; amounts, rates and periods stay untouched.
+/// Date-valued results are converted back before they enter the workbook.
+fn with_calendar_dates(
+    args: &[Arg],
+    ctx: &mut dyn Ctx,
+    dates: &[usize],
+    date_result: bool,
+    calculate: fn(&[Arg], &mut dyn Ctx) -> R<Value>,
+) -> R<Value> {
+    if ctx.date_system() == DateSystem::D1900 {
+        return calculate(args, ctx);
+    }
+    let mut converted = args.to_vec();
+    for &i in dates {
+        let day = num(args, i)?.trunc();
+        if !(0.0..=gridcraft_core::date::max_serial(DateSystem::D1904) as f64).contains(&day) {
+            return Err(CellError::Num);
+        }
+        let arg = converted.get_mut(i).ok_or(CellError::Value)?;
+        arg.value = Value::Number(day + 1462.0);
+    }
+    let value = calculate(&converted, ctx)?;
+    if date_result {
+        match value {
+            Value::Number(day) => num_val(day - 1462.0),
+            other => Ok(other),
+        }
+    } else {
+        Ok(value)
+    }
+}
+
 pub(crate) fn specs() -> Vec<FnSpec> {
     vec![
         f!(
@@ -1509,7 +1542,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "AMORLINC(cost, date_purchased, first_period, salvage, period, rate, [basis])",
             "French linear depreciation prorated for the first period.",
-            amorlinc
+            |a, c| with_calendar_dates(a, c, &[1, 2], false, amorlinc)
         ),
         f!(
             "AMORDEGRC",
@@ -1519,7 +1552,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "AMORDEGRC(cost, date_purchased, first_period, salvage, period, rate, [basis])",
             "French degressive depreciation with a life-based coefficient.",
-            amordegrc
+            |a, c| with_calendar_dates(a, c, &[1, 2], false, amordegrc)
         ),
         f!(
             "ACCRINT",
@@ -1529,7 +1562,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "ACCRINT(issue, first_interest, settlement, rate, par, frequency, [basis], [calc_method])",
             "Accrued interest of a security paying periodic interest.",
-            accrint
+            |a, c| with_calendar_dates(a, c, &[0, 1, 2], false, accrint)
         ),
         f!(
             "ACCRINTM",
@@ -1539,7 +1572,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "ACCRINTM(issue, settlement, rate, [par], [basis])",
             "Accrued interest of a security paying interest at maturity.",
-            accrintm
+            |a, c| with_calendar_dates(a, c, &[0, 1], false, accrintm)
         ),
         f!(
             "COUPDAYBS",
@@ -1549,7 +1582,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "COUPDAYBS(settlement, maturity, frequency, [basis])",
             "Days from the start of the coupon period to settlement.",
-            coupdaybs
+            |a, c| with_calendar_dates(a, c, &[0, 1], false, coupdaybs)
         ),
         f!(
             "COUPDAYS",
@@ -1559,7 +1592,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "COUPDAYS(settlement, maturity, frequency, [basis])",
             "Days in the coupon period that contains settlement.",
-            coupdays
+            |a, c| with_calendar_dates(a, c, &[0, 1], false, coupdays)
         ),
         f!(
             "COUPDAYSNC",
@@ -1569,9 +1602,11 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "COUPDAYSNC(settlement, maturity, frequency, [basis])",
             "Days from settlement to the next coupon date.",
-            coupdaysnc
+            |a, c| with_calendar_dates(a, c, &[0, 1], false, coupdaysnc)
         ),
-        f!("COUPNCD", 3, 4, Financial, S, "COUPNCD(settlement, maturity, frequency, [basis])", "Next coupon date after settlement.", coupncd),
+        f!("COUPNCD", 3, 4, Financial, S, "COUPNCD(settlement, maturity, frequency, [basis])", "Next coupon date after settlement.", |a, c| {
+            with_calendar_dates(a, c, &[0, 1], true, coupncd)
+        }),
         f!(
             "COUPPCD",
             3,
@@ -1580,7 +1615,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "COUPPCD(settlement, maturity, frequency, [basis])",
             "Previous coupon date on or before settlement.",
-            couppcd
+            |a, c| with_calendar_dates(a, c, &[0, 1], true, couppcd)
         ),
         f!(
             "COUPNUM",
@@ -1590,9 +1625,11 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "COUPNUM(settlement, maturity, frequency, [basis])",
             "Number of coupons payable between settlement and maturity.",
-            coupnum
+            |a, c| with_calendar_dates(a, c, &[0, 1], false, coupnum)
         ),
-        f!("DISC", 4, 5, Financial, S, "DISC(settlement, maturity, pr, redemption, [basis])", "Discount rate of a security.", disc),
+        f!("DISC", 4, 5, Financial, S, "DISC(settlement, maturity, pr, redemption, [basis])", "Discount rate of a security.", |a, c| {
+            with_calendar_dates(a, c, &[0, 1], false, disc)
+        }),
         f!(
             "PRICEDISC",
             4,
@@ -1601,7 +1638,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "PRICEDISC(settlement, maturity, discount, redemption, [basis])",
             "Price per 100 face value of a discounted security.",
-            pricedisc
+            |a, c| with_calendar_dates(a, c, &[0, 1], false, pricedisc)
         ),
         f!(
             "YIELDDISC",
@@ -1611,7 +1648,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "YIELDDISC(settlement, maturity, pr, redemption, [basis])",
             "Annual yield of a discounted security.",
-            yielddisc
+            |a, c| with_calendar_dates(a, c, &[0, 1], false, yielddisc)
         ),
         f!(
             "INTRATE",
@@ -1621,7 +1658,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "INTRATE(settlement, maturity, investment, redemption, [basis])",
             "Interest rate of a fully invested security.",
-            intrate
+            |a, c| with_calendar_dates(a, c, &[0, 1], false, intrate)
         ),
         f!(
             "RECEIVED",
@@ -1631,20 +1668,21 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "RECEIVED(settlement, maturity, investment, discount, [basis])",
             "Amount received at maturity for a fully invested security.",
-            received
+            |a, c| with_calendar_dates(a, c, &[0, 1], false, received)
         ),
-        f!(
-            "TBILLPRICE",
-            3,
-            3,
-            Financial,
-            S,
-            "TBILLPRICE(settlement, maturity, discount)",
-            "Price per 100 face value of a Treasury bill.",
-            tbillprice
-        ),
-        f!("TBILLYIELD", 3, 3, Financial, S, "TBILLYIELD(settlement, maturity, pr)", "Yield of a Treasury bill.", tbillyield),
-        f!("TBILLEQ", 3, 3, Financial, S, "TBILLEQ(settlement, maturity, discount)", "Bond-equivalent yield of a Treasury bill.", tbilleq),
+        f!("TBILLPRICE", 3, 3, Financial, S, "TBILLPRICE(settlement, maturity, discount)", "Price per 100 face value of a Treasury bill.", |a, c| {
+            with_calendar_dates(a, c, &[0, 1], false, tbillprice)
+        }),
+        f!("TBILLYIELD", 3, 3, Financial, S, "TBILLYIELD(settlement, maturity, pr)", "Yield of a Treasury bill.", |a, c| with_calendar_dates(
+            a,
+            c,
+            &[0, 1],
+            false,
+            tbillyield
+        )),
+        f!("TBILLEQ", 3, 3, Financial, S, "TBILLEQ(settlement, maturity, discount)", "Bond-equivalent yield of a Treasury bill.", |a, c| {
+            with_calendar_dates(a, c, &[0, 1], false, tbilleq)
+        }),
         f!(
             "PRICEMAT",
             5,
@@ -1653,7 +1691,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "PRICEMAT(settlement, maturity, issue, rate, yld, [basis])",
             "Price per 100 face value of a security paying interest at maturity.",
-            pricemat
+            |a, c| with_calendar_dates(a, c, &[0, 1, 2], false, pricemat)
         ),
         f!(
             "YIELDMAT",
@@ -1663,7 +1701,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "YIELDMAT(settlement, maturity, issue, rate, pr, [basis])",
             "Annual yield of a security paying interest at maturity.",
-            yieldmat
+            |a, c| with_calendar_dates(a, c, &[0, 1, 2], false, yieldmat)
         ),
         f!(
             "PRICE",
@@ -1673,7 +1711,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "PRICE(settlement, maturity, rate, yld, redemption, frequency, [basis])",
             "Price per 100 face value of a security paying periodic interest.",
-            price
+            |a, c| with_calendar_dates(a, c, &[0, 1], false, price)
         ),
         f!(
             "YIELD",
@@ -1683,7 +1721,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "YIELD(settlement, maturity, rate, pr, redemption, frequency, [basis])",
             "Yield of a security paying periodic interest.",
-            yield_
+            |a, c| with_calendar_dates(a, c, &[0, 1], false, yield_)
         ),
         f!(
             "DURATION",
@@ -1693,7 +1731,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "DURATION(settlement, maturity, coupon, yld, frequency, [basis])",
             "Macaulay duration of a security with periodic interest.",
-            duration
+            |a, c| with_calendar_dates(a, c, &[0, 1], false, duration)
         ),
         f!(
             "MDURATION",
@@ -1703,7 +1741,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "MDURATION(settlement, maturity, coupon, yld, frequency, [basis])",
             "Modified duration of a security with periodic interest.",
-            mduration
+            |a, c| with_calendar_dates(a, c, &[0, 1], false, mduration)
         ),
         f!(
             "ODDFPRICE",
@@ -1713,7 +1751,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "ODDFPRICE(settlement, maturity, issue, first_coupon, rate, yld, redemption, frequency, [basis])",
             "Price per 100 face value of a security with an odd first period.",
-            oddfprice
+            |a, c| with_calendar_dates(a, c, &[0, 1, 2, 3], false, oddfprice)
         ),
         f!(
             "ODDFYIELD",
@@ -1723,7 +1761,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "ODDFYIELD(settlement, maturity, issue, first_coupon, rate, pr, redemption, frequency, [basis])",
             "Yield of a security with an odd first period.",
-            oddfyield
+            |a, c| with_calendar_dates(a, c, &[0, 1, 2, 3], false, oddfyield)
         ),
         f!(
             "ODDLPRICE",
@@ -1733,7 +1771,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "ODDLPRICE(settlement, maturity, last_interest, rate, yld, redemption, frequency, [basis])",
             "Price per 100 face value of a security with an odd last period.",
-            oddlprice
+            |a, c| with_calendar_dates(a, c, &[0, 1, 2], false, oddlprice)
         ),
         f!(
             "ODDLYIELD",
@@ -1743,7 +1781,7 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             S,
             "ODDLYIELD(settlement, maturity, last_interest, rate, pr, redemption, frequency, [basis])",
             "Yield of a security with an odd last period.",
-            oddlyield
+            |a, c| with_calendar_dates(a, c, &[0, 1, 2], false, oddlyield)
         ),
         f!(
             "EUROCONVERT",
@@ -1766,6 +1804,42 @@ mod tests {
 
     fn d(y: i64, m: i64, dd: i64) -> Arg {
         n(serial_from_ymd(DateSystem::D1900, y, m, dd).unwrap())
+    }
+
+    #[test]
+    fn coupon_calendar_follows_the_workbook_date_system() {
+        let mut ctx = TestCtx { sys: DateSystem::D1904, ..Default::default() };
+        let args = vec![n(serial_from_ymd(ctx.sys, 2026, 10, 13).unwrap()), n(serial_from_ymd(ctx.sys, 2028, 2, 29).unwrap()), n(2.0), n(1.0)];
+        let spec = crate::lookup("COUPDAYBS").unwrap();
+        close(crate::call(spec, &args, &mut ctx), 43.0);
+        for (name, date) in [("COUPPCD", (2026, 8, 31)), ("COUPNCD", (2027, 2, 28))] {
+            close(crate::call(crate::lookup(name).unwrap(), &args, &mut ctx), serial_from_ymd(ctx.sys, date.0, date.1, date.2).unwrap());
+        }
+    }
+
+    #[test]
+    fn calendar_financial_families_are_epoch_invariant() {
+        let cases = [
+            ("PRICE", vec![d(2026, 10, 13), d(2028, 2, 29), n(0.05), n(0.04), n(100.0), n(2.0), n(1.0)], 2),
+            ("DISC", vec![d(2026, 10, 13), d(2028, 2, 29), n(97.0), n(100.0), n(1.0)], 2),
+            ("PRICEMAT", vec![d(2026, 10, 13), d(2028, 2, 29), d(2026, 2, 28), n(0.05), n(0.04), n(1.0)], 3),
+            ("ODDFPRICE", vec![d(2026, 10, 13), d(2028, 2, 29), d(2026, 2, 28), d(2027, 2, 28), n(0.05), n(0.04), n(100.0), n(2.0), n(1.0)], 4),
+        ];
+        for (name, args, dates) in cases {
+            let expected = ev(name, args.clone());
+            let mut shifted = args;
+            for arg in shifted.iter_mut().take(dates) {
+                if let Value::Number(day) = &mut arg.value {
+                    *day -= 1462.0;
+                }
+            }
+            let mut ctx = TestCtx { sys: DateSystem::D1904, ..Default::default() };
+            close_tol(crate::call(crate::lookup(name).unwrap(), &shifted, &mut ctx), number(expected), 1e-12);
+        }
+        let mut ctx = TestCtx { sys: DateSystem::D1904, ..Default::default() };
+        for bad in [-1.0, 2_957_004.0, f64::NAN, f64::INFINITY] {
+            is_err(crate::call(crate::lookup("COUPDAYBS").unwrap(), &[n(bad), n(45_350.0), n(2.0)], &mut ctx), CellError::Num);
+        }
     }
 
     #[test]
