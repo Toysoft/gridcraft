@@ -198,27 +198,29 @@ fn sort(s: &mut Session, p: &Json) -> Result<Json> {
     let header = bool_param(p, "header").unwrap_or_else(|| guess_header(&d.wb, sh, r));
     let by_cols = str_param(p, "orientation") == Some("columns");
     let case = bool_param(p, "matchCase").unwrap_or(false);
-    let keys: Vec<SortKey> = p
-        .get("keys")
-        .and_then(Json::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(|k| {
-                    let col = if by_cols {
-                        k.get("row").and_then(Json::as_u64).map(|r| r as u32 - 1).or_else(|| col_param(k.get("column"), r.start.row))?
-                    } else {
-                        col_param(k.get("column"), r.start.col)?
-                    };
-                    Some(SortKey {
-                        col,
-                        desc: k.get("order").and_then(Json::as_str) == Some("desc"),
-                        by: k.get("by").and_then(Json::as_str).unwrap_or("values").to_string(),
-                        list: k.get("customList").and_then(Json::as_array).map(|l| l.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut keys: Vec<SortKey> = Vec::new();
+    for k in p.get("keys").and_then(Json::as_array).map(Vec::as_slice).unwrap_or_default() {
+        let col = if by_cols {
+            let row = match k.get("row").and_then(Json::as_u64) {
+                // Worksheet rows are 1-based; 0 (or a value past u32) has no coordinate.
+                Some(n) => {
+                    let row = u32::try_from(n).ok().and_then(|n| n.checked_sub(1));
+                    Some(row.ok_or_else(|| bad("data.sort", "sort key row must be 1 or greater"))?)
+                }
+                None => None,
+            };
+            row.or_else(|| col_param(k.get("column"), r.start.row))
+        } else {
+            col_param(k.get("column"), r.start.col)
+        };
+        let Some(col) = col else { continue };
+        keys.push(SortKey {
+            col,
+            desc: k.get("order").and_then(Json::as_str) == Some("desc"),
+            by: k.get("by").and_then(Json::as_str).unwrap_or("values").to_string(),
+            list: k.get("customList").and_then(Json::as_array).map(|l| l.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()),
+        });
+    }
     if keys.is_empty() {
         s.ui_requests.push(crate::UiRequest::Dialog("sort".into(), json!({"range": r.a1(), "header": header})));
         return ok();
@@ -462,6 +464,12 @@ fn toggle_filter(s: &mut Session, p: &Json) -> Result<Json> {
             Ok(json!({"filter": false}))
         });
     }
+    install_filter(s, p)
+}
+
+/// Turn a sheet AutoFilter on over `p.range`, or over the data range of the selection.
+fn install_filter(s: &mut Session, p: &Json) -> Result<Json> {
+    let sheet = s.doc()?.wb.active_sheet;
     let mut r = data_range(s, p)?;
     // A selected header row filters the data below it (#201).
     if p.get("range").is_none() && r.height() == 1 {
@@ -484,7 +492,7 @@ fn filter_by(s: &mut Session, p: &Json) -> Result<Json> {
     let af = match &sh.autofilter {
         Some(a) => a.clone(),
         None => {
-            toggle_filter(s, &json!({}))?;
+            install_filter(s, &json!({}))?;
             s.doc()?.wb.sheet(sheet).and_then(|sh| sh.autofilter.clone()).ok_or_else(|| EngineError::Other("no filter".into()))?
         }
     };
@@ -896,7 +904,7 @@ fn subtract_range(r: RangeRef, cut: &RangeRef) -> Vec<RangeRef> {
 }
 
 /// Removes the cells of `cuts` from every validation, keeping the rest of each rule's ranges.
-fn remove_validation_cells(validations: &mut Vec<Validation>, cuts: &[RangeRef]) {
+pub(super) fn remove_validation_cells(validations: &mut Vec<Validation>, cuts: &[RangeRef]) {
     for dv in validations.iter_mut() {
         for cut in cuts {
             dv.ranges = dv.ranges.iter().flat_map(|r| subtract_range(*r, cut)).collect();
@@ -1044,6 +1052,18 @@ fn formula_at(f: &str, first: CellRef, at: CellRef) -> String {
         )),
         Err(_) => f.to_string(),
     }
+}
+
+/// Moves the relative references of a rule formula written for `first` so it reads the same cells from `to`
+/// (pasting a rule); text without relative references (constants, literal lists) stays as typed.
+pub(super) fn move_rule_formula(f: &str, first: CellRef, to: CellRef) -> String {
+    if first == to {
+        return f.to_string();
+    }
+    let moved = formula_at(f, first, to);
+    let has_relative = gridcraft_formula::parse(f.trim_start_matches('=')).is_ok_and(|e| gridcraft_formula::print(&e) != moved);
+    let eq = if f.starts_with('=') { "=" } else { "" };
+    if has_relative { format!("{eq}{moved}") } else { f.to_string() }
 }
 
 fn compare_op(op: CfOperator, n: f64, a: Option<f64>, b: Option<f64>) -> bool {
@@ -1279,6 +1299,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn filter_by_inside_a_table_installs_the_autofilter_and_keeps_the_button() {
+        for sel in [json!({"cell": "A1"}), json!({"cell": "A2"}), json!({"range": "A1:A3"})] {
+            let mut s = Session::new();
+            s.new_workbook();
+            s.execute("range.setValues", json!({"range": "A1", "values": [["H"], ["a"], ["b"]]})).unwrap();
+            s.execute("insert.table", json!({"range": "A1:A3", "header": true})).unwrap();
+            s.execute("selection.set", sel.clone()).unwrap();
+            s.execute("data.filterBy", json!({"column": "A", "values": ["a"]})).unwrap();
+            let sh = s.doc().unwrap().wb.active().unwrap();
+            assert_eq!(sh.autofilter.as_ref().map(|a| a.range.a1()), Some("A1:A3".to_string()), "{sel}");
+            assert!(sh.tables[0].filter_button, "{sel}");
+            assert!(!sh.is_row_hidden(1), "{sel}");
+            assert!(sh.is_row_hidden(2), "{sel}");
+            assert_eq!(sh.value(CellRef::new(2, 0)).display(), "b", "{sel}");
+        }
+    }
+
+    #[test]
     fn partial_validation_edits_keep_the_rest_of_the_old_rule() {
         let mut s = Session::new();
         s.new_workbook();
@@ -1373,6 +1411,18 @@ mod tests {
         let sc = |id: &str| specs().into_iter().find(|c| c.id == id).and_then(|c| c.shortcut);
         assert_eq!(sc("data.group"), Some("Alt+Shift+Right"));
         assert_eq!(sc("data.ungroup"), Some("Alt+Shift+Left"));
+    }
+
+    #[test]
+    fn column_sort_rejects_row_key_zero_without_panicking() {
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("cell.set", json!({"cell": "A1", "input": "2"})).unwrap();
+        for row in [0u64, 1 << 32] {
+            let params = json!({"range": "A1:B2", "header": false, "orientation": "columns", "keys": [{"row": row}]});
+            let err = s.execute("data.sort", params).unwrap_err();
+            assert!(matches!(err, EngineError::BadParams { .. }), "row {row}: {err:?}");
+        }
     }
 
     #[test]

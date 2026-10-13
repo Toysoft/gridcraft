@@ -461,6 +461,33 @@ fn solver_dialog_loads_the_saved_model_and_results_can_restore() {
 }
 
 #[test]
+fn solver_results_write_the_chosen_reports() {
+    let mut s = blank();
+    for (c, v) in [("A1", "0"), ("A2", "0"), ("B1", "=3*A1+5*A2"), ("B2", "=2*A2"), ("B3", "=3*A1+2*A2")] {
+        s.execute("cell.set", json!({"cell": c, "input": v})).unwrap();
+    }
+    let r = s
+        .execute(
+            "data.solver",
+            json!({"objective": "B1", "variables": "A1:A2", "constraints": ["A1 <= 4", "B2 <= 12", "B3 <= 18"], "method": "simplex"}),
+        )
+        .unwrap();
+    let mut h = harness(s);
+    // Restore Original Values with the Answer and Limits reports: the cells go back, the reports stay.
+    h.state_mut().open_dialog("solverResults", r);
+    for key in ["restore", "answerReport", "limitsReport"] {
+        h.state_mut().dialog.as_mut().unwrap().values.insert(key.into(), json!(true));
+    }
+    h.run_steps(2);
+    key(&mut h, Key::Enter, Modifiers::NONE);
+    assert!(h.state().dialog.is_none());
+    assert!(h.state().message.is_none(), "{:?}", h.state().message);
+    let names: Vec<String> = h.state().session.active().unwrap().wb.sheets.iter().map(|s| s.name.clone()).collect();
+    assert_eq!(names, ["Answer Report 1", "Limits Report 1", "Sheet1"]);
+    assert_eq!(value(&h, "B1"), Value::Number(0.0));
+}
+
+#[test]
 fn about_renders_every_tab() {
     let mut h = harness(blank());
     for tab in ["About", "Contributors", "Models"] {

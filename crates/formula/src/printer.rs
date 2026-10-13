@@ -224,10 +224,20 @@ fn write_expr(s: &mut String, e: &Expr, r1c1: Option<CellRef>) {
                 }
             },
         },
-        Expr::Binary(op, a, b) => {
-            write_expr(s, a, r1c1);
-            s.push_str(op.symbol());
-            write_expr(s, b, r1c1);
+        Expr::Binary(..) => {
+            // Walk the left spine iteratively: a flat chain such as `1+1+1+...` parses into a
+            // tree one level deeper per operator, and recursing on it could exhaust the stack.
+            let mut rest: Vec<(&BinOp, &Expr)> = Vec::new();
+            let mut first = e;
+            while let Expr::Binary(op, a, b) = first {
+                rest.push((op, b));
+                first = a;
+            }
+            write_expr(s, first, r1c1);
+            for (op, right) in rest.into_iter().rev() {
+                s.push_str(op.symbol());
+                write_expr(s, right, r1c1);
+            }
         }
         Expr::Call(name, args) => {
             s.push_str(name);
