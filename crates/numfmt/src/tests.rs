@@ -247,6 +247,11 @@ fn dates_and_times() {
     assert_eq!(f("m/d/yyyy", 60.0), "2/29/1900");
     assert_eq!(f("m/d/yyyy", 0.0), "1/0/1900");
     assert_eq!(format_value(&Value::Number(0.0), &NumberFormat::parse("m/d/yyyy"), DateSystem::D1904).text, "1/1/1904");
+    let fmt = NumberFormat::parse("m/d/yyyy");
+    assert_eq!(format_value(&Value::Number(2957003.5), &fmt, DateSystem::D1904).text, "12/31/9999");
+    assert_eq!(format_value(&Value::Number(2957004.0), &fmt, DateSystem::D1904).text, "########");
+    assert_eq!(format_value(&Value::Number(2958465.0), &fmt, DateSystem::D1900).text, "12/31/9999");
+    assert_eq!(format_value(&Value::Number(2958466.0), &fmt, DateSystem::D1900).text, "########");
     assert_eq!(f("m/d/yyyy", -1.0), "########");
     assert_eq!(f("m/d/yyyy", 3e6), "########");
     assert_eq!(f("[$-409]m/d/yyyy", 46302.0), "10/7/2026");
@@ -339,6 +344,8 @@ fn text_fn() {
     assert_eq!(text_function(&Value::Empty, "0.00", S), Ok("0.00".into()));
     assert_eq!(text_function(&Value::Number(5.0), "", S), Ok("".into()));
     assert_eq!(text_function(&Value::Number(-1.0), "m/d/yyyy", S), Err(CellError::Value));
+    assert_eq!(text_function(&Value::Number(2957003.0), "m/d/yyyy", DateSystem::D1904), Ok("12/31/9999".into()));
+    assert_eq!(text_function(&Value::Number(2957004.0), "m/d/yyyy", DateSystem::D1904), Err(CellError::Value));
     assert_eq!(text_function(&Value::Bool(true), "0", S), Ok("TRUE".into()));
     // Booleans go through the text section as TRUE/FALSE (observed Excel results).
     let cases: &[(bool, &str, &str)] = &[

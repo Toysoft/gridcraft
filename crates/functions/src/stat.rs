@@ -461,7 +461,7 @@ fn prob(a: &[Arg], _: C) -> R<Value> {
     let (xs, ps) = arg_pairs(a, 0, 1)?;
     let lo = num(a, 2)?;
     let hi = if has(a, 3) { num(a, 3)? } else { lo };
-    if ps.iter().any(|&p| !(0.0..=1.0).contains(&p)) {
+    if ps.iter().any(|&p| p <= 0.0 || p > 1.0) {
         return Err(CellError::Num);
     }
     let total: f64 = ps.iter().sum();
@@ -2472,7 +2472,10 @@ mod tests {
         let p = c(&[0.2, 0.3, 0.1, 0.4]);
         close(ev("PROB", vec![x.clone(), p.clone(), n(2.0)]), 0.1);
         close(ev("PROB", vec![x.clone(), p, n(1.0), n(3.0)]), 0.8);
-        is_err(ev("PROB", vec![x, c(&[0.5, 0.5, 0.5, 0.5]), n(1.0)]), CellError::Num);
+        is_err(ev("PROB", vec![x.clone(), c(&[0.5, 0.5, 0.5, 0.5]), n(1.0)]), CellError::Num);
+        // Excel: any probability <= 0 is #NUM!, even when it sums to one and lies outside the limits.
+        is_err(ev("PROB", vec![x.clone(), c(&[0.5, 0.0, 0.25, 0.25]), n(0.0), n(3.0)]), CellError::Num);
+        is_err(ev("PROB", vec![x, c(&[0.5, 0.0, 0.25, 0.25]), n(2.0), n(3.0)]), CellError::Num);
     }
 
     #[test]

@@ -1019,6 +1019,21 @@ fn tables_and_structured_refs() {
 }
 
 #[test]
+fn table_rename_keeps_a_defined_name_with_the_same_name() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["Qty"], [7]]})).unwrap();
+    s.execute("cell.set", json!({"cell": "D1", "input": "100"})).unwrap();
+    s.execute("insert.table", json!({"range": "A1:A2", "header": true, "name": "Data"})).unwrap();
+    s.execute("formulas.defineName", json!({"name": "Data", "refersTo": "=Sheet1!$D$1"})).unwrap();
+    s.execute("cell.set", json!({"cell": "E1", "input": "=Data"})).unwrap();
+    s.execute("cell.set", json!({"cell": "F1", "input": "=SUM(Data[Qty])"})).unwrap();
+    s.execute("table.rename", json!({"table": "Data", "name": "Later"})).unwrap();
+    assert_eq!(s.execute("cell.get", json!({"cell": "E1"})).unwrap()["formula"], "=Data");
+    assert_eq!(s.execute("cell.get", json!({"cell": "F1"})).unwrap()["formula"], "=SUM(Later[Qty])");
+    assert_eq!((v(&s, "E1"), v(&s, "F1")), (Value::Number(100.0), Value::Number(7.0)));
+}
+
+#[test]
 fn slicer_filters_table() {
     let mut s = s();
     s.execute("range.setValues", json!({"range": "A1", "values": [["Region", "Qty"], ["East", 2], ["West", 5], ["East", 3], ["North", 1]]})).unwrap();
@@ -1168,6 +1183,22 @@ fn insert_and_delete_cells_never_shift_part_of_a_table() {
     assert!(e.to_string().contains("not valid"), "a cell reference isn't a table name: {e}");
     let e = s.execute("insert.table", json!({"range": "D5:F6", "header": false})).unwrap_err();
     assert!(e.to_string().contains("shift cells in a table"), "{e}");
+}
+
+#[test]
+fn table_names_with_a_hyphen_are_rejected() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["Qty"], [7]]})).unwrap();
+    let e = s.execute("insert.table", json!({"range": "A1:A2", "header": true, "name": "A-B"})).unwrap_err();
+    assert!(e.to_string().contains("not valid"), "{e}");
+    assert!(s.doc().unwrap().wb.table("A-B").is_none());
+    s.execute("insert.table", json!({"range": "A1:A2", "header": true, "name": "Sales"})).unwrap();
+    let e = s.execute("table.rename", json!({"table": "Sales", "name": "A-B"})).unwrap_err();
+    assert!(e.to_string().contains("not valid"), "{e}");
+    assert!(s.doc().unwrap().wb.table("Sales").is_some());
+    assert!(s.execute("table.rename", json!({"table": "Sales", "name": ".AB"})).is_err());
+    s.execute("table.rename", json!({"table": "Sales", "name": "A_B"})).unwrap();
+    assert!(s.doc().unwrap().wb.table("A_B").is_some());
 }
 
 #[test]
@@ -1615,6 +1646,17 @@ fn replacing_a_spilling_formula_clears_its_spill() {
     s.execute("cell.set", json!({"cell": "A1", "input": "=SEQUENCE(3)"})).unwrap();
     s.execute("edit.clearContents", json!({"range": "A1"})).unwrap();
     assert_eq!((v(&s, "A2"), v(&s, "B1")), (Value::Empty, Value::Number(0.0)));
+}
+
+#[test]
+fn clearing_a_spill_past_65536_cells_updates_a_late_dependent() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "=SEQUENCE(65537)"})).unwrap();
+    s.execute("cell.set", json!({"cell": "C1", "input": "=A65536"})).unwrap();
+    s.execute("cell.set", json!({"cell": "C2", "input": "=A65537"})).unwrap();
+    assert_eq!(v(&s, "C2"), Value::Number(65537.0));
+    s.execute("cell.set", json!({"cell": "A1", "input": "5"})).unwrap();
+    assert_eq!((v(&s, "C1"), v(&s, "C2")), (Value::Number(0.0), Value::Number(0.0)));
 }
 
 #[test]
@@ -2506,6 +2548,15 @@ fn fill_series_month_clamps_to_month_end() {
 }
 
 #[test]
+fn fill_series_weekday_out_of_range_step_errors() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "45000"})).unwrap();
+    let r = s.execute("edit.fillSeries", json!({"range": "A1:A2", "direction": "columns", "type": "date", "dateUnit": "weekday", "step": 1e12}));
+    assert!(r.is_err());
+    assert_eq!(v(&s, "A2"), Value::Empty);
+}
+
+#[test]
 fn fill_series_month_leap_year() {
     let s = series_date("2028-01-31", "A1:A3", "month");
     assert_eq!(v(&s, "A2"), ymd(2028, 2, 29));
@@ -2794,4 +2845,33 @@ fn a_decrypted_workbook_never_overwrites_its_encrypted_original() {
     assert!(s.take_ui_requests().iter().any(|r| matches!(r, crate::UiRequest::Dialog(name, _) if name == "saveAs")));
     assert_eq!(std::fs::read(&path).unwrap(), bytes, "the encrypted original is untouched");
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn paste_special_validation_copies_the_rule() {
+    let mut s = s();
+    let ok = |s: &mut Session, cell: &str, input: &str| s.execute("data.validate", json!({"cell": cell, "input": input})).unwrap()["ok"] == true;
+    s.execute("cell.set", json!({"cell": "A1", "input": "5"})).unwrap();
+    s.execute("cell.set", json!({"cell": "C3", "input": "7"})).unwrap();
+    s.execute("data.validation", json!({"range": "A1", "type": "whole", "operator": "greater", "formula1": "0"})).unwrap();
+    s.execute("edit.copy", json!({"range": "A1"})).unwrap();
+    s.execute("edit.pasteSpecial", json!({"what": "formats", "at": "E5"})).unwrap();
+    assert!(ok(&mut s, "E5", "-1"));
+    s.execute("edit.pasteSpecial", json!({"what": "validation", "at": "C3"})).unwrap();
+    assert!(!ok(&mut s, "C3", "-1"));
+    assert!(ok(&mut s, "C3", "1"));
+    assert!(!ok(&mut s, "A1", "-1"));
+    assert_eq!(s.execute("cell.get", json!({"cell": "C3"})).unwrap()["text"], json!("7"));
+}
+
+#[test]
+fn paste_special_validation_moves_relative_references() {
+    let mut s = s();
+    let ok = |s: &mut Session, cell: &str, input: &str| s.execute("data.validate", json!({"cell": cell, "input": input})).unwrap()["ok"] == true;
+    s.execute("cell.set", json!({"cell": "A1", "input": "50"})).unwrap();
+    s.execute("data.validation", json!({"range": "A1", "type": "custom", "formula1": "=A1>10"})).unwrap();
+    s.execute("edit.copy", json!({"range": "A1"})).unwrap();
+    s.execute("edit.pasteSpecial", json!({"what": "validation", "at": "C3"})).unwrap();
+    assert!(!ok(&mut s, "C3", "5"), "the pasted rule checks C3, not A1");
+    assert!(ok(&mut s, "C3", "20"));
 }

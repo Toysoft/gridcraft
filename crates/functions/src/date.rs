@@ -1,6 +1,6 @@
 //! Date and time functions.
 
-use gridcraft_core::date::{DateTime, datetime_from_serial, days_in_month, days_in_month_in, is_leap, serial_from_ymd};
+use gridcraft_core::date::{DateTime, datetime_from_serial, days_in_month, days_in_month_in, is_leap, serial_from_ymd, serial_in_system};
 use gridcraft_core::parse::parse_input;
 use gridcraft_core::{CellError, DateSystem, Value};
 
@@ -98,10 +98,10 @@ fn second(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
 }
 
 fn now(_a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
-    num_val(c.now_serial())
+    num_val(serial_in_system(c.date_system(), c.now_serial()))
 }
 fn today(_a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
-    num_val(c.now_serial().floor())
+    num_val(serial_in_system(c.date_system(), c.now_serial()).floor())
 }
 
 fn weekday(a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
@@ -794,6 +794,11 @@ mod tests {
         close(crate::call(spec, &[n(0.0)], &mut ctx), 6.0);
         let spec = crate::lookup("YEAR").unwrap();
         close(crate::call(spec, &[n(0.0)], &mut ctx), 1904.0);
+        // The clock is 2026-10-07 12:00; in the 1904 system that is serial 44840.5.
+        close(crate::call(crate::lookup("NOW").unwrap(), &[], &mut ctx), 44840.5);
+        let today = crate::call(crate::lookup("TODAY").unwrap(), &[], &mut ctx);
+        close(today.clone(), 44840.0);
+        close(crate::call(spec, &[crate::Arg::val(today)], &mut ctx), 2026.0);
         // No fictitious day here: 1904 is a real leap year and 1900 is before the epoch.
         let spec = crate::lookup("DATE").unwrap();
         close(crate::call(spec, &[n(1904.0), n(2.0), n(29.0)], &mut ctx), 59.0);

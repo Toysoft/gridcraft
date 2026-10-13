@@ -574,6 +574,16 @@ fn merge(s: &mut Session, p: &Json, how: &str) -> Result<Json> {
                         let m = RangeRef::new(CellRef::new(row, r.start.col), CellRef::new(row, r.end.col));
                         if !m.is_single() {
                             sh.merges.push(m);
+                            // As below: only the first value of each row survives.
+                            let others: Vec<CellRef> = sh.cells.iter_range(m).map(|(c, _)| c).filter(|c| *c != m.start).collect();
+                            for c in others {
+                                if let Some(mut cell) = sh.cells.get(c).cloned() {
+                                    cell.value = gridcraft_core::Value::Empty;
+                                    cell.formula = None;
+                                    sh.set_cell(c, cell);
+                                }
+                                touched.push((sheet, c));
+                            }
                         }
                     }
                 }
@@ -1111,6 +1121,19 @@ fn hide(s: &mut Session, p: &Json, rows: bool, on: bool) -> Result<Json> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merge_across_keeps_the_first_value_of_each_row() {
+        let mut s = crate::Session::new();
+        s.new_workbook();
+        s.execute("range.setValues", json!({"range": "A1", "values": [[1, 2], [3, 4]]})).unwrap();
+        s.execute("cell.set", json!({"cell": "D1", "input": "=SUM(A1:B2)"})).unwrap();
+        s.execute("home.mergeAcross", json!({"range": "A1:B2"})).unwrap();
+        let v = |s: &mut crate::Session, a: &str| s.execute("cell.get", json!({"cell": a})).unwrap()["value"].clone();
+        assert_eq!(v(&mut s, "B1"), Json::Null);
+        assert_eq!(v(&mut s, "B2"), Json::Null);
+        assert_eq!(v(&mut s, "D1"), json!(4.0));
+    }
 
     #[test]
     fn decimal_steps() {

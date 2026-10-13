@@ -158,6 +158,21 @@ fn index_with_arrays_of_positions() {
 }
 
 #[test]
+fn index_area_number_overflow() {
+    let mut t = T::new();
+    t.set("A1", "7");
+    t.set("D1", "9");
+    for (area, expected) in [("1", 7.0), ("2", 9.0)] {
+        t.set("G5", &format!("=INDEX((A1:B2,D1:E2),1,1,{area})"));
+        assert_eq!(t.num("G5"), expected, "area {area}");
+    }
+    for area in ["3", "1E300", "-1", "-1E300"] {
+        t.set("G5", &format!("=INDEX((A1:B2,D1:E2),1,1,{area})"));
+        assert_eq!(t.get("G5"), Value::Error(CellError::Ref), "area {area}");
+    }
+}
+
+#[test]
 fn errors_and_cycles() {
     let mut t = T::new();
     t.set("A1", "=1/0");
@@ -413,6 +428,37 @@ fn references_functions() {
 }
 
 #[test]
+fn indirect_r1c1_out_of_bounds() {
+    for reference in ["R[9223372036854775807]C", "RC[9223372036854775807]", "R[4294967296]C", "R[4294967291]C", "R[2000000]C", "RC[20000]"] {
+        let mut t = T::new();
+        t.set("D5", &format!("=ROW(INDIRECT(\"{reference}\",FALSE))"));
+        assert_eq!(t.get("D5"), Value::Error(CellError::Ref), "{reference}");
+    }
+}
+
+#[test]
+fn indirect_r1c1_past_the_sheet_does_not_fall_back_to_a1() {
+    let mut t = T::new();
+    t.set("RC16385", "78");
+    for reference in ["RC16385", "rc16385", "RC1:RC16385"] {
+        t.set("D5", &format!("=INDIRECT(\"{reference}\",FALSE)"));
+        assert_eq!(t.get("D5"), Value::Error(CellError::Ref), "{reference}");
+    }
+}
+
+#[test]
+fn indirect_r1c1_valid_references() {
+    let mut t = T::new();
+    t.set("E6", "11");
+    t.set("A1", "22");
+    t.set("D4", "33");
+    for (reference, expected) in [("R[1]C[1]", 11.0), ("R1C1", 22.0), ("R[-1]C", 33.0)] {
+        t.set("D5", &format!("=INDIRECT(\"{reference}\",FALSE)"));
+        assert_eq!(t.num("D5"), expected, "{reference}");
+    }
+}
+
+#[test]
 fn relative_names() {
     let mut t = T::new();
     // As files store them: relative to A1. `Left` is the cell to the left, `Above3` the three
@@ -502,6 +548,38 @@ fn let_lambda() {
 }
 
 #[test]
+fn lambda_argument_count() {
+    let mut t = T::new();
+    t.wb.names.push(gridcraft_model::DefinedName {
+        name: "AddPair".into(),
+        scope: None,
+        formula: "LAMBDA(a,b,a+b)".into(),
+        comment: String::new(),
+        hidden: false,
+    });
+    t.calc.rebuild(&t.wb);
+    let omit = "LAMBDA(x,y,IF(ISOMITTED(y),\"Missing\",x+y))";
+    t.set("A1", "=LAMBDA(a,b,a+b)(2)");
+    t.set("A2", "=LAMBDA(a,b,a+b)(2,3,4)");
+    t.set("A3", &format!("={omit}(1,)"));
+    t.set("A4", &format!("={omit}(1)"));
+    t.set("A5", &format!("={omit}(1,2)"));
+    t.set("A6", "=LAMBDA(7)()");
+    t.set("A7", "=AddPair(2)");
+    t.set("A8", "=AddPair(2,3)");
+    assert_eq!(t.get("A1"), Value::Error(CellError::Value));
+    assert_eq!(t.get("A2"), Value::Error(CellError::Value));
+    assert_eq!(t.get("A3"), Value::Text("Missing".into()));
+    assert_eq!(t.get("A4"), Value::Error(CellError::Value));
+    assert_eq!(t.num("A5"), 3.0);
+    assert_eq!(t.num("A6"), 7.0);
+    assert_eq!(t.get("A7"), Value::Error(CellError::Value));
+    assert_eq!(t.num("A8"), 5.0);
+    t.set("A9", "=LAMBDA(x,ISOMITTED(x))()");
+    assert_eq!(t.get("A9"), Value::Bool(true));
+}
+
+#[test]
 fn names_and_sheets() {
     let mut t = T::new();
     t.wb.names.push(gridcraft_model::DefinedName { name: "Rate".into(), scope: None, formula: "0.5".into(), comment: String::new(), hidden: false });
@@ -550,6 +628,17 @@ fn text_function() {
 }
 
 #[test]
+fn long_operator_chains() {
+    let mut t = T::new();
+    t.set("A1", "1");
+    // 1,000 additions: a formula of 3,000 characters, well within Excel's 8,192.
+    t.set("B1", &format!("={}", vec!["A1"; 1000].join("+")));
+    assert_eq!(t.num("B1"), 1000.0);
+    t.set("B2", &format!("=5{}", "+1-1".repeat(600)));
+    assert_eq!(t.num("B2"), 5.0);
+}
+
+#[test]
 fn subtotal_skips_hidden() {
     let mut t = T::new();
     t.set("A1", "1");
@@ -560,6 +649,29 @@ fn subtotal_skips_hidden() {
     t.set("B2", "=SUBTOTAL(9,A1:A3)");
     assert_eq!(t.num("B1"), 4.0);
     assert_eq!(t.num("B2"), 6.0);
+}
+
+#[test]
+fn subtotal_109_skips_nested_subtotal() {
+    let mut t = T::new();
+    t.set("A1", "2");
+    t.set("A2", "=SUBTOTAL(9,A1)");
+    t.set("C1", "=SUBTOTAL(109,A1:A2)");
+    t.set("C2", "=SUBTOTAL(9,A1:A2)");
+    t.set("C3", "=SUBTOTAL(109,A1)");
+    assert_eq!(t.num("C1"), 2.0);
+    assert_eq!(t.num("C2"), 2.0);
+    assert_eq!(t.num("C3"), 2.0);
+    // Manually hidden rows are still left out by 109 only.
+    let mut t = T::new();
+    t.set("A1", "1");
+    t.set("A2", "2");
+    t.set("A3", "=SUBTOTAL(9,A1:A2)");
+    t.wb.sheet_mut(0).unwrap().rows.insert(1, gridcraft_model::LineInfo { hidden: true, ..Default::default() });
+    t.set("B1", "=SUBTOTAL(109,A1:A3)");
+    t.set("B2", "=SUBTOTAL(9,A1:A3)");
+    assert_eq!(t.num("B1"), 1.0);
+    assert_eq!(t.num("B2"), 3.0);
 }
 
 /// SUBTOTAL leaves out rows a filter hides for every function number, while 1-11 keep rows
@@ -606,6 +718,23 @@ fn subtotal_skips_filtered_rows() {
     for (at, want) in [("E1", 53.0), ("E2", 53.0), ("E3", 53.0), ("E4", 117.0), ("E5", 53.0), ("E6", 4.0), ("E7", 63.0)] {
         assert_eq!(t.num(at), want, "{at}");
     }
+}
+
+#[test]
+fn aggregate_without_data_argument_is_an_error() {
+    let mut t = T::new();
+    t.set("A1", "1");
+    t.set("A2", "2");
+    t.set("D1", "=AGGREGATE(9,0)");
+    t.set("D2", "=AGGREGATE(4,0)");
+    t.set("D3", "=AGGREGATE(9,0,A1:A2)");
+    t.set("D4", "=AGGREGATE(9,0,A3:A4)");
+    t.set("D5", "=AGGREGATE(9,0,A1:A2,A1:A2)");
+    assert_eq!(t.get("D1"), Value::Error(CellError::Value));
+    assert_eq!(t.get("D2"), Value::Error(CellError::Value));
+    assert_eq!(t.num("D3"), 3.0);
+    assert_eq!(t.num("D4"), 0.0);
+    assert_eq!(t.num("D5"), 6.0);
 }
 
 #[test]
@@ -967,4 +1096,33 @@ fn trim_references() {
     // Nothing but blanks.
     t.set("K20", "=SUM(Q1:.Q9)");
     assert_eq!(t.get("K20"), Value::Error(CellError::Calc));
+}
+
+#[test]
+fn offset_extreme_arguments_return_ref() {
+    let wb = Workbook::new();
+    for formula in [
+        "=OFFSET(B2,1E300,0)",
+        "=OFFSET(B2,0,1E300)",
+        "=OFFSET(B2,0,0,1E300,1)",
+        "=OFFSET(B2,0,0,1,1E300)",
+        "=OFFSET(B2,-1E300,0)",
+        "=OFFSET(B2,0,-1E300)",
+        "=OFFSET(B2,0,0,-1E300,1)",
+        "=OFFSET(B2,0,0,1,-1E300)",
+        "=OFFSET(B2,1E300,0,-1E300,1)",
+        "=OFFSET(B2,0,1E300,1,-1E300)",
+        "=OFFSET(B2,-1E300,0,-1E300,1)",
+    ] {
+        assert_eq!(crate::evaluate(&wb, 0, c("D1"), formula), Value::Error(CellError::Ref), "{formula}");
+    }
+    for (formula, expected) in [
+        ("=ROW(OFFSET(B2,1.9,0))", 3.0),
+        ("=COLUMN(OFFSET(B2,0,-1.9))", 1.0),
+        ("=ROWS(OFFSET(B2,0,0,-2,1))", 2.0),
+        ("=COLUMNS(OFFSET(B2,0,0,1,-2))", 2.0),
+        ("=ROWS(OFFSET(A1,0,0,1048576,1))", 1048576.0),
+    ] {
+        assert_eq!(crate::evaluate(&wb, 0, c("D1"), formula), Value::Number(expected), "{formula}");
+    }
 }
