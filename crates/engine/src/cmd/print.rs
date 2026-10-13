@@ -660,6 +660,10 @@ fn cell_look(wb: &Workbook, si: usize, sh: &Sheet, c: CellRef, cf: &mut Option<c
                 *dst = src;
             }
         }
+        // The rule's number format (in a differential style, `General` means "not set").
+        if st.num_fmt.as_str() != "General" {
+            style.num_fmt = st.num_fmt.clone();
+        }
     }
     let mut fill = match style.fill.pattern {
         PatternType::None => None,
@@ -1076,7 +1080,8 @@ fn draw_text(pg: &mut Page, b: &Block, c: CellRef, l: &Look, rect: (f32, f32, f3
         let max_chars = (avail / digit).floor().max(1.0) as usize;
         gridcraft_numfmt::format_general_fit(n, max_chars.min(11)).unwrap_or_else(|| "#".repeat(max_chars.min(255)))
     } else {
-        crate::display::cell_text(wb, sh, c)
+        // `code` is the cell's format, or a matching conditional format's.
+        crate::display::value_text_as(wb, &v, code)
     };
     if !wrap {
         text = text.replace(['\n', '\r'], " ");
@@ -1892,6 +1897,18 @@ mod tests {
         s.execute("pageLayout.headerFooter", json!({"differentFirst": false, "differentOddEven": false})).unwrap();
         let (pdf, _) = pdf_of(&mut s, json!({}));
         assert!(contains(&pdf, "(Odd 1) Tj") && contains(&pdf, "(Odd 2) Tj") && !contains(&pdf, "(Cover) Tj"));
+    }
+
+    #[test]
+    fn pdf_shows_a_rules_number_format() {
+        // Issue #1163: a matching rule's number format replaces the cell's in print and PDF.
+        let mut s = s();
+        s.execute("range.setValues", json!({"range": "A1", "values": [[1], [3]]})).unwrap();
+        let rule = json!({"type": "cellIs", "operator": "greater", "value": "2", "style": {"num_fmt": "0.00"}});
+        s.execute("home.conditionalFormat", json!({"range": "A1:A2", "rule": rule})).unwrap();
+        let (pdf, _) = pdf_of(&mut s, json!({}));
+        assert!(contains(&pdf, "(1) Tj") && contains(&pdf, "(3.00) Tj"));
+        assert!(!contains(&pdf, "(3) Tj"));
     }
 
     #[test]

@@ -492,6 +492,10 @@ fn look(wb: &Workbook, si: usize, sh: &Sheet, c: CellRef, cf: &mut CfCache) -> (
                 *dst = src;
             }
         }
+        // The rule's number format (in a differential style, `General` means "not set").
+        if st.num_fmt.as_str() != "General" {
+            style.num_fmt = st.num_fmt.clone();
+        }
     }
     let mut fill = match style.fill.pattern {
         PatternType::None => None,
@@ -3320,6 +3324,20 @@ mod selection_fill_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rules_number_format_is_shown() {
+        // Issue #1163: a matching rule's number format replaces the cell's.
+        let mut s = gridcraft_engine::Session::new();
+        s.new_workbook();
+        s.execute("range.setValues", serde_json::json!({"range": "A1", "values": [[1], [3]]})).unwrap();
+        let rule = serde_json::json!({"type": "cellIs", "operator": "greater", "value": "2", "style": {"num_fmt": "0.00"}});
+        s.execute("home.conditionalFormat", serde_json::json!({"range": "A1:A2", "rule": rule})).unwrap();
+        let d = s.active().unwrap();
+        let sh = d.wb.sheet(0).unwrap();
+        let code = |a: &str| look(&d.wb, 0, sh, CellRef::parse(a).unwrap(), &mut CfCache::new()).0.style.num_fmt.as_str().to_string();
+        assert_eq!((code("A1"), code("A2")), ("General".to_string(), "0.00".to_string()));
+    }
 
     #[test]
     fn wheel_zoom_steps_along_the_ladder_and_stops_at_100() {
