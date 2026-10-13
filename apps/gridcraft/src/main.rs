@@ -368,6 +368,12 @@ fn main() -> eframe::Result<()> {
     let apple_events = apple_events::AppleEvents::install();
     #[cfg(target_os = "macos")]
     let apple_events = &apple_events;
+    // The document icon's drag anchors on the press the user is making; the watch keeps that
+    // event fresh (AppKit's own current event lags behind the frame, document_window.rs).
+    #[cfg(target_os = "macos")]
+    if let Err(e) = gridcraft_macos_window::watch_mouse_gestures() {
+        log::warn!("mouse gesture watch: {e}");
+    }
     // The app waits here until a start gets as far as creating it; a start that fails before
     // (no graphics adapter, device or surface) leaves it here for the next attempt.
     let pending = std::cell::Cell::new(Some(app));

@@ -23,16 +23,49 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use block2::RcBlock;
+use core::ptr::NonNull;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send, runtime::NSObject, runtime::NSObjectProtocol};
 use objc2_app_kit::{
     NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSDragOperation, NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource,
-    NSWorkspace,
+    NSEvent, NSEventMask, NSEventType, NSWorkspace,
 };
-use objc2_core_foundation::{CGPoint, CGSize};
-use objc2_foundation::{NSArray, NSDictionary, NSRect, NSString, NSURL};
+use objc2_core_foundation::CGSize;
+use objc2_foundation::{NSArray, NSDictionary, NSPoint, NSRect, NSString, NSURL};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+// The mouse-down / mouse-drag the running gesture is on. `NSApplication.currentEvent` lags behind
+// winit's event pump by the time the app reacts (the anchor a drag session gets must be the press
+// itself), so a local event monitor keeps the fresh one.
+thread_local! {
+    static GESTURE: std::cell::RefCell<Option<Retained<NSEvent>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Starts watching the app's mouse gestures, so [`begin_file_drag`] can anchor on the press the
+/// user is actually making. Call once on the main thread before the event loop runs (a drag
+/// started before this watches falls back to AppKit's own current event, which may lag).
+pub fn watch_mouse_gestures() -> Result<(), Error> {
+    // The monitor must be installed on the main thread; this module is main-thread-only anyway.
+    MainThreadMarker::new().ok_or(Error::MainThread)?;
+    // Only the press: it is the anchor a drag session needs, and the freshest one is the
+    // gesture's down (dragged events keep coming after the hand-off and must not displace it).
+    let mask = NSEventMask::LeftMouseDown;
+    // The handler observes the event and returns it unchanged (returning nil would swallow it).
+    let handler = RcBlock::new(move |event: NonNull<NSEvent>| {
+        if let Some(owned) = unsafe { Retained::retain_autoreleased(event.as_ptr()) } {
+            log::debug!("gesture watch: event at {:?}", owned.locationInWindow());
+            GESTURE.with(|g| *g.borrow_mut() = Some(owned));
+        }
+        event.as_ptr()
+    });
+    let _monitor = unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &handler) };
+    // The monitor stays installed for the process lifetime; dropping the handle would remove it,
+    // so hold it (leaked deliberately — one small object for the app's lifetime).
+    std::mem::forget(_monitor);
+    Ok(())
+}
 
 /// The call failed; the window keeps its previous state and nothing was dragged or drawn.
 #[derive(Debug)]
@@ -108,7 +141,8 @@ pub fn set_titlebar_transparent(window: &impl HasWindowHandle, transparent: bool
 define_class!(
     // The drag source AppKit calls back on. Every callback the protocol offers is optional and
     // irrelevant for a file drag out of a painted icon, except the operation mask, which answers
-    // "any operation" so every drop target accepts the file as itself.
+    // "any operation" so every drop target accepts the file as itself. The rest log — a drag that
+    // silently fails is undebuggable.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     struct FileDragSource;
@@ -119,12 +153,21 @@ define_class!(
         // objc2 names protocol methods after their Objective-C selectors.
         #[allow(non_snake_case)]
         #[unsafe(method(draggingSession:sourceOperationMaskForDraggingContext:))]
-        fn draggingSession_sourceOperationMaskForDraggingContext(
-            &self,
-            _session: &NSDraggingSession,
-            _context: NSDraggingContext,
-        ) -> NSDragOperation {
+        fn draggingSession_sourceOperationMaskForDraggingContext(&self, _session: &NSDraggingSession, context: NSDraggingContext) -> NSDragOperation {
+            log::debug!("drag source: operation mask asked (context {context:?})");
             NSDragOperation::Every
+        }
+
+        #[allow(non_snake_case)]
+        #[unsafe(method(draggingSession:willBeginAtPoint:))]
+        fn draggingSession_willBeginAtPoint(&self, _session: &NSDraggingSession, point: NSPoint) {
+            log::debug!("drag session begins at {point:?}");
+        }
+
+        #[allow(non_snake_case)]
+        #[unsafe(method(draggingSession:endedAtPoint:operation:))]
+        fn draggingSession_endedAtPoint_operation(&self, _session: &NSDraggingSession, point: NSPoint, operation: NSDragOperation) {
+            log::debug!("drag session ended at {point:?}, operation {:?}", operation);
         }
     }
 );
@@ -145,8 +188,21 @@ thread_local! {
 pub fn begin_file_drag(window: &impl HasWindowHandle, path: &str) -> Result<(), Error> {
     let mtm = MainThreadMarker::new().ok_or(Error::MainThread)?;
     let ns_window = ns_window(window)?;
-    // The gesture in flight: a drag session must begin with the mouse down on our window.
-    let event = NSApplication::sharedApplication(mtm).currentEvent().ok_or(Error::Window)?;
+    // The gesture in flight: anchor on the fresh mouse-down the monitor captured, falling back to
+    // AppKit's current event (which may be a beat behind winit's pump).
+    let event = GESTURE.with(|g| g.borrow_mut().take()).filter(|e| matches!(e.r#type(), NSEventType::LeftMouseDown | NSEventType::LeftMouseDragged));
+    let event = match event {
+        Some(e) => e,
+        None => {
+            let e = NSApplication::sharedApplication(mtm).currentEvent().ok_or(Error::Window)?;
+            log::debug!("gesture watch missed it; falling back to current event");
+            e
+        }
+    };
+    // The image anchors at the cursor: the event's location, in window coordinates, is where the
+    // press is right now.
+    let at = event.locationInWindow();
+    log::debug!("beginning file drag of {path} from event {at:?}");
 
     let file = NSString::from_str(path);
     let url = NSURL::fileURLWithPath_isDirectory(&file, false);
@@ -155,7 +211,7 @@ pub fn begin_file_drag(window: &impl HasWindowHandle, path: &str) -> Result<(), 
     let icon = NSWorkspace::sharedWorkspace().iconForFile(&file);
     let size = icon.size();
     unsafe {
-        item.setDraggingFrame_contents(NSRect::new(CGPoint::ZERO, size), Some(&icon));
+        item.setDraggingFrame_contents(NSRect::new(at, size), Some(&icon));
     }
     // NSObject's `init` completes the allocation; the class overrides no initializer.
     let source: Retained<FileDragSource> = unsafe { msg_send![super(mtm.alloc::<FileDragSource>().set_ivars(())), init] };

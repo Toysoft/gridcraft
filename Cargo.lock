@@ -1627,6 +1627,8 @@ dependencies = [
 name = "gridcraft-macos-window"
 version = "0.1.0"
 dependencies = [
+ "block2 0.6.2",
+ "log",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
