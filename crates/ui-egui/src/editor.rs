@@ -284,16 +284,21 @@ pub fn intercept_run_delta(id: &str, params: &Json, ed: &EditState, base: &Font)
                     _ => Underline::Single,
                 }
             };
-            // Off stores the explicit clear, mirroring the engine's `chars` branch.
-            let u = if on.unwrap_or(true) { style } else { Underline::None };
+            // The engine's chars path resolves a missing `on` via the all-covered toggle over
+            // the requested style's underline; off stores the explicit clear.
+            let on = on.unwrap_or_else(|| !all_covered(ed, &range, base, underline_get(style)));
+            let u = if on { style } else { Underline::None };
             one_app(&range, RunFont { underline: Some(u), ..RunFont::default() })
         }
-        "home.superscript" => one_app(
-            &range,
-            RunFont { vert: Some(if on.unwrap_or(true) { VertAlign::Superscript } else { VertAlign::Baseline }), ..RunFont::default() },
-        ),
+        "home.superscript" => {
+            // Toggle like the engine's chars path: an all-superscript selection goes back to
+            // baseline, anything else raises.
+            let on = on.unwrap_or_else(|| !all_covered(ed, &range, base, |rf: &RunFont| rf.vert.map(|v| v == VertAlign::Superscript)));
+            one_app(&range, RunFont { vert: Some(if on { VertAlign::Superscript } else { VertAlign::Baseline }), ..RunFont::default() })
+        }
         "home.subscript" => {
-            one_app(&range, RunFont { vert: Some(if on.unwrap_or(true) { VertAlign::Subscript } else { VertAlign::Baseline }), ..RunFont::default() })
+            let on = on.unwrap_or_else(|| !all_covered(ed, &range, base, |rf: &RunFont| rf.vert.map(|v| v == VertAlign::Subscript)));
+            one_app(&range, RunFont { vert: Some(if on { VertAlign::Subscript } else { VertAlign::Baseline }), ..RunFont::default() })
         }
         "home.fontName" => {
             params.get("name").and_then(Json::as_str).map(|name| Ok(vec![(range, RunFont { name: Some(name.to_string()), ..RunFont::default() })]))
@@ -386,6 +391,19 @@ fn all_covered(ed: &EditState, range: &std::ops::Range<usize>, base: &Font, get:
         }
     }
     covered
+}
+
+/// A [`all_covered`] property for underline styles: the resolved underline equals `u` (a plain
+/// `fn`, since the helper takes a function pointer) — the local twin of the engine's
+/// `underline_get`.
+fn underline_get(u: Underline) -> fn(&RunFont) -> Option<bool> {
+    match u {
+        Underline::None => |rf: &RunFont| Some(rf.underline == Some(Underline::None)),
+        Underline::Single => |rf: &RunFont| Some(rf.underline == Some(Underline::Single)),
+        Underline::Double => |rf: &RunFont| Some(rf.underline == Some(Underline::Double)),
+        Underline::SingleAccounting => |rf: &RunFont| Some(rf.underline == Some(Underline::SingleAccounting)),
+        Underline::DoubleAccounting => |rf: &RunFont| Some(rf.underline == Some(Underline::DoubleAccounting)),
+    }
 }
 
 /// The `color` param (`"#RRGGBB"`, `"auto"`, or `{theme, tint}`): the local twin of the engine's
@@ -708,6 +726,48 @@ mod tests {
         assert_eq!(apps.len(), 2);
         assert_eq!((apps[0].0.clone(), apps[0].1.size), (0..2, Some(12.0)));
         assert_eq!((apps[1].0.clone(), apps[1].1.size), (2..5, Some(15.0)));
+    }
+
+    #[test]
+    fn intercept_underline_toggles_like_the_engine() {
+        // All underlined: the press clears (explicit clear, `Underline::None`); the next applies
+        // again. An explicit `on` still wins over the all-covered rule.
+        let runs = CellRuns { runs: vec![Run { start: 0, len: 5, font: RunFont { underline: Some(Underline::Single), ..RunFont::default() } }] };
+        let mut e = edit_sel("black", Some((0, 5)), Some(runs));
+        let base = Font::default();
+        let apps = intercept_run_delta("home.underline", &json!({}), &e, &base).unwrap().unwrap();
+        assert_eq!(apps[0].1.underline, Some(Underline::None));
+        apply_run_fonts(&mut e, apps).unwrap();
+        // The explicit clear survives as one run over the whole text (an all-`None` font would
+        // be flat, `Some(None)` is the stored "off", like the engine).
+        assert!(e.runs.as_ref().is_some_and(|r| r.runs.iter().all(|run| run.font.underline == Some(Underline::None))));
+        let apps = intercept_run_delta("home.underline", &json!({}), &e, &base).unwrap().unwrap();
+        assert_eq!(apps[0].1.underline, Some(Underline::Single));
+        apply_run_fonts(&mut e, apps).unwrap();
+        assert!(e.runs.as_ref().is_some_and(|r| r.runs.iter().all(|run| run.font.underline == Some(Underline::Single))));
+        // Explicit `on` is honored whatever the buffer holds.
+        let apps = intercept_run_delta("home.underline", &json!({"on": true}), &e, &base).unwrap().unwrap();
+        assert_eq!(apps[0].1.underline, Some(Underline::Single));
+        let apps = intercept_run_delta("home.underline", &json!({"on": false}), &e, &base).unwrap().unwrap();
+        assert_eq!(apps[0].1.underline, Some(Underline::None));
+    }
+
+    #[test]
+    fn intercept_superscript_toggles_like_the_engine() {
+        // All superscript: the press returns to baseline; the next raises again.
+        let runs = CellRuns { runs: vec![Run { start: 0, len: 5, font: RunFont { vert: Some(VertAlign::Superscript), ..RunFont::default() } }] };
+        let mut e = edit_sel("black", Some((0, 5)), Some(runs));
+        let base = Font::default();
+        let apps = intercept_run_delta("home.superscript", &json!({}), &e, &base).unwrap().unwrap();
+        assert_eq!(apps[0].1.vert, Some(VertAlign::Baseline));
+        apply_run_fonts(&mut e, apps).unwrap();
+        // The explicit baseline survives as one run over the whole text (the engine's off
+        // stores `Some(VertAlign::Baseline)`, which is not an all-`None` font).
+        assert!(e.runs.as_ref().is_some_and(|r| r.runs.iter().all(|run| run.font.vert == Some(VertAlign::Baseline))));
+        let apps = intercept_run_delta("home.superscript", &json!({}), &e, &base).unwrap().unwrap();
+        assert_eq!(apps[0].1.vert, Some(VertAlign::Superscript));
+        apply_run_fonts(&mut e, apps).unwrap();
+        assert!(e.runs.as_ref().is_some_and(|r| r.runs.iter().all(|run| run.font.vert == Some(VertAlign::Superscript))));
     }
 
     #[test]
