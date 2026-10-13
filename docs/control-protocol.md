@@ -40,6 +40,11 @@ Errors come back as `{"id": …, "ok": false, "error": "…"}`.
 
 Any other method name that is a command id (e.g. `home.bold`) runs that command.
 
+`edit.copy` with `{"html": true}` also returns the range as a styled HTML table: the cell's own
+formatting rides on each `<td>`, and rich-text runs copy as per-run `<span style="…">` entries
+carrying only the run's delta (colour, weight, slant, underline, strike, size, typeface,
+super/subscript). HTML is built only when requested and only while the range is small enough.
+
 Use `engine.execute` with `{command: "view.theme", params: {mode: "system"}}`
 to choose the display theme; `mode` accepts `"system"`, `"light"`, or `"dark"`.
 System follows live OS appearance changes and falls back to Light when the platform supplies no preference.

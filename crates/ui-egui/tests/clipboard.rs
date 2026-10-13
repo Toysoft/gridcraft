@@ -5,6 +5,8 @@ use std::rc::Rc;
 
 use egui::{Event, OutputCommand};
 use gridcraft_engine::Session;
+use gridcraft_engine::core::CellRef;
+use gridcraft_engine::model::{CellRuns, Color, Run, RunFont};
 use gridcraft_ui_egui::{Services, SheetApp};
 use serde_json::json;
 
@@ -47,6 +49,60 @@ fn copy_and_cut_publish_html_and_text_without_overwriting_rich_clipboard() {
         assert!(!h.output().platform_output.commands.iter().any(|c| matches!(c, OutputCommand::CopyText(_))));
         assert_eq!(h.state().session.clipboard.as_ref().map(|c| c.cut), Some(matches!(event, Event::Cut)));
     }
+}
+
+#[test]
+fn copy_publishes_run_spans_with_the_cells_own_style() {
+    // Issue #907: rich runs copy out as per-run <span> styles through the real path
+    // (Event::Copy → edit.copy {"html":true} → Services::copy_html), not just in the engine's io.
+    let mut session = Session::new();
+    session.new_workbook();
+    let text = "plain red plain";
+    session.execute("range.setValues", json!({"range": "A1", "values": [[text]]})).unwrap();
+    session.execute("home.bold", json!({"range": "A1"})).unwrap();
+    {
+        // Seed runs after the value: a command-set value drops the cell's runs entry.
+        let d = session.doc_mut().unwrap();
+        let wb = std::sync::Arc::make_mut(&mut d.wb);
+        let sh = wb.sheet_mut(0).unwrap();
+        let plain = RunFont { bold: Some(false), ..RunFont::default() };
+        let red = RunFont { color: Some(Color::rgb(255, 0, 0)), ..RunFont::default() };
+        sh.cell_runs.insert(
+            CellRef::new(0, 0),
+            CellRuns {
+                runs: vec![Run { start: 0, len: 6, font: plain.clone() }, Run { start: 6, len: 3, font: red }, Run { start: 9, len: 6, font: plain }],
+            },
+        );
+    }
+    session.execute("selection.set", json!({"range": "A1:A1"})).unwrap();
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let received = calls.clone();
+    let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+        |ui, app: &mut SheetApp| {
+            let ctx = ui.ctx().clone();
+            app.logic(&ctx);
+            app.ui(ui);
+        },
+        SheetApp::new(
+            session,
+            Services {
+                copy_html: Some(Box::new(move |html, _text| {
+                    received.borrow_mut().push(html.to_string());
+                    Ok(())
+                })),
+                ..Default::default()
+            },
+        ),
+    );
+    h.run_steps(4);
+    h.input_mut().events.push(Event::Copy);
+    h.step();
+    let calls = calls.borrow();
+    assert_eq!(calls.len(), 1);
+    // The <td> carries the cell's own bold; the run's Some(false) must switch it off inside.
+    assert!(calls[0].contains("font-weight:bold;"), "cell style on the td, got: {}", calls[0]);
+    assert!(calls[0].contains("<span style=\"font-weight:normal;\">plain </span>"), "got: {}", calls[0]);
+    assert!(calls[0].contains("<span style=\"color:#FF0000;\">red</span>"), "got: {}", calls[0]);
 }
 
 #[test]
