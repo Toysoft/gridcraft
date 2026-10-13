@@ -640,8 +640,8 @@ fn generated_field_name(field: usize, k: usize) -> Value {
 
 /// field_headers: 0 none, 1 present but hidden, 2 generate, 3 present and shown; missing =
 /// automatic: when the first value row is all text and the next is not, that row is used as
-/// headers but not shown (Excel).
-fn prepare(fields: &[&Array], values: &Array, fh: Option<i64>, filter: Option<&Array>) -> R<Prepared> {
+/// headers, shown only with several functions (`auto_shows`), as Excel does.
+fn prepare(fields: &[&Array], values: &Array, fh: Option<i64>, filter: Option<&Array>, auto_shows: bool) -> R<Prepared> {
     let n = values.rows;
     for f in fields {
         if f.rows != n {
@@ -653,13 +653,11 @@ fn prepare(fields: &[&Array], values: &Array, fh: Option<i64>, filter: Option<&A
     let mode = match fh {
         Some(m @ 0..=3) => m,
         Some(_) => return Err(CellError::Value),
-        None => {
-            if first_text && second_not {
-                1
-            } else {
-                0
-            }
-        }
+        None => match (first_text && second_not, auto_shows) {
+            (true, true) => 3,
+            (true, false) => 1,
+            _ => 0,
+        },
     };
     let has_hdr = mode == 1 || mode == 3;
     let show = mode >= 2;
@@ -964,10 +962,40 @@ fn opt_value(args: &[Arg], i: usize) -> R<Option<Value>> {
     if has(args, i) { Ok(Some(arg(args, i)?.value.clone())) } else { Ok(None) }
 }
 
-/// An aggregation the host supplies to [`groupby_with`] / [`pivotby_with`]: given the values of
-/// one group in one value column and the values it is measured against (the whole column for
-/// GROUPBY, the column group for PIVOTBY, as Excel's PERCENTOF sees them), the cell's result.
-pub type Aggregation<'a> = &'a mut dyn FnMut(&[&Value], &[&Value]) -> Value;
+/// An aggregation the host supplies to [`groupby_with`] / [`pivotby_with`]: given a function (an
+/// index into [`Functions::names`]), the values of one group in one value column and the values
+/// it is measured against (the whole column for GROUPBY, the column group for PIVOTBY, as Excel's
+/// PERCENTOF sees them), the cell's result.
+pub type Aggregation<'a> = &'a mut dyn FnMut(usize, &[&Value], &[&Value]) -> Value;
+
+/// How the results of several functions given together are laid out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stacked {
+    /// One function.
+    One,
+    /// HSTACK of functions: a value column per function, under a row of their names.
+    Across,
+    /// VSTACK of functions: a line per key and function, the name in a column after the keys.
+    Down,
+}
+
+/// The functions GROUPBY / PIVOTBY aggregate with, as the host resolved them.
+pub struct Functions {
+    /// Each function's name as Excel shows it above (HSTACK) or beside (VSTACK) its results.
+    pub names: Vec<Value>,
+    pub stacked: Stacked,
+}
+
+impl Functions {
+    /// A single function.
+    pub fn one() -> Functions {
+        Functions { names: Vec::new(), stacked: Stacked::One }
+    }
+
+    fn several(&self) -> bool {
+        self.stacked != Stacked::One && self.names.len() > 1
+    }
+}
 
 /// Whether GROUPBY / PIVOTBY aggregate with the function of this name themselves (`SUM`,
 /// `AVERAGE`…); any other function given by name is applied by the host, like a LAMBDA.
@@ -975,9 +1003,18 @@ pub fn is_named_aggregation(name: &str) -> bool {
     parse_agg(&Value::from(name)).is_ok()
 }
 
+/// The aggregation GROUPBY / PIVOTBY do themselves for the function of this name (see
+/// [`is_named_aggregation`]); `#VALUE!` for any other name.
+pub fn aggregate_by_name(name: &str, vals: &[&Value]) -> Value {
+    match parse_agg(&Value::from(name)) {
+        Ok(f) => aggregate(f, vals),
+        Err(e) => Value::Error(e),
+    }
+}
+
 fn groupby(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
     let f = parse_agg(&arg(args, 2)?.value)?;
-    groupby_with(args, &mut |vs, _| aggregate(f, vs))
+    groupby_with(args, &Functions::one(), &mut |_, vs, _| aggregate(f, vs))
 }
 
 /// The values of value column `c` in data rows `rows`.
@@ -985,14 +1022,32 @@ fn column_values<'a>(vals: &'a Array, rows: &[usize], c: usize) -> Vec<&'a Value
     rows.iter().filter_map(|&r| vals.get(r, c)).collect()
 }
 
-/// GROUPBY with the aggregation given by the host (a LAMBDA, or a function given by name such as
-/// PERCENTOF) instead of argument 2, which is ignored.
-pub fn groupby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
+/// The results GROUPBY / PIVOTBY show for each group, as (function, value column): one function
+/// on each value column; several functions on one value column each, or paired with as many value
+/// columns; anything else is #VALUE! (Excel).
+fn measures(funcs: &Functions, value_cols: usize) -> R<Vec<(usize, usize)>> {
+    let n = funcs.names.len();
+    if !funcs.several() {
+        Ok((0..value_cols).map(|c| (0, c)).collect())
+    } else if value_cols == 1 {
+        Ok((0..n).map(|f| (f, 0)).collect())
+    } else if value_cols == n {
+        Ok((0..n).map(|f| (f, f)).collect())
+    } else {
+        Err(CellError::Value)
+    }
+}
+
+/// GROUPBY with the functions given by the host (several, a LAMBDA, or a function given by name
+/// such as PERCENTOF) instead of argument 2, which is ignored.
+pub fn groupby_with(args: &[Arg], funcs: &Functions, agg: Aggregation) -> R<Value> {
     let rf = arr_arg(args, 0)?;
     let vals = arr_arg(args, 1)?;
+    let ms = measures(funcs, vals.cols)?;
+    let down = funcs.several() && funcs.stacked == Stacked::Down;
     let fh = opt_count(args, 3)?;
     let depth = opt_count(args, 4)?;
-    let order = parse_order(opt_value(args, 5)?.as_ref(), rf.cols, vals.cols)?;
+    let order = parse_order(opt_value(args, 5)?.as_ref(), rf.cols, ms.len())?;
     let filter = opt_arr(args, 6)?;
     // field_relationship: 0 groups within groups, 1 a flat table.
     let flat = match opt_count(args, 7)? {
@@ -1001,25 +1056,49 @@ pub fn groupby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
         Some(_) => return Err(CellError::Value),
     };
     let depth = total_depth(depth, &order, rf.cols, flat)?;
-    let p = prepare(&[&rf], &vals, fh, filter.as_ref())?;
+    let p = prepare(&[&rf], &vals, fh, filter.as_ref(), funcs.several())?;
     // Each value column in full: what a two-argument aggregation (PERCENTOF) measures against.
     let all: Vec<Vec<&Value>> = (0..vals.cols).map(|c| column_values(&vals, &p.rows, c)).collect();
     let against = |c: usize| all.get(c).map_or(&[][..], Vec::as_slice);
+    let mut value = |rows: &[usize], (f, c): (usize, usize)| agg(f, &column_values(&vals, rows, c), against(c));
     let axis = Axis { order: &order, flat, depth };
-    let lines = axis_lines(&rf, &p.rows, &axis, &mut |rows, c| agg(&column_values(&vals, rows, c), against(c)));
-    check_output_size(lines.len().saturating_add(usize::from(p.show_headers)), rf.cols.saturating_add(vals.cols))?;
-    let mut out = Vec::with_capacity(lines.len().saturating_add(1));
+    let lines = axis_lines(&rf, &p.rows, &axis, &mut |rows, m| ms.get(m).map_or(Value::Empty, |&fc| value(rows, fc)));
+    let (per_line, width) = if down { (ms.len(), rf.cols + 2) } else { (1, rf.cols.saturating_add(ms.len())) };
+    let names_row = funcs.several() && !down;
+    let height = lines.len().saturating_mul(per_line).saturating_add(usize::from(p.show_headers) + usize::from(names_row));
+    check_output_size(height, width)?;
+    let name = |f: usize| funcs.names.get(f).cloned().unwrap_or_else(gap);
+    let mut out = Vec::with_capacity(height);
+    if names_row {
+        let mut h = vec![gap(); rf.cols];
+        h.extend(ms.iter().map(|&(f, _)| name(f)));
+        out.push(h);
+    }
     if p.show_headers {
         let mut h = p.field_headers.first().cloned().unwrap_or_default();
-        h.extend(p.value_headers.iter().cloned());
+        if down {
+            h.push(gap());
+            h.push(p.value_headers.first().cloned().unwrap_or_else(gap));
+        } else {
+            h.extend(ms.iter().map(|&(_, c)| p.value_headers.get(c).cloned().unwrap_or_else(gap)));
+        }
         out.push(h);
     }
     for line in lines {
-        let mut cells = line.cells;
-        for c in 0..vals.cols {
-            cells.push(agg(&column_values(&vals, &line.rows, c), against(c)));
+        if down {
+            for &fc in &ms {
+                let mut cells = line.cells.clone();
+                cells.push(name(fc.0));
+                cells.push(value(&line.rows, fc));
+                out.push(cells);
+            }
+        } else {
+            let mut cells = line.cells;
+            for &fc in &ms {
+                cells.push(value(&line.rows, fc));
+            }
+            out.push(cells);
         }
-        out.push(cells);
     }
     from_rows(out, &Value::Empty)
 }
@@ -1033,20 +1112,22 @@ fn pivot_dims(header_rows: usize, body_rows: usize, col_keys: usize, value_cols:
 
 fn pivotby(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
     let f = parse_agg(&arg(args, 3)?.value)?;
-    pivotby_with(args, &mut |vs, _| aggregate(f, vs))
+    pivotby_with(args, &Functions::one(), &mut |_, vs, _| aggregate(f, vs))
 }
 
-/// PIVOTBY with the aggregation given by the host (a LAMBDA, or a function given by name such as
-/// PERCENTOF) instead of argument 3, which is ignored.
-pub fn pivotby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
+/// PIVOTBY with the functions given by the host (several, a LAMBDA, or a function given by name
+/// such as PERCENTOF) instead of argument 3, which is ignored.
+pub fn pivotby_with(args: &[Arg], funcs: &Functions, agg: Aggregation) -> R<Value> {
     let rf = arr_arg(args, 0)?;
     let cf = arr_arg(args, 1)?;
     let vals = arr_arg(args, 2)?;
+    let ms = measures(funcs, vals.cols)?;
+    let down = funcs.several() && funcs.stacked == Stacked::Down;
     let fh = opt_count(args, 4)?;
     let row_total = opt_count(args, 5)?;
     let col_total = opt_count(args, 7)?;
-    let row_order = parse_order(opt_value(args, 6)?.as_ref(), rf.cols, vals.cols)?;
-    let col_order = parse_order(opt_value(args, 8)?.as_ref(), cf.cols, vals.cols)?;
+    let row_order = parse_order(opt_value(args, 6)?.as_ref(), rf.cols, ms.len())?;
+    let col_order = parse_order(opt_value(args, 8)?.as_ref(), cf.cols, ms.len())?;
     // Rows sort by a value through the total column, columns through the total row: without that
     // total, Excel keeps the keys' order.
     let row_order = if col_total == Some(0) && matches!(row_order, Order::Value(..)) { Order::ascending(rf.cols) } else { row_order };
@@ -1054,28 +1135,38 @@ pub fn pivotby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
     let row_total = total_depth(row_total, &row_order, rf.cols, false)?;
     let col_total = total_depth(col_total, &col_order, cf.cols, false)?;
     let filter = opt_arr(args, 9)?;
-    let p = prepare(&[&rf, &cf], &vals, fh, filter.as_ref())?;
+    let p = prepare(&[&rf, &cf], &vals, fh, filter.as_ref(), funcs.several())?;
     let all: Vec<Vec<&Value>> = (0..vals.cols).map(|c| column_values(&vals, &p.rows, c)).collect();
     let rlines = {
         let axis = Axis { order: &row_order, flat: false, depth: row_total };
         // A row's value is its total column's cell: measured against every value.
-        axis_lines(&rf, &p.rows, &axis, &mut |rows, c| agg(&column_values(&vals, rows, c), all.get(c).map_or(&[][..], Vec::as_slice)))
+        axis_lines(&rf, &p.rows, &axis, &mut |rows, m| {
+            ms.get(m).map_or(Value::Empty, |&(f, c)| agg(f, &column_values(&vals, rows, c), all.get(c).map_or(&[][..], Vec::as_slice)))
+        })
     };
     let clines = {
         let axis = Axis { order: &col_order, flat: false, depth: col_total };
         // A column's value is its total row's cell: measured against the column's values.
-        axis_lines(&cf, &p.rows, &axis, &mut |rows, c| {
-            let vs = column_values(&vals, rows, c);
-            agg(&vs, &vs)
+        axis_lines(&cf, &p.rows, &axis, &mut |rows, m| {
+            ms.get(m).map_or(Value::Empty, |&(f, c)| {
+                let vs = column_values(&vals, rows, c);
+                agg(f, &vs, &vs)
+            })
         })
     };
-    let lead = rf.cols;
+    // Several functions: across, a value column per function under a row of their names; down,
+    // a line per row key and function with the name in a column after the row fields.
+    let lead = rf.cols + usize::from(down);
+    let across = if down { 1 } else { ms.len() };
+    let names_row = funcs.several() && !down;
+    let name = |f: usize| funcs.names.get(f).cloned().unwrap_or_else(gap);
     // With headers shown, a row with the column fields' names above their items, and one with
     // the row fields' and the values' names below them.
     let show = p.show_headers;
-    let header_rows = cf.cols.saturating_add(2 * usize::from(show));
+    let header_rows = cf.cols.saturating_add(2 * usize::from(show)).saturating_add(usize::from(names_row));
+    let body_rows = rlines.len().saturating_mul(if down { ms.len() } else { 1 });
     // Reject before building any header or body row: every column-field header row is as wide as the whole grid.
-    let (height, width) = pivot_dims(header_rows, rlines.len(), clines.len(), vals.cols, lead);
+    let (height, width) = pivot_dims(header_rows, body_rows, clines.len(), across, lead);
     if height.saturating_mul(width) > MAX_CELLS {
         return Err(CellError::Num);
     }
@@ -1092,7 +1183,14 @@ pub fn pivotby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
         let mut line = vec![gap(); lead];
         for c in &clines {
             let cell = c.cells.get(level).cloned().unwrap_or_else(gap);
-            line.extend(std::iter::repeat_n(cell, vals.cols));
+            line.extend(std::iter::repeat_n(cell, across));
+        }
+        out.push(line);
+    }
+    if names_row {
+        let mut line = vec![gap(); lead];
+        for _ in &clines {
+            line.extend(ms.iter().map(|&(f, _)| name(f)));
         }
         out.push(line);
     }
@@ -1100,7 +1198,11 @@ pub fn pivotby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
         let mut line: Vec<Value> = p.field_headers.first().cloned().unwrap_or_default();
         line.resize(lead, gap());
         for _ in &clines {
-            line.extend(p.value_headers.iter().cloned());
+            if down {
+                line.push(p.value_headers.first().cloned().unwrap_or_else(gap));
+            } else {
+                line.extend(ms.iter().map(|&(_, c)| p.value_headers.get(c).cloned().unwrap_or_else(gap)));
+            }
         }
         out.push(line);
     }
@@ -1115,28 +1217,41 @@ pub fn pivotby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
         }
     }
     let against: Vec<Vec<Vec<&Value>>> = clines.iter().map(|c| (0..vals.cols).map(|vc| column_values(&vals, &c.rows, vc)).collect()).collect();
+    let mut cell = |rows: &[usize], ci: usize, (f, c): (usize, usize)| -> Value {
+        // Excel fills the row / column combinations without data with empty text.
+        if rows.is_empty() {
+            return gap();
+        }
+        let of = against.get(ci).and_then(|a| a.get(c)).map_or(&[][..], Vec::as_slice);
+        agg(f, &column_values(&vals, rows, c), of)
+    };
     for rl in rlines {
-        let mut cells: Vec<Vec<usize>> = vec![Vec::new(); clines.len()];
+        let mut groups: Vec<Vec<usize>> = vec![Vec::new(); clines.len()];
         for &r in &rl.rows {
             for &ci in member.get(r).map_or(&[][..], Vec::as_slice) {
-                if let Some(c) = cells.get_mut(ci) {
-                    c.push(r);
+                if let Some(g) = groups.get_mut(ci) {
+                    g.push(r);
                 }
             }
         }
-        let mut line = rl.cells;
-        for (ci, rows) in cells.iter().enumerate() {
-            for vc in 0..vals.cols {
-                // Excel fills the row / column combinations without data with empty text.
-                line.push(if rows.is_empty() {
-                    gap()
-                } else {
-                    let of = against.get(ci).and_then(|a| a.get(vc)).map_or(&[][..], Vec::as_slice);
-                    agg(&column_values(&vals, rows, vc), of)
-                });
+        if down {
+            for &fc in &ms {
+                let mut line = rl.cells.clone();
+                line.push(name(fc.0));
+                for (ci, rows) in groups.iter().enumerate() {
+                    line.push(cell(rows, ci, fc));
+                }
+                out.push(line);
             }
+        } else {
+            let mut line = rl.cells;
+            for (ci, rows) in groups.iter().enumerate() {
+                for &fc in &ms {
+                    line.push(cell(rows, ci, fc));
+                }
+            }
+            out.push(line);
         }
-        out.push(line);
     }
     from_rows(out, &Value::Empty)
 }

@@ -77,7 +77,7 @@ pub(crate) mod stat;
 pub(crate) mod text;
 pub(crate) mod util;
 
-pub use dynamic::{Aggregation, groupby_with, is_named_aggregation, pivotby_with};
+pub use dynamic::{Aggregation, Functions, Stacked, aggregate_by_name, groupby_with, is_named_aggregation, pivotby_with};
 pub use ets::Timeline;
 pub use stat::{aggregate_values, aggregate_values_k};
 

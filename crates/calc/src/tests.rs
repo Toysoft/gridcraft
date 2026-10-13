@@ -697,6 +697,57 @@ fn groupby_and_pivotby_blank_keys_and_values() {
     assert_eq!((t.get("S1"), t.get("S4"), t.num("T4")), (Value::from(""), Value::Number(0.0), 4.0));
 }
 
+/// Sets `{col}1` to `formula` and checks its spill row by row (each row's cells' display
+/// text joined with "|"), and that it spills no further.
+fn assert_spill(t: &mut T, col: &str, formula: &str, expected: &[&str]) {
+    t.set(&format!("{col}1"), formula);
+    let at = c(&format!("{col}1"));
+    let w = u32::try_from(expected.first().map_or(1, |r| r.split('|').count())).unwrap();
+    let h = u32::try_from(expected.len()).unwrap();
+    let cell = |r: u32, k: u32| t.wb.sheet(0).unwrap().value(CellRef::new(at.row + r, at.col + k));
+    let got: Vec<String> = (0..h).map(|r| (0..w).map(|k| cell(r, k).display()).collect::<Vec<_>>().join("|")).collect();
+    assert_eq!(got, expected, "{formula}");
+    assert_eq!((cell(h, 0), cell(0, w)), (Value::Empty, Value::Empty), "{formula} spills further");
+}
+
+/// GROUPBY / PIVOTBY with several functions at once (HSTACK or VSTACK of functions), as Excel
+/// (Microsoft 365) lays them out.
+#[test]
+fn groupby_and_pivotby_with_several_functions() {
+    let mut t = T::new();
+    let gb = |f: &str| format!("=GROUPBY({{\"a\";\"b\";\"a\"}},{{1;2;3}},{f})");
+    assert_spill(&mut t, "A", &gb("HSTACK(SUM,COUNT)"), &["|SUM|COUNT", "a|4|2", "b|2|1", "Total|6|3"]);
+    assert_spill(&mut t, "E", &gb("VSTACK(SUM,COUNT)"), &["a|SUM|4", "a|COUNT|2", "b|SUM|2", "b|COUNT|1", "Total|SUM|6", "Total|COUNT|3"]);
+    // A LAMBDA is a custom function; one function alone has no row of names.
+    assert_spill(&mut t, "I", &gb("HSTACK(LAMBDA(x,SUM(x)),COUNT)"), &["|CUSTOM|COUNT", "a|4|2", "b|2|1", "Total|6|3"]);
+    assert_spill(&mut t, "M", &gb("HSTACK(SUM)"), &["a|4", "b|2", "Total|6"]);
+    t.set("Q1", &gb("HSTACK(SUM,PERCENTOF)"));
+    assert_eq!((t.get("S1"), t.num("R4"), t.num("S4")), (Value::from("PERCENTOF"), 6.0, 1.0));
+    // Several value columns pair with as many functions; other counts are #VALUE!.
+    let two = |f: &str| format!("=GROUPBY({{\"a\";\"b\";\"a\"}},{{1,10;2,20;3,30}},{f})");
+    assert_spill(&mut t, "U", &two("HSTACK(SUM,MAX)"), &["|SUM|MAX", "a|4|30", "b|2|20", "Total|6|30"]);
+    assert_spill(&mut t, "Y", &two("HSTACK(SUM,MAX,MIN)"), &["#VALUE!"]);
+    // Detected headers are shown with several functions; a sort index past the keys picks the column.
+    let hdr = "=GROUPBY({\"Key\";\"a\";\"b\";\"a\"},{\"Val\";1;2;3},HSTACK(SUM,COUNT))";
+    assert_spill(&mut t, "AC", hdr, &["|SUM|COUNT", "Key|Val|Val", "a|4|2", "b|2|1", "Total|6|3"]);
+    let sorted = "=GROUPBY({\"a\";\"b\";\"c\";\"a\"},{1;5;2;3},HSTACK(SUM,COUNT),,1,3)";
+    assert_spill(&mut t, "AG", sorted, &["|SUM|COUNT", "b|5|1", "c|2|1", "a|4|2", "Total|11|4"]);
+    // PIVOTBY: names under the column items, or a column after the row fields.
+    let pv = |f: &str| format!("=PIVOTBY({{\"R\";\"a\";\"b\"}},{{\"C\";\"x\";\"y\"}},{{\"V\";1;2}},{f},3)");
+    assert_spill(
+        &mut t,
+        "AK",
+        &pv("HSTACK(SUM,COUNT)"),
+        &["|C|||||", "|x|x|y|y|Total|Total", "|SUM|COUNT|SUM|COUNT|SUM|COUNT", "R|V|V|V|V|V|V", "a|1|1|||1|1", "b|||2|1|2|1", "Total|1|1|2|1|3|2"],
+    );
+    assert_spill(
+        &mut t,
+        "AS",
+        &pv("VSTACK(SUM,COUNT)"),
+        &["||C||", "||x|y|Total", "R||V|V|V", "a|SUM|1||1", "a|COUNT|1||1", "b|SUM||2|2", "b|COUNT||1|1", "Total|SUM|1|2|3", "Total|COUNT|1|1|2"],
+    );
+}
+
 #[test]
 fn lambda_argument_count() {
     let mut t = T::new();
