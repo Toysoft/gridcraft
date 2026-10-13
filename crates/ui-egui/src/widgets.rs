@@ -296,6 +296,45 @@ pub fn message_box(app: &mut SheetApp, ctx: &egui::Context) {
     }
 }
 
+/// Asks before an external link opens, showing the full address. Cancel is the default (Escape);
+/// only the Open button opens it, so a stray Enter can't.
+pub fn link_confirm(app: &mut SheetApp, ctx: &egui::Context) {
+    if app.message.is_some() {
+        return;
+    }
+    let Some(url) = app.pending_link.clone() else { return };
+    let lang = app.ui.language;
+    let mut open = false;
+    let mut close = false;
+    egui::Modal::new(egui::Id::new("link_confirm")).show(ctx, |ui| {
+        ui.set_width(420.0);
+        ui.label(egui::RichText::new(lang.tr("Open this link?")).strong());
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(lang.tr("Only open links from sources you trust.")).wrap());
+        ui.add_space(6.0);
+        ui.add(egui::Label::new(egui::RichText::new(&url).monospace()).wrap());
+        ui.add_space(8.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button(format!("  {}  ", lang.tr("Open"))).clicked() {
+                open = true;
+            }
+            let cancel = ui.button(format!("  {}  ", lang.tr("Cancel")));
+            if cancel.clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                close = true;
+            }
+        });
+    });
+    if open {
+        if let Some(f) = &app.services.open_url {
+            f(&url);
+        }
+        close = true;
+    }
+    if close {
+        app.pending_link = None;
+    }
+}
+
 pub fn toast(app: &mut SheetApp, ctx: &egui::Context) {
     let Some((msg, at)) = app.toast.clone() else { return };
     if crate::now_ms() - at > 2500.0 {
