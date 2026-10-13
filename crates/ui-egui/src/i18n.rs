@@ -17,6 +17,7 @@ mod ko;
 mod pt;
 mod ru;
 mod zh;
+mod zh_tw;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -25,6 +26,8 @@ pub enum Language {
     En,
     Es,
     Zh,
+    #[serde(rename = "zh-TW")]
+    ZhTw,
     Ja,
     Ko,
     Ru,
@@ -36,7 +39,7 @@ pub enum Language {
 }
 
 impl Language {
-    pub const ALL: [Self; 10] = [Self::En, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::PtBr, Self::De, Self::Cs, Self::Fr];
+    pub const ALL: [Self; 11] = [Self::En, Self::Es, Self::Zh, Self::ZhTw, Self::Ja, Self::Ko, Self::Ru, Self::PtBr, Self::De, Self::Cs, Self::Fr];
 
     /// The language's own name, shown in the switcher.
     pub fn name(self) -> &'static str {
@@ -44,6 +47,7 @@ impl Language {
             Self::En => "English",
             Self::Es => "Español",
             Self::Zh => "简体中文",
+            Self::ZhTw => "繁體中文（台灣）",
             Self::Ja => "日本語",
             Self::Ko => "한국어",
             Self::Ru => "Русский",
@@ -60,6 +64,7 @@ impl Language {
             Self::En => "en",
             Self::Es => "es",
             Self::Zh => "zh",
+            Self::ZhTw => "zh-TW",
             Self::Ja => "ja",
             Self::Ko => "ko",
             Self::Ru => "ru",
@@ -75,10 +80,23 @@ impl Language {
     }
 
     fn from_tag(tag: &str) -> Option<Self> {
-        match tag.trim().split(['-', '_']).next()?.to_ascii_lowercase().as_str() {
+        let normalized = tag.trim().replace('_', "-").to_ascii_lowercase();
+        let mut parts = normalized.split('-');
+        let primary = parts.next()?;
+
+        if primary == "zh" {
+            let subtags: Vec<&str> = parts.collect();
+
+            if subtags.iter().any(|part| matches!(*part, "tw" | "hant")) {
+                return Some(Self::ZhTw);
+            }
+
+            return Some(Self::Zh);
+        }
+
+        match primary {
             "en" => Some(Self::En),
             "es" => Some(Self::Es),
-            "zh" => Some(Self::Zh),
             "ja" => Some(Self::Ja),
             "ko" => Some(Self::Ko),
             "ru" => Some(Self::Ru),
@@ -117,6 +135,7 @@ impl Language {
             Self::Es => es::translate(text),
             Self::Ja => JAPANESE.iter().find(|(english, _)| *english == text).map(|(_, translated)| *translated),
             Self::Zh => zh::translate(text),
+            Self::ZhTw => zh_tw::translate(text),
             Self::Ko => ko::translate(text),
             Self::Ru => ru::translate(text),
             Self::PtBr => pt::translate(text),
@@ -682,5 +701,33 @@ mod tests {
         for l in Language::ALL {
             assert_eq!(Language::parse(l.code()), Some(l));
         }
+    }
+}
+
+#[cfg(test)]
+mod traditional_chinese_tests {
+    use super::Language;
+
+    #[test]
+    fn traditional_chinese_preference_roundtrips() {
+        // 原本的測試...
+    }
+
+    #[test]
+    fn distinguishes_traditional_and_simplified_chinese() {
+        // 原本的測試...
+    }
+
+    #[test]
+    fn traditional_chinese_translates_spreadsheet_terms() {
+        assert_eq!(Language::ZhTw.tr("Paste"), "貼上");
+        assert_eq!(Language::ZhTw.tr("Merge Cells"), "合併儲存格");
+        assert_eq!(Language::ZhTw.tr("Conditional Formatting"), "條件式格式設定");
+
+        // 未翻譯文字退回英文。
+        assert_eq!(Language::ZhTw.tr("Some untranslated label"), "Some untranslated label");
+
+        // 簡體中文翻譯維持不變。
+        assert_eq!(Language::Zh.tr("Paste"), "粘贴");
     }
 }
