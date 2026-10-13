@@ -1157,6 +1157,7 @@ fn cf_menu(app: &mut SheetApp, ui: &mut Ui) {
         if ui.button("Duplicate Values…").clicked() {
             act(app, "home.conditionalFormat", json!({"rule": {"type": "duplicate"}}));
         }
+        more_rules(app, ui, json!({"kind": "contains"}));
     });
     ui.menu_button("Top/Bottom Rules", |ui| {
         menu_items(
@@ -1171,6 +1172,7 @@ fn cf_menu(app: &mut SheetApp, ui: &mut Ui) {
                 ("Below Average", "home.conditionalFormat", json!({"rule": {"type": "aboveAverage", "below": true}})),
             ],
         );
+        more_rules(app, ui, json!({"kind": "top"}));
     });
     ui.menu_button("Data Bars", |ui| {
         for (label, c) in
@@ -1180,6 +1182,7 @@ fn cf_menu(app: &mut SheetApp, ui: &mut Ui) {
                 act(app, "home.conditionalFormat", json!({"rule": {"type": "dataBar", "color": c}}));
             }
         }
+        more_rules(app, ui, json!({"kind": "values", "style": "dataBar"}));
     });
     ui.menu_button("Color Scales", |ui| {
         for (label, cols) in [
@@ -1194,6 +1197,7 @@ fn cf_menu(app: &mut SheetApp, ui: &mut Ui) {
                 act(app, "home.conditionalFormat", json!({"rule": {"type": "colorScale", "colors": cols}}));
             }
         }
+        more_rules(app, ui, json!({"kind": "values", "style": "2color"}));
     });
     ui.menu_button("Icon Sets", |ui| {
         for (label, set) in [
@@ -1208,10 +1212,12 @@ fn cf_menu(app: &mut SheetApp, ui: &mut Ui) {
                 act(app, "home.conditionalFormat", json!({"rule": {"type": "iconSet", "set": set}}));
             }
         }
+        more_rules(app, ui, json!({"kind": "values", "style": "iconSet"}));
     });
     ui.separator();
+    // Without a rule, the command asks for the New Formatting Rule dialog (as Alt, H, L, N does).
     if ui.button("New Rule…").clicked() {
-        app.open_dialog("cfQuick", json!({"type": "expression", "title": "New Formatting Rule"}));
+        act(app, "home.conditionalFormat", json!({}));
     }
     ui.menu_button("Clear Rules", |ui| {
         menu_items(
@@ -1225,6 +1231,16 @@ fn cf_menu(app: &mut SheetApp, ui: &mut Ui) {
     });
     if ui.button("Manage Rules…").clicked() {
         app.open_dialog("manageRules", json!({}));
+    }
+}
+
+/// A Conditional Formatting submenu's last item: the New Formatting Rule dialog on the rule type
+/// the submenu is about.
+fn more_rules(app: &mut SheetApp, ui: &mut Ui, kind: serde_json::Value) {
+    ui.separator();
+    if ui.button("More Rules…").clicked() {
+        app.open_dialog("newFormattingRule", kind);
+        ui.close();
     }
 }
 

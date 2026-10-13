@@ -444,4 +444,32 @@ mod tests {
         assert_eq!(col("B"), [Some(0), Some(1), Some(1), Some(2)], "> 3, > 6");
         assert_eq!(col("C"), [Some(0), Some(1), Some(1), Some(1)], "> 30 %, > 70 %");
     }
+
+    #[test]
+    fn above_average_with_equal_and_standard_deviations() {
+        // Measured in Excel: over 0..10, 40 and 19 only 40 and 19 are more than one (population)
+        // standard deviation above the average; over 1, 2, 3 "equal or above" and "equal or
+        // below" both take the 2.
+        let mut s = crate::Session::new();
+        s.new_workbook();
+        let wide: Vec<[u32; 1]> = (0..=10).chain([40, 19]).map(|n| [n]).collect();
+        s.execute("range.setValues", json!({"range": "A1", "values": wide})).unwrap();
+        s.execute("range.setValues", json!({"range": "B1", "values": [[1], [2], [3]]})).unwrap();
+        s.execute("range.setValues", json!({"range": "C1", "values": [[1], [2], [3]]})).unwrap();
+        for (range, rule) in [
+            ("A1:A13", json!({"type": "aboveAverage", "stdDev": 1})),
+            ("B1:B3", json!({"type": "aboveAverage", "equal": true})),
+            ("C1:C3", json!({"type": "aboveAverage", "below": true, "equal": true})),
+        ] {
+            s.execute("home.conditionalFormat", json!({"range": range, "rule": rule})).unwrap();
+        }
+        let d = s.doc().unwrap();
+        let mut cache = CfCache::new();
+        let mut on = |a: String| cache.look(&d.wb, 0, CellRef::parse(&a).unwrap()).is_some();
+        let a: Vec<bool> = (1..=13).map(|r| on(format!("A{r}"))).collect();
+        assert_eq!(a.iter().filter(|x| **x).count(), 2);
+        assert!(a[11] && a[12], "40 and 19");
+        assert_eq!([1, 2, 3].map(|r| on(format!("B{r}"))), [false, true, true], "equal or above");
+        assert_eq!([1, 2, 3].map(|r| on(format!("C{r}"))), [true, true, false], "equal or below");
+    }
 }

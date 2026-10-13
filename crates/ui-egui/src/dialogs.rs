@@ -1,5 +1,6 @@
 //! Dialogs. Simple dialogs are forms (fields → a command with params); Format Cells, Insert
-//! Function, Find & Replace, Sort, Name Manager and the command palette are custom.
+//! Function, Find & Replace, Sort, Name Manager, New Formatting Rule and the command palette are
+//! custom.
 //!
 //! Every dialog is also reachable programmatically: `ui.dialog {name}` opens one,
 //! `ui.dialog.set {field, value}` edits a field and `ui.dialog.confirm` presses OK.
@@ -11,6 +12,8 @@ use serde_json::{Map, Value as Json, json};
 
 use crate::SheetApp;
 use crate::theme;
+
+mod new_rule;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Field {
@@ -584,33 +587,11 @@ impl Dialog {
                     "timePeriod" => fields.push(Choice {
                         key: "period",
                         label: "Format cells that contain a date occurring:",
-                        options: vec![
-                            ("yesterday", "Yesterday"),
-                            ("today", "Today"),
-                            ("tomorrow", "Tomorrow"),
-                            ("last7Days", "In the last 7 days"),
-                            ("lastWeek", "Last week"),
-                            ("thisWeek", "This week"),
-                            ("nextWeek", "Next week"),
-                            ("lastMonth", "Last month"),
-                            ("thisMonth", "This month"),
-                            ("nextMonth", "Next month"),
-                        ],
+                        options: new_rule::PERIODS.to_vec(),
                     }),
                     _ => fields.push(Text { key: "formula", label: "Format values where this formula is true:" }),
                 }
-                fields.push(Choice {
-                    key: "preset",
-                    label: "with",
-                    options: vec![
-                        ("lightRedFillDarkRedText", "Light Red Fill with Dark Red Text"),
-                        ("yellowFillDarkYellowText", "Yellow Fill with Dark Yellow Text"),
-                        ("greenFillDarkGreenText", "Green Fill with Dark Green Text"),
-                        ("lightRedFill", "Light Red Fill"),
-                        ("redText", "Red Text"),
-                        ("redBorder", "Red Border"),
-                    ],
-                });
+                fields.push(Choice { key: "preset", label: "with", options: new_rule::PRESETS.to_vec() });
                 let mut d = Dialog::form(
                     "cfQuick",
                     &title,
@@ -671,6 +652,13 @@ impl Dialog {
             "sort" => Dialog::custom("sort", "Sort", json!({"header": true, "levels": [{"column": "A", "order": "asc"}]})),
             "nameManager" => Dialog::custom("nameManager", "Name Manager", json!({})),
             "manageRules" => Dialog::custom("manageRules", "Conditional Formatting Rules Manager", json!({})),
+            // Home › Conditional Formatting › New Rule… (and each submenu's More Rules…, which
+            // pass the rule type): OK runs `home.conditionalFormat`.
+            "newFormattingRule" => {
+                let mut d = Dialog::custom("newFormattingRule", "New Formatting Rule", new_rule::defaults(&params));
+                d.command = Some("home.conditionalFormat");
+                d
+            }
             "commandSearch" => Dialog::custom("commandSearch", "Search Commands", json!({})),
             "agents" => Dialog::custom("agents", "Agent Control", json!({})),
             "about" => {
@@ -939,7 +927,8 @@ fn data_validation_form(ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, o
 }
 
 /// Builds the command params from form values for dialogs that need translation.
-fn build_params(d: &Dialog) -> Json {
+/// The command parameters for a dialog's values (what OK runs; `ui.dialog.confirm` too).
+pub(crate) fn build_params(d: &Dialog) -> Json {
     let mut v = Json::Object(d.values.clone());
     match d.name.as_str() {
         "dataValidation" => {
@@ -990,6 +979,7 @@ fn build_params(d: &Dialog) -> Json {
                 v["percent"] = json!(p.parse::<f64>().unwrap_or(100.0));
             }
         }
+        "newFormattingRule" => v = new_rule::params(&d.values),
         "cfQuick" => {
             let mut rule = Map::new();
             for (k, val) in &d.values {
@@ -1029,7 +1019,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
     let width = match d.name.as_str() {
         "formatCells" => 560.0,
         "about" => 660.0,
-        "insertFunction" | "commandSearch" | "nameManager" | "manageRules" | "journal" | "agents" | "macros" => 520.0,
+        "insertFunction" | "commandSearch" | "nameManager" | "manageRules" | "newFormattingRule" | "journal" | "agents" | "macros" => 520.0,
         "recommendedCharts" => 600.0,
         "analysisToolPak" => 420.0,
         "solver" => 460.0,
@@ -1054,6 +1044,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "sort" => sort(app, ui, &mut d, &mut confirm),
                 "nameManager" => name_manager(app, ui, &mut d, &mut open),
                 "manageRules" => manage_rules(app, ui),
+                "newFormattingRule" => new_rule::show(ui, &mut d, &mut confirm, &mut open),
                 "recommendedCharts" => recommended_charts(app, ui, &mut d, &mut confirm, &mut open),
                 "selectData" => select_data(app, ui, &mut d, &mut confirm, &mut open),
                 "commandSearch" => command_search(app, ui, &mut d, &mut confirm),

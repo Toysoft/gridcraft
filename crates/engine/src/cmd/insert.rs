@@ -188,7 +188,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Conditional Formatting",
             ["Home", "Styles"],
             None,
-            "{range?, rule: {type: cellIs|expression|containsText|beginsWith|endsWith|blanks|noBlanks|errors|noErrors|duplicate|unique|top10|aboveAverage|timePeriod|colorScale|dataBar|iconSet, operator?, value?, value2?, formula?, text?, rank?, bottom?, percent?, below?, period?, colors?: [..], color?, set?, thresholds?: [{type: num|percent|percentile|formula, value, operator?: \">=\"|\">\"}], style?: {font..fill..}|preset: lightRedFill|redText|yellowFill|greenFill|redBorder|lightRedFillDarkRedText…}}",
+            "{range?, rule: {type: cellIs|expression|containsText|beginsWith|endsWith|blanks|noBlanks|errors|noErrors|duplicate|unique|top10|aboveAverage|timePeriod|colorScale|dataBar|iconSet, operator?, value?, value2?, formula?, text?, rank?, bottom?, percent?, below?, equal?, stdDev?: 1|2|3, period?, colors?: [..], color?, set?, thresholds?: [{type: num|percent|percentile|formula, value, operator?: \">=\"|\">\"}], style?: {font..fill..}|preset: lightRedFill|redText|yellowFill|greenFill|redBorder|lightRedFillDarkRedText…}}",
             has_doc,
             add_cf
         ),
@@ -1309,7 +1309,9 @@ fn insert_symbol(s: &mut Session, p: &Json) -> Result<Json> {
 
 // ---------------------------------------------------------------- conditional formatting
 
-fn preset_style(name: &str) -> Style {
+/// The style of a conditional-format `preset` (Excel's quick formats, such as Light Red Fill with
+/// Dark Red Text); an unknown name is that one.
+pub fn preset_style(name: &str) -> Style {
     let mut s = Style::default();
     match name {
         "redText" => s.font.color = Color::rgb(0x9C, 0x00, 0x06),
@@ -1409,7 +1411,13 @@ fn add_cf(s: &mut Session, p: &Json) -> Result<Json> {
             rank: rule.get("rank").and_then(Json::as_u64).unwrap_or(10) as u32,
             style,
         },
-        "aboveAverage" => CfRule::AboveAverage { below: rule.get("below").and_then(Json::as_bool).unwrap_or(false), equal: false, std_dev: 0, style },
+        "aboveAverage" => CfRule::AboveAverage {
+            below: rule.get("below").and_then(Json::as_bool).unwrap_or(false),
+            equal: rule.get("equal").and_then(Json::as_bool).unwrap_or(false),
+            // Standard deviations above or below the average: 1 to 3, as in Excel; 0 is the average.
+            std_dev: rule.get("stdDev").and_then(Json::as_u64).unwrap_or(0).min(3) as u8,
+            style,
+        },
         "timePeriod" => CfRule::TimePeriod { period: g("period").unwrap_or_else(|| "today".into()), style },
         "colorScale" => {
             let cols: Vec<Color> = rule
