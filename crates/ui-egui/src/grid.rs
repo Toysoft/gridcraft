@@ -103,6 +103,8 @@ pub struct GridState {
     pub paper: Option<crate::paper_view::PaperCache>,
     /// Header or footer being edited in place (Page Layout view).
     pub hf_edit: Option<crate::paper_view::HfEdit>,
+    /// A page margin being dragged on a ruler (Page Layout view); committed on release.
+    pub ruler_drag: Option<crate::paper_view::RulerDrag>,
     /// Insert › Header & Footer: start editing the first page's header once Page Layout view is up.
     pub hf_start: bool,
     /// The grid geometry of the last frame (hit-testing for agents and tests).
@@ -491,11 +493,17 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
     // Page Layout view: pages on a desk, rulers above and left of the headings.
     let paper = sh.view == gridcraft_engine::model::SheetViewMode::PageLayout;
     let ruler = if paper && !app.session.hide_ruler { crate::paper_view::RULER } else { 0.0 };
-    let grid_rect = Rect::from_min_max(pos2((rect.left() + ruler).min(rect.right()), (rect.top() + ruler).min(rect.bottom())), rect.max);
+    // Right-to-left sheets carry the vertical ruler on the right, beside the row headings.
+    let grid_rect = if rtl {
+        Rect::from_min_max(pos2(rect.left(), (rect.top() + ruler).min(rect.bottom())), pos2((rect.right() - ruler).max(rect.left()), rect.bottom()))
+    } else {
+        Rect::from_min_max(pos2((rect.left() + ruler).min(rect.right()), (rect.top() + ruler).min(rect.bottom())), rect.max)
+    };
     let make_geo = |app: &mut SheetApp, scroll: egui::Vec2| -> Geo {
         if paper {
             let probe = Geo::new(sh, grid_rect, scroll);
             if let Some(g) = crate::paper_view::grid_for(app, &wb, si, sh, probe.cells.size(), scroll) {
+                let g = crate::paper_view::with_dragged_margin(app, &wb, si, g);
                 return Geo::paged(sh, grid_rect, scroll, g);
             }
         }
@@ -2443,6 +2451,12 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
                     Key::Home => {
                         let a = app.session.active().map(|d| d.selection.active).unwrap_or_default();
                         let _ = app.session.run("selection.set", json!({"cell": CellRef::new(a.row, 0).a1()}));
+                        app.grid.ensure_visible = true;
+                    }
+                    // Excel: Enter while a copied range is marked pastes it and ends copy mode.
+                    Key::Enter if !m.alt && !m.ctrl && !shift && !cmd && app.session.clipboard.is_some() => {
+                        app.run_or_alert("edit.paste", json!({}));
+                        app.session.clipboard = None;
                         app.grid.ensure_visible = true;
                     }
                     Key::Enter => {

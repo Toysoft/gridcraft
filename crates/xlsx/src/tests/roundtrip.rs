@@ -1051,6 +1051,76 @@ fn package_kind_sets_workbook_content_type() {
     assert_eq!(crate::XlsxKind::from_path("noext"), crate::XlsxKind::Workbook);
 }
 
+/// The workbook's default font (`fonts[0]`, the Normal style's) is what every default-formatted
+/// cell shows, typed or empty; saving keeps it instead of resetting it to Calibri 11 (#805).
+#[test]
+fn default_font_survives_a_round_trip() {
+    let styles = |font0: &str| {
+        format!(
+            r#"<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font>{font0}</font><font><b/><sz val="14"/><color theme="1"/><name val="Arial"/><family val="2"/></font></fonts>
+            <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+            <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+            <cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs>
+            <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>"#
+        )
+    };
+    let rels = r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>"#;
+    let body = r#"<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>typed text</t></is></c><c r="B1" s="1"><v>1</v></c></row></sheetData>"#;
+    let font0 = |bytes: &[u8]| {
+        let mut pkg = Package::open(bytes).unwrap();
+        let st = pkg.read_xml("xl/styles.xml").unwrap().unwrap();
+        let f = st.child("fonts").unwrap().kids("font").next().unwrap().clone();
+        let val = |n: &str| f.child(n).and_then(|e| e.attr("val")).map(str::to_string);
+        (val("sz"), val("name"), val("family"), val("scheme"))
+    };
+
+    let file =
+        super::minimal(body, &[("xl/styles.xml", &styles(r#"<sz val="10"/><color theme="1"/><name val="Arial"/><family val="2"/>"#))], rels, "");
+    let (wb, _) = read_xlsx(&file).unwrap();
+    let saved = write_xlsx(&wb).unwrap();
+    assert_eq!(font0(&saved), (Some("10".into()), Some("Arial".into()), Some("2".into()), None));
+    let (back, _) = read_xlsx(&saved).unwrap();
+    let normal = &back.styles.get(StyleId::DEFAULT).font;
+    assert_eq!((normal.name.as_str(), normal.size), ("Arial", 10.0), "empty cells and new input take the Normal font");
+    let s = back.sheet(0).unwrap();
+    assert_eq!(s.cell(at("A1")).unwrap().style, StyleId::DEFAULT);
+    let b1 = &back.styles.get(s.cell(at("B1")).unwrap().style).font;
+    assert!(b1.bold && b1.size == 14.0, "an explicit font is still its own: {b1:?}");
+
+    // Excel's own Normal font follows the theme's body font; the scheme link survives too.
+    let file = super::minimal(
+        body,
+        &[("xl/styles.xml", &styles(r#"<name val="Calibri"/><family val="2"/><color theme="1"/><sz val="12"/><scheme val="minor"/>"#))],
+        rels,
+        "",
+    );
+    let saved = write_xlsx(&read_xlsx(&file).unwrap().0).unwrap();
+    assert_eq!(font0(&saved), (Some("12".into()), Some("Calibri".into()), Some("2".into()), Some("minor".into())));
+}
+
+#[test]
+fn solid_data_bar_survives_with_sparklines_and_gradient_neighbours() {
+    let mut wb = Workbook::new();
+    let s = wb.sheet_mut(0).unwrap();
+    s.set_value(at("A1"), Value::Number(1.0));
+    let bar =
+        |gradient: bool, max: CfValueKind| CfRule::DataBar { min: CfValueKind::Min, max, color: Color::Rgb(0x638EC6), gradient, show_value: true };
+    let rules = [(true, "A1", CfValueKind::Max), (false, "B1", CfValueKind::Formula("$C$1".into())), (false, "D1:D3", CfValueKind::Number(9.0))];
+    for (i, (gradient, range, max)) in rules.into_iter().enumerate() {
+        s.cond_formats.push(CondFormat { ranges: vec![rr(range)], rule: bar(gradient, max), priority: i as u32 + 1, stop_if_true: false });
+    }
+    s.sparklines.push(Sparkline { cell: at("F1"), source: "A1:C1".into(), kind: SparklineKind::Line, color: Color::Rgb(0x376092), markers: false });
+    let bytes = write_xlsx(&wb).unwrap();
+    // x14 cfvo values are `xm:f` children; a `val` attribute there is not valid x14.
+    let (xml, _) = sheet1_xml(&bytes);
+    assert!(xml.contains("<x14:cfvo type=\"num\"><xm:f>9</xm:f></x14:cfvo>"), "{xml}");
+    let (back, rep) = read_xlsx(&bytes).unwrap();
+    assert!(rep.warnings.is_empty(), "{:?}", rep.warnings);
+    let b = &back.sheets[0];
+    assert_eq!(b.cond_formats, wb.sheets[0].cond_formats);
+    assert_eq!(b.sparklines.len(), 1);
+}
+
 #[test]
 fn doc_props_keep_boundary_whitespace() {
     let mut wb = Workbook::new();

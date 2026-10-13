@@ -392,7 +392,13 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Workbook calculation" => "Obliczanie skoroszytu",
         "Enable iterative calculation" => "Włącz obliczanie iteracyjne",
         "Calculation settings are saved with the workbook." => "Ustawienia obliczania są zapisywane razem ze skoroszytem.",
-        // Format Cells dialog (looked up through `Language::tr` once storytold/gridcraft#788 lands).
+        "Left Margin" => "Margines lewy",
+        "Right Margin" => "Margines prawy",
+        "Top Margin" => "Margines górny",
+        "Bottom Margin" => "Margines dolny",
+        "Header Margin" => "Margines nagłówka",
+        "Footer Margin" => "Margines stopki",
+        // Format Cells dialog (looked up through `Language::tr` since storytold/gridcraft#788).
         "Format Cells" => "Formatuj komórki",
         "Cancel" => "Anuluj",
         "Alignment" => "Wyrównanie",
