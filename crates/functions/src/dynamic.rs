@@ -786,9 +786,10 @@ fn cmp_dir(a: &Value, b: &Value, dir: i64) -> Ordering {
     cmp_keys(std::slice::from_ref(a), std::slice::from_ref(b), &[dir])
 }
 
-/// A line of a GROUPBY / PIVOTBY axis: a key or the grand total.
+/// A line of a GROUPBY / PIVOTBY axis: a key, the subtotal of a key prefix, or the grand total.
 struct Line {
-    /// The cells shown for it: the key, or the total's label then empty text.
+    /// The cells shown for it: the key; the prefix, then empty text; the total's label, then
+    /// empty text.
     cells: Vec<Value>,
     /// The data rows it covers, in order.
     rows: Vec<usize>,
@@ -808,12 +809,27 @@ struct Axis<'o> {
     order: &'o Order,
     /// Keys are a flat table (GROUPBY's field_relationship 1), not groups within groups.
     flat: bool,
-    /// Grand total after the keys (> 0), before them (< 0), or none (0).
+    /// How many levels get totals (1: the grand total, 2: also a subtotal for each group of the
+    /// first key column, …), after their groups (> 0) or before them (< 0); 0: none.
     depth: i64,
 }
 
+/// The total depth of an axis with `keys` key columns: as given, where more levels than key
+/// columns, or more than one for a flat table, is #VALUE! (Excel); when omitted, the grand total,
+/// and every level when sorting by a value (Excel's automatic subtotals).
+fn total_depth(given: Option<i64>, order: &Order, keys: usize, flat: bool) -> R<i64> {
+    match given {
+        Some(d) => {
+            let levels = usize::try_from(d.unsigned_abs()).unwrap_or(usize::MAX);
+            if levels > keys || (flat && levels > 1) { Err(CellError::Value) } else { Ok(d) }
+        }
+        None if matches!(order, Order::Value(..)) && !flat => Ok(i64::try_from(keys).unwrap_or(1)),
+        None => Ok(1),
+    }
+}
+
 /// The lines of an axis with keys `keys` over the data rows `rows`: each distinct key (grouped
-/// case-insensitively, spelled as first seen) in order, and the grand total. `value_of` gives a
+/// case-insensitively, spelled as first seen) in order, with subtotals and the grand total. `value_of` gives a
 /// group's value in the column a value sort orders by.
 fn axis_lines(keys: &Array, rows: &[usize], axis: &Axis, value_of: &mut dyn FnMut(&[usize], usize) -> Value) -> Vec<Line> {
     let k = keys.cols;
@@ -889,8 +905,11 @@ fn axis_lines(keys: &Array, rows: &[usize], axis: &Axis, value_of: &mut dyn FnMu
             }
         }
     }
+    let levels = usize::try_from(axis.depth.unsigned_abs()).unwrap_or(0).min(k);
+    // With subtotals, Excel calls the total the grand total.
+    let label = if levels >= 2 { "Grand Total" } else { "Total" };
     let total = || {
-        let mut cells = vec![Value::from("Total")];
+        let mut cells = vec![Value::from(label)];
         cells.resize(k, gap());
         Line { cells, rows: rows.to_vec() }
     };
@@ -900,11 +919,36 @@ fn axis_lines(keys: &Array, rows: &[usize], axis: &Axis, value_of: &mut dyn FnMu
         cells.resize(k, gap());
         Line { cells, rows: x.rows.clone() }
     };
+    // Subtotals for the prefixes of 1 ..= levels - 1 key columns: deepest first after a group
+    // ends, outermost first before it starts.
+    let sub = levels.saturating_sub(1);
+    // The first key column where two keys differ: the prefixes longer than that part there.
+    let parts = |a: &[usize], b: &[usize]| a.iter().zip(b).position(|(x, y)| x != y).unwrap_or(k);
     let mut out = Vec::with_capacity(paths.len().saturating_add(1));
     if axis.depth < 0 {
         out.push(total());
     }
-    out.extend(paths.iter().filter_map(|path| path.last()).map(|&leaf| line(leaf)));
+    for (i, path) in paths.iter().enumerate() {
+        if axis.depth < 0 {
+            let from = i.checked_sub(1).and_then(|j| paths.get(j)).map_or(0, |prev| parts(prev, path));
+            for len in (from + 1)..=sub {
+                if let Some(&id) = path.get(len - 1) {
+                    out.push(line(id));
+                }
+            }
+        }
+        if let Some(&leaf) = path.last() {
+            out.push(line(leaf));
+        }
+        if axis.depth > 0 {
+            let to = paths.get(i + 1).map_or(0, |next| parts(path, next));
+            for len in ((to + 1)..=sub).rev() {
+                if let Some(&id) = path.get(len - 1) {
+                    out.push(line(id));
+                }
+            }
+        }
+    }
     if axis.depth > 0 {
         out.push(total());
     }
@@ -947,7 +991,7 @@ pub fn groupby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
     let rf = arr_arg(args, 0)?;
     let vals = arr_arg(args, 1)?;
     let fh = opt_count(args, 3)?;
-    let depth = opt_count(args, 4)?.unwrap_or(1);
+    let depth = opt_count(args, 4)?;
     let order = parse_order(opt_value(args, 5)?.as_ref(), rf.cols, vals.cols)?;
     let filter = opt_arr(args, 6)?;
     // field_relationship: 0 groups within groups, 1 a flat table.
@@ -956,6 +1000,7 @@ pub fn groupby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
         Some(1) => true,
         Some(_) => return Err(CellError::Value),
     };
+    let depth = total_depth(depth, &order, rf.cols, flat)?;
     let p = prepare(&[&rf], &vals, fh, filter.as_ref())?;
     // Each value column in full: what a two-argument aggregation (PERCENTOF) measures against.
     let all: Vec<Vec<&Value>> = (0..vals.cols).map(|c| column_values(&vals, &p.rows, c)).collect();
@@ -998,14 +1043,16 @@ pub fn pivotby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
     let cf = arr_arg(args, 1)?;
     let vals = arr_arg(args, 2)?;
     let fh = opt_count(args, 4)?;
-    let row_total = opt_count(args, 5)?.unwrap_or(1);
-    let col_total = opt_count(args, 7)?.unwrap_or(1);
+    let row_total = opt_count(args, 5)?;
+    let col_total = opt_count(args, 7)?;
     let row_order = parse_order(opt_value(args, 6)?.as_ref(), rf.cols, vals.cols)?;
     let col_order = parse_order(opt_value(args, 8)?.as_ref(), cf.cols, vals.cols)?;
     // Rows sort by a value through the total column, columns through the total row: without that
     // total, Excel keeps the keys' order.
-    let row_order = if col_total == 0 && matches!(row_order, Order::Value(..)) { Order::ascending(rf.cols) } else { row_order };
-    let col_order = if row_total == 0 && matches!(col_order, Order::Value(..)) { Order::ascending(cf.cols) } else { col_order };
+    let row_order = if col_total == Some(0) && matches!(row_order, Order::Value(..)) { Order::ascending(rf.cols) } else { row_order };
+    let col_order = if row_total == Some(0) && matches!(col_order, Order::Value(..)) { Order::ascending(cf.cols) } else { col_order };
+    let row_total = total_depth(row_total, &row_order, rf.cols, false)?;
+    let col_total = total_depth(col_total, &col_order, cf.cols, false)?;
     let filter = opt_arr(args, 9)?;
     let p = prepare(&[&rf, &cf], &vals, fh, filter.as_ref())?;
     let all: Vec<Vec<&Value>> = (0..vals.cols).map(|c| column_values(&vals, &p.rows, c)).collect();
@@ -1462,6 +1509,69 @@ mod tests {
         let cf = av(arr(vec![vec![tv("C1"), tv("C2")], vec![tv("x"), tv("p")]]));
         let r = ev("PIVOTBY", vec![c(vec![tv("R"), tv("a")]), cf, c(vec![tv("V"), nv(1.0)]), t("SUM"), n(3.0)]);
         assert_eq!(rows_of(&r)[0][1], tv("C1, C2"));
+    }
+
+    /// Subtotals and totals of GROUPBY / PIVOTBY as Excel (Microsoft 365) lays them out.
+    #[test]
+    fn groupby_and_pivotby_total_depth() {
+        use crate::Arg;
+        let m = |v: Vec<Vec<Value>>| av(arr(v));
+        let s = |v: &Value| rows_of(v).iter().map(|l| l.iter().map(Value::display).collect::<Vec<_>>().join(" ")).collect::<Vec<_>>();
+        let two = || m(vec![vec![tv("a"), tv("x")], vec![tv("a"), tv("y")], vec![tv("b"), tv("x")]]);
+        let gb = |depth: f64| ev("GROUPBY", vec![two(), av(col(&[1.0, 2.0, 3.0])), t("SUM"), empty(), n(depth)]);
+        assert_eq!(s(&gb(2.0)), ["a x 1", "a y 2", "a  3", "b x 3", "b  3", "Grand Total  6"]);
+        assert_eq!(s(&gb(-2.0)), ["Grand Total  6", "a  3", "a x 1", "a y 2", "b  3", "b x 3"]);
+        assert_eq!(rows_of(&gb(2.0))[2][1], tv(""));
+        is_err(gb(3.0), CellError::Value);
+        is_err(ev("GROUPBY", vec![av(col(&[1.0, 2.0])), av(col(&[1.0, 2.0])), t("SUM"), empty(), n(2.0)]), CellError::Value);
+        // A flat table has no subtotals.
+        is_err(ev("GROUPBY", vec![two(), av(col(&[1.0, 2.0, 3.0])), t("SUM"), empty(), n(2.0), empty(), empty(), n(1.0)]), CellError::Value);
+        // Three key columns: depth 3 adds subtotals at the second level too; before the groups when negative.
+        let three = || {
+            m(vec![
+                vec![tv("a"), tv("x"), tv("p")],
+                vec![tv("a"), tv("x"), tv("q")],
+                vec![tv("a"), tv("y"), tv("p")],
+                vec![tv("b"), tv("x"), tv("p")],
+            ])
+        };
+        let gb3 = |depth: Arg, sort: Arg| ev("GROUPBY", vec![three(), av(col(&[1.0, 2.0, 3.0, 4.0])), t("SUM"), empty(), depth, sort]);
+        assert_eq!(s(&gb3(n(2.0), empty())), ["a x p 1", "a x q 2", "a y p 3", "a   6", "b x p 4", "b   4", "Grand Total   10"]);
+        assert_eq!(
+            s(&gb3(n(3.0), empty())),
+            ["a x p 1", "a x q 2", "a x  3", "a y p 3", "a y  3", "a   6", "b x p 4", "b x  4", "b   4", "Grand Total   10"]
+        );
+        assert_eq!(
+            s(&gb3(n(-3.0), empty())),
+            ["Grand Total   10", "a   6", "a x  3", "a x p 1", "a x q 2", "a y  3", "a y p 3", "b   4", "b x  4", "b x p 4"]
+        );
+        // Sorting by a value with the depth omitted shows every level's subtotals.
+        assert_eq!(
+            s(&gb3(empty(), n(4.0))),
+            ["b x p 4", "b x  4", "b   4", "a x p 1", "a x q 2", "a x  3", "a y p 3", "a y  3", "a   6", "Grand Total   10"]
+        );
+        // PIVOTBY: subtotal columns after each outer column group.
+        let cf = m(vec![vec![tv("x"), tv("p")], vec![tv("y"), tv("p")], vec![tv("x"), tv("q")]]);
+        let r = ev(
+            "PIVOTBY",
+            vec![
+                av(arr(vec![vec![tv("a")], vec![tv("b")], vec![tv("a")]])),
+                cf,
+                av(col(&[1.0, 2.0, 3.0])),
+                t("SUM"),
+                empty(),
+                empty(),
+                empty(),
+                n(2.0),
+            ],
+        );
+        assert_eq!(s(&r), [" x x x y y Grand Total", " p q  p  ", "a 1 3 4   4", "b    2 2 2", "Total 1 3 4 2 2 6"]);
+        // Rows sorted by a value get their subtotals too.
+        let r = ev(
+            "PIVOTBY",
+            vec![two(), av(arr(vec![vec![tv("p")], vec![tv("q")], vec![tv("p")]])), av(col(&[1.0, 2.0, 3.0])), t("SUM"), empty(), empty(), n(3.0)],
+        );
+        assert_eq!(s(&r), ["  p q Total", "a x 1  1", "a y  2 2", "a  1 2 3", "b x 3  3", "b  3  3", "Grand Total  4 2 6"]);
     }
 
     /// The sort orders of GROUPBY / PIVOTBY as Excel (Microsoft 365) applies them.
