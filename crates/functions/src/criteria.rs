@@ -20,10 +20,40 @@ enum Operand {
     Number(f64),
     Bool(bool),
     Error(CellError),
-    /// Text (lower-cased chars kept for wildcard matching).
-    Text(String),
+    Text(TextPattern),
     /// Nothing after the operator (`"="`, `"<>"`) or an empty criterion.
     Blank,
+}
+
+/// A text operand, prepared once per criterion rather than once per cell.
+#[derive(Clone, Debug)]
+struct TextPattern {
+    /// As written (after the operator), for `<`/`>` comparisons.
+    raw: String,
+    /// Wildcard tokens (lower-cased), for `=`/`<>` matching.
+    toks: Vec<Tok>,
+    /// The pattern holds `*`, `?` or `~`; otherwise `=` is a case-insensitive comparison.
+    wild: bool,
+    /// Lower-cased text, the index key of a plain pattern.
+    lower: String,
+}
+
+impl TextPattern {
+    fn new(raw: &str) -> TextPattern {
+        let toks = tokenize(raw);
+        let wild = toks.iter().any(|t| !matches!(t, Tok::Char(_))) || raw.contains('~');
+        TextPattern { raw: raw.to_string(), toks, wild, lower: raw.chars().flat_map(char::to_lowercase).collect() }
+    }
+    /// Whole-text, case-insensitive match with wildcards.
+    fn matches(&self, text: &str) -> bool {
+        if self.wild {
+            return match_from(&self.toks, &lower_chars(text), true).is_some();
+        }
+        if text.is_ascii() && self.lower.is_ascii() {
+            return text.eq_ignore_ascii_case(&self.lower);
+        }
+        text.chars().flat_map(char::to_lowercase).eq(self.lower.chars())
+    }
 }
 
 /// A parsed criterion.
@@ -34,6 +64,8 @@ pub(crate) struct Criterion {
     /// The criterion was a bare `""` (or empty cell text): matches blanks and empty strings.
     bare_empty: bool,
 }
+
+static EMPTY: Value = Value::Empty;
 
 impl Criterion {
     /// Parses a criterion value the way COUNTIF does.
@@ -78,19 +110,37 @@ impl Criterion {
         } else if let Some(e) = CellError::parse(rest) {
             Operand::Error(e)
         } else {
-            Operand::Text(rest.to_string())
+            Operand::Text(TextPattern::new(rest))
         };
         Criterion { op, operand, bare_empty: false }
+    }
+
+    /// The equality key every matching cell has, when the criterion is a plain `=` match that an
+    /// [`crate::index::EqIndex`] can answer; `true` with it for `<>`, which matches exactly the
+    /// cells `=` doesn't for these operands.
+    pub(crate) fn eq_key(&self) -> Option<(crate::index::Key, bool)> {
+        use crate::index::Key;
+        if !matches!(self.op, Op::Eq | Op::Ne) || self.bare_empty {
+            return None;
+        }
+        let key = match &self.operand {
+            Operand::Number(n) => Key::number(*n),
+            Operand::Bool(b) => Key::Bool(*b),
+            Operand::Error(e) => Key::Error(e.code()),
+            Operand::Text(p) if !p.wild => Key::Text(p.lower.clone().into()),
+            _ => return None,
+        };
+        Some((key, self.op == Op::Ne))
     }
 
     /// Whether a cell value satisfies the criterion.
     pub(crate) fn matches(&self, v: &Value) -> bool {
         let v = match v {
-            Value::Array(a) => a.data.first().cloned().unwrap_or(Value::Empty),
-            other => other.clone(),
+            Value::Array(a) => a.data.first().unwrap_or(&EMPTY),
+            other => other,
         };
         if self.bare_empty {
-            return matches!(&v, Value::Empty) || matches!(&v, Value::Text(t) if t.is_empty());
+            return matches!(v, Value::Empty) || matches!(v, Value::Text(t) if t.is_empty());
         }
         match &self.operand {
             Operand::Blank => {
@@ -99,14 +149,14 @@ impl Criterion {
                     Op::Eq => blank,
                     Op::Ne => !blank,
                     // "<" / ">" with nothing: Excel compares against "" for text cells.
-                    _ => match &v {
+                    _ => match v {
                         Value::Text(t) => cmp_op(self.op, compare_text(t, "")),
                         _ => false,
                     },
                 }
             }
             Operand::Number(n) => {
-                let cell = match &v {
+                let cell = match v {
                     Value::Number(x) => Some(*x),
                     // Numeric text matches only for equality (COUNTIF("1") counts text "1").
                     Value::Text(t) if matches!(self.op, Op::Eq | Op::Ne) => parse_number_text(t),
@@ -117,26 +167,22 @@ impl Criterion {
                     None => self.op == Op::Ne,
                 }
             }
-            Operand::Bool(b) => match &v {
+            Operand::Bool(b) => match v {
                 Value::Bool(x) => cmp_op(self.op, x.cmp(b)),
                 _ => self.op == Op::Ne,
             },
-            Operand::Error(e) => match &v {
+            Operand::Error(e) => match v {
                 Value::Error(x) => cmp_op(self.op, x.code().cmp(&e.code())),
                 _ => self.op == Op::Ne,
             },
             Operand::Text(pat) => match self.op {
                 Op::Eq | Op::Ne => {
                     // Blank cells hold no text: `"*"` skips them and `"<>*"` counts them.
-                    let cell_text = match &v {
-                        Value::Text(t) => Some(t.to_string()),
-                        _ => None,
-                    };
-                    let m = cell_text.is_some_and(|t| wildcard_match(pat, &t));
+                    let m = matches!(v, Value::Text(t) if pat.matches(t));
                     if self.op == Op::Eq { m } else { !m }
                 }
-                _ => match &v {
-                    Value::Text(t) => cmp_op(self.op, compare_text(t, pat)),
+                _ => match v {
+                    Value::Text(t) => cmp_op(self.op, compare_text(t, &pat.raw)),
                     _ => false,
                 },
             },

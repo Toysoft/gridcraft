@@ -6,6 +6,7 @@ use std::f64::consts::PI;
 use gridcraft_core::{Array, CellError, Value};
 
 use crate::criteria::Criterion;
+use crate::index::matching_positions;
 use crate::util::{
     A, MAX_CELLS, R, S, array_val, as_array, check_size, has, num, num_val, numbers, opt_num, round_half_away, text, text_val, to_sig_digits,
 };
@@ -944,115 +945,146 @@ fn seriessum(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
 // ---------------------------------------------------------------------------------------------
 // Criteria aggregates
 
-/// Values at the matched positions of `target` for every (range, criteria) pair.
-fn criteria_mask(a: &[Arg], first_pair: usize, rows: usize, cols: usize) -> R<Vec<bool>> {
+/// A range argument of a criteria function as an array. An error in place of a reference
+/// (`#NAME?` from an undefined name, `#REF!` from a deleted range) is the function's result, as
+/// in Excel; an error read from a cell is just a value that doesn't match.
+fn criteria_range(a: &Arg) -> R<std::borrow::Cow<'_, Array>> {
+    match &a.value {
+        Value::Error(e) if !a.from_ref => Err(*e),
+        v => Ok(as_array(v)),
+    }
+}
+
+/// Positions (row-major) of the cells matching every (range, criteria) pair. Indexed criteria
+/// give their matches directly; the others test only the positions still in the running.
+fn criteria_hits(a: &[Arg], first_pair: usize, rows: usize, cols: usize, ctx: &mut dyn Ctx) -> R<Vec<usize>> {
     let rest = a.get(first_pair..).unwrap_or(&[]);
     if rest.is_empty() || rest.len() % 2 != 0 {
         return Err(CellError::Value);
     }
-    let mut mask = vec![true; rows.saturating_mul(cols)];
+    let mut hits: Option<Vec<usize>> = None;
     for pair in rest.chunks(2) {
         let (Some(range), Some(crit)) = (pair.first(), pair.get(1)) else { return Err(CellError::Value) };
-        let r = as_array(&range.value);
+        let r = criteria_range(range)?;
         if r.rows != rows || r.cols != cols {
             return Err(CellError::Value);
         }
         let c = Criterion::parse(&crit.value.scalar());
-        for (m, v) in mask.iter_mut().zip(r.iter()) {
-            if *m && !c.matches(v) {
-                *m = false;
+        let matches = |i: &usize| r.data.get(*i).is_some_and(|v| c.matches(v));
+        hits = Some(match (hits, matching_positions(ctx, &range.value, &c)) {
+            (None, Some(found)) => found.iter().map(|i| *i as usize).collect(),
+            (Some(h), Some(found)) => {
+                // Both ascending: keep the common positions.
+                let mut found = found.iter().map(|i| *i as usize).peekable();
+                h.into_iter()
+                    .filter(|i| {
+                        while found.next_if(|f| f < i).is_some() {}
+                        found.peek() == Some(i)
+                    })
+                    .collect()
             }
-        }
+            (None, None) => (0..r.data.len()).filter(matches).collect(),
+            (Some(h), None) => h.into_iter().filter(matches).collect(),
+        });
     }
-    Ok(mask)
+    Ok(hits.unwrap_or_default())
 }
 
-/// Numbers in `target` where `mask` is set (errors at matched positions propagate).
-fn masked_numbers(target: &Array, mask: &[bool]) -> R<Vec<f64>> {
+fn countifs(a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
+    let first = criteria_range(crate::util::arg(a, 0)?)?;
+    num_val(criteria_hits(a, 0, first.rows, first.cols, c)?.len() as f64)
+}
+
+/// The numbers of the `*IFS` target range where every pair matches.
+fn ifs_numbers(a: &[Arg], ctx: &mut dyn Ctx) -> R<Vec<f64>> {
+    let target = criteria_range(crate::util::arg(a, 0)?)?;
     let mut out = Vec::new();
-    for (v, m) in target.iter().zip(mask.iter()) {
-        if !*m {
-            continue;
-        }
-        match v {
-            Value::Number(n) => out.push(*n),
-            Value::Error(e) => return Err(*e),
+    for i in criteria_hits(a, 1, target.rows, target.cols, ctx)? {
+        match target.data.get(i) {
+            Some(Value::Number(n)) => out.push(*n),
+            Some(Value::Error(e)) => return Err(*e),
             _ => {}
         }
     }
     Ok(out)
 }
 
-fn countifs(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
-    let first = as_array(&crate::util::arg(a, 0)?.value);
-    let mask = criteria_mask(a, 0, first.rows, first.cols)?;
-    num_val(mask.iter().filter(|m| **m).count() as f64)
+fn sumifs(a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
+    num_val(ifs_numbers(a, c)?.iter().sum())
 }
-
-/// The values of the `*IFS` target range with the mask from its pairs.
-fn ifs_numbers(a: &[Arg]) -> R<Vec<f64>> {
-    let target = as_array(&crate::util::arg(a, 0)?.value);
-    let mask = criteria_mask(a, 1, target.rows, target.cols)?;
-    masked_numbers(&target, &mask)
-}
-
-fn sumifs(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
-    num_val(ifs_numbers(a)?.iter().sum())
-}
-fn averageifs(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
-    let v = ifs_numbers(a)?;
+fn averageifs(a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
+    let v = ifs_numbers(a, c)?;
     if v.is_empty() {
         return Err(CellError::Div0);
     }
     num_val(v.iter().sum::<f64>() / v.len() as f64)
 }
-fn maxifs(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
-    let v = ifs_numbers(a)?;
+fn maxifs(a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
+    let v = ifs_numbers(a, c)?;
     num_val(v.iter().copied().reduce(f64::max).unwrap_or(0.0))
 }
-fn minifs(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
-    let v = ifs_numbers(a)?;
+fn minifs(a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
+    let v = ifs_numbers(a, c)?;
     num_val(v.iter().copied().reduce(f64::min).unwrap_or(0.0))
 }
 
-fn countif(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
-    let range = as_array(&crate::util::arg(a, 0)?.value);
+fn countif(a: &[Arg], ctx: &mut dyn Ctx) -> R<Value> {
+    let range = criteria_range(crate::util::arg(a, 0)?)?;
+    let range_arg = &crate::util::arg(a, 0)?.value;
     let c = Criterion::parse(&crate::util::arg(a, 1)?.value.scalar());
+    if let Some(hits) = matching_positions(ctx, range_arg, &c) {
+        return num_val(hits.len() as f64);
+    }
     num_val(range.iter().filter(|v| c.matches(v)).count() as f64)
 }
 
 /// SUMIF / AVERAGEIF: matched numbers from the sum range, read at the criteria range's positions.
 /// Excel sizes a sum range reference like the criteria range, anchored at its own top-left cell;
 /// the evaluator does that resizing (it has the references), so cells line up one to one here.
-fn if_numbers(a: &[Arg]) -> R<Vec<f64>> {
-    let range = as_array(&crate::util::arg(a, 0)?.value);
+fn if_numbers(a: &[Arg], ctx: &mut dyn Ctx) -> R<Vec<f64>> {
+    let range = criteria_range(crate::util::arg(a, 0)?)?;
+    let range_arg = &crate::util::arg(a, 0)?.value;
     let c = Criterion::parse(&crate::util::arg(a, 1)?.value.scalar());
-    let sum_range = if has(a, 2) { Some(as_array(&crate::util::arg(a, 2)?.value)) } else { None };
+    let sum_range = if has(a, 2) { Some(criteria_range(crate::util::arg(a, 2)?)?) } else { None };
     let mut out = Vec::new();
+    let mut take = |r: usize, col: usize, v: &Value| -> R<()> {
+        let target = match &sum_range {
+            Some(s) => s.get(r, col),
+            None => Some(v),
+        };
+        match target {
+            Some(Value::Number(n)) => out.push(*n),
+            Some(Value::Error(e)) => return Err(*e),
+            _ => {}
+        }
+        Ok(())
+    };
+    if let Some(hits) = matching_positions(ctx, range_arg, &c)
+        && range.cols > 0
+    {
+        for &i in hits.iter() {
+            let (r, col) = (i as usize / range.cols, i as usize % range.cols);
+            if let Some(v) = range.get(r, col) {
+                take(r, col, v)?;
+            }
+        }
+        return Ok(out);
+    }
     for r in 0..range.rows {
         for col in 0..range.cols {
             let Some(v) = range.get(r, col) else { continue };
-            if !c.matches(v) {
-                continue;
-            }
-            let target = match &sum_range {
-                Some(s) => s.get(r, col),
-                None => Some(v),
-            };
-            match target {
-                Some(Value::Number(n)) => out.push(*n),
-                Some(Value::Error(e)) => return Err(*e),
-                _ => {}
+            if c.matches(v) {
+                take(r, col, v)?;
             }
         }
     }
     Ok(out)
 }
-fn sumif(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
-    num_val(if_numbers(a)?.iter().sum())
+fn sumif(a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
+    num_val(if_numbers(a, c)?.iter().sum())
 }
-fn averageif(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
-    let v = if_numbers(a)?;
+fn averageif(a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
+    let v = if_numbers(a, c)?;
     if v.is_empty() {
         return Err(CellError::Div0);
     }
@@ -1640,7 +1672,15 @@ mod tests {
         close(ev("MINIFS", vec![rf(qty.clone()), rf(names.clone()), t("apple")]), 10.0);
         close(ev("MAXIFS", vec![rf(qty.clone()), rf(names.clone()), t("zzz")]), 0.0);
         is_err(ev("SUMIFS", vec![rf(qty.clone()), rf(row(&[1.0, 2.0])), t("1")]), CellError::Value);
-        is_err(ev("COUNTIFS", vec![rf(qty.clone()), t(">1"), rf(qty)]), CellError::Value);
+        is_err(ev("COUNTIFS", vec![rf(qty.clone()), t(">1"), rf(qty.clone())]), CellError::Value);
         is_err(ev("SUMIF", vec![rf(col(&[1.0, 2.0])), t(">0"), rf(arr(vec![vec![Value::Error(NA)], vec![nv(1.0)]]))]), NA);
+        // An error in place of the range (an undefined name) is the result; an error cell isn't.
+        is_err(ev("SUMIF", vec![e(CellError::Name), t("a"), rf(qty.clone())]), CellError::Name);
+        is_err(ev("SUMIF", vec![rf(names.clone()), t("a"), e(CellError::Ref)]), CellError::Ref);
+        is_err(ev("COUNTIF", vec![e(CellError::Name), t("a")]), CellError::Name);
+        is_err(ev("SUMIFS", vec![rf(qty.clone()), e(CellError::Name), t("a")]), CellError::Name);
+        is_err(ev("COUNTIFS", vec![e(CellError::Ref), t("a")]), CellError::Ref);
+        close(ev("SUMIF", vec![rf(Value::Error(NA)), t("a"), rf(nv(1.0))]), 0.0);
+        close(ev("COUNTIF", vec![rf(Value::Error(NA)), t("#N/A")]), 1.0);
     }
 }

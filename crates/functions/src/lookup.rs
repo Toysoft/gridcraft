@@ -8,6 +8,7 @@ use std::cmp::Ordering;
 use gridcraft_core::{Array, CellError, Value, col_to_letters, compare};
 
 use crate::criteria::{has_wildcards, lookup_equal};
+use crate::index::{Line, find_first};
 use crate::util::{R, arg, array_val, as_array, has, int, num, opt_bool, opt_int, opt_num, text, text_val};
 use crate::{Arg, Ctx, FnSpec};
 
@@ -127,7 +128,12 @@ fn cell_result(v: Value) -> Value {
 // ---------------------------------------------------------------------------------------------
 // VLOOKUP / HLOOKUP / LOOKUP / MATCH
 
-fn vh_lookup(args: &[Arg], vertical: bool) -> R<Value> {
+/// A text needle with wildcards (searched by pattern, not indexed).
+fn has_wildcards_needle(x: &Value) -> bool {
+    matches!(x, Value::Text(t) if has_wildcards(t))
+}
+
+fn vh_lookup(args: &[Arg], vertical: bool, c: &mut dyn Ctx) -> R<Value> {
     let x = needle(args, 0)?;
     let table = as_array(&arg(args, 1)?.value);
     if let Value::Error(e) = &arg(args, 1)?.value {
@@ -139,22 +145,30 @@ fn vh_lookup(args: &[Arg], vertical: bool) -> R<Value> {
     }
     let idx = idx.trunc() as usize - 1;
     let approx = opt_bool(args, 3, true)?;
-    let (keys, len) = if vertical { (column(&table, 0), table.cols) } else { (row(&table, 0), table.rows) };
+    let len = if vertical { table.cols } else { table.rows };
     if idx >= len {
         return Err(CellError::Ref);
     }
-    let pos = if approx { bsearch_last(&x, &keys, false) } else { find_exact(&x, &keys, true, false) };
+    let line = if vertical { Line::FirstColumn } else { Line::FirstRow };
+    let indexed = if approx || has_wildcards_needle(&x) { None } else { find_first(c, &arg(args, 1)?.value, line, &x) };
+    let pos = match indexed {
+        Some(p) => p,
+        None => {
+            let keys = if vertical { column(&table, 0) } else { row(&table, 0) };
+            if approx { bsearch_last(&x, &keys, false) } else { find_exact(&x, &keys, true, false) }
+        }
+    };
     let pos = pos.ok_or(CellError::NA)?;
     let v = if vertical { table.get(pos, idx) } else { table.get(idx, pos) };
     Ok(cell_result(v.cloned().unwrap_or(Value::Empty)))
 }
 
-fn vlookup(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
-    vh_lookup(a, true)
+fn vlookup(a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
+    vh_lookup(a, true, c)
 }
 
-fn hlookup(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
-    vh_lookup(a, false)
+fn hlookup(a: &[Arg], c: &mut dyn Ctx) -> R<Value> {
+    vh_lookup(a, false, c)
 }
 
 fn lookup(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
@@ -194,14 +208,24 @@ fn lookup(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
     }
 }
 
-fn match_fn(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
+fn match_fn(args: &[Arg], c: &mut dyn Ctx) -> R<Value> {
     let x = needle(args, 0)?;
     let av = &arg(args, 1)?.value;
     if let Value::Error(e) = av {
         return Err(*e);
     }
-    let hay = vector(&as_array(av)).ok_or(CellError::NA)?;
+    let arr = as_array(av);
+    if arr.rows != 1 && arr.cols != 1 {
+        return Err(CellError::NA);
+    }
     let mt = opt_num(args, 2, 1.0)?;
+    if mt == 0.0
+        && !has_wildcards_needle(&x)
+        && let Some(p) = find_first(c, av, Line::All, &x)
+    {
+        return p.map(|p| Value::Number((p + 1) as f64)).ok_or(CellError::NA);
+    }
+    let hay = vector(&arr).ok_or(CellError::NA)?;
     let pos = if mt == 0.0 {
         find_exact(&x, &hay, true, false)
     } else if mt > 0.0 {

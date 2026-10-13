@@ -66,6 +66,17 @@ pub trait Host {
     fn range_values(&mut self, sheet: usize, range: RangeRef) -> Vec<Value> {
         range.iter().map(|c| self.cell_value(sheet, c)).collect()
     }
+    /// A block as an array value. Hosts that keep values fixed while evaluating can hand out the
+    /// same array to every formula reading the block.
+    fn range_array(&mut self, sheet: usize, range: RangeRef) -> Value {
+        let (h, w) = (range.height() as usize, range.width() as usize);
+        let data = self.range_values(sheet, range);
+        Array::new(h, w, data).map(Value::from).unwrap_or(Value::Error(CellError::Value))
+    }
+    /// Equality indexes for criteria functions, kept as long as the arrays they index.
+    fn criteria_cache(&mut self) -> Option<&mut gridcraft_functions::CriteriaCache> {
+        None
+    }
     /// The sheet's used range (`Sheet::used_range`, which walks every stored row). Hosts that
     /// keep the workbook unchanged while evaluating can remember it.
     fn used_range(&mut self, sheet: usize) -> Option<RangeRef> {
@@ -99,6 +110,9 @@ impl Ctx for FnCtx<'_, '_> {
     }
     fn random(&mut self) -> f64 {
         self.ev.host.random()
+    }
+    fn criteria_cache(&mut self) -> Option<&mut gridcraft_functions::CriteriaCache> {
+        self.ev.host.criteria_cache()
     }
 }
 
@@ -155,8 +169,7 @@ impl<'h> Evaluator<'h> {
         if (h as u64) * (w as u64) > MAX_CELLS {
             return Value::Error(CellError::Num);
         }
-        let data = self.host.range_values(a.sheet, range);
-        Array::new(h, w, data).map(Value::from).unwrap_or(Value::Error(CellError::Value))
+        self.host.range_array(a.sheet, range)
     }
 
     /// Trims the bottom/right of an area to the sheet's used range (keeps the top-left so

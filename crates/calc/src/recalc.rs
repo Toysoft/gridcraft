@@ -408,7 +408,18 @@ struct PassHost<'a> {
     tainted: HashSet<Key>,
     /// Whether the formula being evaluated has read a previous value.
     taint: bool,
+    /// Blocks read in this pass as arrays: the thousands of formulas that read the same block
+    /// (`SUMIF(codes, A2, amounts)` down a column) share one. Off while iterating, and dropped
+    /// when a spill appears or goes (spilled values are part of a block's array).
+    areas: HashMap<(usize, RangeRef), Value>,
+    /// Cells held in `areas`.
+    area_cells: usize,
+    /// Equality indexes over the shared arrays, for criteria functions.
+    criteria: gridcraft_functions::CriteriaCache,
 }
+
+/// Cells `PassHost::areas` holds before it stops taking more.
+const MAX_AREA_CELLS: usize = 8_000_000;
 
 impl<'a> PassHost<'a> {
     fn new(wb: &'a Workbook, exprs: &'a HashMap<Key, std::sync::Arc<Expr>>, rng: &'a mut u64, now: f64) -> Self {
@@ -431,6 +442,17 @@ impl<'a> PassHost<'a> {
             members: HashSet::default(),
             tainted: HashSet::default(),
             taint: false,
+            areas: HashMap::default(),
+            area_cells: 0,
+            criteria: gridcraft_functions::CriteriaCache::new(),
+        }
+    }
+
+    /// Spilled values changed: arrays read before may be out of date.
+    fn spills_changed(&mut self) {
+        if !self.areas.is_empty() {
+            self.areas.clear();
+            self.area_cells = 0;
         }
     }
 }
@@ -519,6 +541,7 @@ impl PassHost<'_> {
                 };
                 if a.rows > 1 || a.cols > 1 {
                     self.spills.insert(k, a.clone());
+                    self.spills_changed();
                 }
                 a.data.first().cloned().unwrap_or_default()
             }
@@ -529,6 +552,7 @@ impl PassHost<'_> {
         let v = match self.spills.get(&k) {
             Some(a) if spill_blocked(self, k, a) => {
                 self.spills.remove(&k);
+                self.spills_changed();
                 Value::Error(CellError::Spill)
             }
             _ => v,
@@ -738,6 +762,27 @@ impl Host for PassHost<'_> {
             }
         }
         out
+    }
+    fn range_array(&mut self, sheet: usize, range: RangeRef) -> Value {
+        let key = (sheet, range);
+        if let Some(v) = self.areas.get(&key) {
+            return v.clone();
+        }
+        let cycles = self.cycles.len();
+        let (h, w) = (range.height() as usize, range.width() as usize);
+        let data = self.range_values(sheet, range);
+        let v = Array::new(h, w, data).map(Value::from).unwrap_or(Value::Error(CellError::Value));
+        // Only final values are shared: not while iterating (values change between passes) nor
+        // when the block took part in a circular reference (it read a `#CIRC!` in passing).
+        let cells = h.saturating_mul(w);
+        if !self.iterate && self.cycles.len() == cycles && self.area_cells.saturating_add(cells) <= MAX_AREA_CELLS {
+            self.area_cells += cells;
+            self.areas.insert(key, v.clone());
+        }
+        v
+    }
+    fn criteria_cache(&mut self) -> Option<&mut gridcraft_functions::CriteriaCache> {
+        if self.iterate { None } else { Some(&mut self.criteria) }
     }
     fn visit_range(&mut self, sheet: usize, range: RangeRef, f: &mut dyn FnMut(&Value) -> bool) -> bool {
         let wb = self.wb;
@@ -1267,6 +1312,137 @@ pub(crate) mod tests {
         let small = best(5_000);
         let large = best(20_000);
         assert!(large < small * 8 + Duration::from_millis(100), "5k rows {small:?}, 20k rows {large:?}");
+    }
+
+    /// A ledger on "Data" (codes in A, mixing text, numbers and numeric text; amounts in B) and, on
+    /// Sheet1, `rows` rows that each run SUMIF/COUNTIF/SUMIFS/VLOOKUP over the whole columns with
+    /// their own code — the shape of a stock workbook (items × transactions).
+    fn ledger(entries: u32, rows: u32) -> Workbook {
+        let mut wb = Workbook::new();
+        wb.sheets.push(std::sync::Arc::new(gridcraft_model::Sheet::new("Data")));
+        let code = |i: u32| match i % 4 {
+            0 => Value::from(format!("C{}", i % 37)),
+            1 => Value::from(format!("c{}", i % 37)),
+            2 => Value::Number(f64::from(i % 37)),
+            _ => Value::from(format!("{}", i % 37)),
+        };
+        if let Some(sh) = wb.sheet_mut(1) {
+            for i in 0..entries {
+                sh.cells.set(CellRef::new(i, 0), Cell::value(code(i)));
+                sh.cells.set(CellRef::new(i, 1), Cell::value(Value::Number(f64::from(i))));
+            }
+        }
+        if let Some(sh) = wb.sheet_mut(0) {
+            for r in 0..rows {
+                let n = r + 1;
+                sh.cells.set(CellRef::new(r, 0), Cell::value(code(r)));
+                for (c, f) in [
+                    "=SUMIF(Data!A:A,A{n},Data!B:B)",
+                    "=COUNTIF(Data!A:A,A{n})",
+                    "=SUMIFS(Data!B:B,Data!A:A,A{n},Data!B:B,\">100\")",
+                    "=IFERROR(VLOOKUP(A{n},Data!A:B,2,FALSE),-1)",
+                    "=COUNTIF(Data!A:A,\"<>\"&A{n})",
+                ]
+                .iter()
+                .enumerate()
+                {
+                    let f = f.replace("{n}", &n.to_string());
+                    sh.cells.set(CellRef::new(r, 1 + c as u32), Cell::formula(Formula::new(&f)));
+                }
+            }
+        }
+        wb
+    }
+
+    #[test]
+    fn criteria_formulas_sharing_a_range_match_a_scan() {
+        // The shared arrays and equality indexes give what scanning each range gives.
+        let (entries, rows) = (300u32, 80u32);
+        let mut wb = ledger(entries, rows);
+        Calc::new().recalc_all(&mut wb);
+        let (data, sh) = (wb.sheet(1).unwrap(), wb.sheet(0).unwrap());
+        for r in 0..rows {
+            let code = sh.value(CellRef::new(r, 0));
+            let crit = criterion_eq(&code);
+            let hits: Vec<u32> = (0..entries).filter(|i| crit(&data.value(CellRef::new(*i, 0)))).collect();
+            let sum: f64 = hits.iter().map(|i| f64::from(*i)).sum();
+            let big: f64 = hits.iter().filter(|i| **i > 100).map(|i| f64::from(*i)).sum();
+            // VLOOKUP matches type too: the number 5 doesn't find the text "5".
+            let same = |v: &Value| match (&code, v) {
+                (Value::Number(a), Value::Number(b)) => a == b,
+                (Value::Text(a), Value::Text(b)) => a.to_lowercase() == b.to_lowercase(),
+                _ => false,
+            };
+            let first = (0..entries).find(|i| same(&data.value(CellRef::new(*i, 0)))).map_or(-1.0, f64::from);
+            let want = [sum, hits.len() as f64, big, first, f64::from(entries) - hits.len() as f64];
+            for (c, w) in want.iter().enumerate() {
+                assert_eq!(sh.value(CellRef::new(r, 1 + c as u32)), Value::Number(*w), "row {} col {c}", r + 1);
+            }
+        }
+    }
+
+    /// Excel's `=` criterion match (numbers, numeric text, case-insensitive text), for the test.
+    fn criterion_eq(want: &Value) -> impl Fn(&Value) -> bool {
+        let want = want.clone();
+        move |v: &Value| match (&want, v) {
+            (Value::Number(a), Value::Number(b)) => a == b,
+            (Value::Number(a), Value::Text(t)) => t.parse::<f64>().ok() == Some(*a),
+            (Value::Text(a), Value::Text(b)) => match a.parse::<f64>() {
+                Ok(n) => b.parse::<f64>().ok() == Some(n),
+                Err(_) => a.to_lowercase() == b.to_lowercase(),
+            },
+            (Value::Text(a), Value::Number(b)) => a.parse::<f64>().ok() == Some(*b),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn shared_range_arrays_see_spills_and_cycles() {
+        // A1 reads C1:C3 before B1's array spills into it; A5 after. Both end up seeing the spill.
+        let mut wb = Workbook::new();
+        if let Some(sh) = wb.sheet_mut(0) {
+            for (at, f) in [("A1", "=SUMPRODUCT(C1:C3)"), ("B1", "=SEQUENCE(3,2)"), ("A5", "=SUMPRODUCT(C1:C3)")] {
+                sh.cells.set(CellRef::parse(at).unwrap_or_default(), Cell::formula(Formula::new(f)));
+            }
+        }
+        Calc::new().recalc_all(&mut wb);
+        let v = |wb: &Workbook, at: &str| wb.sheet(0).map(|s| s.value(CellRef::parse(at).unwrap_or_default()));
+        assert_eq!(v(&wb, "A1"), Some(Value::Number(12.0)));
+        assert_eq!(v(&wb, "A5"), Some(Value::Number(12.0)));
+        // A block read while one of its formulas is part of a circular reference isn't shared:
+        // E1 is a loop, F1 and F2 read the block holding it.
+        let mut wb = Workbook::new();
+        if let Some(sh) = wb.sheet_mut(0) {
+            for (at, f) in [("E1", "=SUMPRODUCT(E1:E3)"), ("F1", "=COUNTIF(E1:E3,\"#CIRC!\")"), ("F2", "=COUNTIF(E1:E3,\"#CIRC!\")")] {
+                sh.cells.set(CellRef::parse(at).unwrap_or_default(), Cell::formula(Formula::new(f)));
+            }
+            sh.cells.set(CellRef::parse("E2").unwrap_or_default(), Cell::value(Value::Number(1.0)));
+        }
+        Calc::new().recalc_all(&mut wb);
+        assert_eq!(v(&wb, "F1"), v(&wb, "F2"));
+    }
+
+    #[test]
+    #[ignore = "timing-sensitive; run with --ignored in release"]
+    #[allow(clippy::disallowed_methods)]
+    fn criteria_formulas_over_shared_ranges_scale_linearly() {
+        // Thousands of SUMIFs each over the same whole columns: scanning per formula is quadratic
+        // (a 2,700 × 32,000 stock workbook took over 15 minutes to open). 4x both took 16x the
+        // time; with shared arrays and equality indexes it is ~4x. Allow 8x.
+        let time = |entries, rows| {
+            (0..3)
+                .map(|_| {
+                    let mut wb = ledger(entries, rows);
+                    let t = Instant::now();
+                    Calc::new().recalc_all(&mut wb);
+                    t.elapsed()
+                })
+                .min()
+                .unwrap_or_default()
+        };
+        let small = time(5_000, 500);
+        let large = time(20_000, 2_000);
+        assert!(large < small * 8 + Duration::from_millis(100), "5k×500 {small:?}, 20k×2000 {large:?}");
     }
 
     #[test]

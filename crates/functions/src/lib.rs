@@ -67,6 +67,7 @@ pub(crate) mod dynamic;
 pub(crate) mod engineering;
 pub(crate) mod ets;
 pub(crate) mod financial;
+pub(crate) mod index;
 pub(crate) mod info;
 pub(crate) mod lift;
 pub(crate) mod lookup;
@@ -77,6 +78,7 @@ pub(crate) mod text;
 pub(crate) mod util;
 
 pub use ets::Timeline;
+pub use index::CriteriaCache;
 pub use stat::{aggregate_values, aggregate_values_k};
 
 /// An evaluated argument. Ranges arrive as `Value::Array` (blank cells = `Value::Empty`) with
@@ -105,6 +107,10 @@ pub trait Ctx {
     fn now_serial(&self) -> f64;
     /// Uniform in [0, 1).
     fn random(&mut self) -> f64;
+    /// Equality indexes kept for the calculation pass (`None`: criteria functions scan).
+    fn criteria_cache(&mut self) -> Option<&mut CriteriaCache> {
+        None
+    }
 }
 
 pub type FnImpl = fn(&[Arg], &mut dyn Ctx) -> Value;
