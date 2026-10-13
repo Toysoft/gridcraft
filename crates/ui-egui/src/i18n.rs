@@ -64,7 +64,8 @@ impl Language {
     /// The language tag the Spelling dialog checks in: the interface language's main region, so
     /// the matching installed Hunspell dictionary (`pl_PL`, `pt_BR`) is found. `None` checks in
     /// English, as do the interfaces whose Excel spelling isn't Hunspell-based here (Chinese,
-    /// Japanese, Korean).
+    /// Japanese, Korean) and Serbian: its interface is Latin script, while `sr`/`sr_RS` Hunspell
+    /// dictionaries are Cyrillic, so picking one needs a script-aware lookup first.
     pub const fn spelling_tag(self) -> Option<&'static str> {
         match self {
             Self::Es => Some("es-ES"),
@@ -74,7 +75,7 @@ impl Language {
             Self::Cs => Some("cs-CZ"),
             Self::Fr => Some("fr-FR"),
             Self::Pl => Some("pl-PL"),
-            Self::En | Self::Zh | Self::Ja | Self::Ko => None,
+            Self::En | Self::Zh | Self::Ja | Self::Ko | Self::Sr => None,
         }
     }
 
