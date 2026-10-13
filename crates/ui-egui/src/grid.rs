@@ -1832,7 +1832,8 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
         } else if on_handle(p) && app.editor.is_none() {
             ctx.set_cursor_icon(CursorIcon::Crosshair);
             if app.grid.drag == Drag::None && !pointer.any_down() {
-                resp.clone().on_hover_text_at_pointer("Drag to fill cells. Drag from inside a cell to select a range.");
+                resp.clone()
+                    .on_hover_text_at_pointer(crate::i18n::current(&ctx).tr("Drag to fill cells. Drag from inside a cell to select a range."));
             }
         } else if in_cells && app.editor.is_none() && on_cur_border(p) {
             ctx.set_cursor_icon(CursorIcon::Move);
@@ -2192,8 +2193,13 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
             }
             Drag::ResizeCol { col, start, orig } => {
                 let w = (orig + (p.x - start) / geo.z).max(0.0);
-                app.toast =
-                    Some((format!("Width: {:.2} ({} pixels)", gridcraft_engine::cmd::format::points_to_chars(w as f64), w.round()), crate::now_ms()));
+                app.toast = Some((
+                    crate::i18n::current(&ctx).tr_with(
+                        "Width: {width} ({pixels} pixels)",
+                        &[("width", &format!("{:.2}", gridcraft_engine::cmd::format::points_to_chars(w as f64))), ("pixels", &w.round().to_string())],
+                    ),
+                    crate::now_ms(),
+                ));
                 // Inside a selection of whole columns, every selected column takes the new width
                 // (Ctrl-selected areas included); otherwise only the dragged one.
                 let cols = if sel.ranges.iter().any(|r| r.is_full_cols() && col >= r.start.col && col <= r.end.col) {
@@ -2206,7 +2212,13 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
             }
             Drag::ResizeRow { row, start, orig } => {
                 let h = (orig + (p.y - start) / geo.z).max(0.0);
-                app.toast = Some((format!("Height: {:.2} ({} pixels)", h * 0.75, h.round()), crate::now_ms()));
+                app.toast = Some((
+                    crate::i18n::current(&ctx).tr_with(
+                        "Height: {height} ({pixels} pixels)",
+                        &[("height", &format!("{:.2}", h * 0.75)), ("pixels", &h.round().to_string())],
+                    ),
+                    crate::now_ms(),
+                ));
                 let rows = if sel.ranges.iter().any(|r| r.is_full_rows() && row >= r.start.row && row <= r.end.row) {
                     sel.ranges
                         .iter()
@@ -2773,63 +2785,66 @@ fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool)
     let response = area.show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_width(230.0);
-            if ui.button("↑  Sort Ascending").clicked() {
-                let _ = app.run("data.sortAscending", json!({"column": col_to_letters(col)}));
-                close = true;
-            }
-            if ui.button("↓  Sort Descending").clicked() {
-                let _ = app.run("data.sortDescending", json!({"column": col_to_letters(col)}));
-                close = true;
-            }
-            ui.separator();
-            ui.label(egui::RichText::new("Filter").strong());
-            let mut checks: Vec<(String, bool)> = ui.ctx().data_mut(|d| d.get_temp::<Vec<(String, bool)>>(key)).unwrap_or(values.clone());
-            // A search narrows the list; Select All and Apply then only cover the matches.
-            let mut search: String = ui.ctx().data_mut(|d| d.get_temp(search_key)).unwrap_or_default();
-            let field = ui.add(egui::TextEdit::singleline(&mut search).hint_text("Search").desired_width(f32::INFINITY));
-            if !was_open {
-                field.request_focus();
-            }
-            let needle = search.trim().to_lowercase();
-            let matches = |v: &str| needle.is_empty() || v.to_lowercase().contains(&needle);
-            let all = checks.iter().filter(|(v, _)| matches(v)).all(|(_, b)| *b);
-            let mut all_new = all;
-            let label = if needle.is_empty() { "(Select All)" } else { "(Select All Search Results)" };
-            if ui.checkbox(&mut all_new, label).changed() {
-                for c in checks.iter_mut().filter(|(v, _)| matches(v)) {
-                    c.1 = all_new;
-                }
-            }
-            // Full width: shrunk to the longest value, the scroll bar sat mid-menu and the wheel only
-            // worked over the values themselves (#432).
-            egui::ScrollArea::vertical().max_height(220.0).auto_shrink([false, true]).show(ui, |ui| {
-                for (v, on) in checks.iter_mut().filter(|(v, _)| matches(v)) {
-                    ui.checkbox(on, v.as_str());
-                }
-            });
-            ui.ctx().data_mut(|d| {
-                d.insert_temp(key, checks.clone());
-                d.insert_temp(search_key, search.clone());
-            });
-            let checks: Vec<(String, bool)> = checks.iter().map(|(v, on)| (v.clone(), *on && matches(v))).collect();
-            ui.separator();
-            ui.horizontal(|ui| {
-                if ui.button("Clear Filter").clicked() {
-                    let _ = app.run("data.filterBy", json!({"column": col_to_letters(col), "clear": true}));
+            crate::rtl::root(ui, |ui| {
+                let lang = crate::i18n::current(ui.ctx());
+                if ui.button(format!("↑  {}", lang.tr("Sort Ascending"))).clicked() {
+                    let _ = app.run("data.sortAscending", json!({"column": col_to_letters(col)}));
                     close = true;
                 }
-                if ui.button("Apply").clicked() {
-                    let blanks = checks.iter().any(|(v, on)| v == "(Blanks)" && *on);
-                    let vals: Vec<String> = checks.iter().filter(|(v, on)| *on && v != "(Blanks)").map(|(v, _)| v.clone()).collect();
-                    let p = if checks.iter().all(|(_, b)| *b) {
-                        json!({"column": col_to_letters(col), "clear": true})
-                    } else {
-                        json!({"column": col_to_letters(col), "values": vals, "blanks": blanks})
-                    };
-                    let _ = app.run("data.filterBy", p);
+                if ui.button(format!("↓  {}", lang.tr("Sort Descending"))).clicked() {
+                    let _ = app.run("data.sortDescending", json!({"column": col_to_letters(col)}));
                     close = true;
                 }
-            });
+                ui.separator();
+                ui.label(egui::RichText::new(lang.tr("Filter")).strong());
+                let mut checks: Vec<(String, bool)> = ui.ctx().data_mut(|d| d.get_temp::<Vec<(String, bool)>>(key)).unwrap_or(values.clone());
+                // A search narrows the list; Select All and Apply then only cover the matches.
+                let mut search: String = ui.ctx().data_mut(|d| d.get_temp(search_key)).unwrap_or_default();
+                let field = ui.add(egui::TextEdit::singleline(&mut search).hint_text(lang.tr("Search")).desired_width(f32::INFINITY));
+                if !was_open {
+                    field.request_focus();
+                }
+                let needle = search.trim().to_lowercase();
+                let matches = |v: &str| needle.is_empty() || v.to_lowercase().contains(&needle);
+                let all = checks.iter().filter(|(v, _)| matches(v)).all(|(_, b)| *b);
+                let mut all_new = all;
+                let label = lang.tr(if needle.is_empty() { "(Select All)" } else { "(Select All Search Results)" });
+                if crate::rtl::checkbox(ui, &mut all_new, label).changed() {
+                    for c in checks.iter_mut().filter(|(v, _)| matches(v)) {
+                        c.1 = all_new;
+                    }
+                }
+                // Full width: shrunk to the longest value, the scroll bar sat mid-menu and the wheel only
+                // worked over the values themselves (#432).
+                egui::ScrollArea::vertical().max_height(220.0).auto_shrink([false, true]).show(ui, |ui| {
+                    for (v, on) in checks.iter_mut().filter(|(v, _)| matches(v)) {
+                        crate::rtl::checkbox(ui, on, v.as_str());
+                    }
+                });
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(key, checks.clone());
+                    d.insert_temp(search_key, search.clone());
+                });
+                let checks: Vec<(String, bool)> = checks.iter().map(|(v, on)| (v.clone(), *on && matches(v))).collect();
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button(lang.tr("Clear Filter")).clicked() {
+                        let _ = app.run("data.filterBy", json!({"column": col_to_letters(col), "clear": true}));
+                        close = true;
+                    }
+                    if ui.button(lang.tr("Apply")).clicked() {
+                        let blanks = checks.iter().any(|(v, on)| v == "(Blanks)" && *on);
+                        let vals: Vec<String> = checks.iter().filter(|(v, on)| *on && v != "(Blanks)").map(|(v, _)| v.clone()).collect();
+                        let p = if checks.iter().all(|(_, b)| *b) {
+                            json!({"column": col_to_letters(col), "clear": true})
+                        } else {
+                            json!({"column": col_to_letters(col), "values": vals, "blanks": blanks})
+                        };
+                        let _ = app.run("data.filterBy", p);
+                        close = true;
+                    }
+                });
+            })
         });
     });
     if close || popup_dismissed(&response.response, was_open) {
@@ -2846,71 +2861,74 @@ fn context_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
     let mut close = false;
     let resp = egui::Area::new(egui::Id::new("cell_context")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
-            ui.set_min_width(200.0);
-            let insert_copied = insert_copied_item(app);
-            let mut items: Vec<(&str, &str)> = vec![
-                ("Cut", "edit.cut"),
-                ("Copy", "edit.copy"),
-                ("Paste", "edit.paste"),
-                ("Paste Special…", "ui:pasteSpecial"),
-                ("-", ""),
-                ("Insert…", "ui:insertCells"),
-                ("Delete…", "ui:deleteCells"),
-                ("Clear Contents", "edit.clearContents"),
-                ("-", ""),
-                ("Filter by Selected Cell's Value", "ui:filterValue"),
-                ("Sort A to Z", "data.sortAscending"),
-                ("Sort Z to A", "data.sortDescending"),
-                ("-", ""),
-                ("New Comment", "ui:newComment"),
-                ("New Note", "ui:newNote"),
-                ("-", ""),
-                ("Format Cells…", "ui:formatCells"),
-                ("Pick From Drop-down List…", "ui:pickList"),
-                ("Define Name…", "ui:defineName"),
-                ("Link…", "ui:insertLink"),
-            ];
-            if let Some(item) = insert_copied {
-                items.insert(6, item);
-            }
-            let lang = crate::i18n::current(ui.ctx());
-            for (label, id) in items {
-                if label == "-" {
-                    ui.separator();
-                    continue;
+            // The mirrored column hugs the right edge of the room it is given: give it the menu's width.
+            ui.set_width(200.0);
+            crate::rtl::root(ui, |ui| {
+                let insert_copied = insert_copied_item(app);
+                let mut items: Vec<(&str, &str)> = vec![
+                    ("Cut", "edit.cut"),
+                    ("Copy", "edit.copy"),
+                    ("Paste", "edit.paste"),
+                    ("Paste Special…", "ui:pasteSpecial"),
+                    ("-", ""),
+                    ("Insert…", "ui:insertCells"),
+                    ("Delete…", "ui:deleteCells"),
+                    ("Clear Contents", "edit.clearContents"),
+                    ("-", ""),
+                    ("Filter by Selected Cell's Value", "ui:filterValue"),
+                    ("Sort A to Z", "data.sortAscending"),
+                    ("Sort Z to A", "data.sortDescending"),
+                    ("-", ""),
+                    ("New Comment", "ui:newComment"),
+                    ("New Note", "ui:newNote"),
+                    ("-", ""),
+                    ("Format Cells…", "ui:formatCells"),
+                    ("Pick From Drop-down List…", "ui:pickList"),
+                    ("Define Name…", "ui:defineName"),
+                    ("Link…", "ui:insertLink"),
+                ];
+                if let Some(item) = insert_copied {
+                    items.insert(6, item);
                 }
-                if ui.add(egui::Button::new(lang.tr(label)).frame(false).min_size(vec2(190.0, 20.0))).clicked() {
-                    close = true;
-                    match id {
-                        "ui:pasteSpecial" => app.open_dialog("pasteSpecial", json!({})),
-                        "ui:insertPaste" => app.open_dialog("insertPaste", json!({})),
-                        "ui:insertCells" => app.open_dialog("insertCells", json!({})),
-                        "ui:deleteCells" => app.open_dialog("deleteCells", json!({})),
-                        "ui:formatCells" => app.open_dialog("formatCells", json!({})),
-                        "ui:newComment" => app.open_dialog("comment", json!({"threaded": true})),
-                        "ui:newNote" => app.open_dialog("comment", json!({"threaded": false})),
-                        "ui:defineName" => app.open_dialog("defineName", json!({})),
-                        "ui:insertLink" => app.open_dialog("insertLink", json!({})),
-                        "ui:pickList" => app.open_dialog("pickList", json!({})),
-                        "ui:filterValue" => {
-                            if let Some(d) = app.session.active() {
-                                let a = d.selection.active;
-                                let text = d.wb.active().map(|sh| gridcraft_engine::display::cell_text(&d.wb, sh, a)).unwrap_or_default();
-                                let has = d.wb.active().is_some_and(|sh| sh.autofilter.is_some());
-                                if !has {
-                                    let _ = app.run("data.filter", json!({}));
+                let lang = crate::i18n::current(ui.ctx());
+                for (label, id) in items {
+                    if label == "-" {
+                        ui.separator();
+                        continue;
+                    }
+                    if ui.add(crate::rtl::item(ui, lang.tr(label), vec2(190.0, 20.0))).clicked() {
+                        close = true;
+                        match id {
+                            "ui:pasteSpecial" => app.open_dialog("pasteSpecial", json!({})),
+                            "ui:insertPaste" => app.open_dialog("insertPaste", json!({})),
+                            "ui:insertCells" => app.open_dialog("insertCells", json!({})),
+                            "ui:deleteCells" => app.open_dialog("deleteCells", json!({})),
+                            "ui:formatCells" => app.open_dialog("formatCells", json!({})),
+                            "ui:newComment" => app.open_dialog("comment", json!({"threaded": true})),
+                            "ui:newNote" => app.open_dialog("comment", json!({"threaded": false})),
+                            "ui:defineName" => app.open_dialog("defineName", json!({})),
+                            "ui:insertLink" => app.open_dialog("insertLink", json!({})),
+                            "ui:pickList" => app.open_dialog("pickList", json!({})),
+                            "ui:filterValue" => {
+                                if let Some(d) = app.session.active() {
+                                    let a = d.selection.active;
+                                    let text = d.wb.active().map(|sh| gridcraft_engine::display::cell_text(&d.wb, sh, a)).unwrap_or_default();
+                                    let has = d.wb.active().is_some_and(|sh| sh.autofilter.is_some());
+                                    if !has {
+                                        let _ = app.run("data.filter", json!({}));
+                                    }
+                                    app.run_or_alert("data.filterBy", json!({"column": col_to_letters(a.col), "values": [text]}));
                                 }
-                                app.run_or_alert("data.filterBy", json!({"column": col_to_letters(a.col), "values": [text]}));
                             }
+                            "edit.copy" | "edit.cut" => {
+                                app.copy_to_clipboard(ui.ctx(), id);
+                            }
+                            "edit.paste" => app.paste_from_clipboard(),
+                            other => app.run_or_alert(other, json!({})),
                         }
-                        "edit.copy" | "edit.cut" => {
-                            app.copy_to_clipboard(ui.ctx(), id);
-                        }
-                        "edit.paste" => app.paste_from_clipboard(),
-                        other => app.run_or_alert(other, json!({})),
                     }
                 }
-            }
+            })
         });
     });
     if close
@@ -3106,65 +3124,68 @@ fn header_menu(app: &mut SheetApp, ui: &mut egui::Ui, was_open: bool) {
     let mut close = false;
     let response = egui::Area::new(egui::Id::new("header_menu")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
-            ui.set_min_width(190.0);
-            let insert_copied = insert_copied_item(app);
-            let mut items: Vec<(&str, &str)> = if rows {
-                vec![
-                    ("Cut", "edit.cut"),
-                    ("Copy", "edit.copy"),
-                    ("Paste", "edit.paste"),
-                    ("-", ""),
-                    ("Insert", "home.insertRows"),
-                    ("Delete", "home.deleteRows"),
-                    ("Clear Contents", "edit.clearContents"),
-                    ("-", ""),
-                    ("Row Height…", "ui:rowHeight"),
-                    ("AutoFit Row Height", "home.autofitRowHeight"),
-                    ("Hide", "home.hideRows"),
-                    ("Unhide", "home.unhideRows"),
-                    ("Group", "data.group"),
-                ]
-            } else {
-                vec![
-                    ("Cut", "edit.cut"),
-                    ("Copy", "edit.copy"),
-                    ("Paste", "edit.paste"),
-                    ("-", ""),
-                    ("Insert", "home.insertColumns"),
-                    ("Delete", "home.deleteColumns"),
-                    ("Clear Contents", "edit.clearContents"),
-                    ("-", ""),
-                    ("Column Width…", "ui:columnWidth"),
-                    ("AutoFit Column Width", "home.autofitColumnWidth"),
-                    ("Hide", "home.hideColumns"),
-                    ("Unhide", "home.unhideColumns"),
-                    ("Sort A to Z", "data.sortAscending"),
-                    ("Group", "data.group"),
-                ]
-            };
-            if let Some(item) = insert_copied {
-                items.insert(5, item);
-            }
-            let lang = crate::i18n::current(ui.ctx());
-            for (label, id) in items {
-                if label == "-" {
-                    ui.separator();
-                    continue;
+            // The mirrored column hugs the right edge of the room it is given: give it the menu's width.
+            ui.set_width(190.0);
+            crate::rtl::root(ui, |ui| {
+                let insert_copied = insert_copied_item(app);
+                let mut items: Vec<(&str, &str)> = if rows {
+                    vec![
+                        ("Cut", "edit.cut"),
+                        ("Copy", "edit.copy"),
+                        ("Paste", "edit.paste"),
+                        ("-", ""),
+                        ("Insert", "home.insertRows"),
+                        ("Delete", "home.deleteRows"),
+                        ("Clear Contents", "edit.clearContents"),
+                        ("-", ""),
+                        ("Row Height…", "ui:rowHeight"),
+                        ("AutoFit Row Height", "home.autofitRowHeight"),
+                        ("Hide", "home.hideRows"),
+                        ("Unhide", "home.unhideRows"),
+                        ("Group", "data.group"),
+                    ]
+                } else {
+                    vec![
+                        ("Cut", "edit.cut"),
+                        ("Copy", "edit.copy"),
+                        ("Paste", "edit.paste"),
+                        ("-", ""),
+                        ("Insert", "home.insertColumns"),
+                        ("Delete", "home.deleteColumns"),
+                        ("Clear Contents", "edit.clearContents"),
+                        ("-", ""),
+                        ("Column Width…", "ui:columnWidth"),
+                        ("AutoFit Column Width", "home.autofitColumnWidth"),
+                        ("Hide", "home.hideColumns"),
+                        ("Unhide", "home.unhideColumns"),
+                        ("Sort A to Z", "data.sortAscending"),
+                        ("Group", "data.group"),
+                    ]
+                };
+                if let Some(item) = insert_copied {
+                    items.insert(5, item);
                 }
-                if ui.add(egui::Button::new(lang.tr(label)).frame(false).min_size(vec2(180.0, 20.0))).clicked() {
-                    close = true;
-                    match id {
-                        "ui:insertPaste" => app.open_dialog("insertPaste", json!({})),
-                        "ui:rowHeight" => app.open_dialog("rowHeight", json!({})),
-                        "ui:columnWidth" => app.open_dialog("columnWidth", json!({})),
-                        "edit.copy" | "edit.cut" => {
-                            app.copy_to_clipboard(ui.ctx(), id);
+                let lang = crate::i18n::current(ui.ctx());
+                for (label, id) in items {
+                    if label == "-" {
+                        ui.separator();
+                        continue;
+                    }
+                    if ui.add(crate::rtl::item(ui, lang.tr(label), vec2(180.0, 20.0))).clicked() {
+                        close = true;
+                        match id {
+                            "ui:insertPaste" => app.open_dialog("insertPaste", json!({})),
+                            "ui:rowHeight" => app.open_dialog("rowHeight", json!({})),
+                            "ui:columnWidth" => app.open_dialog("columnWidth", json!({})),
+                            "edit.copy" | "edit.cut" => {
+                                app.copy_to_clipboard(ui.ctx(), id);
+                            }
+                            "edit.paste" => app.paste_from_clipboard(),
+                            other => app.run_or_alert(other, json!({})),
                         }
-                        "edit.paste" => app.paste_from_clipboard(),
-                        other => app.run_or_alert(other, json!({})),
                     }
                 }
-            }
+            })
         });
     });
     if close || popup_dismissed(&response.response, was_open) {

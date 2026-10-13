@@ -58,19 +58,18 @@ pub fn big_button(ui: &mut Ui, icon: Icon, label: &str, tip: &str, dropdown: boo
         ui.painter().rect_filled(rect, 5.0, t.hover);
     }
     icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.center().x, rect.top() + 21.0), vec2(30.0, 30.0)), icon, t.text);
+    let rtl = crate::rtl::on(ui.ctx());
     for (i, line) in lines.iter().enumerate() {
         let has_arrow = dropdown && i + 1 == lines.len();
         let line_w = line.size().x + if has_arrow { arrow_space } else { 0.0 };
         let left = rect.center().x - line_w / 2.0;
         let y = rect.top() + 46.0 + i as f32 * 13.0;
-        ui.painter().galley(pos2(left, y - line.size().y / 2.0), line.clone(), t.text);
+        // The arrow follows the text: at its left end when the window is mirrored.
+        let text_left = if rtl && has_arrow { left + arrow_space } else { left };
+        ui.painter().galley(pos2(text_left, y - line.size().y / 2.0), line.clone(), t.text);
         if has_arrow {
-            icons::paint(
-                ui.painter(),
-                Rect::from_center_size(pos2(left + line_w - arrow_size / 2.0, y + 1.0), vec2(arrow_size, arrow_size)),
-                Icon::Chevron,
-                t.text_dim,
-            );
+            let arrow_x = if rtl { left + arrow_size / 2.0 } else { left + line_w - arrow_size / 2.0 };
+            icons::paint(ui.painter(), Rect::from_center_size(pos2(arrow_x, y + 1.0), vec2(arrow_size, arrow_size)), Icon::Chevron, t.text_dim);
         }
     }
     resp.on_hover_text(tr(ui, tip))
@@ -89,14 +88,15 @@ pub fn small_button(ui: &mut Ui, icon: Icon, label: &str, tip: &str, dropdown: b
     } else if resp.hovered() {
         ui.painter().rect_filled(rect, 4.0, t.hover);
     }
-    icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 12.0, rect.center().y), vec2(16.0, 16.0)), icon, t.text);
+    let rtl = crate::rtl::on(ui.ctx());
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(crate::rtl::lead_x(rtl, rect, 12.0), rect.center().y), vec2(16.0, 16.0)), icon, t.text);
     if !label.is_empty() {
-        ui.painter().text(pos2(rect.left() + 24.0, rect.center().y), Align2::LEFT_CENTER, label, font, t.text);
+        ui.painter().text(pos2(crate::rtl::lead_x(rtl, rect, 24.0), rect.center().y), crate::rtl::lead_center(rtl), label, font, t.text);
     }
     if dropdown {
         icons::paint(
             ui.painter(),
-            Rect::from_center_size(pos2(rect.right() - 7.0, rect.center().y + 1.0), vec2(10.0, 10.0)),
+            Rect::from_center_size(pos2(crate::rtl::trail_x(rtl, rect, 7.0), rect.center().y + 1.0), vec2(10.0, 10.0)),
             Icon::Chevron,
             t.text_dim,
         );
@@ -109,17 +109,23 @@ pub fn small_button(ui: &mut Ui, icon: Icon, label: &str, tip: &str, dropdown: b
 pub fn split_button(ui: &mut Ui, icon: Icon, accent: Option<Color32>, tip: &str) -> (bool, Response) {
     let t = Tokens::get(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(38.0, 24.0), Sense::hover());
-    let main = Rect::from_min_size(rect.min, vec2(25.0, 24.0));
-    let arrow = Rect::from_min_max(pos2(main.right(), rect.top()), rect.max);
+    // Mirrored, the arrow is at the left and the main part at the right.
+    let rtl = crate::rtl::on(ui.ctx());
+    let (main, arrow) = if rtl {
+        (Rect::from_min_max(pos2(rect.right() - 25.0, rect.top()), rect.max), Rect::from_min_max(rect.min, pos2(rect.right() - 25.0, rect.bottom())))
+    } else {
+        (Rect::from_min_size(rect.min, vec2(25.0, 24.0)), Rect::from_min_max(pos2(rect.left() + 25.0, rect.top()), rect.max))
+    };
+    let divider_x = if rtl { main.left() } else { main.right() };
     let m = ui.interact(main, ui.id().with((tip, "main")), Sense::click());
     let a = ui.interact(arrow, ui.id().with((tip, "arrow")), Sense::click());
     if m.hovered() || a.hovered() {
         ui.painter().rect_filled(rect, 4.0, t.hover);
-        ui.painter().line_segment([pos2(main.right(), rect.top() + 3.0), pos2(main.right(), rect.bottom() - 3.0)], Stroke::new(1.0, t.separator));
+        ui.painter().line_segment([pos2(divider_x, rect.top() + 3.0), pos2(divider_x, rect.bottom() - 3.0)], Stroke::new(1.0, t.separator));
     }
     icons::paint(ui.painter(), Rect::from_center_size(main.center() - vec2(0.0, 2.0), vec2(16.0, 16.0)), icon, t.text);
     if let Some(c) = accent {
-        ui.painter().rect_filled(Rect::from_min_size(pos2(main.left() + 4.0, main.bottom() - 5.0), vec2(17.0, 3.0)), 0.0, c);
+        ui.painter().rect_filled(Rect::from_center_size(pos2(main.center().x, main.bottom() - 3.5), vec2(17.0, 3.0)), 0.0, c);
     }
     icons::paint(ui.painter(), Rect::from_center_size(arrow.center(), vec2(10.0, 10.0)), Icon::Chevron, t.text_dim);
     (m.on_hover_text(tr(ui, tip)).clicked(), a)
@@ -222,13 +228,13 @@ pub fn color_palette(ui: &mut Ui, theme_colors: &[u32; 12], none_label: &str) ->
         });
         ui.data_mut(|d| d.remove_temp::<Option<(usize, usize)>>(pal_id));
     }
-    if ui.button(none_label).clicked() {
+    if ui.button(tr(ui, none_label)).clicked() {
         picked = Some("none".to_string());
     }
-    ui.label(egui::RichText::new("Theme Colors").small());
+    ui.label(egui::RichText::new(tr(ui, "Theme Colors")).small());
     let order = [0usize, 1, 2, 3, 4, 5, 6, 7, 8, 9];
     let tints = [0.0f64, 0.8, 0.6, 0.4, -0.25, -0.5];
-    egui::Grid::new(ui.id().with("theme_grid")).spacing(vec2(2.0, 2.0)).show(ui, |ui| {
+    crate::rtl::grid(ui, egui::Grid::new(ui.id().with("theme_grid")).spacing(vec2(2.0, 2.0)), |ui| {
         for (row, tint) in tints.iter().enumerate() {
             for (col, &i) in order.iter().enumerate() {
                 let base = theme_colors.get(i).copied().unwrap_or(0);
@@ -248,23 +254,25 @@ pub fn color_palette(ui: &mut Ui, theme_colors: &[u32; 12], none_label: &str) ->
             ui.end_row();
         }
     });
-    ui.label(egui::RichText::new("Standard Colors").small());
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        for (col, hex) in std_hex.iter().enumerate() {
-            let c = gridcraft_engine::model::Color::from_hex(hex)
-                .and_then(|c| c.resolve(&Default::default()))
-                .map(theme::color32)
-                .unwrap_or(Color32::BLACK);
-            let (r, resp) = ui.allocate_exact_size(vec2(16.0, 14.0), Sense::click());
-            ui.painter().rect_filled(r, 1.0, c);
-            if resp.hovered() || cur == Some((ROWS - 1, col)) {
-                ui.painter().rect_stroke(r.expand(1.0), 1.0, Stroke::new(1.5, Color32::from_rgb(0xE8, 0x7D, 0x2B)), StrokeKind::Outside);
+    ui.label(egui::RichText::new(tr(ui, "Standard Colors")).small());
+    crate::rtl::island(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            for (col, hex) in std_hex.iter().enumerate() {
+                let c = gridcraft_engine::model::Color::from_hex(hex)
+                    .and_then(|c| c.resolve(&Default::default()))
+                    .map(theme::color32)
+                    .unwrap_or(Color32::BLACK);
+                let (r, resp) = ui.allocate_exact_size(vec2(16.0, 14.0), Sense::click());
+                ui.painter().rect_filled(r, 1.0, c);
+                if resp.hovered() || cur == Some((ROWS - 1, col)) {
+                    ui.painter().rect_stroke(r.expand(1.0), 1.0, Stroke::new(1.5, Color32::from_rgb(0xE8, 0x7D, 0x2B)), StrokeKind::Outside);
+                }
+                if resp.clicked() {
+                    picked = Some(hex.to_string());
+                }
             }
-            if resp.clicked() {
-                picked = Some(hex.to_string());
-            }
-        }
+        })
     });
     ui.data_mut(|d| d.insert_temp(pal_id, cur));
     picked
@@ -275,21 +283,25 @@ pub fn message_box(app: &mut SheetApp, ctx: &egui::Context) {
     let mut close = false;
     egui::Modal::new(egui::Id::new("message_box")).show(ctx, |ui| {
         ui.set_width(380.0);
-        ui.horizontal(|ui| {
-            let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
-            ui.painter().circle_filled(r.center(), 16.0, Color32::from_rgb(0xF2, 0xC3, 0x2E));
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, "!", theme::ui_bold(20.0), Color32::WHITE);
-            ui.vertical(|ui| {
-                ui.label(egui::RichText::new(title).strong());
-                ui.add(egui::Label::new(msg).wrap());
+        crate::rtl::root(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
+                ui.painter().circle_filled(r.center(), 16.0, Color32::from_rgb(0xF2, 0xC3, 0x2E));
+                ui.painter().text(r.center(), Align2::CENTER_CENTER, "!", theme::ui_bold(20.0), Color32::WHITE);
+                crate::rtl::vertical(ui, |ui| {
+                    ui.label(egui::RichText::new(tr(ui, &title)).strong());
+                    ui.add(egui::Label::new(tr(ui, &msg)).wrap());
+                });
             });
-        });
-        ui.add_space(8.0);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("  OK  ").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape)) {
-                close = true;
-            }
-        });
+            ui.add_space(8.0);
+            ui.with_layout(crate::rtl::far_side(ui, egui::Align::Center), |ui| {
+                if ui.button(format!("  {}  ", tr(ui, "OK"))).clicked()
+                    || ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape))
+                {
+                    close = true;
+                }
+            });
+        })
     });
     if close {
         app.message = None;
@@ -308,7 +320,7 @@ pub fn toast(app: &mut SheetApp, ctx: &egui::Context) {
         |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_max_width(320.0);
-                ui.label(msg);
+                ui.label(tr(ui, &msg));
             });
         },
     );
@@ -327,33 +339,35 @@ pub fn notice_bar(app: &mut SheetApp, ui: &mut Ui) {
     let mut dismiss = false;
     let mut action: Option<(String, String)> = None;
     egui::Panel::top("notice_bar").frame(egui::Frame::NONE.fill(bg).inner_margin(egui::Margin::symmetric(12, 0))).show(ui, |ui| {
-        // Bottom border as a 1px strip spanning the bar.
-        let bar = ui.max_rect();
-        ui.painter().rect_stroke(bar, 0.0, Stroke::new(1.0, border), StrokeKind::Inside);
-        ui.horizontal_centered(|ui| {
-            let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
-            icons::paint(
-                ui.painter(),
-                r,
-                match notice.kind {
-                    crate::NoticeKind::Warning => Icon::Lock,
-                    crate::NoticeKind::Info => Icon::Note,
-                },
-                border,
-            );
-            ui.add_space(6.0);
-            ui.label(egui::RichText::new(&notice.text).font(theme::ui_font(12.5)).color(t.text));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if icon_button(ui, Icon::Close, t.text_dim, "Dismiss", vec2(20.0, 20.0)).clicked() {
-                    dismiss = true;
-                }
-                if let Some((label, dialog)) = &notice.action
-                    && ui.button(egui::RichText::new(label).font(theme::ui_font(12.5))).clicked()
-                {
-                    action = Some((label.clone(), dialog.clone()));
-                }
+        crate::rtl::root(ui, |ui| {
+            // Bottom border as a 1px strip spanning the bar.
+            let bar = ui.max_rect();
+            ui.painter().rect_stroke(bar, 0.0, Stroke::new(1.0, border), StrokeKind::Inside);
+            ui.horizontal_centered(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                icons::paint(
+                    ui.painter(),
+                    r,
+                    match notice.kind {
+                        crate::NoticeKind::Warning => Icon::Lock,
+                        crate::NoticeKind::Info => Icon::Note,
+                    },
+                    border,
+                );
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(tr(ui, &notice.text)).font(theme::ui_font(12.5)).color(t.text));
+                ui.with_layout(crate::rtl::far_side(ui, egui::Align::Center), |ui| {
+                    if icon_button(ui, Icon::Close, t.text_dim, "Dismiss", vec2(20.0, 20.0)).clicked() {
+                        dismiss = true;
+                    }
+                    if let Some((label, dialog)) = &notice.action
+                        && ui.button(egui::RichText::new(tr(ui, label)).font(theme::ui_font(12.5))).clicked()
+                    {
+                        action = Some((label.clone(), dialog.clone()));
+                    }
+                });
             });
-        });
+        })
     });
     if let Some((_, dialog)) = action {
         app.open_dialog(&dialog, serde_json::json!({}));

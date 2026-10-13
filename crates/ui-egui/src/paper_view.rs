@@ -851,7 +851,7 @@ pub fn ribbon_tab(app: &mut SheetApp, ui: &mut egui::Ui) {
     // Header & Footer presets (shown with sample values, as the result will read).
     for (label, part) in [("Header", false), ("Footer", true)] {
         let r = big_button(ui, if part { Icon::Footer } else { Icon::Header }, label, label, true);
-        egui::Popup::menu(&r).show(|ui| {
+        crate::rtl::menu(&r).show(|ui| {
             let presets: [(String, &str); 7] = [
                 (tr(app, "(none)").to_string(), ""),
                 ("Page 1".into(), "&CPage &P"),
@@ -898,12 +898,12 @@ pub fn ribbon_tab(app: &mut SheetApp, ui: &mut egui::Ui) {
         .active()
         .and_then(|d| d.wb.sheet(app.grid.hf_edit.as_ref().map_or(0, |e| e.sheet)).map(|s| (s.print.different_first, s.print.different_odd_even)))
         .unwrap_or_default();
-    ui.vertical(|ui| {
+    crate::rtl::vertical(ui, |ui| {
         let (mut f, mut o) = (first, odd_even);
-        if ui.checkbox(&mut f, tr(app, "Different First Page")).changed() {
+        if crate::rtl::checkbox(ui, &mut f, tr(app, "Different First Page")).changed() {
             set_option(app, "differentFirst", f);
         }
-        if ui.checkbox(&mut o, tr(app, "Different Odd & Even Pages")).changed() {
+        if crate::rtl::checkbox(ui, &mut o, tr(app, "Different Odd & Even Pages")).changed() {
             set_option(app, "differentOddEven", o);
         }
     });

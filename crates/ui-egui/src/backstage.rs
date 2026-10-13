@@ -154,10 +154,12 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let t = Tokens::get(&ctx);
     let lang = app.ui.language;
     let mut out = Outcome::default();
+    let rtl = crate::rtl::on(&ctx);
     let (nav_bg, nav_text, nav_sel) =
         if t.dark { (t.accent_soft, t.text, Color32::from_white_alpha(30)) } else { (t.accent, Color32::WHITE, Color32::from_black_alpha(46)) };
-    egui::Panel::left("backstage_nav")
-        .exact_size(NAV_W)
+    // The navigation is on the side reading starts from.
+    let nav = if rtl { egui::Panel::right("backstage_nav") } else { egui::Panel::left("backstage_nav") };
+    nav.exact_size(NAV_W)
         .resizable(false)
         .frame(egui::Frame::NONE.fill(nav_bg).inner_margin(egui::Margin { left: 0, right: 0, top: 10, bottom: 10 }))
         .show(ui, |ui| {
@@ -190,7 +192,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                     out.close = true;
                 }
             }
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            ui.with_layout(egui::Layout::bottom_up(if rtl { egui::Align::Max } else { egui::Align::Min }), |ui| {
                 if nav_item(ui, Page::Options.icon(), lang.tr("Options"), bs.page == Page::Options, nav_text, nav_sel).clicked() {
                     out.page = Some(Page::Options);
                 }
@@ -198,20 +200,27 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         });
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.ribbon)).show(ui, |ui| {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            egui::Frame::NONE.inner_margin(egui::Margin { left: 44, right: 32, top: 26, bottom: 32 }).show(ui, |ui| {
-                ui.set_max_width(CONTENT_W);
-                ui.label(RichText::new(lang.tr(bs.page.label())).font(theme::ui_font(28.0)).color(t.text));
-                ui.add_space(18.0);
-                match bs.page {
-                    Page::Home => home(app, ui, &mut bs, &mut out),
-                    Page::New => new_page(app, ui, &mut out),
-                    Page::Open => open_page(app, ui, &mut bs, &mut out),
-                    Page::Info => info(app, ui, &mut bs),
-                    Page::SaveAs => save_as(app, ui, &mut bs, &mut out),
-                    Page::Print => print(app, ui, &mut bs, &mut out),
-                    Page::Export => export(app, ui, &mut out),
-                    Page::Options => options(app, ui),
-                }
+            let margin = if rtl {
+                egui::Margin { left: 32, right: 44, top: 26, bottom: 32 }
+            } else {
+                egui::Margin { left: 44, right: 32, top: 26, bottom: 32 }
+            };
+            egui::Frame::NONE.inner_margin(margin).show(ui, |ui| {
+                crate::rtl::root(ui, |ui| {
+                    ui.set_max_width(CONTENT_W);
+                    ui.label(RichText::new(lang.tr(bs.page.label())).font(theme::ui_font(28.0)).color(t.text));
+                    ui.add_space(18.0);
+                    match bs.page {
+                        Page::Home => home(app, ui, &mut bs, &mut out),
+                        Page::New => new_page(app, ui, &mut out),
+                        Page::Open => open_page(app, ui, &mut bs, &mut out),
+                        Page::Info => info(app, ui, &mut bs),
+                        Page::SaveAs => save_as(app, ui, &mut bs, &mut out),
+                        Page::Print => print(app, ui, &mut bs, &mut out),
+                        Page::Export => export(app, ui, &mut out),
+                        Page::Options => options(app, ui),
+                    }
+                })
             });
         });
     });
@@ -253,15 +262,21 @@ fn save(app: &mut SheetApp, out: &mut Outcome) {
 fn nav_item(ui: &mut Ui, icon: Icon, label: &str, selected: bool, text: Color32, sel: Color32) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(NAV_W, 38.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label));
+    let rtl = crate::rtl::on(ui.ctx());
     let p = ui.painter();
     if selected {
         p.rect_filled(rect, 0.0, sel);
-        p.rect_filled(Rect::from_min_size(rect.min, vec2(4.0, rect.height())), 0.0, text);
+        let bar = if rtl {
+            Rect::from_min_size(pos2(rect.right() - 4.0, rect.top()), vec2(4.0, rect.height()))
+        } else {
+            Rect::from_min_size(rect.min, vec2(4.0, rect.height()))
+        };
+        p.rect_filled(bar, 0.0, text);
     } else if resp.hovered() {
         p.rect_filled(rect, 0.0, sel.gamma_multiply(0.55));
     }
-    icons::paint(p, Rect::from_center_size(pos2(rect.left() + 30.0, rect.center().y), vec2(17.0, 17.0)), icon, text);
-    p.text(pos2(rect.left() + 50.0, rect.center().y), Align2::LEFT_CENTER, label, theme::ui_font(14.0), text);
+    icons::paint(p, Rect::from_center_size(pos2(crate::rtl::lead_x(rtl, rect, 30.0), rect.center().y), vec2(17.0, 17.0)), icon, text);
+    p.text(pos2(crate::rtl::lead_x(rtl, rect, 50.0), rect.center().y), crate::rtl::lead_center(rtl), label, theme::ui_font(14.0), text);
     resp
 }
 
@@ -319,7 +334,8 @@ fn tile(ui: &mut Ui, label: &str, sample: Option<usize>) -> egui::Response {
     }
     p.rect_stroke(thumb, 4.0, edge, StrokeKind::Inside);
     let galley = p.layout(label.to_string(), theme::ui_font(12.5), t.text, rect.width());
-    p.galley(pos2(rect.left(), thumb.bottom() + 6.0), galley, t.text);
+    let x = if crate::rtl::on(ui.ctx()) { rect.right() - galley.size().x } else { rect.left() };
+    p.galley(pos2(x, thumb.bottom() + 6.0), galley, t.text);
     resp
 }
 
@@ -333,7 +349,7 @@ fn new_tiles(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
             out.close = true;
         }
         for (i, (name, title)) in gridcraft_engine::sample::SAMPLES.iter().enumerate() {
-            if tile(ui, title, Some(i)).clicked() {
+            if tile(ui, lang.tr(title), Some(i)).clicked() {
                 app.run_or_alert("file.new", json!({"sample": name}));
                 out.close = true;
             }
@@ -381,23 +397,46 @@ fn recent_list(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Ou
         let (name, folder) = split_path(&path);
         let (rect, resp) = ui.allocate_exact_size(vec2(width, 44.0), Sense::click());
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
+        let rtl = crate::rtl::on(ui.ctx());
         let p = ui.painter();
         if resp.hovered() {
             p.rect_filled(rect, 4.0, t.hover);
         }
-        icons::paint(p, Rect::from_center_size(pos2(rect.left() + 20.0, rect.center().y), vec2(20.0, 20.0)), Icon::Book, t.text);
+        icons::paint(p, Rect::from_center_size(pos2(crate::rtl::lead_x(rtl, rect, 20.0), rect.center().y), vec2(20.0, 20.0)), Icon::Book, t.text);
         // A long name or folder stops short of the column instead of running under it.
-        let room = if modified_w > 0.0 { rect.right() - modified_w - 14.0 } else { rect.right() };
-        let text = p.with_clip_rect(Rect::from_min_max(rect.min, pos2(room, rect.bottom())).intersect(p.clip_rect()));
-        text.text(pos2(rect.left() + 42.0, rect.center().y - 8.0), Align2::LEFT_CENTER, &name, theme::ui_font(13.5), t.text);
-        text.text(pos2(rect.left() + 42.0, rect.center().y + 9.0), Align2::LEFT_CENTER, &folder, theme::ui_font(11.5), t.text_dim);
+        let clip = if rtl {
+            Rect::from_min_max(pos2(if modified_w > 0.0 { rect.left() + modified_w + 14.0 } else { rect.left() }, rect.top()), rect.max)
+        } else {
+            Rect::from_min_max(rect.min, pos2(if modified_w > 0.0 { rect.right() - modified_w - 14.0 } else { rect.right() }, rect.bottom()))
+        };
+        let text = p.with_clip_rect(clip.intersect(p.clip_rect()));
+        text.text(
+            pos2(crate::rtl::lead_x(rtl, rect, 42.0), rect.center().y - 8.0),
+            crate::rtl::lead_center(rtl),
+            &name,
+            theme::ui_font(13.5),
+            t.text,
+        );
+        text.text(
+            pos2(crate::rtl::lead_x(rtl, rect, 42.0), rect.center().y + 9.0),
+            crate::rtl::lead_center(rtl),
+            &folder,
+            theme::ui_font(11.5),
+            t.text_dim,
+        );
         if modified_w > 0.0 {
             let (words, color) = match known.get(&path) {
                 Some(Modified::At(seconds)) => (age(lang, now - seconds), t.text_dim),
                 Some(Modified::Unknown) => (lang.tr("Not available").to_string(), t.text_disabled),
                 None => (String::new(), t.text_dim),
             };
-            p.text(pos2(rect.right() - modified_w, rect.center().y), Align2::LEFT_CENTER, words, theme::ui_font(12.0), color);
+            p.text(
+                pos2(if rtl { rect.left() } else { rect.right() - modified_w }, rect.center().y),
+                Align2::LEFT_CENTER,
+                words,
+                theme::ui_font(12.0),
+                color,
+            );
         }
         let resp = resp.on_hover_text(&path);
         if resp.clicked() {
@@ -507,13 +546,14 @@ fn action_row(ui: &mut Ui, icon: Icon, title: &str, detail: &str) -> egui::Respo
     let width = ui.available_width().min(CONTENT_W);
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 56.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, title));
+    let rtl = crate::rtl::on(ui.ctx());
     let p = ui.painter();
     if resp.hovered() {
         p.rect_filled(rect, 4.0, t.hover);
     }
-    icons::paint(p, Rect::from_center_size(pos2(rect.left() + 24.0, rect.center().y), vec2(24.0, 24.0)), icon, t.text);
-    p.text(pos2(rect.left() + 52.0, rect.center().y - 9.0), Align2::LEFT_CENTER, title, theme::ui_bold(13.5), t.text);
-    p.text(pos2(rect.left() + 52.0, rect.center().y + 10.0), Align2::LEFT_CENTER, detail, theme::ui_font(12.0), t.text_dim);
+    icons::paint(p, Rect::from_center_size(pos2(crate::rtl::lead_x(rtl, rect, 24.0), rect.center().y), vec2(24.0, 24.0)), icon, t.text);
+    p.text(pos2(crate::rtl::lead_x(rtl, rect, 52.0), rect.center().y - 9.0), crate::rtl::lead_center(rtl), title, theme::ui_bold(13.5), t.text);
+    p.text(pos2(crate::rtl::lead_x(rtl, rect, 52.0), rect.center().y + 10.0), crate::rtl::lead_center(rtl), detail, theme::ui_font(12.0), t.text_dim);
     resp
 }
 
@@ -597,9 +637,10 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
         vec![pr.title.clone(), pr.subject.clone(), pr.author.clone(), pr.company.clone(), pr.keywords.clone(), pr.description.clone()]
     };
     ui.horizontal(|ui| {
-        icons::paint(ui.painter(), Rect::from_min_size(ui.cursor().min, vec2(28.0, 28.0)), Icon::Book, t.text);
-        ui.add_space(38.0);
-        ui.vertical(|ui| {
+        let (book, _) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::hover());
+        icons::paint(ui.painter(), book, Icon::Book, t.text);
+        ui.add_space(10.0);
+        crate::rtl::vertical(ui, |ui| {
             ui.label(RichText::new(&title).font(theme::ui_bold(16.0)).color(t.text));
             match &path {
                 Some(p) => dim(ui, p),
@@ -613,7 +654,7 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
             protect_workbook(app);
         }
         ui.add_space(12.0);
-        ui.vertical(|ui| {
+        crate::rtl::vertical(ui, |ui| {
             ui.add_space(14.0);
             ui.label(RichText::new(lang.tr("Protect Workbook")).font(theme::ui_bold(13.5)).color(t.text));
             let text = if protected {
@@ -626,7 +667,7 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
     });
     ui.add_space(22.0);
     section(ui, lang, "Properties");
-    egui::Grid::new("backstage_props").num_columns(2).spacing(vec2(18.0, 8.0)).show(ui, |ui| {
+    crate::rtl::grid(ui, egui::Grid::new("backstage_props").num_columns(2).spacing(vec2(18.0, 8.0)), |ui| {
         ui.label(RichText::new(lang.tr("Location")).color(t.text_dim));
         ui.label(path.as_deref().unwrap_or(lang.tr("Not saved yet")));
         ui.end_row();
@@ -706,7 +747,7 @@ fn print(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome)
     }
     let pages: Vec<Json> = bs.preview.as_ref().and_then(|(_, p)| p.get("pageList")).and_then(Json::as_array).cloned().unwrap_or_default();
     ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
+        crate::rtl::vertical(ui, |ui| {
             ui.set_width(250.0);
             if let Some(discover) = &app.services.printers {
                 crate::printing::show(&mut app.printing, ui, discover, |label| lang.tr(label).to_owned());
@@ -729,7 +770,7 @@ fn print(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome)
                 }
             });
             ui.add_space(8.0);
-            if ui.checkbox(&mut bs.fit_to_page, lang.tr("Fit Sheet on One Page")).changed() {
+            if crate::rtl::checkbox(ui, &mut bs.fit_to_page, lang.tr("Fit Sheet on One Page")).changed() {
                 bs.preview_page = 0;
             }
             ui.add_space(8.0);
@@ -738,7 +779,7 @@ fn print(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome)
             }
         });
         ui.add_space(24.0);
-        ui.vertical(|ui| {
+        crate::rtl::vertical(ui, |ui| {
             if pages.is_empty() {
                 dim(ui, lang.tr("Nothing to print."));
                 return;
@@ -764,7 +805,8 @@ fn print(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome)
             dim(ui, &format!("{sheet} · {range}"));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.add_enabled(bs.preview_page > 0, egui::Button::new("◀")).on_hover_text(lang.tr("Previous page")).clicked() {
+                let (back, forward) = if crate::rtl::on(ui.ctx()) { ("▶", "◀") } else { ("◀", "▶") };
+                if ui.add_enabled(bs.preview_page > 0, egui::Button::new(back)).on_hover_text(lang.tr("Previous page")).clicked() {
                     bs.preview_page = bs.preview_page.saturating_sub(1);
                 }
                 let text = lang
@@ -772,7 +814,7 @@ fn print(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome)
                     .replace("{page}", &(bs.preview_page + 1).to_string())
                     .replace("{pages}", &pages.len().to_string());
                 ui.label(text);
-                if ui.add_enabled(bs.preview_page < last, egui::Button::new("▶")).on_hover_text(lang.tr("Next page")).clicked() {
+                if ui.add_enabled(bs.preview_page < last, egui::Button::new(forward)).on_hover_text(lang.tr("Next page")).clicked() {
                     bs.preview_page = (bs.preview_page + 1).min(last);
                 }
             });
@@ -930,7 +972,7 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
 fn options(app: &mut SheetApp, ui: &mut Ui) {
     let lang = app.ui.language;
     section(ui, lang, "Options|General");
-    egui::Grid::new("backstage_options_general").num_columns(2).spacing(vec2(18.0, 10.0)).show(ui, |ui| {
+    crate::rtl::grid(ui, egui::Grid::new("backstage_options_general").num_columns(2).spacing(vec2(18.0, 10.0)), |ui| {
         ui.label(lang.tr("Display theme"));
         let mode = app.ui.theme_mode();
         let current = match mode {
@@ -958,19 +1000,19 @@ fn options(app: &mut SheetApp, ui: &mut Ui) {
     });
     ui.add_space(6.0);
     let mut formula_bar = app.session.prefs.formula_bar;
-    if ui.checkbox(&mut formula_bar, lang.tr("Show formula bar")).changed() {
+    if crate::rtl::checkbox(ui, &mut formula_bar, lang.tr("Show formula bar")).changed() {
         app.run_or_alert("view.formulaBar", json!({"on": formula_bar}));
     }
     ui.add_space(18.0);
     section(ui, lang, "Options|Editing");
     let mut autocomplete = app.ui.autocomplete;
-    if ui.checkbox(&mut autocomplete, lang.tr("Enable AutoComplete for cell values")).changed() {
+    if crate::rtl::checkbox(ui, &mut autocomplete, lang.tr("Enable AutoComplete for cell values")).changed() {
         app.run_or_alert("options.autoComplete", json!({"on": autocomplete}));
     }
     ui.add_space(18.0);
     section(ui, lang, "Options|Save");
     let mut autosave = app.grid.autosave();
-    if ui.checkbox(&mut autosave, lang.tr("Save .xlsx workbooks automatically after every change")).changed() {
+    if crate::rtl::checkbox(ui, &mut autosave, lang.tr("Save .xlsx workbooks automatically after every change")).changed() {
         app.grid.toggle_autosave();
     }
     let Some(calc) = app.session.active().map(|d| d.wb.calc.clone()) else { return };
@@ -983,13 +1025,13 @@ fn options(app: &mut SheetApp, ui: &mut Ui) {
         (CalcMode::AutomaticExceptTables, "automaticExceptTables", "Automatic Except for Data Tables"),
         (CalcMode::Manual, "manual", "Manual"),
     ] {
-        if ui.radio(calc.mode == mode, lang.tr(label)).clicked() && calc.mode != mode {
+        if crate::rtl::radio(ui, calc.mode == mode, lang.tr(label)).clicked() && calc.mode != mode {
             app.run_or_alert("formulas.calculationOptions", json!({"mode": id}));
         }
     }
     ui.add_space(4.0);
     let mut iterative = calc.iterative;
-    if ui.checkbox(&mut iterative, lang.tr("Enable iterative calculation")).changed() {
+    if crate::rtl::checkbox(ui, &mut iterative, lang.tr("Enable iterative calculation")).changed() {
         app.run_or_alert("formulas.calculationOptions", json!({"iterative": iterative}));
     }
     ui.add_space(6.0);
