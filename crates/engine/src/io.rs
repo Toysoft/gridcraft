@@ -231,20 +231,10 @@ pub fn source_dir(path: &str) -> Option<std::path::PathBuf> {
 /// Save As CSV/Text writes "the text and values as they are displayed in cells" with "all
 /// characters in each cell" (Microsoft Support, *Excel formatting and features that are not
 /// transferred to other file formats*): number formats applied, never column-width `#####`.
+/// One intentional difference: a number shown as General is written as `&` converts it (15
+/// significant digits), not narrowed to the cell width, so long identifiers survive.
 fn csv(wb: &Workbook, sh: &Sheet, delimiter: u8) -> Result<Vec<u8>> {
-    gridcraft_xlsx::write_csv(sh, delimiter, |c| {
-        // General's grid-width formatting rounds large identifiers to scientific notation.
-        // Delimited files have no column width, so preserve the whole numeric value instead.
-        if wb.styles.get(sh.style_id(c)).num_fmt.as_str().eq_ignore_ascii_case("General")
-            && let gridcraft_core::Value::Number(number) = sh.value(c)
-            && number.is_finite()
-        {
-            number.to_string()
-        } else {
-            crate::display::value_text(wb, sh, c)
-        }
-    })
-    .map_err(|e| EngineError::Other(e.to_string()))
+    gridcraft_xlsx::write_csv(sh, delimiter, |c| crate::display::value_text(wb, sh, c)).map_err(|e| EngineError::Other(e.to_string()))
 }
 
 fn esc(s: &str) -> String {
@@ -708,6 +698,50 @@ mod tests {
         for (path, separator) in [("data.csv", ","), ("data.tsv", "\t")] {
             let output = String::from_utf8(save_bytes(&workbook, path).unwrap()).unwrap();
             assert_eq!(output, format!("124412140710{separator}1.23456789012345{separator}1.24E+11\r\n"));
+        }
+    }
+
+    /// A number shown as General is written as `&` converts it (15 significant digits), whatever
+    /// colour, sections or literals the format adds, and in a Text cell. Excel writes the cell
+    /// display (`1.24412E+11`, `0.333333333`); GridCraft keeps the digits so part codes survive.
+    #[test]
+    fn delimited_exports_write_general_numbers_as_text_converts_them() {
+        use gridcraft_core::Value;
+        use gridcraft_model::{Cell, NumFmt, StyleId};
+        let mut wb = Workbook::new();
+        let mut styled = |code: &str| wb.styles.derive(StyleId::DEFAULT, |s| s.num_fmt = NumFmt::new(code));
+        let (blue, signed, red, text, unit) =
+            (styled("[Blue]General"), styled("General;-General"), styled("General;[Red]-General"), styled("@"), styled("General\" mm\""));
+        let code = 124412140710.0;
+        let sh = wb.sheet_mut(0).unwrap();
+        let cells = [
+            (Value::Number(1.0 / 3.0), StyleId::DEFAULT),
+            (Value::Number(0.1 + 0.2), StyleId::DEFAULT),
+            (Value::Number(1e20), StyleId::DEFAULT),
+            (Value::Number(code), blue),
+            (Value::Number(-1.0 / 3.0), blue),
+            (Value::Number(-code), signed),
+            (Value::Number(-code), red),
+            (Value::Number(code), text),
+            (Value::Number(code), unit),
+        ];
+        for (col, (value, style)) in cells.into_iter().enumerate() {
+            sh.set_cell(CellRef::new(0, col as u32), Cell { value, formula: None, style });
+        }
+        for (path, sep) in [("out.csv", ","), ("out.txt", "\t")] {
+            let output = String::from_utf8(save_bytes(&wb, path).unwrap()).unwrap();
+            let expected = [
+                "0.333333333333333",
+                "0.3",
+                "1E+20",
+                "124412140710",
+                "-0.333333333333333",
+                "-124412140710",
+                "-124412140710",
+                "124412140710",
+                "124412140710 mm",
+            ];
+            assert_eq!(output, format!("{}\r\n", expected.join(sep)));
         }
     }
 
