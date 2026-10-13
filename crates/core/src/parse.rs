@@ -96,10 +96,16 @@ fn parse_plain(t: &str) -> Option<(f64, Option<&'static str>)> {
     if s.is_empty() {
         return None;
     }
-    let has_sep = s.contains(',');
+    // The exponent (`E3`) follows the mantissa; thousands separators belong to the mantissa only,
+    // so `1,000E3` is a number and `1,5E3` (a decimal comma) is text, as in Excel.
+    let (mantissa, exponent) = match s.find(['e', 'E']) {
+        Some(i) => (s.get(..i)?, s.get(i..)?),
+        None => (s, ""),
+    };
+    let has_sep = mantissa.contains(',');
     let digits: String = if has_sep {
         // Thousands separators must be in groups of three before the decimal point.
-        let (int, frac) = s.split_once('.').map_or((s, None), |(a, b)| (a, Some(b)));
+        let (int, frac) = mantissa.split_once('.').map_or((mantissa, None), |(a, b)| (a, Some(b)));
         let groups: Vec<&str> = int.split(',').collect();
         let first = groups.first()?;
         if first.is_empty() || first.len() > 3 || groups.iter().skip(1).any(|g| g.len() != 3) {
@@ -110,6 +116,7 @@ fn parse_plain(t: &str) -> Option<(f64, Option<&'static str>)> {
             d.push('.');
             d.push_str(f);
         }
+        d.push_str(exponent);
         d
     } else {
         s.to_string()
@@ -350,6 +357,20 @@ mod tests {
         assert_eq!(p("1e3").value, Value::Number(1000.0));
         assert_eq!(p("1 1/2").value, Value::Number(1.5));
         assert_eq!(p(".5").value, Value::Number(0.5));
+    }
+
+    #[test]
+    fn thousands_separators_belong_to_the_mantissa() {
+        // Excel 365 reads these with `,` as the thousands separator: a group of three before the
+        // exponent makes a number; a decimal comma (`1,5E3`) stays text instead of 15000.
+        assert_eq!(p("1,000E3").value, Value::Number(1_000_000.0));
+        assert_eq!(p("1,000E3").format, Some("0.00E+00"));
+        assert_eq!(p("1,234E2").value, Value::Number(123_400.0));
+        for s in ["1,5E3", "-1,5E3", "12,3e4", "1,2e3", "1,5E", "1,000E"] {
+            assert_eq!(p(s).value, Value::text(s), "{s}");
+        }
+        assert_eq!(parse_number_text("1,5E3"), None);
+        assert_eq!(p("1E3").value, Value::Number(1000.0));
     }
 
     #[test]
