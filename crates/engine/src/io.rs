@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 
 use gridcraft_core::{CellRef, RangeRef};
-use gridcraft_model::{Sheet, Workbook};
+use gridcraft_model::{RunFont, Sheet, Underline, VertAlign, Workbook};
 
 use crate::{EngineError, Result};
 
@@ -222,6 +222,60 @@ fn html_cell_css(wb: &Workbook, sh: &Sheet, c: CellRef) -> String {
     css
 }
 
+/// A rich-text run's font delta as the CSS of the `<span>` drawing it: only the overridden
+/// fields, in a fixed order, each declaration ending in `;`. The surrounding `<td>` already
+/// carries the cell-level style, so an all-`None` delta produces nothing (the run needs only
+/// its delta, never the merged font).
+#[allow(dead_code)] // wired into `range_html` by the next commit of this branch (issue #907) — remove then
+fn run_span_css(delta: &RunFont, wb: &Workbook) -> String {
+    let mut css = String::new();
+    if let Some(c) = &delta.color
+        && let Some(h) = c.hex(&wb.theme)
+    {
+        let _ = write!(css, "color:{h};");
+    }
+    match delta.bold {
+        Some(true) => css.push_str("font-weight:bold;"),
+        Some(false) => css.push_str("font-weight:normal;"),
+        None => {}
+    }
+    match delta.italic {
+        Some(true) => css.push_str("font-style:italic;"),
+        Some(false) => css.push_str("font-style:normal;"),
+        None => {}
+    }
+    // Underline and strike share one declaration; a double underline adds the style upgrade as
+    // its own declaration, so old parsers that drop it still keep the underline itself.
+    let mut deco = String::new();
+    if !matches!(delta.underline, None | Some(Underline::None)) {
+        deco.push_str("underline");
+    }
+    if delta.strike == Some(true) {
+        if !deco.is_empty() {
+            deco.push(' ');
+        }
+        deco.push_str("line-through");
+    }
+    if !deco.is_empty() {
+        let _ = write!(css, "text-decoration:{deco};");
+    }
+    if matches!(delta.underline, Some(Underline::Double | Underline::DoubleAccounting)) {
+        css.push_str("text-decoration-style:double;");
+    }
+    if let Some(size) = delta.size {
+        let _ = write!(css, "font-size:{size}pt;");
+    }
+    if let Some(name) = &delta.name {
+        let _ = write!(css, "font-family:\"{}\";", esc(name));
+    }
+    match delta.vert {
+        Some(VertAlign::Superscript) => css.push_str("vertical-align:super;"),
+        Some(VertAlign::Subscript) => css.push_str("vertical-align:sub;"),
+        _ => {}
+    }
+    css
+}
+
 const CLIPBOARD_HTML_MAX_BYTES: usize = 4 * 1024 * 1024;
 const CLIPBOARD_HTML_MAX_CELLS: u64 = 10_000;
 
@@ -428,6 +482,7 @@ pub fn image_size(data: &[u8]) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gridcraft_model::{Color, RunFont, Underline, VertAlign};
 
     #[test]
     fn macros_are_saved_only_into_xlsm() {
@@ -607,5 +662,46 @@ mod tests {
             ),
             "{types}"
         );
+    }
+
+    #[test]
+    fn run_span_css_emits_each_delta_in_a_fixed_order() {
+        let wb = Workbook::new();
+        let delta = RunFont {
+            name: Some("Georgia".into()),
+            size: Some(14.0),
+            bold: Some(true),
+            italic: Some(false),
+            underline: Some(Underline::Single),
+            strike: Some(true),
+            color: Some(Color::rgb(255, 0, 0)),
+            vert: Some(VertAlign::Superscript),
+        };
+        assert_eq!(
+            run_span_css(&delta, &wb),
+            "color:#FF0000;font-weight:bold;font-style:normal;\
+             text-decoration:underline line-through;font-size:14pt;\
+             font-family:\"Georgia\";vertical-align:super;"
+        );
+    }
+
+    #[test]
+    fn run_span_css_empty_delta_is_empty() {
+        assert_eq!(run_span_css(&RunFont::default(), &Workbook::new()), "");
+    }
+
+    #[test]
+    fn run_span_css_doubles_the_underline_without_losing_it() {
+        let wb = Workbook::new();
+        let delta = RunFont { underline: Some(Underline::Double), strike: Some(true), ..RunFont::default() };
+        // Two declarations: the style upgrade is dropped by old parsers, the underline survives.
+        assert_eq!(run_span_css(&delta, &wb), "text-decoration:underline line-through;text-decoration-style:double;");
+    }
+
+    #[test]
+    fn run_span_css_escapes_font_names() {
+        let wb = Workbook::new();
+        let delta = RunFont { name: Some("Bad\"Name&".into()), ..RunFont::default() };
+        assert_eq!(run_span_css(&delta, &wb), "font-family:\"Bad&quot;Name&amp;\";");
     }
 }
