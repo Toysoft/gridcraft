@@ -421,6 +421,16 @@ fn rasterize_bar_center_has_bar_color() {
 }
 
 #[test]
+fn rasterize_does_not_panic_on_negative_rect_extents() {
+    let red = [255, 0, 0, 255];
+    for (w, h) in [(-10.0, 10.0), (10.0, -10.0), (-10.0, -10.0), (f32::NAN, f32::NAN)] {
+        let rect = Prim::Rect { x: 5.0, y: 5.0, w, h, fill: Some(red), stroke: Some((red, 2.0)), radius: 0.0 };
+        let img = rasterize(&[rect], 20, 20, [0, 0, 0, 0]);
+        assert_eq!(img.len(), 20 * 20 * 4);
+    }
+}
+
+#[test]
 fn pie_starts_at_twelve_clockwise() {
     let c = chart(ChartKind::Pie);
     let d = sample(ChartKind::Pie);
@@ -878,6 +888,28 @@ fn treemap_and_histogram_shapes() {
 }
 
 #[test]
+fn histogram_boundary_values_match_interval_labels() {
+    let heights = |vals: &[f64]| -> Vec<f32> {
+        let d = ChartData { categories: vec![], series: vec![series("h", vals, [10, 20, 30, 255], ChartKind::Histogram)] };
+        let prims = render(&chart(ChartKind::Histogram), &d, 600.0, 400.0, &ApproxMeasure);
+        prims.iter().filter_map(|p| if let Prim::Rect { h, fill: Some([10, 20, 30, 255]), .. } = p { Some(*h) } else { None }).collect()
+    };
+    // Labels are "[0, 7.5]" and "(7.5, 15.0]": 7.5 belongs to the first bar, so the counts are 2 and 1.
+    let h = heights(&[0.0, 7.5, 15.0]);
+    assert_eq!(h.len(), 2);
+    assert!((h[0] / h[1] - 2.0).abs() < 0.01, "{h:?}");
+    let h = heights(&[-15.0, -7.5, 0.0]);
+    assert!((h[0] / h[1] - 2.0).abs() < 0.01, "{h:?}");
+    // A value off the boundary still goes right: [0, 7.5] holds 1, (7.5, 15.0] holds 2.
+    let h = heights(&[0.0, 7.75, 15.0]);
+    assert!((h[1] / h[0] - 2.0).abs() < 0.01, "{h:?}");
+    // Five values, three bins [0,5] (5,10] (10,15]: counts 3, 1, 1.
+    let h = heights(&[0.0, 5.0, 5.0, 10.0, 15.0]);
+    assert_eq!(h.len(), 3);
+    assert!((h[0] / h[1] - 3.0).abs() < 0.01 && (h[1] - h[2]).abs() < 0.01, "{h:?}");
+}
+
+#[test]
 fn union_series_references() {
     let mut wb = Workbook::new();
     {
@@ -901,4 +933,30 @@ fn union_series_references() {
     // Deeply nested parentheses from a file are bounded, not a crash.
     c.series[0].values = format!("{}Sheet1!$B$1,Sheet1!$B$2{}", "(".repeat(5000), ")".repeat(5000));
     let _ = resolve(&wb, 0, &c);
+}
+
+#[test]
+fn area_charts_draw_source_value_labels_only_when_enabled() {
+    for kind in [ChartKind::Area, ChartKind::AreaStacked] {
+        let d = sample(kind);
+        let mut c = chart(kind);
+        c.data_labels = false;
+        let off = render(&c, &d, 640.0, 400.0, &ApproxMeasure);
+        c.data_labels = true;
+        let on = render(&c, &d, 640.0, 400.0, &ApproxMeasure);
+        let count = |p: &[Prim], v: &str| texts(p).iter().filter(|t| **t == v).count();
+        // One label per point: 3 series x 6 categories.
+        assert_eq!(texts(&on).len(), texts(&off).len() + 18, "{kind:?}");
+        for v in ["$12,000", "$38,000", "$9,000", "$27,000"] {
+            assert_eq!(count(&on, v), count(&off, v) + 1, "{kind:?}: {v}");
+        }
+        // Stacked areas label the source values, not cumulative totals (12,000 + 38,000).
+        assert_eq!(count(&on, "$50,000"), count(&off, "$50,000"), "{kind:?}: cumulative total shown");
+        let polys = |p: &[Prim]| p.iter().filter(|p| matches!(p, Prim::Polygon { .. })).cloned().collect::<Vec<_>>();
+        assert_eq!(polys(&on), polys(&off));
+        // The first series' labels are drawn after every area, so the next area can't cover them.
+        let last_poly = on.iter().rposition(|p| matches!(p, Prim::Polygon { .. }));
+        let first_label = on.iter().position(|p| matches!(p, Prim::Text { text, .. } if text == "$12,000"));
+        assert!(first_label > last_poly, "{kind:?}: label drawn under a later area");
+    }
 }

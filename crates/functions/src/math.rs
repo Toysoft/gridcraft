@@ -75,7 +75,15 @@ fn round_dir(x: f64, digits: i32, up: bool) -> f64 {
     }
     let s = clean(scaled);
     let r = if up { s.ceil() } else { s.floor() };
-    let out = if neg { r * f } else { clean(r / f) };
+    // Toward zero, r == 0 with an infinite scale would be 0 * inf = NaN (#NUM!); the result is simply
+    // zero. Away from zero the true result (10^309 or more) is not a number, so ROUNDUP stays #NUM!.
+    let out = if !neg {
+        clean(r / f)
+    } else if r == 0.0 && !up {
+        0.0
+    } else {
+        r * f
+    };
     if x < 0.0 { -out } else { out }
 }
 
@@ -1373,6 +1381,13 @@ mod tests {
         close(ev2("ROUNDDOWN", -3.9, 0.0), -3.0);
         close(ev2("ROUNDDOWN", 2.71989, 3.0), 2.719);
         close(ev2("ROUNDDOWN", 31415.92654, -2.0), 31400.0);
+        for digits in [-308.0, -309.0, -400.0] {
+            for x in [1234.0, -1234.0, 0.5] {
+                close(ev2("ROUNDDOWN", x, digits), 0.0);
+                close(ev2("TRUNC", x, digits), 0.0);
+            }
+        }
+        assert!(matches!(ev2("ROUNDUP", 1234.0, -309.0), Value::Error(CellError::Num)));
         close(ev2("ROUNDUP", 0.1 + 0.2, 1.0), 0.3);
         close(ev2("TRUNC", 8.987, 2.0), 8.98);
         close(ev1("TRUNC", -8.9), -8.0);

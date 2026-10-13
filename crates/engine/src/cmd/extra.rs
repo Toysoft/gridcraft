@@ -743,6 +743,17 @@ fn custom_views(s: &mut Session, p: &Json) -> Result<Json> {
         if let Some(z) = v["zoom"].as_u64() {
             s.execute("view.zoom", json!({"percent": z}))?;
         }
+        if let Some(f) = v.get("freeze") {
+            let freeze = match (f[0].as_u64(), f[1].as_u64()) {
+                (Some(r), Some(c)) => u32::try_from(r).ok().zip(u32::try_from(c).ok()),
+                _ => None,
+            };
+            edit(s, |cx| {
+                let si = cx.sheet_index();
+                cx.sheet_mut(si)?.freeze = freeze;
+                Ok(())
+            })?;
+        }
     } else if let Some(name) = str_param(p, "delete") {
         if let Some(o) = views.as_object_mut() {
             o.remove(name);
@@ -812,7 +823,7 @@ fn table_resize(s: &mut Session, p: &Json) -> Result<Json> {
         let sheet = cx.sheet_mut(si)?;
         let headers: Vec<String> = (r.start.col..=r.end.col).map(|c| sheet.value(CellRef::new(r.start.row, c)).display()).collect();
         let t = sheet.tables.get_mut(ti).ok_or_else(|| bad("table", "gone"))?;
-        if r.start.row != t.range.start.row {
+        if r.start.row != t.range.start.row || !r.intersects(&t.range) {
             return Err(EngineError::Other(
                 "The headers must remain in the same row, and the resulting table range must overlap the original table range.".into(),
             ));

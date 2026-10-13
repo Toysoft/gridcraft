@@ -301,7 +301,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
     if let Some(r) = find_rel(&root_rels, "core-properties").cloned()
         && let Ok(Some(x)) = cx.pkg.read_xml(&r.target)
     {
-        let get = |n: &str| x.child(n).map(|e| e.text.trim().to_string()).unwrap_or_default();
+        let get = |n: &str| x.child(n).map(|e| e.text.clone()).unwrap_or_default();
         wb.props.title = get("title");
         wb.props.subject = get("subject");
         wb.props.author = get("creator");
@@ -311,7 +311,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
     if let Some(r) = find_rel(&root_rels, "extended-properties").cloned()
         && let Ok(Some(x)) = cx.pkg.read_xml(&r.target)
     {
-        wb.props.company = x.child("Company").map(|e| e.text.trim().to_string()).unwrap_or_default();
+        wb.props.company = x.child("Company").map(|e| e.text.clone()).unwrap_or_default();
     }
 
     // A VBA project is carried through unchanged: GridCraft never runs macros, but preserving the

@@ -249,10 +249,14 @@ fn cancel_copy_mode(s: &mut Session) {
 
 fn insert_lines(s: &mut Session, p: &Json, axis: Axis) -> Result<Json> {
     let (at, count) = lines(s, p, axis)?;
+    let limit = if axis == Axis::Rows { MAX_ROWS } else { MAX_COLS };
+    if at.checked_add(count).is_none_or(|end| end > limit) {
+        let cmd = if axis == Axis::Rows { "home.insertRows" } else { "home.insertColumns" };
+        return Err(bad(cmd, "the inserted lines would extend past the end of the worksheet"));
+    }
     check_lines_protection(s, p, axis, at, count, true)?;
     let sheet = target_sheet(s, p)?;
     // Refuse to push data off the sheet.
-    let limit = if axis == Axis::Rows { MAX_ROWS } else { MAX_COLS };
     if let Some(u) = s.doc()?.wb.sheet(sheet).and_then(|sh| sh.used_range()) {
         let last = if axis == Axis::Rows { u.end.row } else { u.end.col };
         if last >= at && last as u64 + count as u64 >= limit as u64 {
@@ -290,6 +294,9 @@ fn insert_lines(s: &mut Session, p: &Json, axis: Axis) -> Result<Json> {
 
 fn delete_lines(s: &mut Session, p: &Json, axis: Axis) -> Result<Json> {
     let (at, count) = lines(s, p, axis)?;
+    let limit = if axis == Axis::Rows { MAX_ROWS } else { MAX_COLS };
+    // Deleting past the last line only removes up to the end of the worksheet.
+    let count = count.min(limit.saturating_sub(at)).max(1);
     check_lines_protection(s, p, axis, at, count, false)?;
     let sheet = target_sheet(s, p)?;
     let out = edit(s, |cx| {

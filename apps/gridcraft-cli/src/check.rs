@@ -559,6 +559,14 @@ fn diff_sets(d: &mut Diffs, sheet: &str, a: &BTreeSet<String>, b: &BTreeSet<Stri
     }
 }
 
+/// A sheet's conditional-format rules in precedence order, as comparable text. The priority number
+/// itself is left out, so renumbering without changing the order isn't a difference.
+fn cond_format_list(s: &Sheet) -> Vec<String> {
+    let mut cfs: Vec<_> = s.cond_formats.iter().collect();
+    cfs.sort_by_key(|c| c.priority);
+    cfs.iter().map(|c| format!("{:?} {:?} stopIfTrue={}", c.ranges, c.rule, c.stop_if_true)).collect()
+}
+
 fn diff_count(d: &mut Diffs, sheet: &str, a: usize, b: usize) {
     if a != b {
         d.push(|| format!("{sheet}: {a} → {b}"));
@@ -634,7 +642,12 @@ pub fn diff_workbooks(a: &Workbook, b: &Workbook, opts: &Options) -> Vec<Categor
                 .collect()
         };
         diff_sets(&mut tables, &name, &set(&table_list, sa), &set(&table_list, sb));
-        diff_count(&mut cond_formats, &name, sa.cond_formats.len(), sb.cond_formats.len());
+        let (cfa, cfb) = (cond_format_list(sa), cond_format_list(sb));
+        if cfa.len() != cfb.len() {
+            cond_formats.push(|| format!("{name}: {} → {}", cfa.len(), cfb.len()));
+        } else if let Some((x, y)) = cfa.iter().zip(&cfb).find(|(x, y)| x != y) {
+            cond_formats.push(|| format!("{name}: {x} → {y}"));
+        }
         diff_count(&mut validations, &name, sa.validations.len(), sb.validations.len());
         let chart_list = |s: &Sheet| s.charts.iter().map(|c| format!("{:?} ({} series)", c.kind, c.series.len())).collect::<Vec<_>>();
         let (ca, cb) = (chart_list(sa), chart_list(sb));
@@ -1301,6 +1314,27 @@ mod tests {
         assert_eq!(get("merges").examples, ["Sheet1: lost C1:D2"]);
         assert_eq!(get("sheets").diffs, 1);
         assert_eq!(get("tables").diffs, 0);
+    }
+
+    #[test]
+    fn diff_detects_changed_cond_format_rule() {
+        use gridcraft_engine::model::{CfRule, CfValueKind, Color, CondFormat};
+        let bar = |gradient: bool, priority: u32| CondFormat {
+            ranges: vec![gridcraft_engine::core::RangeRef::parse("A1").unwrap()],
+            rule: CfRule::DataBar { min: CfValueKind::Min, max: CfValueKind::Max, color: Color::Rgb(0x638EC6), gradient, show_value: true },
+            priority,
+            stop_if_true: false,
+        };
+        let with = |cf: CondFormat| {
+            let mut wb = book(&[("A1", "2", n(2.0))]);
+            wb.sheet_mut(0).unwrap().cond_formats.push(cf);
+            wb
+        };
+        let diffs =
+            |a: &Workbook, b: &Workbook| diff_workbooks(a, b, &Options::default()).into_iter().find(|c| c.name == "condFormats").unwrap().diffs;
+        assert_eq!(diffs(&with(bar(false, 1)), &with(bar(true, 1))), 1);
+        assert_eq!(diffs(&with(bar(true, 1)), &with(bar(true, 1))), 0);
+        assert_eq!(diffs(&with(bar(true, 1)), &with(bar(true, 5))), 0);
     }
 
     fn zip_of(parts: &[(&str, &str)]) -> Vec<u8> {

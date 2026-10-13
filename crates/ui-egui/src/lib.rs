@@ -179,6 +179,10 @@ pub struct Services {
     /// source spreadsheet recorded as numbers stay numbers ("Rp10,000.00" → 10000). `None` from
     /// the host pastes the plain text alone.
     pub paste_html: Option<Box<dyn FnMut() -> Option<String>>>,
+    /// Read the system clipboard's plain text for the ribbon and menu Paste commands (Cmd/Ctrl+V
+    /// gets it from egui's `Event::Paste`). `None` from the host, or no service (web), pastes
+    /// GridCraft's own clipboard.
+    pub paste_text: Option<Box<dyn FnMut() -> Option<String>>>,
     /// Web: deliver a file to the user (name, bytes).
     pub download: Option<Box<dyn Fn(&str, &[u8])>>,
     /// Web: start an asynchronous file pick; the bytes arrive later in `inbox`.
@@ -246,6 +250,14 @@ pub struct SheetApp {
     pub(crate) shots: control::Shots,
     /// Chart selected on the sheet (id).
     pub selected_chart: Option<u32>,
+    /// The system clipboard's text when GridCraft last copied without publishing to it (a
+    /// control-channel or MCP `edit.copy`/`edit.cut`). While the system clipboard still holds this
+    /// text, GridCraft's copy is the newer one and Paste uses it.
+    clipboard_text_at_copy: Option<String>,
+    /// The system clipboard's text right after GridCraft's last cut (the published text, or the
+    /// text noted for an unpublished cut); `None` after a copy, or once the clipboard is seen
+    /// holding other text. Once the cut has been pasted, Paste leaves this text alone.
+    cut_text: Option<String>,
     pub started: f64,
 }
 
@@ -287,6 +299,8 @@ impl SheetApp {
             keytips: keytips::KeyTips::default(),
             shots: control::Shots::default(),
             selected_chart: None,
+            clipboard_text_at_copy: None,
+            cut_text: None,
             started: now_ms(),
         }
     }
@@ -322,6 +336,17 @@ impl SheetApp {
 
     /// Runs an engine command (or a UI command) and handles UI requests it makes.
     pub fn run(&mut self, id: &str, params: Json) -> Result<Json, String> {
+        let r = self.run_command(id, params);
+        // This copy leaves the system clipboard alone: note what it holds, so Paste can tell
+        // that GridCraft's copy is newer while that text is still there.
+        if matches!(id, "edit.copy" | "edit.cut") && r.is_ok() {
+            self.clipboard_text_at_copy = self.system_clipboard_text();
+            self.cut_text = if id == "edit.cut" { self.clipboard_text_at_copy.clone() } else { None };
+        }
+        r
+    }
+
+    fn run_command(&mut self, id: &str, params: Json) -> Result<Json, String> {
         if matches!(id, "file.save" | "file.saveAs" | "file.saveBytes") {
             self.store_view_state();
         }
@@ -365,11 +390,14 @@ impl SheetApp {
     /// their existing internal clipboard behavior and do not write to the host clipboard.
     pub fn copy_to_clipboard(&mut self, ctx: &egui::Context, command: &str) {
         // Only ask the engine for HTML when the host can publish it.
-        let result = match self.run(command, json!({"html": self.services.copy_html.is_some()})) {
+        let result = match self.run_command(command, json!({"html": self.services.copy_html.is_some()})) {
             Ok(result) => result,
             Err(e) => return self.alert(e),
         };
         let Some(text) = result.get("text").and_then(Json::as_str) else { return };
+        // The system clipboard gets this copy, so its text decides what Paste pastes.
+        self.clipboard_text_at_copy = None;
+        self.cut_text = (command == "edit.cut").then(|| text.replace("\r\n", "\n"));
         if let Some(html) = result.get("html").and_then(Json::as_str)
             && let Some(copy_html) = &mut self.services.copy_html
         {
@@ -381,15 +409,55 @@ impl SheetApp {
         ctx.copy_text(text.to_string());
     }
 
-    /// Paste text that came from the system clipboard, with the clipboard's HTML flavour when the
-    /// host can read it.
+    /// Paste text that came from the system clipboard (Cmd/Ctrl+V, or the ribbon and menu Paste),
+    /// with the clipboard's HTML flavour when the host can read it.
+    ///
+    /// Excel pastes a cut once: after GridCraft's cut has been pasted, the system clipboard text
+    /// that came with it is not pasted again over the moved block; GridCraft's own (empty)
+    /// clipboard is pasted instead, which reports "Nothing to paste.". Other text means the
+    /// clipboard has moved on, so the cut's text is forgotten and pastes normally later.
     pub fn paste_external(&mut self, text: String) {
+        if Self::same_clipboard_text(Some(&text), self.cut_text.as_deref()) {
+            if self.session.clipboard.is_none() {
+                return self.run_or_alert("edit.paste", json!({}));
+            }
+        } else {
+            self.cut_text = None;
+        }
         let html = self.services.paste_html.as_mut().and_then(|read| read());
         let params = match html {
             Some(html) => json!({"text": text, "html": html}),
             None => json!({"text": text}),
         };
         self.run_or_alert("edit.paste", params);
+    }
+
+    /// Ribbon and menu Paste: paste the text on the system clipboard, as Cmd/Ctrl+V does. With no
+    /// text there, no host clipboard (web), or the text that was there when GridCraft last copied
+    /// without publishing, GridCraft's own clipboard is pasted.
+    pub fn paste_from_clipboard(&mut self) {
+        match self.system_clipboard_text() {
+            Some(text) if self.session.clipboard.is_none() || self.clipboard_text_at_copy.as_ref() != Some(&text) => self.paste_external(text),
+            _ => self.run_or_alert("edit.paste", json!({})),
+        }
+    }
+
+    /// The system clipboard's plain text, with the line endings of egui's `Event::Paste` text.
+    /// `None` when it holds no text or the host can't read it.
+    fn system_clipboard_text(&mut self) -> Option<String> {
+        self.services.paste_text.as_mut().and_then(|read| read()).filter(|t| !t.is_empty()).map(|t| t.replace("\r\n", "\n"))
+    }
+
+    /// Whether two clipboard texts are the same copy: trailing line breaks don't count, as in the
+    /// engine's `edit.paste`, and CRLF matches LF (egui's `Event::Paste` text may keep the host's).
+    fn same_clipboard_text(a: Option<&str>, b: Option<&str>) -> bool {
+        fn chars(t: &str) -> impl Iterator<Item = char> + '_ {
+            t.trim_end_matches(['\r', '\n']).chars().filter(|c| *c != '\r')
+        }
+        match (a, b) {
+            (Some(a), Some(b)) => chars(a).eq(chars(b)),
+            _ => false,
+        }
     }
 
     /// Web: `file.exportPdf` without a path returns the PDF as base64; hand it to the browser as a download.
@@ -1079,6 +1147,8 @@ impl SheetApp {
                     self.run_or_alert("ui.ribbonTab", json!({"tab": tab}));
                     self.ui.ribbon_collapsed = false;
                 }
+                keytips::Action::Command(id @ ("edit.copy" | "edit.cut")) => self.copy_to_clipboard(ctx, id),
+                keytips::Action::Command("edit.paste") => self.paste_from_clipboard(),
                 keytips::Action::Command(id) => self.run_or_alert(id, json!({})),
                 keytips::Action::Dialog(name) => self.open_dialog(name, json!({})),
                 // Reserved sequence: fires silently while its command is missing. When the

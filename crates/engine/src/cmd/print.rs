@@ -391,7 +391,7 @@ pub struct HfContext {
 
 /// Today's date and the current time as headers and footers show them (`&D`, `&T`).
 pub fn hf_date_time(wb: &Workbook) -> (String, String) {
-    let now = gridcraft_calc::now_serial();
+    let now = gridcraft_core::date::serial_in_system(wb.date_system, gridcraft_calc::now_serial());
     let date = crate::display::format(&Value::Number(now.floor()), "m/d/yyyy", wb).text;
     let time = crate::display::format(&Value::Number(now), "h:mm AM/PM", wb).text;
     (date, time)
@@ -1763,6 +1763,14 @@ mod tests {
             let _ = join_header_footer(&split_header_footer(t));
             let _ = fields_to_codes(&codes_to_fields(t));
         }
+    }
+
+    #[test]
+    fn header_footer_date_follows_the_workbook_date_system() {
+        let mut wb = Workbook::new();
+        let date_1900 = hf_date_time(&wb).0;
+        wb.date_system = gridcraft_core::DateSystem::D1904;
+        assert_eq!(hf_date_time(&wb).0, date_1900);
     }
 
     #[test]
