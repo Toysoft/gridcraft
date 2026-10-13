@@ -656,6 +656,98 @@ fn column_autocomplete_completes_on_enter() {
     assert_eq!(value(&h, "A5"), Value::from("Ea"));
 }
 
+fn completion(h: &egui_kittest::Harness<'static, SheetApp>) -> (String, Option<String>) {
+    let ed = h.state().editor.as_ref().expect("still editing");
+    (ed.text.clone(), ed.completion.clone())
+}
+
+#[test]
+fn column_autocomplete_backspace_and_escape_drop_only_the_proposal() {
+    let mut s = blank();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["Apple"], ["Banana"]]})).unwrap();
+    s.execute("selection.set", json!({"cell": "A3"})).unwrap();
+    let mut h = harness(s);
+    text(&mut h, "ap");
+    assert_eq!(completion(&h), ("ap".into(), Some("Apple".into())), "\"ple\" is proposed after the caret");
+    key(&mut h, Key::Enter, Modifiers::NONE);
+    assert_eq!(value(&h, "A3"), Value::from("Apple"), "Enter accepts it, with the entry's own case");
+    text(&mut h, "ba");
+    key(&mut h, Key::Tab, Modifiers::NONE);
+    assert_eq!(value(&h, "A4"), Value::from("Banana"), "Tab accepts it too");
+
+    // Backspace removes the proposal, not the typed "a".
+    h.state_mut().run("selection.set", json!({"cell": "A5"})).unwrap();
+    h.run_steps(2);
+    text(&mut h, "ba");
+    key(&mut h, Key::Backspace, Modifiers::NONE);
+    assert_eq!(completion(&h), ("ba".into(), None));
+    key(&mut h, Key::Enter, Modifiers::NONE);
+    assert_eq!(value(&h, "A5"), Value::from("ba"));
+
+    // Escape dismisses the proposal and keeps the edit; a second Escape cancels it.
+    text(&mut h, "ap");
+    key(&mut h, Key::Escape, Modifiers::NONE);
+    assert_eq!(completion(&h), ("ap".into(), None));
+    key(&mut h, Key::Escape, Modifiers::NONE);
+    assert!(h.state().editor.is_none());
+    assert_eq!(value(&h, "A6"), Value::Empty);
+}
+
+#[test]
+fn column_autocomplete_skips_ambiguous_prefixes_and_numbers() {
+    let mut s = blank();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["Apricot"], ["Apple"], ["12 Main St"]]})).unwrap();
+    s.execute("selection.set", json!({"cell": "A4"})).unwrap();
+    let mut h = harness(s);
+    text(&mut h, "ap");
+    assert_eq!(completion(&h), ("ap".into(), None), "Apricot and Apple both match");
+    text(&mut h, "p");
+    assert_eq!(completion(&h), ("app".into(), Some("Apple".into())), "one more letter settles it");
+    h.state_mut().cancel_edit();
+    text(&mut h, "12");
+    assert_eq!(completion(&h), ("12".into(), None), "a number is not completed");
+}
+
+#[test]
+fn column_autocomplete_folds_case_beyond_ascii() {
+    let mut s = blank();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["Ébène"], ["Ébano"], ["ébano"], ["STRAẞENBAHN"]]})).unwrap();
+    s.execute("selection.set", json!({"cell": "A5"})).unwrap();
+    let mut h = harness(s);
+    text(&mut h, "éba");
+    assert_eq!(completion(&h), ("éba".into(), Some("ébano".into())), "Ébano and ébano are one entry, Ébène doesn't match");
+    h.state_mut().cancel_edit();
+    text(&mut h, "éb");
+    assert_eq!(completion(&h).1, None, "Ébène and Ébano differ past the prefix");
+    h.state_mut().cancel_edit();
+    // "ß" is two bytes, "ẞ" three: the proposed rest starts after the fifth character, not the sixth byte.
+    text(&mut h, "straß");
+    assert_eq!(completion(&h), ("straß".into(), Some("STRAẞENBAHN".into())));
+    let painted = h.output().shapes.iter().any(|c| matches!(&c.shape, egui::Shape::Text(t) if t.galley.job.text == "ENBAHN"));
+    assert!(painted, "the rest \"ENBAHN\" is drawn after the caret");
+}
+
+#[test]
+fn column_autocomplete_can_be_turned_off() {
+    assert!(gridcraft_ui_egui::UiState::default().autocomplete);
+    let old: gridcraft_ui_egui::UiState = serde_json::from_str(r#"{"dark": true}"#).unwrap();
+    assert!(old.autocomplete, "a ui.json written before the setting existed keeps it on");
+
+    let mut s = blank();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["North"]]})).unwrap();
+    s.execute("selection.set", json!({"cell": "A2"})).unwrap();
+    let mut h = harness(s);
+    assert_eq!(h.state_mut().run("options.autoComplete", json!({"on": false})), Ok(json!({"on": false})));
+    assert!(h.state().dialog.is_none());
+    text(&mut h, "No");
+    assert_eq!(completion(&h), ("No".into(), None));
+    text(&mut h, "r");
+    assert_eq!(completion(&h), ("Nor".into(), None), "typing on doesn't bring it back");
+    key(&mut h, Key::Enter, Modifiers::NONE);
+    assert_eq!(value(&h, "A2"), Value::from("Nor"));
+    assert_eq!(h.state_mut().run("options.autoComplete", json!({})), Ok(json!({"on": true})), "no parameters: it toggles");
+}
+
 /// An .xlsm carrying a VBA project, saved to bytes.
 fn macro_workbook_bytes() -> Vec<u8> {
     let mut wb = gridcraft_engine::model::Workbook::new();

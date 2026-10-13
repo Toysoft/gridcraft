@@ -405,6 +405,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Options|General" => "일반",
         "Options|Save" => "저장",
         "Show formula bar" => "수식 입력줄 표시",
+        "Enable AutoComplete for cell values" => "셀 값에 자동 완성 사용",
         "Save .xlsx workbooks automatically after every change" => "변경할 때마다 .xlsx 통합 문서를 자동으로 저장",
         "Workbook calculation" => "통합 문서 계산",
         "Enable iterative calculation" => "반복 계산 사용",
