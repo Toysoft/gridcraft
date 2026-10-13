@@ -1,5 +1,46 @@
 use super::*;
 
+#[test]
+fn unicode_text_has_searchable_embedded_glyphs_or_reports_a_missing_font() {
+    let mut doc = PdfDoc::new();
+    doc.add_page(300.0, 200.0).text(10.0, 30.0, 12.0, Font::Helvetica, [0, 0, 0], "中文 ABC");
+    if option_env!("CRAFT_FONTS_DIR").is_some() {
+        assert!(unicode::width('中').is_some() && unicode::width('文').is_some(), "licensed build input must provide Chinese glyphs");
+    }
+    if unicode::width('中').is_some() && unicode::width('文').is_some() {
+        let bytes = doc.finish().unwrap();
+        check_xref(&bytes);
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(text.contains("/Subtype /Type3") && text.contains("/ToUnicode"));
+        assert!(text.contains("<4E2D>") && text.contains("<6587>"));
+        assert!(!text.contains("(?? ABC)"));
+    } else {
+        assert!(doc.finish().unwrap_err().to_string().contains("font"));
+    }
+}
+
+#[test]
+fn unicode_subset_splits_before_single_byte_codes_overflow() {
+    let text: String = (0x4E00..0x5200).filter_map(char::from_u32).filter(|&c| unicode::width(c).is_some()).take(300).collect();
+    if text.chars().count() < 300 {
+        return;
+    }
+    let mut doc = PdfDoc::new();
+    doc.add_page(300.0, 200.0).text(10.0, 30.0, 12.0, Font::Helvetica, [0, 0, 0], &text);
+    let bytes = doc.finish().unwrap();
+    check_xref(&bytes);
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("/U1 "));
+    assert!(text.contains("/LastChar 255") && text.contains("/LastChar 45"));
+}
+
+#[test]
+fn missing_glyph_is_an_error_instead_of_a_question_mark() {
+    let mut doc = PdfDoc::new();
+    doc.add_page(100.0, 100.0).text(0.0, 20.0, 12.0, Font::Helvetica, [0, 0, 0], "\u{10ffff}");
+    assert!(doc.finish().unwrap_err().to_string().contains("U+10FFFF"));
+}
+
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
@@ -37,7 +78,7 @@ fn check_xref(pdf: &[u8]) -> usize {
 
 #[test]
 fn minimal_document() {
-    let pdf = PdfDoc::new().finish();
+    let pdf = PdfDoc::new().finish().unwrap();
     assert!(pdf.starts_with(b"%PDF-1.7"));
     assert!(pdf.ends_with(b"%%EOF\n"));
     assert!(check_xref(&pdf) >= 5);
@@ -62,7 +103,7 @@ fn drawing_and_text() {
     let p2 = d.add_page(842.0, 595.0);
     p2.text(10.0, 20.0, 10.0, Font::CourierBold, [0, 0, 0], "Second");
     assert_eq!(d.page_count(), 2);
-    let pdf = d.finish();
+    let pdf = d.finish().unwrap();
     check_xref(&pdf);
     assert!(find(&pdf, b"(Hello \\(world\\) \\\\ caf\\351 \\2005) Tj").is_some());
     assert!(find(&pdf, b"(Second) Tj").is_some());
@@ -87,7 +128,7 @@ fn images_with_alpha() {
     p.image_rgba(10.0, 10.0, 40.0, 40.0, &px, 4, 4);
     p.image_rgba(10.0, 10.0, 40.0, 40.0, &[255; 16], 2, 2); // opaque: no mask
     p.image_rgba(0.0, 0.0, 1.0, 1.0, &[1, 2, 3], 4, 4); // too short: ignored
-    let pdf = d.finish();
+    let pdf = d.finish().unwrap();
     check_xref(&pdf);
     assert!(find(&pdf, b"/SMask").is_some());
     assert!(find(&pdf, b"/Im1 Do").is_some());
@@ -154,7 +195,7 @@ fn hostile_inputs_never_panic() {
     p.restore();
     p.save();
     p.image_rgba(0.0, 0.0, 10.0, 10.0, &[], u32::MAX, u32::MAX);
-    let pdf = d.finish();
+    let pdf = d.finish().unwrap();
     check_xref(&pdf);
 }
 
@@ -234,7 +275,7 @@ fn every_draw_method_survives_hostile_numbers() {
     p.stroke_line_dashed(0.0, 0.0, 1.0, 1.0, 1.0, [0, 0, 0], &[0.0; 100]);
     let c = page_content(&d);
     assert!(!c.contains("NaN") && !c.contains("inf"));
-    let pdf = d.finish();
+    let pdf = d.finish().unwrap();
     check_xref(&pdf);
 }
 
@@ -254,7 +295,7 @@ fn info_strings_with_non_ascii_are_utf16be() {
     doc.add_page(200.0, 200.0);
     doc.info.title = "Übersicht €5 – “Q1” 日本 😀".into();
     doc.info.author = "Müller & Søn".into();
-    let pdf = doc.finish();
+    let pdf = doc.finish().unwrap();
     assert_eq!(utf16_entry(&pdf, "/Title"), "Übersicht €5 – “Q1” 日本 😀");
     assert_eq!(utf16_entry(&pdf, "/Author"), "Müller & Søn");
 }
@@ -264,7 +305,7 @@ fn ascii_info_strings_stay_literal_and_escaped() {
     let mut doc = PdfDoc::new();
     doc.add_page(200.0, 200.0);
     doc.info.title = r"Q1 (draft) a\b".into();
-    let pdf = doc.finish();
+    let pdf = doc.finish().unwrap();
     assert!(find(&pdf, br"/Title (Q1 \(draft\) a\\b)").is_some());
     assert!(find(&pdf, b"/Producer (GridCraft PDF)").is_some());
 }
@@ -274,6 +315,6 @@ fn info_strings_are_capped() {
     let mut doc = PdfDoc::new();
     doc.add_page(200.0, 200.0);
     doc.info.title = "日".repeat(100_000);
-    let pdf = doc.finish();
+    let pdf = doc.finish().unwrap();
     assert_eq!(utf16_entry(&pdf, "/Title").chars().count(), MAX_INFO_CHARS);
 }
