@@ -150,12 +150,8 @@ impl CfCache {
                 // Excel's text rules are formulas (`SEARCH`, `LEFT`, `RIGHT`) that fail on an error
                 // value: it never contains, begins or ends with anything, so it always "does not
                 // contain".
-                CfRule::ContainsText { text: t, style } => {
-                    (!v.is_error() && text.to_lowercase().contains(&t.to_lowercase())).then_some(style.as_ref())
-                }
-                CfRule::NotContainsText { text: t, style } => {
-                    (v.is_error() || !text.to_lowercase().contains(&t.to_lowercase())).then_some(style.as_ref())
-                }
+                CfRule::ContainsText { text: t, style } => (!v.is_error() && search(&text, t)).then_some(style.as_ref()),
+                CfRule::NotContainsText { text: t, style } => (v.is_error() || !search(&text, t)).then_some(style.as_ref()),
                 CfRule::BeginsWith { text: t, style } => {
                     (!v.is_error() && text.to_lowercase().starts_with(&t.to_lowercase())).then_some(style.as_ref())
                 }
@@ -343,6 +339,14 @@ fn layer_under(style: &mut Style, lower: &Style) {
     }
 }
 
+/// Whether `text` contains `find` the way Excel's "Text that Contains" rule tests it, with
+/// `SEARCH`: ignoring case, with `*` (any run), `?` (any one character) and `~` (the next
+/// character literally). "Begins with" and "Ends with" are literal in Excel.
+fn search(text: &str, find: &str) -> bool {
+    let (text, find) = (text.to_lowercase(), find.to_lowercase());
+    if find.contains(['*', '?', '~']) { crate::cmd::edit::wildcard(&text, &format!("*{find}*")) } else { text.contains(&find) }
+}
+
 /// Shifts a rule formula written for the top-left cell of the range to `c`.
 fn relative(f: &str, first: CellRef, c: CellRef) -> String {
     if first == c {
@@ -445,5 +449,34 @@ mod tests {
         assert_eq!(col("B"), [false, false, false], "begins with #");
         assert_eq!(col("C"), [false, false, false], "ends with !");
         assert_eq!(col("D"), [true, true, false], "does not contain a");
+    }
+
+    #[test]
+    fn text_that_contains_takes_wildcards() {
+        // Issue #1161, measured in Excel: "Text that Contains" searches like SEARCH, so `*` and
+        // `?` are wildcards; "Begins with" is literal.
+        let mut s = crate::Session::new();
+        s.new_workbook();
+        let column = json!([["abc"], ["ABC"], ["xabc"], ["abxc"], ["a*c"], ["a?c"], ["ab"]]);
+        for col in ["A", "B", "C", "D", "E"] {
+            s.execute("range.setValues", json!({"range": format!("{col}1"), "values": column})).unwrap();
+        }
+        for (range, rule) in [
+            ("A1:A7", json!({"type": "containsText", "text": "a*c"})),
+            ("B1:B7", json!({"type": "containsText", "text": "a?c"})),
+            ("C1:C7", json!({"type": "containsText", "text": "a~*c"})),
+            ("D1:D7", json!({"type": "notContainsText", "text": "a*c"})),
+            ("E1:E7", json!({"type": "beginsWith", "text": "a*"})),
+        ] {
+            s.execute("home.conditionalFormat", json!({"range": range, "rule": rule})).unwrap();
+        }
+        let d = s.doc().unwrap();
+        let mut cache = CfCache::new();
+        let mut col = |c: &str| [1, 2, 3, 4, 5, 6, 7].map(|r| cache.look(&d.wb, 0, CellRef::parse(&format!("{c}{r}")).unwrap()).is_some());
+        assert_eq!(col("A"), [true, true, true, true, true, true, false], "contains a*c");
+        assert_eq!(col("B"), [true, true, true, false, true, true, false], "contains a?c");
+        assert_eq!(col("C"), [false, false, false, false, true, false, false], "contains a~*c: a literal *");
+        assert_eq!(col("D"), [false, false, false, false, false, false, true], "does not contain a*c");
+        assert_eq!(col("E"), [false, false, false, false, true, false, false], "begins with a*");
     }
 }

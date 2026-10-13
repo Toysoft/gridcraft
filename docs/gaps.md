@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (rows auto-fit oversized fonts on open and whole-row/column formatting) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (§25 conditional formatting, measured against Excel) · **Target:** Microsoft Excel (Microsoft 365)
 
 Every known shortfall against Excel, one entry each, ranked by user impact (what blocks someone
 using GridCraft for real work first). This is the work list: pick from the top, check the open
@@ -164,10 +164,27 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 - Font weights beyond regular/bold (#168), system font list (#4), Calibri metrics (#29), macOS
   chrome (#169, #170), Linux title bar (#54), icon consistency across apps (#173). **Estimate:** 7–12 h.
 
+### 25. Conditional formatting: data bars, copy and fill, rule dialogs (F, U)
+- Measured against Excel for Microsoft 365 (2026-10-13): cell-value, text, date, duplicate,
+  top/bottom, average and formula rules, priorities and colour scales match cell for cell.
+- **Missing:**
+  - data bars with a fixed minimum are drawn from 0 (#1158), and Automatic vs Lowest/Highest
+    bounds are read and written as one (#1159); negative bars and the axis (#703, PR #781);
+  - icon thresholds with ">" (#1160);
+  - a rule's number format isn't shown (#1163);
+  - copy, cut, fill, Format Painter and Clear Formats don't carry or clear rules, and Clear Rules
+    from Selected Cells deletes whole rules (#1164);
+  - the New Formatting Rule dialog (#1165);
+  - menus: no "More Rules…", no solid data bars, 6 of 12 colour scales, 6 of 20 icon sets.
+- **Fixed:** "Text that Contains" takes the wildcards `*` and `?` (#1161); text rules never match
+  an error value (#1162).
+- **Estimate:** 15–25 h.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | §25 added: conditional formatting measured against Excel; text rules take wildcards and skip error values (#1161, #1162) |
 | 2026-10-12 | minor | rows auto-fit oversized fonts on open and whole-row/column formatting (#833) |
 | 2026-10-12 | minor | Page Layout view: dragging margins on the rulers (#792) removed from the §14 remainder |
 | 2026-10-12 | minor | §13: Forecast Sheet Forecast Start (hindcast) landed (#785) |
