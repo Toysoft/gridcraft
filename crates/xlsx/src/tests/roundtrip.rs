@@ -204,9 +204,9 @@ fn sample() -> Workbook {
             security_descriptor: None,
         },
     ];
-    s.hyperlinks.insert(at("A2"), Hyperlink { target: "https://example.com/?a=1&b=2".into(), tooltip: Some("go".into()) });
-    s.hyperlinks.insert(at("A3"), Hyperlink { target: "'Data & Stuff'!B2".into(), tooltip: None });
-    s.hyperlinks.insert(at("A4"), Hyperlink { target: "mailto:me@example.com".into(), tooltip: None });
+    s.hyperlinks.insert(at("A2"), Hyperlink { target: "https://example.com/?a=1&b=2".into(), tooltip: Some("go".into()), external: true });
+    s.hyperlinks.insert(at("A3"), Hyperlink { target: "'Data & Stuff'!B2".into(), tooltip: None, external: false });
+    s.hyperlinks.insert(at("A4"), Hyperlink { target: "mailto:me@example.com".into(), tooltip: None, external: true });
     s.comments.insert(
         at("B2"),
         Comment {
@@ -986,6 +986,42 @@ fn table_newline_column_and_backslash_name_survive() {
     assert_eq!(s.value(at("A1")), Value::text("Handle\nBars"));
     assert_eq!(s.cell(at("D1")).and_then(|c| c.formula.as_ref()).map(|f| f.text.as_str()), Some("COUNTA(\\_Prime.1[Name])"));
     assert!(gridcraft_formula::parse("COUNTA(\\_Prime.1[Name])").is_ok(), "backslash table name parses as a structured reference");
+}
+
+/// A table that is only a header row and a totals row (Insert Table on one row, then Total
+/// Row) is written like the header-only and one-data-row shapes, not dropped on save.
+#[test]
+fn header_and_totals_table_without_data_row_survives() {
+    let mut wb = Workbook::new();
+    let s = wb.sheet_mut(0).unwrap();
+    s.tables.push(Table {
+        id: 1,
+        name: "Table1".into(),
+        range: rr("A1:B2"),
+        header_row: true,
+        totals_row: true,
+        columns: vec![
+            TableColumn { name: "Name".into(), totals: TotalsFn::None, totals_label: Some("Total".into()), formula: None },
+            TableColumn { name: "Amount".into(), totals: TotalsFn::Sum, totals_label: None, formula: None },
+        ],
+        style: "TableStyleMedium2".into(),
+        banded_rows: true,
+        banded_cols: false,
+        first_col: true,
+        last_col: true,
+        filter_button: true,
+        filter: vec![],
+    });
+    let (back, report) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let tables = &back.sheet(0).unwrap().tables;
+    assert_eq!(tables.len(), 1);
+    let t = &tables[0];
+    assert_eq!((t.name.as_str(), t.range.a1(), t.header_row, t.totals_row), ("Table1", "A1:B2".to_string(), true, true));
+    assert_eq!((t.style.as_str(), t.banded_rows, t.first_col, t.last_col), ("TableStyleMedium2", true, true, true));
+    assert_eq!(t.columns[0].totals_label.as_deref(), Some("Total"));
+    assert_eq!(t.columns[1].totals, TotalsFn::Sum);
+    assert_eq!(back.sheet(0).unwrap().value(at("A1")), Value::text("Name"));
 }
 
 /// Templates and macro-enabled files differ from `.xlsx` only in the workbook part's content

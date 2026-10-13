@@ -197,7 +197,8 @@ fn registry() -> &'static (Vec<FnSpec>, HashMap<&'static str, usize>) {
     })
 }
 
-/// Looks a function up by name (case-insensitive; `_xlfn.`, `_xlws.` and `_xludf.`-free names).
+/// Looks a function up by name (case-insensitive; `_xlfn.`- and `_xlws.`-free names). A
+/// `_xludf.` name is user-defined and never found.
 pub fn lookup(name: &str) -> Option<&'static FnSpec> {
     let mut n = name.trim().to_ascii_uppercase();
     loop {

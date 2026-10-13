@@ -200,6 +200,43 @@ fn calculated_table_column_keeps_formula_and_cell_value() {
     assert_eq!(sh.value(at("B2")), Value::Number(6.0));
 }
 
+#[test]
+fn this_row_references_are_written_in_long_form() {
+    let mut wb = Workbook::new();
+    let sh = wb.sheet_mut(0).unwrap();
+    sh.cells.set(at("A2"), Cell::value(Value::Number(3.0)));
+    sh.cells.set(at("B2"), formula("Data[@Input]*2", 6.0));
+    sh.tables.push(Table {
+        id: 1,
+        name: "Data".into(),
+        range: range("A1:B2"),
+        header_row: true,
+        totals_row: false,
+        columns: vec![
+            TableColumn { name: "Input".into(), totals: TotalsFn::None, totals_label: None, formula: None },
+            TableColumn { name: "Output".into(), totals: TotalsFn::None, totals_label: None, formula: Some("[@Input]*2".into()) },
+        ],
+        style: "TableStyleLight1".into(),
+        banded_rows: true,
+        banded_cols: false,
+        first_col: false,
+        last_col: false,
+        filter_button: true,
+        filter: vec![],
+    });
+    let bytes = write_xlsx(&wb).unwrap();
+    let mut pkg = Package::open(&bytes).unwrap();
+    let sheet = pkg.read_xml("xl/worksheets/sheet1.xml").unwrap().unwrap();
+    assert_eq!(cell(&sheet, "B2").child("f").unwrap().text, "Data[[#This Row],[Input]]*2");
+    let table = pkg.read_xml("xl/tables/table1.xml").unwrap().unwrap();
+    let column = table.child("tableColumns").unwrap().kids("tableColumn").nth(1).unwrap();
+    assert_eq!(column.child("calculatedColumnFormula").unwrap().text, "[[#This Row],[Input]]*2");
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    let sh = back.sheet(0).unwrap();
+    assert_eq!(sh.tables[0].columns[1].formula.as_deref(), Some("[@Input]*2"));
+    assert_eq!(sh.cell(at("B2")).unwrap().formula.as_ref().unwrap().text, "Data[@Input]*2");
+}
+
 /// Compare both cell and formula metadata, collecting all boundaries in the group on failure.
 fn check_formula_metadata(mut wb: Workbook, sheet_index: usize, cases: &[(&str, bool)]) {
     for (i, (text, _)) in cases.iter().enumerate() {

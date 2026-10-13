@@ -33,10 +33,11 @@ pub struct PreservedPart {
 }
 
 /// A raw XML element of an owning part that refers to kept parts, re-emitted on save with its
-/// relationship ids rewritten.
+/// relationship ids rewritten, or that Excel needs back unchanged (the workbook's `fileVersion`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PreservedXml {
-    /// Which slot of the owner it belongs in (`externalReferences`, `oleObjects`, `controls`).
+    /// Which slot of the owner it belongs in (`externalReferences`, `fileVersion`, `ext`,
+    /// `oleObjects`, `controls`).
     pub slot: String,
     /// The element, namespace declarations it needs included.
     pub xml: String,

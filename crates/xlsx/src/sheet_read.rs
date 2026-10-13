@@ -104,7 +104,7 @@ pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<Sheet, IoE
                     }
                 }
             }
-            "hyperlinks" => read_hyperlinks(e, &rels, &mut sheet),
+            "hyperlinks" => read_hyperlinks(cx, name, e, &rels, &mut sheet),
             "autoFilter" => sheet.autofilter = read_autofilter(cx, e),
             "printOptions" => {
                 sheet.print.gridlines = e.flag("gridLines", false);
@@ -541,7 +541,7 @@ pub fn parse_iso_datetime(s: &str, sys: DateSystem) -> Option<f64> {
 }
 
 pub fn parse_sqref(s: Option<&str>) -> Vec<RangeRef> {
-    s.unwrap_or("").split_whitespace().filter_map(RangeRef::parse).take(10_000).collect()
+    s.unwrap_or("").split_whitespace().filter_map(RangeRef::parse).collect()
 }
 
 fn cf_op(s: Option<&str>) -> CfOperator {
@@ -709,11 +709,13 @@ fn read_validation(v: &El) -> Option<Validation> {
     })
 }
 
-fn read_hyperlinks(e: &El, rels: &[Rel], sheet: &mut Sheet) {
+fn read_hyperlinks(cx: &mut Ctx<'_>, name: &str, e: &El, rels: &[Rel], sheet: &mut Sheet) {
     let mut cells = 0u64;
     for h in e.kids("hyperlink") {
         let Some(range) = h.attr("ref").and_then(RangeRef::parse) else { continue };
         let mut target = h.attr("id").and_then(|id| rels.iter().find(|r| r.id == id)).map(|r| r.target.clone()).unwrap_or_default();
+        // A relationship is a file or web page; a bare `location` is a place in this workbook.
+        let external = !target.is_empty();
         if let Some(loc) = h.attr("location").filter(|l| !l.is_empty()) {
             if target.is_empty() {
                 target = loc.trim_start_matches('#').to_string();
@@ -724,9 +726,10 @@ fn read_hyperlinks(e: &El, rels: &[Rel], sheet: &mut Sheet) {
         if target.is_empty() {
             continue;
         }
-        let link = Hyperlink { target, tooltip: h.attr("tooltip").map(str::to_string) };
+        let link = Hyperlink { target, tooltip: h.attr("tooltip").map(str::to_string), external };
         for c in range.iter() {
             if cells >= MAX_HYPERLINK_CELLS {
+                cx.warn(format!("sheet \"{name}\": hyperlinks past the first {MAX_HYPERLINK_CELLS} cells were dropped"));
                 return;
             }
             cells += 1;
@@ -972,5 +975,13 @@ mod tests {
         assert_eq!(parse_iso_datetime("06:00:00", DateSystem::D1900), Some(0.25));
         assert_eq!(parse_iso_datetime("garbage", DateSystem::D1900), None);
         assert_eq!(parse_iso_datetime("2024-13-01", DateSystem::D1900), None);
+    }
+
+    #[test]
+    fn sqref_keeps_more_than_ten_thousand_ranges() {
+        let sq = (1..=12_000).map(|r| format!("A{r}")).collect::<Vec<_>>().join(" ");
+        let ranges = parse_sqref(Some(&sq));
+        assert_eq!(ranges.len(), 12_000);
+        assert_eq!(ranges.last().copied(), RangeRef::parse("A12000"));
     }
 }

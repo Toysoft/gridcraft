@@ -24,7 +24,7 @@ fn numbers() {
     assert_eq!(f("0", -2.5), "-3");
     assert_eq!(f("0.00", 2.675), "2.68");
     assert_eq!(f("0.00", 1.005), "1.01");
-    assert_eq!(f("0.0", -0.04), "-0.0");
+    assert_eq!(f("0.0", -0.04), "0.0");
     assert_eq!(f("00000", 123.0), "00123");
     assert_eq!(f("000-00-0000", 123456789.0), "123-45-6789");
     assert_eq!(f("#.##", 0.5), ".5");
@@ -103,6 +103,29 @@ fn scientific() {
     assert_eq!(f("0.000E+00", 1e-300), "1.000E-300");
     assert_eq!(f("0.00E+00", 9.999), "1.00E+01");
     assert_eq!(f("0.00E+00", -12345.0), "-1.23E+04");
+}
+
+/// A negative number that rounds to zero in the first section shows no minus sign; a negative
+/// section of its own keeps its text (observed Excel results).
+#[test]
+fn negative_rounding_to_zero_drops_the_sign() {
+    let cases: &[(&str, f64, &str)] = &[
+        ("0.00", -0.0033, "0.00"),
+        ("0.00", -2.89e-9, "0.00"),
+        ("0.00", -0.005, "-0.01"),
+        ("0", -0.4, "0"),
+        ("0", -0.5, "-1"),
+        ("0.0", -0.004, "0.0"),
+        ("#,##0.00", -0.004, "0.00"),
+        ("0.00%", -2.89e-9, "0.00%"),
+        ("0.00%", -0.0033, "-0.33%"),
+        ("0.00;(0.00)", -0.0033, "(0.00)"),
+        ("0.00;-0.00;\"zero\"", -0.0033, "-0.00"),
+        ("0.00E+00", -2.89e-9, "-2.89E-09"),
+    ];
+    for &(code, n, want) in cases {
+        assert_eq!(f(code, n), want, "{code} with {n}");
+    }
 }
 
 #[test]
@@ -347,6 +370,8 @@ fn text_fn() {
     assert_eq!(text_function(&Value::Number(2957003.0), "m/d/yyyy", DateSystem::D1904), Ok("12/31/9999".into()));
     assert_eq!(text_function(&Value::Number(2957004.0), "m/d/yyyy", DateSystem::D1904), Err(CellError::Value));
     assert_eq!(text_function(&Value::Bool(true), "0", S), Ok("TRUE".into()));
+    assert_eq!(text_function(&Value::Number(-0.0033), "0", S), Ok("0".into()));
+    assert_eq!(text_function(&Value::Number(-0.4), "0", S), Ok("0".into()));
     // Booleans go through the text section as TRUE/FALSE (observed Excel results).
     let cases: &[(bool, &str, &str)] = &[
         (true, ";;;@", "TRUE"),

@@ -68,11 +68,15 @@ pub enum Drag {
 pub struct GridState {
     pub drag: Drag,
     pub ensure_visible: bool,
+    /// With `ensure_visible`: scroll to the moving end of the selection instead of the active cell
+    /// (Shift/Ctrl+Shift+arrows keep the active cell on the anchor while the far corner moves).
+    pub reveal_moving_end: bool,
     pub last_title: Option<String>,
     pub drag_select: bool,
     pub rect: Option<Rect>,
     pub cells_rect: Option<Rect>,
-    pub filter_menu: Option<(u32, Pos2)>,
+    /// Column and row of the clicked header cell, and where to open the menu.
+    pub filter_menu: Option<(u32, u32, Pos2)>,
     pub context_menu: Option<Pos2>,
     pub marching_phase: f32,
     /// The selection outline on its way to a new selection.
@@ -532,10 +536,11 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
     view.scroll.x = view.scroll.x.min(max_x);
     view.scroll.y = view.scroll.y.min(max_y);
     let mut geo = make_geo(app, view.scroll);
-    // Keep the active cell visible after keyboard moves.
+    // Keep the active cell (or the moving end of an extension) visible after keyboard moves.
     if app.grid.ensure_visible {
         app.grid.ensure_visible = false;
-        let target = app.editor.as_ref().and_then(|e| e.point_cell).unwrap_or(sel.active);
+        let cell = if std::mem::take(&mut app.grid.reveal_moving_end) { sel.moving_end() } else { sel.active };
+        let target = app.editor.as_ref().and_then(|e| e.point_cell).unwrap_or(cell);
         if paper {
             crate::paper_view::ensure_covers(app, &wb, si, target);
             geo = make_geo(app, view.scroll);
@@ -1425,6 +1430,20 @@ pub fn outline_sides(cells: Rect, ppp: f32) -> [Rect; 4] {
     ]
 }
 
+/// The selection's outline round `cells` as it is painted: the sides of [`outline_sides`], cut to
+/// `clip` (a little beyond it).
+///
+/// A side that spans a whole column (20 million points tall) loses its precision in the
+/// tessellator and vanishes; sides that stay near the viewport do not. Sides wholly outside
+/// `clip` are left out.
+pub(crate) fn outline_bands(cells: Rect, ppp: f32, clip: Rect) -> Vec<Rect> {
+    if !cells.is_finite() || !clip.is_finite() {
+        return Vec::new();
+    }
+    let clip = clip.expand(OUTLINE_W * 2.0);
+    outline_sides(cells, ppp).into_iter().map(|s| s.intersect(clip)).filter(|s| s.is_finite() && s.width() > 0.0 && s.height() > 0.0).collect()
+}
+
 /// `outline` is where the current area's border is drawn this frame (see `selection_glide`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_selection(
@@ -1467,10 +1486,8 @@ pub(crate) fn paint_selection(
         }
     }
     if cur_here {
-        for side in outline_sides(outline, p.ctx().pixels_per_point()) {
-            if side.is_finite() && side.is_positive() {
-                p.rect_filled(side, 0.0, t.sel_border);
-            }
+        for side in outline_bands(outline, p.ctx().pixels_per_point(), p.clip_rect()) {
+            p.rect_filled(side, 0.0, t.sel_border);
         }
     }
     if active_here && sel.ranges.len() > 1 {
@@ -1799,6 +1816,29 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
         }
     }
 
+    // Double-click the fill handle: a double-click is also a click, so run it before the handle press returns.
+    if resp.double_clicked()
+        && let Some(p) = pos
+        && on_handle(p)
+    {
+        // Fill down as far as the neighbouring column goes.
+        let src = sel.current();
+        let neighbour = if src.start.col > 0 { src.start.col - 1 } else { src.end.col + 1 };
+        let mut last = src.end.row;
+        while last + 1 < MAX_ROWS && sh.value_ref(CellRef::new(last + 1, neighbour)).is_some_and(|v| !v.is_empty()) && last - src.end.row < 1_000_000
+        {
+            last += 1;
+        }
+        if last > src.end.row {
+            let target = RangeRef::new(src.start, CellRef::new(last, src.end.col));
+            let _ = app.run("edit.autoFill", json!({"source": src.a1(), "target": target.a1()}));
+        }
+        app.grid.drag = Drag::None;
+        app.grid.drag_select = false;
+        resp.request_focus();
+        return;
+    }
+
     // Press: decide the drag mode.
     if resp.drag_started() || (primary_clicked && app.grid.drag == Drag::None) {
         // Where the press began (a drag is only recognised after the pointer has moved).
@@ -1826,6 +1866,9 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
                 return;
             }
             let c = geo.col_at(sh, p.x);
+            if point_header(app, wb, sh, RangeRef::cols(c, c)) {
+                return;
+            }
             if resp.drag_started()
                 && !mods.any()
                 && sel.ranges.len() == 1
@@ -1846,6 +1889,9 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
                 return;
             }
             let r = geo.row_at(sh, p.y);
+            if point_header(app, wb, sh, RangeRef::rows(r, r)) {
+                return;
+            }
             let range = if mods.shift { RangeRef::rows(sel.anchor.row.min(r), sel.anchor.row.max(r)) } else { RangeRef::rows(r, r) };
             select_ranges(app, range, mods.command, CellRef::new(r, geo.col_at(sh, geo.cells.left() + 1.0)));
             app.grid.drag = Drag::Rows(if mods.shift { sel.anchor.row } else { r });
@@ -1864,7 +1910,7 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
         }
         // Filter dropdown buttons.
         if is_filter_button(sh, geo, p) {
-            app.grid.filter_menu = Some((c.col, geo.mirror_pos(p)));
+            app.grid.filter_menu = Some((c.col, c.row, geo.mirror_pos(p)));
             return;
         }
         // Point mode while editing a formula: clicking inserts a reference.
@@ -2102,25 +2148,6 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
         app.grid.drag_select = false;
     }
 
-    // Double-click the fill handle.
-    if resp.double_clicked()
-        && let Some(p) = pos
-        && on_handle(p)
-    {
-        // Fill down as far as the neighbouring column goes.
-        let src = sel.current();
-        let neighbour = if src.start.col > 0 { src.start.col - 1 } else { src.end.col + 1 };
-        let mut last = src.end.row;
-        while last + 1 < MAX_ROWS && sh.value_ref(CellRef::new(last + 1, neighbour)).is_some_and(|v| !v.is_empty()) && last - src.end.row < 1_000_000
-        {
-            last += 1;
-        }
-        if last > src.end.row {
-            let target = RangeRef::new(src.start, CellRef::new(last, src.end.col));
-            let _ = app.run("edit.autoFill", json!({"source": src.a1(), "target": target.a1()}));
-        }
-    }
-
     // Right-click: context menu.
     if resp.secondary_clicked()
         && let Some(p) = pos
@@ -2151,6 +2178,16 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
         resp.request_focus();
     }
     keyboard(app, &ctx, resp, geo, sh);
+}
+
+/// Point mode on a header: inserts the whole-column or whole-row reference instead of selecting.
+fn point_header(app: &mut SheetApp, wb: &Workbook, sh: &Sheet, range: RangeRef) -> bool {
+    let Some(ed) = app.editor.as_mut().filter(|ed| ed.can_point()) else { return false };
+    let r = range.a1();
+    let r = if ed.sheet != wb.active_sheet { format!("{}!{r}", gridcraft_engine::formula::quote_sheet(&sh.name)) } else { r };
+    ed.insert_ref(&r);
+    ed.request_focus = true;
+    true
 }
 
 fn select_to_pointer(app: &mut SheetApp, geo: &Geo, sh: &Sheet, wb: &Workbook, p: Pos2) {
@@ -2427,6 +2464,7 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
                 let mv = |app: &mut SheetApp, dr: i64, dc: i64| {
                     let _ = app.session.run("selection.move", json!({"dr": dr, "dc": dc, "extend": shift, "jump": cmd}));
                     app.grid.ensure_visible = true;
+                    app.grid.reveal_moving_end = shift;
                 };
                 match key {
                     Key::ArrowUp => mv(app, -1, 0),
@@ -2654,20 +2692,20 @@ fn popup_dismissed(response: &egui::Response, was_open: bool) -> bool {
     response.ctx.input(|i| !i.focused || i.key_pressed(egui::Key::Escape)) || (was_open && response.clicked_elsewhere())
 }
 
+/// The table whose header cell (`row`, `col`) was clicked, not just the first table in the column.
+fn filter_table_range(sh: &Sheet, col: u32, row: u32) -> Option<RangeRef> {
+    sh.tables.iter().find(|t| t.range.start.row == row && col >= t.range.start.col && col <= t.range.end.col).map(|t| t.range)
+}
+
 fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool) {
-    let Some((col, at)) = app.grid.filter_menu else { return };
+    let Some((col, row, at)) = app.grid.filter_menu else { return };
     let Some(d) = app.session.active() else { return };
     let wb = d.wb.clone();
     let si = wb.active_sheet;
     let Some(sh) = wb.sheet(si) else { return };
     let _ = geo;
     // Tables get an autofilter on demand.
-    let table_range = sh
-        .tables
-        .iter()
-        .find(|t| t.range.start.row <= at.y as u32 || true)
-        .filter(|t| col >= t.range.start.col && col <= t.range.end.col)
-        .map(|t| t.range);
+    let table_range = filter_table_range(sh, col, row);
     if sh.autofilter.is_none()
         && let Some(r) = table_range
     {
@@ -2851,7 +2889,17 @@ pub fn point_move(app: &mut SheetApp, ed: &mut EditState, dr: i64, dc: i64, exte
     let from = ed.point_cell.unwrap_or(ed.cell);
     let to = from.offset_clamped(dr, dc);
     let text = if extend {
-        let anchor = ed.point.and_then(|(s, e)| ed.text.get(s..e)).and_then(|t| CellRef::parse(t.split(':').next().unwrap_or(""))).unwrap_or(from);
+        // The anchor is the corner opposite the moving end: the written range is normalized, so
+        // after extending up or left its first cell is the moving end, not the anchor.
+        let pointed = ed.point.and_then(|(s, e)| ed.text.get(s..e)).and_then(RangeRef::parse);
+        let anchor = pointed
+            .map(|r| {
+                CellRef::new(
+                    if from.row == r.start.row { r.end.row } else { r.start.row },
+                    if from.col == r.start.col { r.end.col } else { r.start.col },
+                )
+            })
+            .unwrap_or(from);
         RangeRef::new(anchor, to).a1()
     } else {
         to.a1()
@@ -2892,8 +2940,9 @@ pub(crate) fn paint_overlays(
         p.rect_stroke(r, 2.0, Stroke::new(1.0, Color32::from_gray(160)), StrokeKind::Inside);
         crate::icons::paint(p, r.shrink(3.0), crate::icons::Icon::Chevron, Color32::from_gray(60));
     }
-    // Input message of the active cell's validation.
+    // Input message of the active cell's validation, hidden while its list is open: it would cover the items.
     if app.editor.is_none()
+        && app.grid.list_picker != Some(sel.active)
         && let Some(dv) = sh.validations.iter().find(|d| d.ranges.iter().any(|r| r.contains(sel.active)))
         && dv.show_input
         && !(dv.input_title.is_empty() && dv.input_message.is_empty())
@@ -3230,6 +3279,32 @@ mod selection_fill_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn filter_menu_uses_the_table_whose_header_was_clicked() {
+        use gridcraft_engine::model::Table;
+        let table = |id: u32, r0: u32, r1: u32| Table {
+            id,
+            name: format!("T{id}"),
+            range: RangeRef::new(CellRef::new(r0, 0), CellRef::new(r1, 0)),
+            header_row: true,
+            totals_row: false,
+            columns: vec![],
+            style: String::new(),
+            banded_rows: true,
+            banded_cols: false,
+            first_col: false,
+            last_col: false,
+            filter_button: true,
+            filter: vec![],
+        };
+        let mut sh = Sheet::new("S");
+        sh.tables.push(table(1, 0, 2));
+        sh.tables.push(table(2, 4, 7));
+        assert_eq!(filter_table_range(&sh, 0, 4), Some(sh.tables[1].range));
+        assert_eq!(filter_table_range(&sh, 0, 0), Some(sh.tables[0].range));
+        assert_eq!(filter_table_range(&sh, 1, 4), None);
+    }
 
     #[test]
     fn cell_text_y_moves_monotonically_in_standard_and_tall_rows() {
@@ -3608,5 +3683,36 @@ mod editor_tests {
         for (cells, ppp) in [(Rect::NAN, 1.0), (cells, f32::NAN), (Rect::from_min_max(pos2(0.0, 0.0), pos2(f32::INFINITY, 10.0)), 1.5)] {
             let _ = outline_sides(cells, ppp).map(|side| side.is_finite() && side.is_positive());
         }
+    }
+}
+
+#[cfg(test)]
+mod outline_band_tests {
+    use super::*;
+
+    #[test]
+    fn whole_column_outline_keeps_left_and_right_sides_near_viewport() {
+        let clip = Rect::from_min_max(pos2(0.0, 0.0), pos2(800.0, 600.0));
+        let col = Rect::from_min_max(pos2(100.0, 40.0), pos2(180.0, 20_971_540.0));
+        for ppp in [1.0, 1.25, 1.5, 2.0] {
+            let sides = outline_bands(col, ppp, clip);
+            // Left, right and top (in view); the bottom is 20 million points away.
+            assert_eq!(sides.len(), 3, "{ppp}");
+            assert!(sides.iter().all(|s| s.bottom() <= clip.bottom() + 4.0 + f32::EPSILON), "{ppp}");
+            // Each lies on the gridline at its edge and reaches outward from it.
+            assert!(sides.iter().any(|s| s.right() <= 100.0 && s.left() >= 96.0 && s.height() > 500.0), "{ppp}: the left side");
+            assert!(sides.iter().any(|s| s.left() >= 178.0 && s.right() <= 183.0 && s.height() > 500.0), "{ppp}: the right side");
+        }
+    }
+
+    #[test]
+    fn outline_outside_the_view_and_non_finite_draw_nothing() {
+        let clip = Rect::from_min_max(pos2(0.0, 0.0), pos2(800.0, 600.0));
+        assert!(outline_bands(Rect::from_min_max(pos2(900.0, 0.0), pos2(950.0, 20.0)), 1.0, clip).is_empty());
+        assert!(outline_bands(Rect::from_min_max(pos2(f32::NAN, 0.0), pos2(1.0, 1.0)), 1.0, clip).is_empty());
+        assert!(outline_bands(Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), 1.0, Rect::NAN).is_empty());
+        // In view, it is the four sides of `outline_sides`, as they are.
+        let cells = Rect::from_min_max(pos2(100.0, 40.0), pos2(180.0, 60.0));
+        assert_eq!(outline_bands(cells, 1.5, clip), outline_sides(cells, 1.5).to_vec());
     }
 }
