@@ -87,6 +87,31 @@ fn copy_formula_from_above_and_function_keys() {
 }
 
 #[test]
+fn ctrl_q_does_not_close_the_window() {
+    // egui closes the window on Ctrl/Cmd+Q unless told otherwise, and ignores extra Shift and Alt:
+    // Ctrl+Q is Quick Analysis in Excel, and Ctrl+Alt+Q types `@` on a German keyboard. Closing
+    // there loses unsaved work without a prompt.
+    let mut session = book("A1");
+    session.execute("cell.set", json!({"cell": "A1", "input": "unsaved"})).unwrap();
+    let mut h = harness(session);
+    let press = |h: &mut Harness, m: Modifiers| {
+        h.input_mut().events.push(Event::Key { key: Key::Q, physical_key: Some(Key::Q), pressed: true, repeat: false, modifiers: m });
+        h.step();
+        let closes = h.output().viewport_output.values().any(|v| v.commands.contains(&egui::ViewportCommand::Close));
+        h.input_mut().events.push(Event::Key { key: Key::Q, physical_key: Some(Key::Q), pressed: false, repeat: false, modifiers: m });
+        h.step();
+        closes
+    };
+    for os in [egui::os::OperatingSystem::Windows, egui::os::OperatingSystem::Nix] {
+        h.ctx.set_os(os);
+        h.step();
+        for m in [CTRL, CTRL_SHIFT, Modifiers { alt: true, ..CTRL }] {
+            assert!(!press(&mut h, m), "{os:?} {m:?} closed the window");
+        }
+    }
+}
+
+#[test]
 fn windows_and_mac_variants() {
     let cmd = CTRL;
     let mac_cmd = Modifiers { mac_cmd: true, command: true, ..Modifiers::NONE };

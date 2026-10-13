@@ -1050,6 +1050,12 @@ impl SheetApp {
         if ctx.options(|o| o.zoom_with_keyboard) {
             ctx.options_mut(|o| o.zoom_with_keyboard = false);
         }
+        // egui closes the window on Ctrl+Q, extra Shift or Alt included, without asking to save.
+        // Outside macOS (where Cmd+Q is the menu bar's Quit) Ctrl+Q is Excel's Quick Analysis,
+        // and Ctrl+Alt+Q types `@` on a German keyboard.
+        if ctx.os() != egui::os::OperatingSystem::Mac && ctx.options(|o| !o.quit_shortcuts.is_empty()) {
+            ctx.options_mut(|o| o.quit_shortcuts.clear());
+        }
         let zoom = self.ui.zoom_factor();
         if (ctx.zoom_factor() - zoom).abs() > 0.001 {
             ctx.set_zoom_factor(zoom);
