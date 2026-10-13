@@ -2118,6 +2118,19 @@ mod tests {
         let (back, _) = gridcraft_xlsx::read_xlsx(&gridcraft_xlsx::write_xlsx(&wb).unwrap()).unwrap();
         let si = back.sheet_index("Sheet2").unwrap();
         assert_eq!(back.sheet(si).unwrap().charts.first().and_then(|c| c.pivot.clone()).as_deref(), Some("Sheet2!PivotTable1"));
+        // Excel 365 binds the chart to its PivotTable only when the link names a workbook in
+        // brackets: the saved file's name, or a placeholder when there is none.
+        let chart_xml = |bytes: &[u8]| {
+            let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+            let mut f = z.by_name("xl/charts/chart1.xml").unwrap();
+            let mut x = String::new();
+            std::io::Read::read_to_string(&mut f, &mut x).unwrap();
+            x
+        };
+        let named = chart_xml(&crate::io::save_bytes(&wb, "Q1 Report.xlsx").unwrap());
+        assert!(named.contains("<c:pivotSource><c:name>[Q1 Report.xlsx]Sheet2!PivotTable1</c:name>"), "{named}");
+        let unnamed = chart_xml(&gridcraft_xlsx::write_xlsx(&wb).unwrap());
+        assert!(unnamed.contains("<c:name>[Workbook.xlsx]Sheet2!PivotTable1</c:name>"), "{unnamed}");
         // Renaming the sheet keeps the link; a refresh still rebinds.
         s.execute("sheet.rename", json!({"name": "Report"})).unwrap();
         assert_eq!(pivot_chart(&s).pivot.as_deref(), Some("Report!PivotTable1"));

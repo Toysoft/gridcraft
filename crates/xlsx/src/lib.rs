@@ -130,12 +130,18 @@ impl XlsxKind {
 
 /// Writes a workbook as an `.xlsx` package, or as an `.xlsm` one when it holds a VBA project.
 pub fn write_xlsx(wb: &Workbook) -> Result<Vec<u8>, IoError> {
-    write::write_xlsx(wb, if wb.vba_project.is_some() { XlsxKind::MacroWorkbook } else { XlsxKind::Workbook })
+    write::write_xlsx(wb, if wb.vba_project.is_some() { XlsxKind::MacroWorkbook } else { XlsxKind::Workbook }, None)
 }
 
 /// Writes a workbook as the given member of the `.xlsx` family.
 pub fn write_xlsx_as(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
-    write::write_xlsx(wb, kind)
+    write::write_xlsx(wb, kind, None)
+}
+
+/// [`write_xlsx_as`] for a file named `file_name` (`Book.xlsx`): links that name the workbook
+/// itself, such as a PivotChart's link to its PivotTable, use that name.
+pub fn write_xlsx_named(wb: &Workbook, kind: XlsxKind, file_name: &str) -> Result<Vec<u8>, IoError> {
+    write::write_xlsx(wb, kind, Some(file_name))
 }
 
 /// CSV import options.

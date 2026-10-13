@@ -236,7 +236,8 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         y_title: y_ax.and_then(|a| a.child("title")).and_then(rich_title),
         source: None,
         by_rows: false,
-        pivot: root.path(&["pivotSource", "name"]).map(|n| n.text.trim().to_string()).filter(|n| !n.is_empty()),
+        // The link without its workbook, which only names the file the chart was saved in.
+        pivot: root.path(&["pivotSource", "name"]).map(|n| without_book(n.text.trim()).trim().to_string()).filter(|n| !n.is_empty()),
     })
 }
 
@@ -610,17 +611,35 @@ fn axis_xml(a: &Ax<'_>) -> String {
     s
 }
 
-/// Chart part XML for a model chart on sheet `si`.
-pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart) -> String {
+/// A PivotChart link without its workbook: `[Book.xlsx]Sheet2!PivotTable1` → `Sheet2!PivotTable1`.
+fn without_book(link: &str) -> &str {
+    match link.strip_prefix('[') {
+        Some(rest) => rest.split_once(']').map_or(rest, |(_, r)| r),
+        None => link,
+    }
+}
+
+/// A PivotChart's `c:pivotSource` name: its link (`Sheet2!PivotTable1`) with the workbook in
+/// brackets in front, replacing any there. Excel 365 binds the chart to its PivotTable only with a
+/// bracketed workbook name; any name will do, so without the file's name a placeholder is used.
+fn pivot_source_name(link: &str, book: Option<&str>) -> String {
+    let bare = without_book(link);
+    let book = book.map(str::trim).filter(|b| !b.is_empty() && !b.contains(['[', ']'])).unwrap_or("Workbook.xlsx");
+    format!("[{book}]{bare}")
+}
+
+/// Chart part XML for a model chart on sheet `si`. `book`: the file name of the workbook being
+/// written, used in a PivotChart's link.
+pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart, book: Option<&str>) -> String {
     let mut s = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><c:roundedCorners val=\"0\"/>",
     );
     if (1..=48).contains(&ch.style) {
         let _ = write!(s, "<c:style val=\"{}\"/>", ch.style);
     }
-    // A PivotChart names its PivotTable (`Sheet2!PivotTable1`).
+    // A PivotChart names its PivotTable with the workbook (`[Book.xlsx]Sheet2!PivotTable1`).
     if let Some(link) = ch.pivot.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
-        let _ = write!(s, "<c:pivotSource><c:name>{}</c:name><c:fmtId val=\"0\"/></c:pivotSource>", esc(link));
+        let _ = write!(s, "<c:pivotSource><c:name>{}</c:name><c:fmtId val=\"0\"/></c:pivotSource>", esc(&pivot_source_name(link, book)));
     }
     s.push_str("<c:chart>");
     match &ch.title {
