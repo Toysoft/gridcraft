@@ -1977,7 +1977,7 @@ fn sort_moves_runs_with_their_rows() {
 }
 
 /// Remove Duplicates compacts the kept rows' runs with them; a cut moves its cells' runs to the
-/// destination while a copy pastes flat text (the milestone-1 paste semantics).
+/// destination and a copy repeats them there (#906).
 #[test]
 fn remove_duplicates_compacts_runs_and_cut_moves_them() {
     let mut s = s();
@@ -1992,12 +1992,89 @@ fn remove_duplicates_compacts_runs_and_cut_moves_them() {
     // Cut B2 (rich) to D5: the runs move with the cell.
     s.execute("edit.cut", json!({"range": "B2"})).unwrap();
     s.execute("edit.paste", json!({"at": "D5"})).unwrap();
-    assert_eq!(runs_of(&s, "D5"), Some(runs), "cut-paste moves runs");
+    assert_eq!(runs_of(&s, "D5"), Some(runs.clone()), "cut-paste moves runs");
     assert!(runs_of(&s, "B2").is_none());
-    // Copy-paste flattens (milestone-1 decision).
+    // Copy-paste repeats the runs at the destination (#906).
     s.execute("edit.copy", json!({"range": "D5"})).unwrap();
     s.execute("edit.paste", json!({"at": "F7"})).unwrap();
-    assert!(runs_of(&s, "F7").is_none(), "copy-paste pastes flat text");
+    assert_eq!(runs_of(&s, "F7"), Some(runs), "copy-paste repeats runs (#906)");
+}
+
+#[test]
+fn copy_paste_repeats_runs() {
+    let mut s = s();
+    let runs = repro_runs();
+    let text = add_runs_cell(&mut s, "A3", runs.clone());
+    s.execute("edit.copy", json!({"range": "A3"})).unwrap();
+    s.execute("edit.paste", json!({"at": "C5"})).unwrap();
+    assert_eq!(runs_of(&s, "C5"), Some(runs.clone()), "copy-paste repeats the runs (#906)");
+    assert_eq!(v(&s, "C5"), Value::text(text.as_str()));
+    // Undo restores the pre-paste state (no runs at the destination), redo brings them back.
+    s.execute("edit.undo", json!({})).unwrap();
+    assert!(runs_of(&s, "C5").is_none(), "undo takes the pasted runs back");
+    s.execute("edit.redo", json!({})).unwrap();
+    assert_eq!(runs_of(&s, "C5"), Some(runs));
+}
+
+#[test]
+fn copy_paste_tiles_repeat_runs() {
+    let mut s = s();
+    let runs = repro_runs();
+    add_runs_cell(&mut s, "A3", runs.clone());
+    s.execute("edit.copy", json!({"range": "A3"})).unwrap();
+    s.execute("selection.set", json!({"range": "C5:D6"})).unwrap();
+    s.execute("edit.paste", json!({})).unwrap();
+    for a in ["C5", "D5", "C6", "D6"] {
+        assert_eq!(runs_of(&s, a), Some(runs.clone()), "tile {a} repeats the runs");
+    }
+}
+
+#[test]
+fn copy_paste_transpose_repeats_runs() {
+    let mut s = s();
+    let runs = repro_runs();
+    add_runs_cell(&mut s, "A3", runs.clone());
+    s.execute("edit.copy", json!({"range": "A3"})).unwrap();
+    s.execute("edit.pasteSpecial", json!({"what": "all", "transpose": true, "at": "C5"})).unwrap();
+    assert_eq!(runs_of(&s, "C5"), Some(runs));
+}
+
+#[test]
+fn cross_sheet_paste_repeats_runs() {
+    let mut s = s();
+    let runs = repro_runs();
+    add_runs_cell(&mut s, "A3", runs.clone());
+    // Copy first: `insertSheet` activates the new sheet, so a later copy would read its empty A3.
+    s.execute("edit.copy", json!({"range": "A3"})).unwrap();
+    s.execute("home.insertSheet", json!({"name": "Other"})).unwrap();
+    s.execute("edit.pasteSpecial", json!({"what": "all", "at": "B2", "sheet": 1})).unwrap();
+    // Read sheet 1 directly: `runs_of` reads the active sheet, which `insertSheet` may have changed.
+    let got = s.doc().unwrap().wb.sheet(1).unwrap().cell_runs.get(&CellRef::parse("B2").unwrap()).cloned();
+    assert_eq!(got, Some(runs), "runs are self-contained deltas — cross-sheet paste carries them");
+}
+
+#[test]
+fn paste_operation_result_stays_flat() {
+    let mut s = s();
+    // "5" stored as text with runs; paste-adding a 1 over it turns it into the number 6 — no runs stay.
+    let runs = CellRuns { runs: vec![Run { start: 0, len: 1, font: RunFont { bold: Some(true), ..runs_none_font() } }] };
+    s.execute("home.formatCells", json!({"range": "B1", "style": {"num_fmt": "@"}})).unwrap();
+    s.execute("cell.set", json!({"cell": "B1", "input": "5", "runs": serde_json::to_value(&runs).unwrap()})).unwrap();
+    s.execute("cell.set", json!({"cell": "A1", "input": "1"})).unwrap();
+    s.execute("edit.copy", json!({"range": "A1"})).unwrap();
+    s.execute("edit.pasteSpecial", json!({"what": "all", "operation": "add", "at": "B1"})).unwrap();
+    assert!(v(&s, "B1").is_number(), "text + number under `add` becomes a number");
+    assert!(runs_of(&s, "B1").is_none(), "an operation-mutated value never carries runs");
+}
+
+#[test]
+fn paste_values_stays_flat() {
+    let mut s = s();
+    let runs = repro_runs();
+    add_runs_cell(&mut s, "A3", runs.clone());
+    s.execute("edit.copy", json!({"range": "A3"})).unwrap();
+    s.execute("edit.pasteSpecial", json!({"what": "values", "at": "C5"})).unwrap();
+    assert!(runs_of(&s, "C5").is_none(), "paste-values is flat, as in Excel");
 }
 
 // Formatting a character range of a cell's text: `home.fontColor {cell, chars, color}` (issue #776).

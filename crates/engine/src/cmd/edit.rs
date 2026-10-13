@@ -1133,6 +1133,22 @@ fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
                                 }
                             }
                         }
+                        // A cut moves its cells' rich text; a copy repeats it at the destination (#906).
+                        // Only where the pasted value is exactly the text the runs describe — an
+                        // operation-mutated value, a formula (Empty) or an error pastes flat.
+                        // (`set_cell` below drops any runs at the destination, so the decision is
+                        // taken before the write and the entry re-inserted after it.)
+                        let carried_runs = if cut_move { moved_runs.get(&sc) } else { src_sheet.cell_runs.get(&sc) };
+                        let runs_dest = if !link
+                            && matches!(what, What::All | What::AllExceptBorders)
+                            && let Some(cr) = carried_runs
+                            && let Value::Text(t) = &new.value
+                            && cr.valid_for(t)
+                        {
+                            Some(cr.clone())
+                        } else {
+                            None
+                        };
                         match what {
                             What::Comments => {
                                 if let Some(cm) = src_sheet.comments.get(&sc).cloned() {
@@ -1155,12 +1171,8 @@ fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
                         if let Some(picture) = new_picture {
                             cx.sheet_mut(dest_sheet)?.cell_pictures.insert(dest, picture);
                         }
-                        // A cut moves its cells' rich text with them (a copy pastes flat text).
-                        if cut_move
-                            && !link
-                            && let Some(cr) = moved_runs.get(&sc)
-                        {
-                            cx.sheet_mut(dest_sheet)?.cell_runs.insert(dest, cr.clone());
+                        if let Some(cr) = runs_dest {
+                            cx.sheet_mut(dest_sheet)?.cell_runs.insert(dest, cr);
                         }
                         cx.touch(dest_sheet, dest);
                     }
