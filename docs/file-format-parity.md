@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (XLSX chart sheets are kept on save (#727); previously minor: CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (validation-content fidelity checks) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -10,6 +10,15 @@ Excel's list comes from Microsoft's public "File formats that are supported in E
 documentation (the Office bundle is off limits under this repo's clean-room rule). GridCraft's
 support comes from `crates/engine/src/io.rs` (`FileKind`), `crates/xlsx/src` and the tests in
 `crates/xlsx/src/tests/` (round-trip, fixtures, malformed input, CSV, ODS, XLSB, XLS, PivotTables).
+
+## Validation fidelity checks
+
+`gridcraft-cli check` compares validation ranges, constraints, formulas, messages and flags after
+saving and reopening. Ordered rule comparison preserves first-match precedence and relative-formula
+anchors. It normalizes ordinary formula spelling and writer-omitted operators, without expanding
+whole-sheet ranges. Regression controls cover actual XLSX save/reopen and report limits. This is
+checker coverage for the validation portion of #1052, not evidence of a new serializer defect or
+external Excel validation; initial-import loss remains outside the model comparison.
 
 ## Workbook formats
 
@@ -85,6 +94,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Validation-content comparisons and regression controls in the CLI fidelity checker (#1052, validation portion) |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |
 | 2026-10-12 | trivial | CSV and TSV export is capped at 512 MiB and refuses a larger used range with an error (#528) |
 | 2026-10-12 | minor | `.xls` import reads the calculation settings (CalcMode, CalcIter, CalcCount, CalcDelta, CalcPrecision), so circular models calculate instead of showing `#CIRC!` (#724) |
