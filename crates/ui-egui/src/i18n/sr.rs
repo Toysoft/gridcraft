@@ -391,6 +391,12 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Workbook calculation" => "Izračunavanje radne sveske",
         "Enable iterative calculation" => "Omogući iterativno izračunavanje",
         "Calculation settings are saved with the workbook." => "Podešavanja izračunavanja se čuvaju sa radnom sveskom.",
+        "Left Margin" => "Leva margina",
+        "Right Margin" => "Desna margina",
+        "Top Margin" => "Gornja margina",
+        "Bottom Margin" => "Donja margina",
+        "Header Margin" => "Margina zaglavlja",
+        "Footer Margin" => "Margina podnožja",
         _ => return None,
     })
 }

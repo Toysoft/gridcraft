@@ -318,6 +318,25 @@ fn language_switch_translates_the_ribbon_and_persists() {
 }
 
 #[test]
+fn format_cells_draws_its_labels_in_the_interface_language() {
+    let mut h = harness(blank());
+    h.state_mut().run("app.language.set", json!({"language": "de"})).unwrap();
+    h.state_mut().open_dialog("formatCells", json!({"tab": "Number"}));
+    h.run_steps(2);
+    assert!(h.query_by_label("Wissenschaftlich").is_some(), "the Number tab's categories are translated");
+    assert!(h.query_by_label("Scientific").is_none(), "no English category is left");
+    h.get_by_label("Wissenschaftlich").click();
+    h.run_steps(2);
+    let style = &h.state().dialog.as_ref().unwrap().values["style"];
+    assert_eq!(style["num_fmt"], json!("0.00E+00"), "a translated category still applies its code");
+    h.state_mut().dialog = None;
+    h.state_mut().run("app.language.set", json!({"language": "en"})).unwrap();
+    h.state_mut().open_dialog("formatCells", json!({"tab": "Number"}));
+    h.run_steps(2);
+    assert!(h.query_by_label("Scientific").is_some(), "English is unchanged");
+}
+
+#[test]
 fn name_manager_new_and_edit_open_the_name_dialog_and_come_back() {
     // #238: New… in the Name Manager did nothing (the manager put itself back over the dialog it
     // had just opened).

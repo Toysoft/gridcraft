@@ -963,6 +963,7 @@ fn row_height(s: &mut Session, p: &Json) -> Result<Json> {
                 e.custom = true;
             }
         }
+        cx.structural = true; // setting a height shows or hides rows: SUBTOTAL(10x) depends on it
         Ok(Json::Null)
     })
 }
@@ -1002,9 +1003,7 @@ pub fn chars_to_points(c: f64) -> f64 {
     }
 }
 
-pub fn points_to_chars(px: f64) -> f64 {
-    if px <= 12.0 { (px / 12.0 * 100.0).round() / 100.0 } else { ((px - 5.0) / 7.0 * 100.0 + 0.5).trunc() / 100.0 }
-}
+pub use gridcraft_model::points_to_chars;
 
 /// Approximate text width in points for autofit (no font metrics in the engine: average glyph
 /// widths for the default font; the UI refines with real measurement when it autofits).
@@ -1079,6 +1078,7 @@ fn autofit_rows(s: &mut Session, p: &Json) -> Result<Json> {
             }
             cx.fit_rows.extend((a..=b).map(|r| (si, r)));
         }
+        cx.structural = true; // autofit reveals hidden rows: SUBTOTAL(10x) depends on it
         Ok(Json::Null)
     })
 }
