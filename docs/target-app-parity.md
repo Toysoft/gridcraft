@@ -1,6 +1,6 @@
 # Target-app parity: GridCraft vs Microsoft Excel
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (audit against main: evidence text corrected for merged PRs, function count 513; scores and hours not re-derived) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (audit against main: evidence text corrected for merged PRs, function count 513; scores and hours not re-derived) · **Target:** Microsoft Excel (Microsoft 365)
 
 This is the authoritative parity assessment. [`ROADMAP.md`](../ROADMAP.md) summarizes it,
 [`gaps.md`](gaps.md) lists every shortfall, and the area checklists hold the detail:
@@ -84,10 +84,10 @@ performance 8, stability 8, localization 4, hardware 2, platforms 2, ecosystem 2
 | Editing, navigation, clipboard, fill | 12 | ~90% | ~70% | 15–25 | Point mode, F4, AutoComplete, Paste Special, AutoFill, Flash Fill, Find/Replace, Go To Special. Fixed since 10-10: monthly fill (#132; #160), cut across sheets (#128; #144), Insert Copied Cells (#21; #288), key tips on every tab (#411, #412). #28 (drag-select) is open; a triage comment says the recording shows a fill-handle drag. [ui-parity.md](ui-parity.md) |
 | Cell formatting, styles, conditional formatting | 10 | ~95% | ~80% | 8–14 | Full number-format language, borders, 47 cell styles, 60 table styles, all CF rule kinds including data bars, colour scales and icon sets. Gaps: font weights beyond regular/bold (#168, open), themes; the system font list is fixed (#9, closes #4) |
 | Sort, filter, tables, validation, outline | 8 | ~82% | ~70% | 10–16 | Multi-level sort, AutoFilter, Advanced Filter, tables with totals, validation, outline, subtotals, consolidate. Open: subtotal header (#131). Fixed: validation edits (#129; #180), table style panic (#130; #179). Table slicers landed (#193) |
-| PivotTables | 7 | ~65% | ~45% | 25–40 | Insert/Recommended, field list, three layouts, date grouping, show-values-as, refresh, calculated fields, XLSX round-trip. Done since 10-10: PivotCharts (#313). Missing: PivotTable slicers (open PR #719), timelines, calculated items, value/label filters, number grouping, GETPIVOTDATA, data-model pivots. Round-trip never checked in Excel |
-| Charts and sparklines | 8 | ~50% | ~30% | 40–60 | 25 chart kinds, all 2-D. The chart model holds title, legend position, a data-labels flag, gridlines flag and axis titles; no axis scaling, error bars, per-point formatting, chart sheets, 3-D, surface, map, Pareto. Trendlines landed (#424) and every kind keeps its type through XLSX (#158, #161). [chart-parity.md](chart-parity.md) |
-| Page layout, print, PDF | 5 | ~80% | ~55% | 12–20 | Page setup, print titles, breaks, Page Break Preview, headers/footers, PDF export and printing. Page Layout view (#334) and first-page / odd-even headers (#404) landed; desktop printing goes through craft-print (#459), web printing through the browser (#209); the PDF writer still uses only the 14 standard fonts without embedding (no CJK or other non-Latin text in PDF) |
-| What-if and analysis | 4 | ~50% | ~40% | 22–35 | Goal Seek, Scenario Manager, data tables, Analysis ToolPak (13 tools, #320), Solver (#327), Forecast Sheet (#325). Missing: Analyze Data, Forecast Start (open PR #786) |
+| PivotTables | 7 | ~65% | ~45% | 25–40 | Insert/Recommended, field list, three layouts, values on rows or columns, date grouping, show-values-as, refresh, calculated fields, XLSX round-trip. Done since 10-10: PivotCharts (#313). Missing: PivotTable slicers (open PR #719), timelines, calculated items, value/label filters, number grouping, GETPIVOTDATA, data-model pivots. Round-trip never checked in Excel |
+| Charts and sparklines | 8 | ~50% | ~30% | 40–60 | 25 chart kinds, all 2-D. The chart model holds title, legend position, a data-labels flag, gridlines flag and axis titles; no axis scaling, error bars, per-point formatting, editing or creating chart sheets (existing ones are kept on save, #727), 3-D, surface, map, Pareto. Trendlines landed (#424) and every kind keeps its type through XLSX (#158, #161). [chart-parity.md](chart-parity.md) |
+| Page layout, print, PDF | 5 | ~80% | ~55% | 12–20 | Page setup, print titles, breaks, Page Break Preview, headers/footers, PDF export and printing. Page Layout view (#334) with margins dragged on the rulers (#792, #794) and first-page / odd-even headers (#404) landed; desktop printing goes through craft-print (#459), web printing through the browser (#209); the PDF writer still uses only the 14 standard fonts without embedding (no CJK or other non-Latin text in PDF) |
+| What-if and analysis | 4 | ~50% | ~40% | 22–35 | Goal Seek, Scenario Manager, data tables, Analysis ToolPak (13 tools, #320), Solver (#327), Forecast Sheet (#325). Forecast Start landed (#785, PR #786). Missing: Analyze Data |
 | Get & Transform, external data, data model | 5 | ~15% | ~10% | 60–100 | Import of CSV/TSV, JSON, HTML. No Power Query editor, no From Web, database or folder sources, no connections or refresh, no relationships or data model, external workbook links are kept unchanged on save (pass-through, #333) but never followed or refreshed |
 | Insert objects | 3 | ~55% | ~45% | 25–40 | Pictures (also inside cells, #105), 9 `ShapeKind` variants (six geometric shapes, text box, icon, ink; Excel has ~170 shapes), text boxes, own icon set, ink with Ink to Shape, hyperlinks, checkboxes. Missing: SmartArt, WordArt (open PR #789), equations, signature line, objects, 3-D models, screenshot |
 | Review, comments, protection, collaboration | 4 | ~55% | ~40% | 35–55 | Threaded comments, notes, spelling (system dictionary), thesaurus, sheet and workbook protection, Allow Edit Ranges with Excel-compatible password hashes (#307), comment navigation and notes-to-comments conversion (#286), password-encrypted files open (#436). Missing: Show Changes, accessibility checker, co-authoring |
@@ -103,7 +103,7 @@ performance 8, stability 8, localization 4, hardware 2, platforms 2, ecosystem 2
 | UI/UX fidelity | 12 | ~55% | 50–80 | Excel-style ribbon, galleries, dialogs, formula bar, status bar; shortcuts audited against Microsoft's lists (#319, see [ui-parity.md](ui-parity.md)); key tips on every tab (#411, #412); short context menu; single window. [ui-parity.md](ui-parity.md) |
 | Performance | 8 | ~35% | 35–55 | [Performance](#performance) |
 | Stability | 8 | ~60% | 15–25 | Never-crash rules enforced by lint, every command fuzzed with hostile params, random command sequences fuzzed against undo/redo, XLSX round-trip and full-recalc invariants, last-resort guard in `Session::execute`. Field reports fixed: Windows Intel GPU crash (#120; #315), error on close (#117; #316); open: freeze opening from Finder (#166), screen flashing (#76) |
-| Localization | 4 | ~10% | 100–165 | Catalogs in nine languages (es, zh, ja, ko, ru, pt-BR, de, cs, fr; 381 entries each, about 17% of the ~2,200 strings), Spanish formulas (#98), CJK/Thai/Hebrew font fallback, Sheet Right-to-Left mirrors the grid (#310), no shaping or bidi. [localization-parity.md](localization-parity.md) |
+| Localization | 4 | ~10% | 100–165 | Catalogs in ten languages (es, zh, ja, ko, ru, pt-BR, de, cs, fr, sr; 393–398 entries each, es 424, cs 514, pt-BR 939: about 18% of the ~2,200 strings for most), Spanish formulas (#98), CJK/Thai/Hebrew font fallback, Sheet Right-to-Left mirrors the grid (#310), no shaping or bidi. [localization-parity.md](localization-parity.md) |
 | Hardware | 2 | ~40% | 25–40 | GPU UI via wgpu; single-threaded calc; no pen pressure; one window. [hardware-parity.md](hardware-parity.md) |
 | Platforms | 2 | ~80% | 30–60 | [Platforms](#platforms) |
 | Ecosystem / add-ins | 2 | ~10% | 25–40 | [Ecosystem and AI](#ecosystem-and-ai) |
@@ -162,7 +162,7 @@ edge cases are left out, along with everything excluded from the mainstream numb
 | Typing data, simple formulas, AutoSum (SUM, AVERAGE, arithmetic) | 20 | 88 | Solid; 15-digit equality (#57) is rare at this level |
 | Basic formatting: fonts, bold, fills, borders, currency/percent/date formats | 15 | 85 | |
 | Copy, paste, fill handle, undo/redo | 15 | 78 | Monthly fill fixed (#132; #160); #28 open |
-| Rows and columns: insert, delete, widths, AutoFit | 10 | 82 | AutoFit fixed (#42, #88) |
+| Rows and columns: insert, delete, widths, AutoFit | 10 | 82 | AutoFit fixed (#42, #88); rows auto-fit oversized fonts on open and row formatting (#833) |
 | Sort and filter | 10 | 82 | |
 | Save, Save As, reopen XLSX | 10 | 85 | |
 | A basic chart | 8 | 55 | Created easily; resizes from the corner handle (#218) |
@@ -301,7 +301,7 @@ The inventory carried over from the 2026-10-07 ROADMAP.md, updated for what land
   average, colour), tables with totals rows, remove duplicates, text to columns, data validation
   with error alerts, grouping/outline, subtotals.
 - PivotTables: Insert/Recommended PivotTables, field list pane, compact/outline/tabular layouts,
-  date grouping, sort, filters, show-values-as, refresh, and XLSX round-trip.
+  values on rows or columns, date grouping, sort, filters, show-values-as, refresh, and XLSX round-trip.
 - Page layout & print: Page Break Preview, Page Layout view, print settings, PDF export and printing.
 - What-if: Goal Seek, scenarios, data tables, Solver, Analysis ToolPak, Forecast Sheet. Spelling (system word list) and thesaurus.
 - Draw: pen, highlighter, eraser, ink strokes and Ink to Shape. Task panes: Comments (threaded
@@ -332,7 +332,11 @@ The inventory carried over from the 2026-10-07 ROADMAP.md, updated for what land
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Re-verified after the 2026-10-12/13 merges: Forecast Start (#786), ruler margin dragging (#794), values on rows, chart sheets kept on save (#727), row AutoFit (#833) recorded; language counts re-measured (ten languages); scores and hours not re-derived |
 | 2026-10-12 | minor | Audit against main: evidence text corrected for merged PRs #9, #77, #98, #105, #209, #148, #152, #157, #158, #161, #178, #183, #187, #193, #218, #286, #313, #320, #325, #327, #332, #333, #334, #404, #411, #412, #424, #436, #459 (see the PR for the row-by-row list); worksheet functions recounted at 513 / 523; the weighted scores, discount factors and hour ranges were not re-derived and are probably pessimistic in places (owner re-score needed) |
+| 2026-10-12 | minor | Essentials AutoFit evidence: rows auto-fit oversized fonts on open and row formatting (#833) |
+| 2026-10-12 | minor | Sheet tabs: reveal the selected tab on navigation and resize while preserving manual scrolling (#681); no score change |
+| 2026-10-12 | minor | PivotTables: values on rows (Σ Values in Rows at any position, all three layouts; `pivot.moveField` and the field pane move it; `dataOnRows` round-trips) (no score change) |
 | 2026-10-11 | minor | Stability: command-sequence fuzz harness (`crates/engine/tests/command_sequence_fuzz.rs`) checks random command sequences against undo/redo, XLSX round-trip, full-recalc and structure invariants; the sequence bugs it found are fixed (no score change) |
 | 2026-10-11 | minor | Password-encrypted workbooks open (#11): Essentials file-opening work 24–36 h |
 | 2026-10-11 | minor | Worksheet functions 505 / 523 (96.6%; 496 working): ODDFPRICE, ODDFYIELD, ODDLPRICE, ODDLYIELD |

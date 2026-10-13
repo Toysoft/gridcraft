@@ -1,6 +1,6 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (audit against main: nine translated interface languages, Spanish and French catalogs, Spanish formulas, counts re-measured) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (audit against main: ten translated interface languages, counts re-measured after the 2026-10-13 merges) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Per-language status against Excel, which ships its UI in dozens of languages (Windows language
 packs cover 100+), with localized function names, argument separators, number and date formats,
@@ -9,19 +9,21 @@ right-to-left sheets and full complex-script support. Part of
 
 ## Where we are (measured from source on `main`, after the 2026-10-10 merges)
 
-- **A catalog exists for nine languages besides English.** `crates/ui-egui/src/i18n.rs` (`Language::ALL`:
-  en, es, zh, ja, ko, ru, pt-BR, de, cs, fr) adds an interface-language preference that defaults to
+- **A catalog exists for ten languages besides English.** `crates/ui-egui/src/i18n.rs` (`Language::ALL`:
+  en, es, zh, ja, ko, ru, pt-BR, de, cs, fr, sr) adds an interface-language preference that defaults to
   the system language (#31, closes #20) and a View-tab switcher, with English-keyed lookup tables:
-  Japanese 377 entries (`JAPANESE` in `i18n.rs`) and 381 each for es, zh, ko, ru, pt-BR, de, cs and fr
-  (`crates/ui-egui/src/i18n/*.rs`, counted as `"English" => "translated"` lines). Merged: #31, #104,
-  #82 (ja, zh, ko, ru, pt-BR), #271 (de), #335 (cs), #242 (es), #413 (fr). The tables are used by
-  the ribbon, sheet tabs and widgets (`ribbon.rs`, `tabs.rs`, `widgets.rs`) and by some dialogs
-  (`tr(` calls in `dialogs.rs`); the extent of dialog, menu, context-menu, task-pane, status-message,
-  command-label and function-description coverage has not been re-measured. Untranslated labels
-  fall back to English. More languages (Italian, Turkish, Polish, Arabic, Hebrew, more Portuguese,
-  Russian and Czech strings, dialogs in the interface language: PRs #650, #663, #713, #743, #721, #778, #739, #676, #652, #669) are open, not on main.
+  Japanese 394 entries (`JAPANESE` in `i18n.rs`), Spanish 424, Czech 514, Brazilian Portuguese 939 and
+  393-398 each for zh, ko, ru, de, fr and sr (`crates/ui-egui/src/i18n/*.rs`, counted as
+  `"English" => "translated"` lines, re-measured after the 2026-10-13 merges). Merged: #31, #104, #82
+  (ja, zh, ko, ru, pt-BR), #271 (de), #335 (cs), #242 (es), #413 (fr), #453 (sr), #652 (cs) and #739
+  (pt-BR). The tables are used by the ribbon, sheet tabs and widgets (`ribbon.rs`, `tabs.rs`,
+  `widgets.rs`), the Format Cells dialog, every dialog title and the shared OK/Cancel buttons; the
+  other dialogs, menus, context menus, task panes, status messages, command labels and function
+  descriptions are only partly looked up (not re-measured). Untranslated labels fall back to English.
+  More languages (Italian, Turkish, Polish, Arabic, Hebrew, more Russian strings, dialogs in the
+  interface language: PRs #650, #663, #713, #743, #721, #778, #676, #669) are open, not on main.
 - **About 2,200 user-visible strings** in all (heuristic source scan: ~1,700 UI and command
-  strings plus ~500 function descriptions), so each shipped language covers about **17%** (381 / ~2,200; measured
+  strings plus ~500 function descriptions), so each shipped language covers about **18%** (393–398 / ~2,200, more for es, cs and pt-BR; measured
   count over an estimated total).
 - **en-US only formulas and formats.** Function names, `,` argument separator, `.` decimal
   separator, en-US number and date formats (`crates/numfmt` says "en-US only"). Spanish function names and `;` separators
@@ -46,20 +48,21 @@ separators, number/date formats, machine translation with agent review, and scri
 | Language | Code | UI strings translated | Dialogs / tooltips / help | Script support | Native review | Status | Estimate to full |
 |---|---|---|---|---|---|---|---|
 | English | en | ~2,200 / ~2,200 (100%, source) | yes | Latin: yes | yes | full | — |
-| Simplified Chinese (Mandarin) | zh-Hans | 381 (~17%) | no | CJK system-font fallback (#38); IME unverified; PDF can't export | no | menus only | 8–13 h |
-| Spanish | es | 381 (~17%); function names and `;` separators (#98) | no | Latin: yes | no | menus only | 6–10 h |
+| Simplified Chinese (Mandarin) | zh-Hans | 398 (~18%) | no | CJK system-font fallback (#38); IME unverified; PDF can't export | no | menus only | 8–13 h |
+| Spanish | es | 424 (~19%); function names and `;` separators (#98) | no | Latin: yes | no | menus only | 6–10 h |
 | Hindi | hi | 0 (0%) | no | Devanagari: **no shaping** | no | none | 12–18 h |
 | Arabic | ar | 0 (0%) | no | **no shaping, no RTL UI**; Sheet Right-to-Left mirrors the grid (#146) | no | none | 25–35 h |
-| French | fr | 381 (~17%) | no | Latin: yes | no | menus only | 6–10 h |
-| Portuguese | pt-BR | 381 (~17%) | no | Latin: yes | no | menus only | 4–8 h |
+| French | fr | 393 (~18%) | no | Latin: yes | no | menus only | 6–10 h |
+| Portuguese | pt-BR | 939 (~43%) | dialogs and tooltips (dialogs take effect with #669) | Latin: yes | no | menus, File view, dialogs | 2–4 h |
+| Serbian (Latin) | sr | 394 (~18%) | no | Latin: yes | no | menus only | not estimated |
 | Indonesian | id | 0 (0%) | no | Latin: yes | no | none | 5–8 h |
-| Japanese | ja | 377 (~17%) | no | CJK system-font fallback; IME unverified; no furigana display | no | menus only | 8–12 h |
-| German | de | 381 (~17%) | no | Latin: yes | no | menus only | 4–8 h |
-| Korean | ko | 381 (~17%) | no | Hangul via the CJK fallback; IME unverified | no | menus only | 6–10 h |
-| Czech | cs | 381 (~17%) | no | Latin: yes | no | menus only | not estimated |
+| Japanese | ja | 394 (~18%) | no | CJK system-font fallback; IME unverified; no furigana display | no | menus only | 8–12 h |
+| German | de | 393 (~18%) | no | Latin: yes | no | menus only | 4–8 h |
+| Korean | ko | 394 (~18%) | no | Hangul via the CJK fallback; IME unverified | no | menus only | 6–10 h |
+| Czech | cs | 514 (~23%) | no | Latin: yes | no | menus only | not estimated |
 | Vietnamese | vi | 0 (0%) | no | Latin with stacked diacritics: unverified | no | none | 6–10 h |
 
-Other shipped languages: Russian (ru), 381 entries (~17%), menus only. Estimates in the last column are unchanged from the 2026-10-10 version.
+Other shipped languages: Russian (ru), 394 entries (~18%), menus only. Estimates in the last column are unchanged from the 2026-10-10 version.
 
 **Total:** catalog work 10–20 h + languages 92–144 h ≈ **100–165 h**. Parallelizes almost fully
 once the catalog covers dialogs and commands. **Needs a human:** native-speaker review of every
@@ -81,7 +84,10 @@ language (none so far) and of localized function names.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Re-audit after the 2026-10-12/13 merges: catalogs re-counted (ja 394, es 424, cs 514, pt-BR 939, 393–398 for the others); Serbian (#453), Czech tooltips (#652) and Brazilian Portuguese dialogs (#739) recorded as merged; open language PRs listed again (#650, #663, #713, #743, #721, #778, #676, #669) |
 | 2026-10-12 | minor | Audit against main: re-counted the catalogs (381 entries each, ja 377: about 17% of the ~2,200 estimate, not 12%); recorded Spanish (#242) and French (#413) interface languages and Spanish formulas (#98); #163 was closed unmerged; Czech row added (no estimate); open language PRs listed by number. The ~10% ready and hour estimates are unchanged (not re-scored) |
+| 2026-10-12 | minor | Format Cells looks up its tabs, labels, options and note through `Language::tr` (Fill tab keyed `Format Cells\|Fill`); dialog titles and OK/Cancel too. Labels already in a table (Number, Currency, Fill…) show translated; the rest fall back to English until the tables add them |
+| 2026-10-12 | minor | Brazilian Portuguese catalog (`i18n/pt.rs`) grows from 377 to 923 entries: every key the other catalogs translate, including the dialog strings #669 starts looking up (~42%) |
 | 2026-10-11 | minor | German ribbon catalog (`i18n/de.rs`, 266 labels, ~12%); `de` locale tags (de-DE, de-AT, de-CH…) resolve to German. PR #163 (localized German formulas/numbers) still open |
 | 2026-10-11 | minor | Sheet Right-to-Left mirrors the grid (#146) |
 | 2026-10-11 | minor | Czech (cs) ribbon table: 266 labels (~12%), menus only |

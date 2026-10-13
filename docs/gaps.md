@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (audit against main: stale entries corrected with evidence; §15 reduced to one line) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (audit against main: stale entries corrected with evidence; §15 reduced to one line) · **Target:** Microsoft Excel (Microsoft 365)
 
 Every known shortfall against Excel, one entry each, ranked by user impact (what blocks someone
 using GridCraft for real work first). This is the work list: pick from the top, check the open
@@ -98,7 +98,7 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 - **Evidence:** `parity-checklist.md` lists `insert.timeline` as the only missing slicer/pivot id;
   `insert.slicer` and `table.insertSlicer` are table slicers (#193), and `insert.pivotChart`
   (#313) and calculated fields (#306) are done. PivotTable slicers from XLSX files are in open PR #719; GETPIVOTDATA
-  is in open PR #290; calculated items are missing.
+  is in open PR #290; calculated items are missing (values on rows, Σ Values in Rows, are done).
 - **Impact:** pivots are the analyst's main tool.
 - **Estimate:** 20–30 h for beta (25–40 h full); not re-estimated.
 
@@ -121,9 +121,9 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 ## After beta
 
 ### 11. Localization is partial (L)
-- Interface catalogs in nine languages besides English (es, zh, ja, ko, ru, pt-BR, de, cs, fr;
-  381 entries each, ja 377: about 17% of the ~2,200 strings; #31, #104, #82, #242, #271, #335,
-  #413); Spanish function names and `;` separators (#98, closes #45). No other formula language,
+- Interface catalogs in ten languages besides English (es, zh, ja, ko, ru, pt-BR, de, cs, fr, sr;
+  393–398 entries each, es 424, cs 514, pt-BR 939: about 18% of the ~2,200 strings for most; #31, #104, #82, #242, #271, #335,
+  #413, #453); Spanish function names and `;` separators (#98, closes #45). No other formula language,
   no localized number/date formats; German formulas (#163) were closed unmerged. More languages and
   dialog translation are open PRs (#650, #663, #713, #743, #721, #778, #739, #676, #652, #669).
   **Estimate:** 100–165 h including #5 (not re-estimated). [localization-parity.md](localization-parity.md)
@@ -134,13 +134,13 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 
 ### 13. Analysis tools: Analyze Data, Forecast Start (F)
 - Solver (#327), the Analysis ToolPak with 13 tools (#320), Forecast Sheet (#325) and the
-  FORECAST.ETS family (#317) are in. Missing: `data.analyzeData`; the Forecast Start (hindcast)
-  option is open PR #786. **Estimate:** 15–25 h was the figure with Solver and ToolPak still missing (not re-estimated).
+  FORECAST.ETS family (#317) are in, including the Forecast Start (hindcast) option (#785, PR #786).
+  Missing: `data.analyzeData`. **Estimate:** 15–25 h was the figure with Solver and ToolPak still missing (not re-estimated).
 
 ### 14. Page Layout view and print polish (U, F)
 - Page Layout view landed (#334): paper view with rulers and in-place header/footer editing;
-  Different First Page and Odd & Even pages landed (#404). Remaining: pictures in headers/footers,
-  dragging margins on the ruler (open PR #794). Desktop submits directly through craft-print with
+  Different First Page and Odd & Even pages landed (#404). Remaining: pictures in headers/footers.
+  Margins are dragged on the rulers (#792, PR #794). Desktop submits directly through craft-print with
   printer choice, copies, duplex and grayscale (#459); browser printing stays available (#209).
   Print page ranges and the driver tray/options UI remain. **Estimate:** 5–10 h.
 
@@ -159,6 +159,8 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
   (`review.showChanges`); cloud storage requested (#86, open). **Estimate:** 35–55 h (co-authoring scope needs the owner; not re-estimated).
 
 ### 17. Insert objects (F)
+- Ink strokes survive XLSX save/reopen as editable polylines. Inserted icons still lose their
+  identity/artwork on save (#551); native Office InkML import is not implemented.
 - Missing ids: `insert.smartArt`, `insert.screenshot`, `insert.signatureLine`, `insert.object`,
   `insert.equation`, `insert.wordArt` (open PR #789), `insert.map`; no 3-D models. `ShapeKind` has 9
   variants (six geometric shapes, text box, icon, ink) vs ~170 Excel shapes. Pictures in cells
@@ -198,7 +200,13 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Re-verified after the 2026-10-12/13 merges: §13 Forecast Start landed (#785, PR #786), §14 ruler margin dragging landed (#792, PR #794), §8 values on rows, §17 ink, language count (ten, Serbian #453); GETPIVOTDATA (#290), PivotTable slicers (#719), Quick Analysis (#795), WordArt (#789) are still open PRs |
 | 2026-10-12 | minor | Audit against main (docs only, evidence per row in the PR): §1, §2, §3, §4, §5, §6, §7, §8, §9, §10, §11, §13, §14, §15 (four contradictory bullets reduced to one: 10 missing, 9 stubs), §16, §17, §19, §21, §24 corrected for merged PRs; estimates and scores not re-derived |
+| 2026-10-12 | minor | rows auto-fit oversized fonts on open and whole-row/column formatting (#833) |
+| 2026-10-12 | minor | Page Layout view: dragging margins on the rulers (#792) removed from the §14 remainder |
+| 2026-10-12 | minor | §13: Forecast Sheet Forecast Start (hindcast) landed (#785) |
+| 2026-10-12 | minor | §17: ink geometry survives XLSX saves; the icon portion of #551 remains |
+| 2026-10-12 | minor | §8: values on rows (Σ Values in Rows, `dataOnRows`) laid out, moved and round-tripped |
 | 2026-10-12 | minor | Desktop File > Print now discovers printers and submits PDF jobs through pinned craft-print with printer choice, copies, duplex and grayscale; browser printing and PDF export remain available. Remaining print parity includes page ranges and driver-specific tray/options UI; physical printer fidelity needs hardware validation. |
 | 2026-10-11 | minor | §6: iterative calculation for circular references landed (Maximum Iterations, Maximum Change) |
 | 2026-10-11 | minor | §15: trim-reference operators (`A1:.E10`, `A1.:E10`, `A1.:.E10`) parse and evaluate |

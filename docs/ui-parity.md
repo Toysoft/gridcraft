@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (audit against main: merge-duplicated rows collapsed, key tips, keyboard and chart-resize rows updated) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (audit against main: merge-duplicated rows collapsed, key tips, keyboard and chart-resize rows updated) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Interaction, controls and feel, against Excel. Part of [target-app-parity.md](target-app-parity.md).
 **UI/UX fidelity: ~55% ready, 50–80 h** (estimated). Ribbon command coverage is measured
@@ -19,12 +19,12 @@ Sources: `crates/ui-egui/src` (ribbon, grid, editor, formula bar, dialogs, panes
 | Ribbon collapse, simplified ribbon, customize ribbon/QAT | yes | partial | customization missing (File ▸ Options exists since #174 but holds only GridCraft's own settings) |
 | Key tips (Alt / F10 then letters) | yes, every ribbon control | done (#411, #412): table-driven sequential access keys, 364 sequences across all tabs, badges on every control (QAT and Backstage excluded) | — |
 | Formula bar with Name Box, expand, function hints | yes | yes | done |
-| Sheet tabs: rename, reorder, colour, hide, scroll | yes | yes | rename focus bug on macOS (#145) |
+| Sheet tabs: rename, reorder, colour, hide, scroll | yes | yes | active tab revealed on navigation and resize (#681); manual wheel/trackpad browsing preserved; rename focus bug on macOS (#145) |
 | Status bar: Sum/Count/Average and more, view buttons, zoom | yes | yes | customizable statistics partial |
 | Task panes (Format Chart, Comments, Watch, Selection, PivotTable fields) | yes | yes | element-level Format pane for shapes and pictures missing |
 | Dark mode, system appearance | yes | yes | done (10-09); follows the system on first run, title-bar switch and File › Display theme (#194, #239) |
-| Backstage (File) view: Info, New with templates, Open recent, Export, Options | yes | yes (#174, 10-11): the File tab opens a full-window view (Esc or the back arrow return) with Home, New (blank + the three samples), Open (recent + Browse), Info (location, properties, Protect Workbook), Save, Save As, Print (page preview, active sheet or workbook, fit to page, Page Setup), Export (PDF, CSV, web page), Close and Options (`file.options`: theme, language, formula bar, AutoSave, calculation) | no Account, Share or template gallery beyond the samples; Options applies at once (no OK/Cancel dialog) and holds only the settings GridCraft has |
-| Page Layout view (paper view with rulers and header editing) | yes | yes (#329, 10-11): per-sheet view saved in XLSX, pages with margins and gaps on the print pagination, "Click to add data" pages, rulers (inches or centimetres), headers and footers drawn and edited in place with a Header & Footer tab | header/footer pictures and ruler margin dragging missing (1–3 h); Different First Page / Odd & Even pages landed (#404); margin dragging is in open PR #794 |
+| Backstage (File) view: Info, New with templates, Open recent, Export, Options | yes | yes (#174, 10-11): the File tab opens a full-window view (Esc or the back arrow return) with Home, New (blank + the three samples), Open (recent + Browse; the recent list tells when each workbook was last changed, 10-12), Info (location, properties, Protect Workbook), Save, Save As, Print (page preview, active sheet or workbook, fit to page, Page Setup), Export (PDF, CSV, web page), Close and Options (`file.options`: theme, language, formula bar, AutoSave, calculation) | no Account, Share or template gallery beyond the samples; Options applies at once (no OK/Cancel dialog) and holds only the settings GridCraft has |
+| Page Layout view (paper view with rulers and header editing) | yes | yes (#329, 10-11): per-sheet view saved in XLSX, pages with margins and gaps on the print pagination, "Click to add data" pages, rulers (inches or centimetres), headers and footers drawn and edited in place with a Header & Footer tab | margins drag on the rulers (#792, with header and footer margins); Different First Page / Odd & Even pages landed (#404); header/footer pictures missing (1–3 h) |
 | Multiple windows per workbook | yes | no (#162) | see [hardware-parity.md](hardware-parity.md) |
 
 ## Grid interaction
@@ -55,7 +55,7 @@ this logic, with one undo step.
 | Move and resize charts, pictures and shapes | charts resize from the corner handle and the Size fields (#218, closes #190) |
 | Context menus on row/column headers, sheet tabs, charts, shapes | headers and tabs done; objects partial |
 | Quick Analysis (Ctrl+Q) | missing |
-| Smooth scrolling, scrollbars | done; vertical scrollbar added (#77, closes #73); #176 (report of a missing scrollbar) closed |
+| Smooth scrolling, scrollbars | done; vertical scrollbar added (#77, closes #73); horizontal scrollbar in the tab bar (60/40 split, drag, track click pages) 10-13 (#840); the tabs/scrollbar split can't be dragged yet; #176 (report of a missing scrollbar) closed |
 | Text overflow into empty neighbours, wrap, rotation, shrink to fit | done |
 
 ## Keyboard
@@ -108,6 +108,7 @@ otherwise. Number-format and border keys match the physical key (Ctrl+Shift+4, w
 | Ctrl+Alt+V | Cmd+Control+V, Cmd+Option+V | Paste Special | **added** |
 | Ctrl+Alt+= / Ctrl+Alt+- | — | zoom in / out (10% steps) | **added** |
 | Alt+=, Alt+Down, Alt+Page Down / Up | Option+Down, Option+Page Down / Up | AutoSum, drop-down list, one screen right / left | **added** |
+| Alt+Down on a filter header | Option+Down | Open the existing AutoFilter popup; validation dropdowns keep priority | **added** (AutoFilter portion of #441; Ribbon dropdowns and column value picker are separate work) |
 | Alt+F1, Alt+Shift+F1, Shift+F11 | Shift+F11 | embedded chart, new sheet | **added** |
 | Shift+F2, Ctrl+Shift+F2 | Shift+F2, Cmd+Shift+F2 | note, threaded comment | **added** |
 | Shift+F3, Ctrl+F3, Ctrl+Shift+F3 | Shift+F3, Cmd+F3 (Define Name), Cmd+Shift+F3 | Insert Function, Name Manager, Create from Selection | **added** |
@@ -142,14 +143,21 @@ by rule and will never match Office's, by design.
 
 ## Work (50–80 h)
 
-Key tips done (#411, #412) · remaining shortcuts with their features 2–4 · context menus and Quick Analysis 5–8 (Quick Analysis is open PR #795) · Page Layout view polish (#329 landed; margin dragging is open PR #794) · Options dialog and ribbon/QAT customization 6–10 · accessibility 12–18 · selection and
+Key tips done (#411, #412) · remaining shortcuts with their features 2–4 · context menus and Quick Analysis 5–8 (Quick Analysis is open PR #795) · Page Layout view polish (#329 landed; margin dragging landed in #792, #794) · Options dialog and ribbon/QAT customization 6–10 · accessibility 12–18 · selection and
 scrollbar bugs 2–4 · pixel/feel pass against observed Excel 7–12.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Re-verified after the 2026-10-12/13 merges: ruler margin dragging is landed (#792, PR #794, no longer an open PR) |
 | 2026-10-12 | minor | Audit against main: collapsed the merge-duplicated chrome, key tips, Backstage, dark-mode and keyboard rows; recorded #411/#412 (key tips), #319 (shortcut audit), #218 (chart resize), #323 and #222 (macOS chrome), #404 (first/odd-even pages), #320, #327, #384, #387, #308 (dialogs) |
+| 2026-10-12 | minor | The File view's recent list tells when each workbook was last changed, read off the UI thread |
+| 2026-10-13 | minor | Horizontal scrollbar in the sheet tab bar: drag, track click pages, frozen columns excluded from the page (#840) |
+| 2026-10-12 | minor | Ctrl+wheel zoom steps along a ladder of percentages about 20% apart that never skips 100%, gliding to each step with animations on, so a notch out undoes a notch in (it drifted: 100 → 122 → 101); Excel steps 15 points, see decisions.md |
+| 2026-10-12 | minor | Page Layout view: left/right/top/bottom margins are dragged on the rulers (#792) |
+| 2026-10-12 | minor | Alt+Down opens the active filter header's existing popup, with validation priority and mirrored anchoring on right-to-left sheets (part of #441) |
+| 2026-10-12 | minor | Paste from the ribbon (button and options menu), the cell and header context menus and the macOS menu bar's Edit menu pastes what is on the system clipboard, as Cmd/Ctrl+V does, instead of only GridCraft's own copy (the web build, which can't read the clipboard on request, still pastes GridCraft's copy). Copy and Cut by keytip (H,C / H,X) publish to the system clipboard like the ribbon buttons. After a control-channel or MCP copy, which leaves the system clipboard alone, Paste pastes that copy until other text is copied. Once a cut has been pasted, Paste (ribbon, menus or Cmd/Ctrl+V) doesn't paste the cut's clipboard text again over the moved cells (Excel pastes a cut once), and the Paste keytip (H,V,P) pastes the system clipboard like the button. Regression test for the Paste button click freeze in 0.5.0 (#273, fixed by #272); the Paste button gets an accessible "Paste" name for screen readers |
 | 2026-10-11 | minor | AutoFit accounts for table and ordinary filter dropdowns, including low zoom; header text excludes the button area |
 | 2026-10-11 | minor | Outline band for grouped rows and columns, Show / Hide Detail on the Data tab, numpad navigation keys in shortcuts (#373) |
 | 2026-10-11 | minor | Shift+Space / Ctrl+Space no longer start an edit; Control+Space selects the column on Mac (#338) |

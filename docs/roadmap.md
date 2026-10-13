@@ -1,6 +1,6 @@
 # Roadmap detail
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (audit against main: current focus, alpha-gate evidence, beta-gate status and milestones brought up to date) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (audit against main: current focus, alpha-gate evidence, beta-gate status and milestones brought up to date) · **Target:** Microsoft Excel (Microsoft 365)
 
 Forward-looking plan. The one-page summary is [`ROADMAP.md`](../ROADMAP.md); the ranked work
 list is [`gaps.md`](gaps.md); numbers and method are in
@@ -71,10 +71,10 @@ to check our files, and Windows machines with the reported GPU drivers.
 | M6 | Conditional formatting manager parity | done |
 | M7 | Charts parity | partial; Format pane, kind round-trip (#158, #161) and trendlines (#424) in; axes and error bars remain |
 | M8 | Insert & Review | partial; ink, icons, comments pane in |
-| M9 | Page layout & print | most; Page Layout view landed (#334); margin dragging on the ruler (open PR #794) and header/footer pictures remain |
+| M9 | Page layout & print | most; Page Layout view landed (#334); margin dragging on the ruler landed (#794); header/footer pictures remain |
 | M10 | PivotTables, Solver, Analysis ToolPak | PivotTables, PivotCharts, calculated fields, table slicers, Solver and Analysis ToolPak in; PivotTable slicers and timelines remain |
 | M11 | Automation (record actions, scripts) | done |
-| M12 | Performance, accessibility, i18n | partial; nine interface languages besides English with Spanish formulas; multi-threaded recalc and an accessible grid tree remain |
+| M12 | Performance, accessibility, i18n | partial; ten interface languages besides English with Spanish formulas; multi-threaded recalc and an accessible grid tree remain |
 | M13 | Release & polish | releases shipping (tags v0.1.0, v0.3.0, v0.4.0, v0.5.0, v0.6.1; signed) |
 | M14 | **Beta gates** (table above) | not started as a milestone; parts landed (see the status column) |
 | M15 | Localization infrastructure and the twelve languages | started: catalogs for ja, zh, ko, pt-BR, ru, de, cs, es, fr (#31, #104, #82, #271, #335, #242, #413); Spanish formulas (#98); more languages in open PRs |
@@ -86,7 +86,7 @@ to check our files, and Windows machines with the reported GPU drivers.
 |---|---|---|
 | Localization: catalog past the ribbon, then twelve languages | #11 | 100–165 |
 | Get & Transform and the data model | #12 | 60–100 |
-| Solver, Analysis ToolPak, Forecast Sheet (all landed: #327, #320, #325; Forecast Start option is open PR #786) | #13 | 22–35 (not re-estimated) |
+| Solver, Analysis ToolPak, Forecast Sheet (all landed: #327, #320, #325; Forecast Start landed in #786) | #13 | 22–35 (not re-estimated) |
 | Remaining functions, oracle suite | #15 | 18–30 |
 | Collaboration and review | #16 | 35–55 |
 | Insert objects | #17 | 25–40 |
@@ -112,6 +112,7 @@ to check our files, and Windows machines with the reported GPU drivers.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Re-verified after the 2026-10-12/13 merges: M9 ruler margin dragging (#794) and the Forecast Start option (#786) are landed; ten interface languages |
 | 2026-10-12 | minor | Audit against main: current focus, alpha-gate evidence, beta-gate status column, milestones M4, M7, M9, M10, M12–M15 and two after-beta rows updated; hours not re-estimated |
 | 2026-10-11 | minor | PivotTable calculated fields landed |
 | 2026-10-10 | minor | Current focus and M15 updated for the 10-10 merges |

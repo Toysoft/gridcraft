@@ -1,6 +1,6 @@
 # Chart parity
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (audit against main: merged #158, #161 and #218 recorded, duplicate rows removed) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (audit against main: merged #158, #161 and #218 recorded, duplicate rows removed) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Excel's chart types and chart elements against GridCraft. Part of
 [target-app-parity.md](target-app-parity.md). **Breadth ~50%, ready ~30%, 40–60 h** (estimated).
@@ -48,7 +48,7 @@ Sources: `crates/model/src/features.rs` (`ChartKind`, `Chart`, `Series`), `crate
 | Data table under the chart | yes | **missing** |
 | Per-series / per-point fill, line, marker, effects | Format pane for every element | series colour only; Format Chart pane covers chart-level options |
 | Chart styles and colour palettes | ~16 styles × colour sets | style number stored, own palettes |
-| Chart sheets | yes | **missing** (skipped with a warning on open) |
+| Chart sheets | yes | **kept, not editable**: not shown, and written back unchanged in their place on save (#727); left out when a sheet they plot is deleted or renamed. No F11 / Move Chart > New sheet |
 | Chart templates (`.crtx`) | yes | **missing** |
 | Recommended Charts | yes | dialog with recommendations from the data's shape (own heuristic) and an All Charts list, live previews (#215) |
 | Switch Row/Column, Select Data | yes | yes (Switch on charts read from files landed in #116); Select Data dialog: data range, remove series, Horizontal (Category) Axis Labels (#287). No series add/edit or hidden/empty cell options |
@@ -79,6 +79,7 @@ back.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-12 | minor | Audit against main: kinds survive XLSX (#158, #161) and charts resize (#218) are recorded as landed; removed the duplicate Recommended Charts and Switch/Select Data rows; smoothed lines dropped from the open work (#62) |
+| 2026-10-12 | trivial | chart sheets are kept on save, still not editable (#727) |
 | 2026-10-11 | minor | Trendlines: all six types modelled, round-tripped through `c:trendline`, drawn with forecast and equation/R² labels; `chart.addElement` `trendline` |
 | 2026-10-11 | minor | PivotCharts (`insert.pivotChart`) |
 | 2026-10-11 | minor | Recommended Charts dialog with previews (#215) |
