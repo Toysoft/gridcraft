@@ -2,9 +2,9 @@
 //! TOROW, TOCOL, WRAPROWS, WRAPCOLS, TAKE, DROP, CHOOSEROWS, CHOOSECOLS, EXPAND, GROUPBY,
 //! PIVOTBY.
 //!
-//! GROUPBY / PIVOTBY take their aggregation as a function name ("SUM", "AVERAGE"…) or a
-//! SUBTOTAL-style code (1–11): the host resolves eta-reduced lambdas such as `SUM` to the name
-//! text before calling. A LAMBDA, or another function given by name (PERCENTOF), is applied by
+//! GROUPBY / PIVOTBY take their aggregation as a function name ("SUM", "AVERAGE"…): the host
+//! resolves eta-reduced lambdas such as `SUM` to the name text before calling. A number is
+//! `#VALUE!`, as in Excel. A LAMBDA, or another function given by name (PERCENTOF), is applied by
 //! the host through [`groupby_with`] / [`pivotby_with`].
 
 use std::cmp::Ordering;
@@ -535,21 +535,6 @@ enum Agg {
 fn parse_agg(v: &Value) -> R<Agg> {
     match v {
         Value::Error(e) => Err(*e),
-        Value::Number(n) => Ok(match n.trunc() as i64 {
-            1 | 101 => Agg::Average,
-            2 | 102 => Agg::Count,
-            3 | 103 => Agg::CountA,
-            4 | 104 => Agg::Max,
-            5 | 105 => Agg::Min,
-            6 | 106 => Agg::Product,
-            7 | 107 => Agg::StdevS,
-            8 | 108 => Agg::StdevP,
-            9 | 109 => Agg::Sum,
-            10 | 110 => Agg::VarS,
-            11 | 111 => Agg::VarP,
-            12 => Agg::Median,
-            _ => return Err(CellError::Value),
-        }),
         Value::Text(t) => {
             let u = t.trim().to_ascii_uppercase();
             let u = u.strip_prefix("_XLFN.").unwrap_or(&u).to_string();
@@ -682,15 +667,23 @@ fn prepare(fields: &[&Array], values: &Array, fh: Option<i64>, filter: Option<&A
         .map(|c| if has_hdr { values.get(0, c).cloned().unwrap_or(Value::Empty) } else { Value::from(format!("Value {}", c + 1)) })
         .collect();
     let start = usize::from(has_hdr);
+    // The filter is a column as tall as the fields; an error or text in it, or a filter that
+    // keeps no row, is #VALUE! (Excel).
+    if filter.is_some_and(|fa| fa.rows != n || fa.cols != 1) {
+        return Err(CellError::Value);
+    }
     let mut rows = Vec::new();
     for r in start..n {
         if let Some(fa) = filter {
             let v = fa.data.get(r).cloned().unwrap_or(Value::Empty);
-            if !truthy(&v)? {
+            if !truthy(&v).map_err(|_| CellError::Value)? {
                 continue;
             }
         }
         rows.push(r);
+    }
+    if filter.is_some() && rows.is_empty() {
+        return Err(CellError::Value);
     }
     Ok(Prepared { field_headers, value_headers, show_headers: show, rows })
 }
@@ -742,6 +735,13 @@ fn distinct_keys(keys: &[Vec<Value>], sort: i64) -> Vec<Vec<Value>> {
     out
 }
 
+/// A sort order names a key column or, past them, a value column (1-based, negative for
+/// descending); 0 or an index past the last column is #VALUE! (Excel).
+fn check_sort(sort: i64, keys: usize, values: usize) -> R<()> {
+    let i = usize::try_from(sort.unsigned_abs()).unwrap_or(usize::MAX);
+    if i == 0 || i > keys.saturating_add(values) { Err(CellError::Value) } else { Ok(()) }
+}
+
 fn opt_arr(args: &[Arg], i: usize) -> R<Option<Array>> {
     if has(args, i) { Ok(Some(arr_arg(args, i)?)) } else { Ok(None) }
 }
@@ -770,6 +770,7 @@ pub fn groupby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
     let fh = opt_count(args, 3)?;
     let total = opt_count(args, 4)?.unwrap_or(1);
     let sort = opt_count(args, 5)?.unwrap_or(1);
+    check_sort(sort, rf.cols, vals.cols)?;
     let filter = opt_arr(args, 6)?;
     let p = prepare(&[&rf], &vals, fh, filter.as_ref())?;
     let keys: Vec<Vec<Value>> = p.rows.iter().map(|&r| key_row(&rf, r)).collect();
@@ -847,6 +848,8 @@ pub fn pivotby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
     let row_sort = opt_count(args, 6)?.unwrap_or(1);
     let col_total = opt_count(args, 7)?.unwrap_or(1);
     let col_sort = opt_count(args, 8)?.unwrap_or(1);
+    check_sort(row_sort, rf.cols, vals.cols)?;
+    check_sort(col_sort, cf.cols, vals.cols)?;
     let filter = opt_arr(args, 9)?;
     let p = prepare(&[&rf, &cf], &vals, fh, filter.as_ref())?;
     let rkeys: Vec<Vec<Value>> = p.rows.iter().map(|&r| key_row(&rf, r)).collect();
@@ -1271,7 +1274,7 @@ mod tests {
                 vec![tv("Total"), nv(43.0)],
             ]
         );
-        let r = ev("GROUPBY", vec![rf(region.clone()), rf(amt.clone()), n(2.0), n(1.0), n(0.0), n(-1.0)]);
+        let r = ev("GROUPBY", vec![rf(region.clone()), rf(amt.clone()), t("COUNT"), n(1.0), n(0.0), n(-1.0)]);
         assert_eq!(rows_of(&r), vec![vec![tv("West"), nv(2.0)], vec![tv("North"), nv(1.0)], vec![tv("East"), nv(2.0)]]);
         let r = ev("GROUPBY", vec![rf(region.clone()), rf(amt.clone()), t("max"), n(1.0), n(0.0), n(-2.0)]);
         assert_eq!(rows_of(&r).first().unwrap(), &vec![tv("West"), nv(20.0)]);
@@ -1287,6 +1290,41 @@ mod tests {
         assert_eq!(rows_of(&r), vec![vec![tv("East"), nv(7.5)], vec![tv("North"), nv(1.0)], vec![tv("West"), nv(7.0)]]);
         is_err(ev("GROUPBY", vec![rf(region.clone()), rf(amt.clone()), t("BOGUS")]), CellError::Value);
         is_err(ev("GROUPBY", vec![rf(region), av(col(&[1.0])), t("SUM")]), CellError::Value);
+    }
+
+    /// Arguments Excel (Microsoft 365) rejects with #VALUE!.
+    #[test]
+    fn groupby_and_pivotby_refuse_what_excel_refuses() {
+        let keys = || av(arr(vec![vec![tv("a")], vec![tv("b")], vec![tv("a")]]));
+        let vals = || av(col(&[1.0, 2.0, 3.0]));
+        let flags = |f: Vec<Value>| av(arr(f.into_iter().map(|v| vec![v]).collect()));
+        // A number as the function (GROUPBY(…,9), GROUPBY(…,1)).
+        is_err(ev("GROUPBY", vec![keys(), vals(), n(9.0)]), CellError::Value);
+        is_err(ev("GROUPBY", vec![keys(), vals(), n(1.0)]), CellError::Value);
+        // Sort order 0, or past the last column.
+        is_err(ev("GROUPBY", vec![keys(), vals(), t("SUM"), empty(), n(1.0), n(0.0)]), CellError::Value);
+        is_err(ev("GROUPBY", vec![keys(), vals(), t("SUM"), empty(), n(1.0), n(5.0)]), CellError::Value);
+        // A filter that keeps no row, is too short, or holds an error.
+        let none = || flags(vec![Value::Bool(false), Value::Bool(false), Value::Bool(false)]);
+        is_err(ev("GROUPBY", vec![keys(), vals(), t("SUM"), empty(), n(1.0), empty(), none()]), CellError::Value);
+        let short = flags(vec![Value::Bool(true), Value::Bool(true)]);
+        is_err(ev("GROUPBY", vec![keys(), vals(), t("SUM"), empty(), n(1.0), empty(), short]), CellError::Value);
+        let error = flags(vec![Value::Bool(true), Value::Error(CellError::NA), Value::Bool(true)]);
+        is_err(ev("GROUPBY", vec![keys(), vals(), t("SUM"), empty(), n(1.0), empty(), error]), CellError::Value);
+        let (pk, pc) = (av(arr(vec![vec![tv("a")], vec![tv("b")]])), av(arr(vec![vec![tv("x")], vec![tv("y")]])));
+        let pnone = flags(vec![Value::Bool(false), Value::Bool(false)]);
+        let args = vec![pk, pc, av(col(&[1.0, 2.0])), t("SUM"), empty(), empty(), empty(), empty(), empty(), pnone];
+        is_err(ev("PIVOTBY", args), CellError::Value);
+        // PIVOTBY sorts by a row or column field, or past them by a value column (rows: the
+        // total column); one past that is #VALUE!.
+        let p = |rs: f64, cs: f64| {
+            let (k, c) = (av(arr(vec![vec![tv("a")], vec![tv("b")]])), av(arr(vec![vec![tv("x")], vec![tv("y")]])));
+            ev("PIVOTBY", vec![k, c, av(col(&[1.0, 2.0])), t("SUM"), empty(), empty(), n(rs), empty(), n(cs)])
+        };
+        is_err(p(3.0, 1.0), CellError::Value);
+        is_err(p(1.0, -3.0), CellError::Value);
+        is_err(p(0.0, 1.0), CellError::Value);
+        assert!(matches!(p(2.0, 2.0), Value::Array(_)));
     }
 
     #[test]
