@@ -30,6 +30,8 @@ pub struct Ctx<'a> {
     pub cell_pictures: Vec<Option<Arc<CellPicture>>>,
     /// x14 conditional-format ids of the current sheet's data bars, with the index of the rule in `cond_formats`.
     pub cf_ext_ids: Vec<(String, usize)>,
+    /// Ink points read so far: the workbook-wide budget against parts shared by many anchors.
+    pub ink_points: usize,
 }
 
 impl Ctx<'_> {
@@ -79,6 +81,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         styles: StyleTable::default(),
         persons: Default::default(),
         next_id: 1,
+        ink_points: 0,
         num_fmts: Default::default(),
         cell_pictures: vec![],
         cf_ext_ids: vec![],
