@@ -1878,6 +1878,22 @@ mod tests {
     }
 
     #[test]
+    fn rank_ties_share_a_rank_and_the_next_follows() {
+        // Excel 365, Rank Largest to Smallest: 5, 4, 3, 3, 4 rank 1, 2, 3, 3, 2 (dense).
+        let mut s = Session::new();
+        s.new_workbook();
+        let rows = json!([["Key", "Val"], ["A", 5], ["B", 4], ["C", 3], ["D", 3], ["E", 4]]);
+        s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+        s.execute("insert.pivotTable", json!({"source": "Sheet1!$A$1:$B$6", "destination": "Sheet1!E3", "rows": ["Key"], "values": ["Val"]}))
+            .unwrap();
+        s.execute("pivot.valueSettings", json!({"field": "Val", "showAs": "rank"})).unwrap();
+        for (key, rank) in [("A", 1.0), ("B", 2.0), ("C", 3.0), ("D", 3.0), ("E", 2.0)] {
+            let r = find_row(&s, key).unwrap();
+            assert_eq!(val(&s, &CellRef::new(r, 5).a1()), Value::Number(rank), "{key}");
+        }
+    }
+
+    #[test]
     fn date_grouping_by_quarter_and_month() {
         let mut s = sales();
         s.execute("insert.pivotTable", json!({"rows": ["Date"], "values": ["Sales"]})).unwrap();

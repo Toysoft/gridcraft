@@ -1329,16 +1329,18 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
                 },
                 PivotShowAs::Rank => match (rp.split_last(), raw.as_f64()) {
                     (Some((_, parent)), Some(me)) => {
+                        // Dense ranks, as Excel gives them: ties share a rank and the next value
+                        // takes the next one (5, 4, 4, 3 rank 1, 2, 2, 3).
                         let sibs = siblings.get(parent).cloned().unwrap_or_default();
-                        let mut rank = 1u64;
+                        let mut greater: HashSet<u64> = HashSet::new();
                         for sib in sibs {
                             let mut p = parent.to_vec();
                             p.push(sib);
-                            if num(&get(&p, cp, *vi)).is_some_and(|x| x > me) {
-                                rank += 1;
+                            if let Some(x) = num(&get(&p, cp, *vi)).filter(|x| *x > me) {
+                                greater.insert(if x == 0.0 { 0 } else { x.to_bits() });
                             }
                         }
-                        Value::number(rank as f64)
+                        Value::number(greater.len() as f64 + 1.0)
                     }
                     (None, _) => Value::Empty,
                     _ => raw,
