@@ -65,19 +65,25 @@ fn wheel_notches_step_through_the_tabs_without_wrapping() {
     assert_eq!(tab(&h), "Automate", "down stops at the last tab");
 }
 
+/// A trackpad gesture: a start phase, a stream of small deltas (one every frame or two), an end.
+fn swipe(h: &mut Harness, at: Pos2, dy: f32, events: usize) {
+    let phase = |phase| Event::MouseWheel { unit: MouseWheelUnit::Point, delta: vec2(0.0, 0.0), phase, modifiers: Modifiers::NONE };
+    h.input_mut().events.push(Event::PointerMoved(at));
+    h.input_mut().events.push(phase(TouchPhase::Start));
+    for _ in 0..events {
+        wheel_for(h, at, MouseWheelUnit::Point, dy, 1);
+    }
+    h.input_mut().events.push(phase(TouchPhase::End));
+    h.run_steps(30);
+}
+
 #[test]
 fn trackpad_deltas_accumulate_to_one_tab_at_a_time() {
     let mut h = harness();
     let (row, _) = tab_row_and_card(&h);
-    // A trackpad sends a stream of small deltas, one every frame or two.
-    for _ in 0..4 {
-        wheel_for(&mut h, row, MouseWheelUnit::Point, -4.0, 1);
-    }
+    swipe(&mut h, row, -4.0, 4);
     assert_eq!(tab(&h), "Home", "a small swipe does not switch");
-    for _ in 0..10 {
-        wheel_for(&mut h, row, MouseWheelUnit::Point, -4.0, 1);
-    }
-    h.run_steps(30);
+    swipe(&mut h, row, -4.0, 10);
     assert_eq!(tab(&h), "Insert", "a notch's worth of swipe moves one tab, not one per event");
 }
 
@@ -95,4 +101,31 @@ fn wheel_does_not_switch_tabs_with_a_menu_open_or_over_the_grid() {
     assert!(!egui::Popup::is_any_open(&h.ctx));
     wheel(&mut h, pos2(600.0, 500.0), MouseWheelUnit::Line, -1.0);
     assert_eq!(tab(&h), "Home", "the wheel over the grid scrolls the sheet, not the ribbon");
+}
+
+/// macOS scales a notched wheel by how fast it turns, and reports most mice in points with no
+/// gesture phases: about 13 points for a slow notch, over 100 for a fast one. Mice that report
+/// lines get a tenth of a line to several. A notch is a notch either way.
+#[test]
+fn a_notch_switches_one_tab_however_small_or_large_its_delta() {
+    for (unit, slow, fast) in [(MouseWheelUnit::Point, 13.0, 103.0), (MouseWheelUnit::Line, 0.1, 3.0)] {
+        let mut h = harness();
+        let (row, _) = tab_row_and_card(&h);
+        wheel(&mut h, row, unit, -slow);
+        assert_eq!(tab(&h), "Insert", "a slow notch switches ({unit:?})");
+        wheel(&mut h, row, unit, -slow);
+        assert_eq!(tab(&h), "Draw", "and so does the next one ({unit:?})");
+        wheel(&mut h, row, unit, slow);
+        assert_eq!(tab(&h), "Insert", "a slow notch up goes back ({unit:?})");
+        wheel(&mut h, row, unit, -fast);
+        assert_eq!(tab(&h), "Draw", "a fast notch is still one tab ({unit:?})");
+        // Quick notches, before the smoothed scroll of the previous one has settled.
+        h.state_mut().ui.ribbon_tab = "Home".into();
+        h.run_steps(2);
+        for _ in 0..3 {
+            wheel_for(&mut h, row, unit, -fast, 2);
+        }
+        h.run_steps(30);
+        assert_eq!(tab(&h), "Page Layout", "three quick notches are three tabs ({unit:?})");
+    }
 }
