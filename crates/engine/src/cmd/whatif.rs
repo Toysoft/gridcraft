@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 use gridcraft_calc::Calc;
 use gridcraft_core::{CellRef, RangeRef, Value};
+use gridcraft_functions::{Wildcard, is_wildcard_criterion};
 use gridcraft_model::{CalcMode, Cell, DefinedName, Sheet, StyleId, Workbook};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
@@ -751,11 +752,11 @@ pub(crate) fn criterion_matches(v: &Value, text: &str, crit: &Value) -> bool {
         (_, Some(_)) if op != "begins" => None,
         _ => Some(gridcraft_core::compare_text(text, operand)),
     };
-    let wild = |pat: &str| super::edit::wildcard(&lower_text, pat);
+    let wild = |pat: &str| Wildcard::new(pat, false).matches(text);
     match op {
         "=" => {
-            if num.is_none() && operand.contains(['*', '?']) {
-                wild(&lower_op)
+            if num.is_none() && is_wildcard_criterion(operand) {
+                wild(operand)
             } else if num.is_none() {
                 lower_text == lower_op
             } else {
@@ -763,8 +764,8 @@ pub(crate) fn criterion_matches(v: &Value, text: &str, crit: &Value) -> bool {
             }
         }
         "<>" => {
-            if num.is_none() && operand.contains(['*', '?']) {
-                !wild(&lower_op)
+            if num.is_none() && is_wildcard_criterion(operand) {
+                !wild(operand)
             } else if num.is_none() {
                 lower_text != lower_op
             } else {
@@ -779,7 +780,7 @@ pub(crate) fn criterion_matches(v: &Value, text: &str, crit: &Value) -> bool {
             // Plain text criterion: begins with (wildcards allowed); a plain number equals.
             match (v, num) {
                 (Value::Number(a), Some(b)) => (a - b).abs() <= 1e-12 * b.abs().max(1.0),
-                _ => !v.is_empty() && wild(&format!("{lower_op}*")),
+                _ => !v.is_empty() && wild(&format!("{operand}*")),
             }
         }
     }

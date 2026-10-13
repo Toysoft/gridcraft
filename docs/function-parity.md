@@ -1,6 +1,6 @@
 # Function parity: worksheet functions and formulas
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (USDOLLAR added as a compatibility function; MIRR, COUNTIF and INDIRECT edge cases match Excel 365) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (one wildcard matcher for the criteria functions, lookups, SEARCH, Find & Replace and filters, with Excel 365's tilde and case rules) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Excel's worksheet functions, category by category, against GridCraft's function library. Part of
 [target-app-parity.md](target-app-parity.md); gaps feed [gaps.md](gaps.md).
@@ -108,6 +108,7 @@ workbooks; results checked in as data, not Excel files) and fixing what it finds
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Wildcards: one matcher (`gridcraft_functions::Wildcard`) for COUNTIF and the other criteria functions, MATCH/VLOOKUP/XLOOKUP, SEARCH, Find & Replace, AutoFilter and Advanced Filter, checked against Excel 365: a trailing `~` is dropped, `~` escapes any character, a criterion without `*` or `?` compares as it is (`COUNTIF(…,"a~b")` counts `a~b`), `İ` only matches itself, and Replace replaces what a pattern matched (`h*o` in `hello world` → `X world`) |
 | 2026-10-12 | minor | USDOLLAR added as a Compatibility function (not on Microsoft's list, so the counts don't change); MIRR with no positive flow is -1, COUNTIF's bare `"<="` / `">="` skip empty strings, INDIRECT with `a1` = FALSE gives `#REF!` for A1-style text (#738) |
 | 2026-10-11 | minor | TEXT / number formats fixed against Excel-cached results: fraction literals and zero fractions, `0` denominators zero padded, `?` pads the thousands separator, booleans use the text section (226 mismatches → 0 in 352 TEXT cells) |
 | 2026-10-11 | minor | Iterative calculation: circular references iterate up to Maximum Iterations / Maximum Change when enabled |

@@ -24,8 +24,8 @@ enum Operand {
     Number(f64),
     Bool(bool),
     Error(CellError),
-    /// Text (lower-cased chars kept for wildcard matching).
-    Text(String),
+    /// Text, with its compiled pattern when it is a wildcard criterion.
+    Text(String, Option<Wildcard>),
     /// A criterion cut to its first 255 UTF-16 units in the middle of a surrogate pair: the
     /// complete characters before the cut, followed (in Excel) by a lone high surrogate.
     ///
@@ -118,7 +118,7 @@ impl Criterion {
         } else if let Some(e) = CellError::parse(rest) {
             Operand::Error(e)
         } else {
-            Operand::Text(rest.to_string())
+            Operand::Text(rest.to_string(), is_wildcard_criterion(rest).then(|| Wildcard::new(rest, false)))
         };
         Criterion { op, operand, bare_empty: false }
     }
@@ -166,14 +166,17 @@ impl Criterion {
                 Value::Error(x) => cmp_op(self.op, x.code().cmp(&e.code())),
                 _ => self.op == Op::Ne,
             },
-            Operand::Text(pat) => match self.op {
+            Operand::Text(pat, wild) => match self.op {
                 Op::Eq | Op::Ne => {
                     // Blank cells hold no text: `"*"` skips them and `"<>*"` counts them.
                     let cell_text = match &v {
                         Value::Text(t) => Some(t.to_string()),
                         _ => None,
                     };
-                    let m = cell_text.is_some_and(|t| wildcard_match(pat, &t));
+                    let m = cell_text.is_some_and(|t| match wild {
+                        Some(w) => w.matches(&t),
+                        None => compare_text(&t, pat) == Ordering::Equal,
+                    });
                     if self.op == Op::Eq { m } else { !m }
                 }
                 _ => match &v {
@@ -228,47 +231,123 @@ enum Tok {
     Star,
 }
 
-fn tokenize(pattern: &str) -> Vec<Tok> {
-    let mut out = Vec::new();
-    let mut it = pattern.chars();
-    while let Some(c) = it.next() {
-        match c {
-            '~' => match it.next() {
-                Some(n) => out.extend(std::iter::once(lower_char(n)).map(Tok::Char)),
-                None => out.push(Tok::Char('~')),
-            },
-            '*' => out.push(Tok::Star),
-            '?' => out.push(Tok::Any),
-            c => out.extend(std::iter::once(lower_char(c)).map(Tok::Char)),
+/// An Excel wildcard pattern, compiled once: `*` matches any run of characters, `?` any one
+/// character, and `~` takes the next character literally. Excel lets `~` escape any character
+/// (`h~ello` is `hello`) and drops a trailing `~` (`x~` is `x`), checked against Excel 365 in
+/// COUNTIF, MATCH, SEARCH, AutoFilter and Find & Replace.
+///
+/// Matching is case-insensitive unless the pattern is built with `match_case`. Each character
+/// folds to exactly one character (so positions in the text stay put), and a character whose
+/// lowercase is longer keeps itself: `İ` (U+0130) only matches `İ`, as in Excel, where
+/// `COUNTIF(…,"i")` skips it and `SEARCH("i","qİq")` is `#VALUE!`.
+///
+/// This is the one implementation behind the criteria functions, the lookups, SEARCH, and the
+/// engine's Find & Replace, AutoFilter and Advanced Filter.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Wildcard {
+    toks: Vec<Tok>,
+    match_case: bool,
+}
+
+impl Wildcard {
+    pub fn new(pattern: &str, match_case: bool) -> Wildcard {
+        let fold = |c: char| if match_case { c } else { fold_char(c) };
+        let mut toks = Vec::new();
+        let mut it = pattern.chars();
+        while let Some(c) = it.next() {
+            match c {
+                // A trailing `~` escapes nothing and is dropped.
+                '~' => toks.extend(it.next().map(|n| Tok::Char(fold(n)))),
+                '*' => toks.push(Tok::Star),
+                '?' => toks.push(Tok::Any),
+                c => toks.push(Tok::Char(fold(c))),
+            }
         }
+        Wildcard { toks, match_case }
     }
-    out
+
+    /// Whether nothing is left to match (`""`, or a lone `~`).
+    pub fn is_empty(&self) -> bool {
+        self.toks.is_empty()
+    }
+
+    fn chars(&self, text: &str) -> Vec<char> {
+        if self.match_case { text.chars().collect() } else { text.chars().map(fold_char).collect() }
+    }
+
+    /// Whether all of `text` matches.
+    pub fn matches(&self, text: &str) -> bool {
+        match_from(&self.toks, &self.chars(text), true).is_some()
+    }
+
+    /// The first match in `text` that starts at or after char `start`, as char positions
+    /// `(start, end)`. A `*` takes as few characters as it can, except a trailing `*`, which takes
+    /// the rest of the text: Excel's Replace turns `hello world` into `X world` for `h*o` and into
+    /// `heX` for `l*`. An empty pattern matches nothing.
+    pub fn find(&self, text: &str, start: usize) -> Option<(usize, usize)> {
+        self.find_in(&self.chars(text), start)
+    }
+
+    /// Every match in `text`, left to right and not overlapping, as char positions (what Replace
+    /// replaces).
+    pub fn spans(&self, text: &str) -> Vec<(usize, usize)> {
+        let t = self.chars(text);
+        let mut out = Vec::new();
+        let mut i = 0;
+        while let Some((start, end)) = self.find_in(&t, i) {
+            out.push((start, end));
+            if end <= start {
+                break;
+            }
+            i = end;
+        }
+        out
+    }
+
+    fn find_in(&self, t: &[char], start: usize) -> Option<(usize, usize)> {
+        if self.toks.is_empty() {
+            return None;
+        }
+        let to_end = self.toks.last() == Some(&Tok::Star);
+        (start..t.len()).find_map(|i| {
+            let len = match_from(&self.toks, t.get(i..)?, false)?;
+            Some((i, if to_end { t.len() } else { i + len }))
+        })
+    }
 }
 
-/// Lowercase one char to exactly one char, so positions in the lowered text match the original
-/// (U+0130 `İ` folds to `i`, like `fold` in text.rs).
-fn lower_char(c: char) -> char {
-    c.to_lowercase().next().unwrap_or(c)
+/// Whether a criterion (COUNTIF and the other *IF functions, the D-functions, AutoFilter and
+/// Advanced Filter) is a wildcard pattern. Excel reads it as one only when it holds `*` or `?`,
+/// escaped or not; any other text compares as it is, tildes included (`COUNTIF(…,"a~b")` counts
+/// `a~b`, not `ab`). Lookups and SEARCH read every `*`, `?` and `~` as a pattern instead
+/// ([`has_wildcards`]).
+pub fn is_wildcard_criterion(text: &str) -> bool {
+    text.contains(['*', '?'])
 }
 
-fn lower_chars(s: &str) -> Vec<char> {
-    s.chars().map(lower_char).collect()
+/// One character, lowercased to exactly one character; one whose lowercase is longer keeps
+/// itself (`İ`).
+fn fold_char(c: char) -> char {
+    let mut l = c.to_lowercase();
+    match (l.next(), l.next()) {
+        (Some(x), None) => x,
+        _ => c,
+    }
 }
 
-/// Whether the pattern contains an unescaped wildcard.
+/// Whether a lookup value (MATCH, VLOOKUP, XLOOKUP) is a pattern: it holds `*`, `?` or `~`.
 pub(crate) fn has_wildcards(pattern: &str) -> bool {
-    tokenize(pattern).iter().any(|t| !matches!(t, Tok::Char(_))) || pattern.contains('~')
+    pattern.contains(['*', '?', '~'])
 }
 
 /// Case-insensitive whole-text match with `*`, `?` and `~` escapes.
 pub(crate) fn wildcard_match(pattern: &str, text: &str) -> bool {
-    let p = tokenize(pattern);
-    let t = lower_chars(text);
-    match_from(&p, &t, true).is_some()
+    Wildcard::new(pattern, false).matches(text)
 }
 
-/// Greedy-free matcher: returns the matched length of `t` when `p` matches a prefix of `t`
-/// (or all of `t` when `whole`). Iterative with backtracking on the last star (linear-ish).
+/// Iterative matcher with backtracking on the last star: returns the matched length of `t`
+/// when `p` matches a prefix of `t` (or all of `t` when `whole`). Stars take as few characters
+/// as they can.
 fn match_from(p: &[Tok], t: &[char], whole: bool) -> Option<usize> {
     let (mut pi, mut ti) = (0usize, 0usize);
     let mut star: Option<(usize, usize)> = None;
@@ -303,14 +382,14 @@ fn match_from(p: &[Tok], t: &[char], whole: bool) -> Option<usize> {
 }
 
 /// SEARCH-style find: the char index (0-based) of the first position at or after `start` where
-/// the wildcard pattern matches, case-insensitively.
+/// the wildcard pattern matches, case-insensitively. An empty pattern (`""` or `"~"`) is found
+/// at `start`, as SEARCH finds empty text there.
 pub(crate) fn wildcard_find(pattern: &str, text: &str, start: usize) -> Option<usize> {
-    let p = tokenize(pattern);
-    let t = lower_chars(text);
-    if p.is_empty() {
-        return if start <= t.len() { Some(start) } else { None };
+    let w = Wildcard::new(pattern, false);
+    if w.is_empty() {
+        return (start <= text.chars().count()).then_some(start);
     }
-    (start..t.len()).find(|&i| t.get(i..).is_some_and(|rest| match_from(&p, rest, false).is_some()))
+    w.find(text, start).map(|(i, _)| i)
 }
 
 /// Exact-or-wildcard equality used by MATCH/VLOOKUP/XLOOKUP exact modes: text with wildcards
@@ -393,8 +472,71 @@ mod tests {
         assert_eq!(wildcard_find("c*", "abcd", 0), Some(2));
         assert_eq!(wildcard_find("z", "abcd", 0), None);
         assert_eq!(wildcard_find("b", "a\u{130}bc", 0), Some(2));
-        assert!(wildcard_match("i*", "\u{130}stanbul"));
+        // Excel 365: `İ` only matches itself (COUNTIF "i*" and AutoFilter skip `İstanbul`).
+        assert!(!wildcard_match("i*", "\u{130}stanbul"));
+        assert!(wildcard_match("\u{130}*", "\u{130}stanbul"));
         assert!(has_wildcards("a*"));
+        assert!(has_wildcards("a~b"));
         assert!(!has_wildcards("abc"));
+    }
+
+    /// Criteria as Excel 365 reads them (COUNTIF and AutoFilter over the same values).
+    #[test]
+    fn criteria_follow_excel_tilde_and_case_rules() {
+        let t = |s: &str| Value::from(s);
+        // A trailing `~` is dropped: "?~" is "?", "*~" is "*".
+        assert!(m("?~", t("y")));
+        assert!(!m("?~", t("x~")));
+        assert!(m("*~", t("x~")) && m("*~", t("ab")));
+        // `~` escapes any character inside a wildcard criterion.
+        assert!(m("h~el*", t("HELLO")));
+        assert!(m("?~x", t("~x")));
+        assert!(m("*~~", t("xyz~")) && !m("*~~", t("xyz")));
+        assert!(m("a~?b", t("a?b")) && !m("a~?b", t("axb")));
+        // Without `*` or `?`, the criterion compares as it is, tildes included.
+        assert!(m("a~b", t("a~b")) && !m("a~b", t("ab")));
+        assert!(m("~x", t("~x")) && !m("~x", t("x")));
+        assert!(!m("~~", t("~")));
+        assert!(!m("h~ello", t("hello")));
+        assert!(m("~", t("~")));
+        // One character folds to one: `İ` and `ı` only match themselves; `ẞ` folds to `ß`.
+        assert!(m("?", t("\u{130}")));
+        assert!(m("i", t("I")) && !m("i", t("\u{130}")) && !m("i", t("\u{131}")));
+        assert!(m("\u{130}", t("\u{130}")));
+        assert!(m("\u{df}*", t("\u{1e9e}")));
+    }
+
+    /// Lookups and SEARCH read every `~` as an escape (Excel 365: MATCH("a~b", …, 0) finds `ab`).
+    #[test]
+    fn lookups_and_search_follow_excel_tilde_rules() {
+        let (s, x) = (|v: &str| Value::from(v), true);
+        assert!(lookup_equal(&s("a~b"), &s("ab"), x));
+        assert!(!lookup_equal(&s("a~b"), &s("a~b"), x));
+        assert!(lookup_equal(&s("x~"), &s("x"), x));
+        assert!(!lookup_equal(&s("x~"), &s("x~"), x));
+        assert!(lookup_equal(&s("~~"), &s("~"), x));
+        assert!(lookup_equal(&s("a~~b"), &s("a~b"), x));
+        assert_eq!(wildcard_find("~x", "xa~bx", 0), Some(0));
+        assert_eq!(wildcard_find("x~", "x~x", 0), Some(0));
+        assert_eq!(wildcard_find("a~~b", "xa~bx", 0), Some(1));
+        assert_eq!(wildcard_find("~", "abc", 0), Some(0));
+        assert_eq!(wildcard_find("\u{130}", "qiq", 0), None);
+        assert_eq!(wildcard_find("i", "q\u{130}q", 0), None);
+        assert_eq!(wildcard_find("\u{130}", "q\u{130}q", 0), Some(1));
+    }
+
+    /// Match spans as Excel 365's Replace uses them.
+    #[test]
+    fn wildcard_spans() {
+        let w = |p: &str| Wildcard::new(p, false);
+        assert_eq!(w("h*o").find("hello world", 0), Some((0, 5)));
+        assert_eq!(w("l*").find("hello world", 0), Some((2, 11)));
+        assert_eq!(w("a?b").find("xaxbyazb", 0), Some((1, 4)));
+        assert_eq!(w("a?b").find("xaxbyazb", 4), Some((5, 8)));
+        assert_eq!(w("~*").find("a*b", 0), Some((1, 2)));
+        assert_eq!(w("~").find("abc", 0), None);
+        assert_eq!(Wildcard::new("HELLO", true).find("hello HELLO", 0), Some((6, 11)));
+        assert!(!Wildcard::new("hello", true).matches("HELLO"));
+        assert!(w("hello").matches("HELLO"));
     }
 }

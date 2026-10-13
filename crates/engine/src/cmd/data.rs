@@ -4,6 +4,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use gridcraft_core::{CellRef, RangeRef, Value, sort_compare};
+use gridcraft_functions::{Wildcard, is_wildcard_criterion};
 use gridcraft_model::*;
 use serde_json::{Value as Json, json};
 
@@ -553,17 +554,19 @@ fn custom_ok(v: &Value, text: &str, op: &str, crit: &str) -> bool {
         (Some(a), Some(b)) => a.partial_cmp(&b),
         _ => Some(gridcraft_core::compare_text(text, crit)),
     };
-    let wild = || super::edit::wildcard(&text.to_lowercase(), &crit.to_lowercase());
+    // Excel reads the criterion as a pattern only when it holds `*` or `?` (see
+    // `is_wildcard_criterion`); the matcher is the one COUNTIF uses.
+    let wild = || Wildcard::new(crit, false).matches(text);
     match op {
         "=" => {
-            if crit.contains(['*', '?']) {
+            if is_wildcard_criterion(crit) {
                 wild()
             } else {
                 cmp == Some(Ordering::Equal)
             }
         }
         "<>" => {
-            if crit.contains(['*', '?']) {
+            if is_wildcard_criterion(crit) {
                 !wild()
             } else {
                 cmp != Some(Ordering::Equal)

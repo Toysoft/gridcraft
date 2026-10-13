@@ -76,6 +76,7 @@ pub(crate) mod stat;
 pub(crate) mod text;
 pub(crate) mod util;
 
+pub use criteria::{Wildcard, is_wildcard_criterion};
 pub use ets::Timeline;
 pub use stat::{aggregate_values, aggregate_values_k};
 

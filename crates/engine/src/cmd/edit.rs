@@ -7,6 +7,7 @@ use serde_json::{Value as Json, json};
 use super::*;
 use crate::selection::{current_region, jump};
 use crate::{Clipboard, Session};
+use gridcraft_functions::Wildcard;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -1380,52 +1381,11 @@ fn flash_fill(s: &mut Session, p: &Json) -> Result<Json> {
 
 // ---------------------------------------------------------------- find & replace
 
-fn matches(hay: &str, what: &str, case: bool, whole: bool) -> bool {
-    let (h, w) = if case { (hay.to_string(), what.to_string()) } else { (hay.to_lowercase(), what.to_lowercase()) };
-    let has_wild = w.contains(['*', '?']);
-    if has_wild {
-        let pat = if whole { w } else { format!("*{w}*") };
-        return wildcard(&h, &pat);
-    }
-    if whole { h == w } else { h.contains(&w) }
-}
-
-/// `*`/`?` wildcard match with `~` escapes.
-pub(crate) fn wildcard(text: &str, pat: &str) -> bool {
-    let t: Vec<char> = text.chars().collect();
-    let mut p: Vec<(char, bool)> = Vec::new();
-    let mut it = pat.chars();
-    while let Some(c) = it.next() {
-        if c == '~' {
-            if let Some(n) = it.next() {
-                p.push((n, true));
-            }
-        } else {
-            p.push((c, false));
-        }
-    }
-    let (mut ti, mut pi) = (0usize, 0usize);
-    let (mut star, mut mark) = (None, 0usize);
-    while ti < t.len() {
-        if pi < p.len() && (p[pi] == ('?', false) || (p[pi].0 == t[ti] && p[pi] != ('*', false))) {
-            ti += 1;
-            pi += 1;
-        } else if pi < p.len() && p[pi] == ('*', false) {
-            star = Some(pi);
-            mark = ti;
-            pi += 1;
-        } else if let Some(sp) = star {
-            pi = sp + 1;
-            mark += 1;
-            ti = mark;
-        } else {
-            return false;
-        }
-    }
-    while pi < p.len() && p[pi] == ('*', false) {
-        pi += 1;
-    }
-    pi == p.len()
+/// Whether a cell's text matches Find's pattern: all of it, or anywhere in it. Find always reads
+/// `*`, `?` and `~` as a pattern (Excel 365: finding `a~b` finds `ab`), with the matcher the
+/// functions use.
+fn matches(hay: &str, what: &Wildcard, whole: bool) -> bool {
+    if whole { what.matches(hay) } else { what.find(hay, 0).is_some() }
 }
 
 fn find(s: &mut Session, p: &Json) -> Result<Json> {
@@ -1435,6 +1395,7 @@ fn find(s: &mut Session, p: &Json) -> Result<Json> {
     }
     let case = bool_param(p, "matchCase").unwrap_or(false);
     let whole = bool_param(p, "wholeCell").unwrap_or(false);
+    let pattern = Wildcard::new(&what, case);
     let values = str_param(p, "lookIn") == Some("values");
     let by_cols = bool_param(p, "byColumns").unwrap_or(false);
     let all = bool_param(p, "all").unwrap_or(false);
@@ -1454,7 +1415,7 @@ fn find(s: &mut Session, p: &Json) -> Result<Json> {
                 } else {
                     cell.input_text()
                 };
-                matches(&text, &what, case, whole).then_some((c, text))
+                matches(&text, &pattern, whole).then_some((c, text))
             })
             .collect();
         if by_cols {
@@ -1489,6 +1450,7 @@ fn replace(s: &mut Session, p: &Json) -> Result<Json> {
     }
     let case = bool_param(p, "matchCase").unwrap_or(false);
     let whole = bool_param(p, "wholeCell").unwrap_or(false);
+    let pattern = Wildcard::new(&what, case);
     let all = bool_param(p, "all").unwrap_or(true);
     let workbook = str_param(p, "within") == Some("workbook");
     let active = s.doc()?.selection.active;
@@ -1502,16 +1464,10 @@ fn replace(s: &mut Session, p: &Json) -> Result<Json> {
                 if !all && c != active {
                     continue;
                 }
-                if !matches(&text, &what, case, whole) {
+                if !matches(&text, &pattern, whole) {
                     continue;
                 }
-                let new = if whole {
-                    with.clone()
-                } else if case {
-                    text.replace(&what, &with)
-                } else {
-                    replace_ci(&text, &what, &with)
-                };
+                let new = if whole { with.clone() } else { replace_matches(&text, &pattern, &with) };
                 let cell = input_to_cell(&new, si, c, &mut cx.wb).unwrap_or_else(|_| Some(Cell::value(Value::text(new.as_str()))));
                 let sh = cx.sheet_mut(si)?;
                 match cell {
@@ -1529,20 +1485,18 @@ fn replace(s: &mut Session, p: &Json) -> Result<Json> {
     Ok(json!({"replaced": n}))
 }
 
-fn replace_ci(text: &str, what: &str, with: &str) -> String {
-    let lower = text.to_lowercase();
-    let w = what.to_lowercase();
-    if lower.len() != text.len() || w.is_empty() {
-        return text.replace(what, with);
-    }
-    let mut out = String::new();
+/// `text` with each match of `pattern` replaced by `with`, left to right (Excel's Replace turns
+/// `hello world` into `X world` for `h*o`).
+fn replace_matches(text: &str, pattern: &Wildcard, with: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
     let mut i = 0;
-    while let Some(pos) = lower.get(i..).and_then(|s| s.find(&w)) {
-        out.push_str(text.get(i..i + pos).unwrap_or(""));
+    for (start, end) in pattern.spans(text) {
+        out.extend(chars.get(i..start).unwrap_or_default());
         out.push_str(with);
-        i += pos + w.len();
+        i = end;
     }
-    out.push_str(text.get(i..).unwrap_or(""));
+    out.extend(chars.get(i..).unwrap_or_default());
     out
 }
 
@@ -1637,13 +1591,19 @@ mod tests {
     }
 
     #[test]
-    fn wildcards() {
-        assert!(wildcard("hello", "h*o"));
-        assert!(wildcard("hello", "h?llo"));
-        assert!(!wildcard("hello", "h?lo"));
-        assert!(wildcard("a*b", "a~*b"));
-        assert!(!wildcard("axb", "a~*b"));
-        assert!(wildcard("", "*"));
+    fn find_matches_with_the_shared_wildcards() {
+        let w = |p: &str| Wildcard::new(p, false);
+        assert!(matches("hello", &w("h*o"), true));
+        assert!(matches("hello", &w("h?llo"), true));
+        assert!(!matches("hello", &w("h?lo"), true));
+        assert!(matches("a*b", &w("a~*b"), true));
+        assert!(!matches("axb", &w("a~*b"), true));
+        assert!(matches("", &w("*"), true));
+        // Excel 365: Find reads `~` as an escape even without `*` or `?`.
+        assert!(matches("xabx", &w("a~b"), false));
+        assert!(!matches("xa~bx", &w("a~b"), false));
+        assert!(matches("hello", &w("h~ello"), true));
+        assert!(!matches("hello", &Wildcard::new("HELLO", true), true));
     }
 
     #[test]
@@ -1677,6 +1637,7 @@ mod tests {
 
     #[test]
     fn replace_case_insensitive() {
-        assert_eq!(replace_ci("Apple apple APPLE", "apple", "pear"), "pear pear pear");
+        assert_eq!(replace_matches("Apple apple APPLE", &Wildcard::new("apple", false), "pear"), "pear pear pear");
+        assert_eq!(replace_matches("Apple apple APPLE", &Wildcard::new("apple", true), "pear"), "Apple pear APPLE");
     }
 }

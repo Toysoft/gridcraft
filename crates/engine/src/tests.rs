@@ -827,6 +827,53 @@ fn sort_and_filter() {
     assert_eq!(r["hiddenRows"], 1);
 }
 
+/// AutoFilter, Find and Replace use the criteria functions' wildcard matcher, with the results
+/// Excel 365 gives for the same values: a trailing `~` is dropped, `~` escapes any character, a
+/// criterion without `*` or `?` compares as it is, and `İ` only matches itself.
+#[test]
+fn wildcards_in_filter_find_and_replace_match_excel() {
+    let vals = ["x~", "y", "ab", "a~b", "a*b", "axb", "İ", "i", "I", "ı", "ß", "~", "hello", "HELLO", "a?b", "~x", "xyz~"];
+    let mut rows = vec![json!(["Val"])];
+    rows.extend(vals.iter().map(|t| json!([t])));
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+    s.execute("selection.set", json!({"cell": "A1"})).unwrap();
+    s.execute("data.filter", json!({})).unwrap();
+    let hidden = |s: &mut Session, crit: &str| {
+        s.execute("data.filterBy", json!({"column": "A", "custom": {"op": "=", "value": crit}})).unwrap()["hiddenRows"].clone()
+    };
+    // Excel shows y, İ, i, I, ı, ß and ~ for both (x~ is hidden: the trailing ~ is dropped).
+    assert_eq!(hidden(&mut s, "?~"), 10);
+    assert_eq!(hidden(&mut s, "?"), 10);
+    // No * or ?: compared as it is, so only a~b and İ themselves show.
+    assert_eq!(hidden(&mut s, "a~b"), 16);
+    assert_eq!(hidden(&mut s, "İ"), 16);
+    // x~, ~ and xyz~ end with a tilde.
+    assert_eq!(hidden(&mut s, "*~~"), 14);
+    s.execute("data.clearFilter", json!({})).unwrap();
+
+    // Find reads ~ as an escape even without * or ?: a~b finds ab.
+    let r = s.execute("edit.find", json!({"what": "a~b", "wholeCell": true, "all": true})).unwrap();
+    assert_eq!(r["count"], 1);
+    assert_eq!(r["results"][0]["value"], "ab");
+
+    let replaced = |text: &str, what: &str, with: &str| {
+        let mut s = self::s();
+        s.execute("cell.set", json!({"cell": "A1", "input": text})).unwrap();
+        let _ = s.execute("edit.replace", json!({"what": what, "with": with}));
+        v(&s, "A1")
+    };
+    assert_eq!(replaced("hello world", "h*o", "X"), Value::from("X world"));
+    assert_eq!(replaced("hello world", "l*", "X"), Value::from("heX"));
+    assert_eq!(replaced("xaxbyazb", "a?b", "X"), Value::from("xXyX"));
+    assert_eq!(replaced("a*b*c", "~*", "+"), Value::from("a+b+c"));
+    assert_eq!(replaced("xabx", "a~b", "X"), Value::from("xXx"));
+    assert_eq!(replaced("xa~bx", "a~b", "X"), Value::from("xa~bx"));
+    assert_eq!(replaced("xabx", "x~", "Y"), Value::from("YabY"));
+    assert_eq!(replaced("İstanbul", "i", "1"), Value::from("İstanbul"));
+    assert_eq!(replaced("İstanbul", "?", "_"), Value::from("________"));
+}
+
 /// Top 10 keeps the top or bottom N items or percent, ties at the threshold included.
 #[test]
 fn filter_top10_items_and_percent() {

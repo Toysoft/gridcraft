@@ -1040,7 +1040,11 @@ mod tests {
         close(ev("SEARCH", vec![t("b"), t("\u{130}b")]), 2.0);
         close(ev("SEARCH", vec![t("B"), t("\u{130}b")]), 2.0);
         close(ev("SEARCH", vec![t("b?"), t("a\u{130}bc")]), 3.0);
-        close(ev("SEARCH", vec![t("i"), t("a\u{130}bc")]), 2.0);
+        // Excel 365: `İ` only matches itself (SEARCH("i","qİq") is #VALUE!, SEARCH("İ","qİq") is 2).
+        is_err(ev("SEARCH", vec![t("i"), t("a\u{130}bc")]), CellError::Value);
+        close(ev("SEARCH", vec![t("\u{130}"), t("a\u{130}bc")]), 2.0);
+        close(ev("SEARCH", vec![t("x~"), t("ax~")]), 2.0);
+        close(ev("SEARCH", vec![t("h~el"), t("ohello")]), 2.0);
         is_err(ev("SEARCH", vec![t("b"), t("a\u{130}bc"), n(4.0)]), CellError::Value);
         for f in ["FIND", "SEARCH"] {
             close(ev(f, vec![t(""), t("abc"), n(3.0)]), 3.0);
