@@ -2,7 +2,7 @@
 title: Write formulas
 description: Type a formula in a cell, pick cells with the mouse, find a function, and total a column with AutoSum.
 order: 30
-verified: 0.5.0
+verified: 0.6.1
 ---
 
 Select a cell, type `=` and your formula, then press Enter. The cell shows the result and the formula bar shows the formula.
@@ -12,6 +12,10 @@ Select a cell, type `=` and your formula, then press Enter. The cell shows the r
 1. Click the cell.
 2. Type `=` followed by the formula, for example `=SUM(B2:B9)`. Your typing also appears in the formula bar above the grid.
 3. Press Enter to keep it. To throw it away, click the **Cancel** button next to the Name Box. The **Enter** button next to it keeps the formula too.
+
+While you type a function's arguments, a hint under the cell shows them with a short description of the function.
+
+If a formula gives a function too few or too many arguments, GridCraft does not enter it. It shows how to call the function instead, for example "DATEDIF has too few arguments. Use DATEDIF(start_date, end_date, unit)", and leaves the cell as it was.
 
 To edit a formula later, select the cell and click in the formula bar. The **Expand formula bar** button at its right end makes the bar taller for long formulas.
 

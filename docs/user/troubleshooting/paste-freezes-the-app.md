@@ -1,11 +1,11 @@
 ---
 title: Clicking Paste freezes the app
-description: In GridCraft 0.5.0, clicking the Paste button or its arrow in the ribbon freezes the app. The fix is not in a release yet.
+description: In GridCraft 0.5.0, clicking the Paste button or its arrow in the ribbon freezes the app. GridCraft 0.6.1 fixes it.
 order: 20
-verified: 0.5.0
+verified: 0.6.1
 ---
 
-In GridCraft 0.5.0, clicking **Paste** or its drop-down arrow on the **Home** tab freezes the app. The cause is fixed in the development version, but not in any release yet, so update to the next release when it comes out.
+In GridCraft 0.5.0, clicking **Paste** or its drop-down arrow on the **Home** tab freezes the app. GridCraft 0.6.1 fixes this, so update to 0.6.1 or newer.
 
 ## Symptoms
 
@@ -15,12 +15,14 @@ In GridCraft 0.5.0, clicking **Paste** or its drop-down arrow on the **Home** ta
 
 ## Fix
 
-No release has the fix. Update GridCraft when a release newer than 0.5.0 appears on the [releases page](https://github.com/storytold/gridcraft/releases). Until then, the reports describe the ribbon button and its arrow only, and the issue names no other workaround. Save your work before you click **Paste** (see [Save a workbook or export a copy](../guides/save-and-export.md)).
+Download the [latest release](https://github.com/storytold/gridcraft/releases/latest) and [install it](../getting-started/install.md).
+
+If you must stay on 0.5.0, save your work before you click **Paste** (see [Save a workbook or export a copy](../guides/save-and-export.md)). The reports describe the ribbon button and its arrow only.
 
 ## Why this happens
 
-A maintainer traced it to the ribbon: when you click **Paste**, the ribbon checks whether you right-clicked while it holds a lock that the app's window library also needs, so the app waits for itself. The clipboard is not involved. The fix was merged after 0.5.0 was released ([issue #273](https://github.com/storytold/gridcraft/issues/273), fix #272).
+A maintainer traced it to the ribbon in 0.5.0: when you click **Paste**, the ribbon checks whether you right-clicked while it holds a lock that the app's window library also needs, so the app waits for itself. The clipboard is not involved. The fix ([issue #273](https://github.com/storytold/gridcraft/issues/273), fix #272) is in 0.6.1.
 
 ## Still stuck?
 
-Comment on [issue #273](https://github.com/storytold/gridcraft/issues/273) or ask in [Discord](https://discord.gg/artcraft). Say which system you use.
+If 0.6.1 still freezes when you click **Paste**, comment on [issue #273](https://github.com/storytold/gridcraft/issues/273) or ask in [Discord](https://discord.gg/artcraft). Say which system you use.

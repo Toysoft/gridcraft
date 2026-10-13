@@ -2,10 +2,10 @@
 title: The app does not open on Windows
 description: What to do when GridCraft flashes in Task Manager and quits, or never shows a window, on Windows 11.
 order: 10
-verified: 0.5.0
+verified: 0.6.1
 ---
 
-If GridCraft 0.5.0 opens a window and closes within a second, start it with the Vulkan graphics backend from PowerShell. On Intel graphics use `gl` instead. If an older version crashes in `igvk64.dll` or `atio6axx.dll`, update to 0.5.0.
+Update to GridCraft 0.6.1 first: it fixes the known causes of a window that flashes and closes. If 0.6.1 still does not open, start it with another graphics backend from PowerShell: `dx12`, or `gl` on Intel graphics.
 
 ## Symptoms
 
@@ -16,35 +16,23 @@ If GridCraft 0.5.0 opens a window and closes within a second, start it with the 
 
 ## Fix
 
-If the log ends with `Parent device is lost`:
-
-1. Open PowerShell, go to the folder that contains `gridcraft.exe`, and run:
-
-       $env:WGPU_BACKEND = "vulkan"
-       & .\gridcraft.exe
-       Remove-Item Env:WGPU_BACKEND
-
-   The last line restores the default for later launches. [Issue #339](https://github.com/storytold/gridcraft/issues/339) confirms that this starts GridCraft 0.5.0.
-
-On Intel graphics use `gl` in place of `vulkan` ([issue #120](https://github.com/storytold/gridcraft/issues/120)). On AMD graphics do not use `gl`: it can bring back the `atio6axx.dll` crash.
-
-### If an older version does not open
-
-1. Download the [latest release](https://github.com/storytold/gridcraft/releases/latest) and [install it](../getting-started/install.md). The reporter of the Intel `igvk64.dll` crash in [issue #59](https://github.com/storytold/gridcraft/issues/59) confirmed it was resolved in 0.5.0.
-2. If you must stay on an older version, tell it to use DirectX 12. Open PowerShell, go to the folder that contains `gridcraft.exe`, and run:
+1. Download the [latest release](https://github.com/storytold/gridcraft/releases/latest) and [install it](../getting-started/install.md). GridCraft 0.6.1 fixes the `Parent device is lost` exit ([issue #339](https://github.com/storytold/gridcraft/issues/339)) and no longer loads the Vulkan driver that crashed on Intel graphics ([issue #120](https://github.com/storytold/gridcraft/issues/120)).
+2. If 0.6.1 still does not open, open `gridcraft.log` (see **Still stuck?** below). Lines starting with `graphics:` say which graphics backend GridCraft chose.
+3. Tell GridCraft which backend to use. Open PowerShell, go to the folder that contains `gridcraft.exe`, and run:
 
        $env:WGPU_BACKEND = "dx12"
        & .\gridcraft.exe
        Remove-Item Env:WGPU_BACKEND
 
-   The last line restores the default for later launches. A maintainer suggested this workaround in issue #59.
-3. If 0.5.0 still does not open, report it (see **Still stuck?** below). Do not use `vulkan` on Intel graphics: Vulkan is what crashed there ([issue #59](https://github.com/storytold/gridcraft/issues/59), [issue #120](https://github.com/storytold/gridcraft/issues/120)).
+   The last line restores the default for later launches. If `dx12` does not help, try `gl` in place of `dx12`.
+
+On AMD graphics do not use `gl`: it can bring back the `atio6axx.dll` crash. On Intel graphics do not use `vulkan`: it can bring back the `igvk64.dll` crash.
 
 ## Why this happens
 
-GridCraft 0.5.0 compiles its DirectX 12 shaders with DXC but does not ship `dxcompiler.dll` and `dxil.dll`, so on some PCs the graphics device is lost before the first frame ([issue #339](https://github.com/storytold/gridcraft/issues/339)). A fix that uses FXC, the compiler built into Windows, was merged after 0.5.0 and is not in a release yet.
+GridCraft 0.5.0 compiled its DirectX 12 shaders with DXC but did not ship `dxcompiler.dll` and `dxil.dll`, so on some PCs the graphics device was lost before the first frame. GridCraft 0.6.1 uses FXC, the compiler built into Windows, instead ([issue #339](https://github.com/storytold/gridcraft/issues/339)).
 
-On some PCs a graphics driver also crashes while the app is setting up graphics, before the window can open. In issue #59 the crash was in Intel's Vulkan driver, which crashed when asked to list the graphics adapters. For AMD, the README says letting the app also create an OpenGL instance can crash `atio6axx.dll`. That is why 0.5.0 uses DirectX 12 only unless you override it.
+On some PCs a graphics driver crashes while the app is setting up graphics, before the window can open. In issue #59 the crash was in Intel's Vulkan driver, which crashed when asked to list the graphics adapters. For AMD, the README says letting the app also create an OpenGL instance can crash `atio6axx.dll`. That is why GridCraft starts with DirectX 12 only. In 0.6.1, if DirectX 12 finds no graphics card or fails to start, GridCraft switches to OpenGL by itself. Setting `WGPU_BACKEND` turns this off, and then GridCraft tries only the backend you chose.
 
 ## Still stuck?
 

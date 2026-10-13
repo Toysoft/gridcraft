@@ -2,14 +2,14 @@
 title: Report a problem
 description: What to include and where to post when GridCraft misbehaves, including where to find the log file.
 order: 40
-verified: 0.5.0
+verified: 0.6.1
 ---
 
 Post in [Discord](https://discord.gg/artcraft) or open an issue in the [issue tracker](https://github.com/storytold/gridcraft/issues). Attach the log file.
 
 ## What to include
 
-- Your system (Windows 11, macOS, Linux distribution) and the GridCraft version, for example 0.5.0.
+- Your system (Windows 11, macOS, Linux distribution) and the GridCraft version, for example 0.6.1.
 - What you did, what you expected and what happened instead.
 - The log file (see below). If the problem happens with one workbook, say what is special about it.
 

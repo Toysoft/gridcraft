@@ -1,7 +1,7 @@
 ---
 title: GridCraft
 description: GridCraft is a free, open-source spreadsheet app that reads and writes .xlsx files, an alternative to Microsoft Excel.
-verified: 0.5.0
+verified: 0.6.1
 ---
 
 GridCraft is a free, open-source spreadsheet app and an alternative to Microsoft Excel. It uses a ribbon, formula bar, Name Box and sheet tabs like Excel's, and saves to the .xlsx format.
