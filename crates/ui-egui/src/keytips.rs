@@ -26,11 +26,18 @@ pub struct KeyTips {
     alt_armed: bool,
     // Keep consuming a held mnemonic after its action closes keytips.
     held: Vec<Key>,
+    /// The interface language of the last processed frame: its key tips are the ones in use.
+    language: crate::i18n::Language,
 }
 
 impl KeyTips {
     pub fn prefix(&self) -> Option<&str> {
         self.prefix.as_deref()
+    }
+
+    /// The key tips in use: the interface language's (German Excel's Home tab is Alt, R).
+    pub fn table(&self) -> keytip_table::Table {
+        keytip_table::Table::for_language(self.language)
     }
 
     pub fn clear(&mut self) {
@@ -51,6 +58,13 @@ impl KeyTips {
             return Vec::new();
         }
         let mac = ctx.os() == OperatingSystem::Mac;
+        let language = crate::i18n::current(ctx);
+        if language != self.language {
+            // Letters typed so far belong to the other language's table.
+            self.prefix = None;
+            self.language = language;
+        }
+        let table = self.table();
         let events = ctx.input_mut(|i| std::mem::take(&mut i.events));
         let pairs = text_pairs(&events);
         let mut consumed = std::collections::HashSet::new();
@@ -105,21 +119,21 @@ impl KeyTips {
                                     prefix.pop();
                                 }
                             }
-                        } else if key.name().len() == 1 {
-                            let next = format!("{}{key_name}", self.prefix.as_deref().unwrap_or_default(), key_name = key.name());
-                            match keytip_table::lookup(&next) {
+                        } else if let Some(unit) = typed_unit(*key, &events, &pairs, index) {
+                            let next = format!("{}{unit}", self.prefix.as_deref().unwrap_or_default());
+                            match table.lookup(&next) {
                                 Some(keytip_table::Entry::Tab(tab)) => {
                                     // A tab with deeper sequences stays as an active level
                                     // (its group badges show); a terminal unit like "JI"
                                     // finishes and clears the prefix.
-                                    self.prefix = keytip_table::has_deeper(&next).then_some(next);
+                                    self.prefix = table.has_deeper(&next).then_some(next);
                                     actions.push(Action::Tab(tab));
                                 }
                                 Some(keytip_table::Entry::Continue) => self.prefix = Some(next),
                                 Some(keytip_table::Entry::Finish(action)) => self.finish(action, &mut actions),
                                 // No complete sequence, but deeper ones start here: wait for
                                 // more input (Excel's two-letter units like Draw's "JI").
-                                None if keytip_table::has_deeper(&next) => self.prefix = Some(next),
+                                None if table.has_deeper(&next) => self.prefix = Some(next),
                                 // Unknown letters are consumed while a prefix is active but
                                 // leave it unchanged, as Excel does.
                                 None => {}
@@ -160,16 +174,37 @@ fn command_modifier(m: Modifiers) -> bool {
     m.ctrl || m.command || m.mac_cmd
 }
 
+/// A letter with no egui key of its own (German Ä, Ö, Ü, ß): egui reports the key's position,
+/// and the layout's character arrives as text. Key tips show it in capitals, except ß.
+fn local_letter(text: &str) -> Option<String> {
+    let mut it = text.chars();
+    let c = it.next()?;
+    if it.next().is_some() || c.is_ascii() || !c.is_alphabetic() {
+        return None;
+    }
+    Some(if c == 'ß' { c.to_string() } else { c.to_uppercase().collect() })
+}
+
+/// The key tip unit a key press types: a letter or digit by its key, or a local letter by the
+/// text paired with the press.
+fn typed_unit(key: Key, events: &[Event], pairs: &[(usize, usize)], index: usize) -> Option<String> {
+    let text = pairs.iter().find(|(k, _)| *k == index).and_then(|(_, t)| match events.get(*t) {
+        Some(Event::Text(text)) => local_letter(text),
+        _ => None,
+    });
+    text.or_else(|| (key.name().len() == 1).then(|| key.name().to_string()))
+}
+
 /// Native integrations emit Key then Text; browsers can emit Text then Key.
 fn text_pairs(events: &[Event]) -> Vec<(usize, usize)> {
     let mut pairs = Vec::new();
     for (text_index, event) in events.iter().enumerate() {
-        let Event::Text(_) = event else { continue };
+        let Event::Text(text) = event else { continue };
         let before = events.iter().enumerate().take(text_index).rev().find(|(_, e)| !matches!(e, Event::ModifiersChanged(_)));
         let after = events.iter().enumerate().skip(text_index + 1).find(|(_, e)| !matches!(e, Event::ModifiersChanged(_)));
         for (key_index, event) in before.into_iter().chain(after) {
             if let Event::Key { key, pressed: true, modifiers, .. } = event
-                && (key.name().len() == 1 || modifiers.alt || command_modifier(*modifiers))
+                && (key.name().len() == 1 || modifiers.alt || command_modifier(*modifiers) || local_letter(text).is_some())
                 && !pairs.iter().any(|(paired, _)| *paired == key_index)
             {
                 pairs.push((key_index, text_index));

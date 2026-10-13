@@ -4,6 +4,8 @@
   "The generated keytip_table/generated.rs is produced from this file: `cargo xtask keytips`.",
   "Adding or removing a shortcut is a one-line edit here. Rules:",
   "  - seq: the access-key sequence, letters and digits only (two-letter units like \"JI\" are one entry).",
+  "  - de: the same entry's sequence in German Excel (measured in Excel 365 with the German interface; may hold Ä Ö Ü ß).",
+  "    Without it the entry isn't in the German table (Excel 2003 paths, duplicates, items German Excel lays out differently).",
   "  - kind: \"tab\" (switches a ribbon tab), \"command\" (runs a command id), \"dialog\" (opens a dialog by name),",
   "    \"continue\" (an explicit group level with no deeper sequences yet).",
   "  - Intermediate levels need no entries: the matcher waits automatically when deeper sequences exist.",
@@ -13,42 +15,50 @@
  "sequences": [
   {
    "seq": "H",
+   "de": "R",
    "kind": "tab",
    "target": "Home"
   },
   {
    "seq": "N",
+   "de": "I",
    "kind": "tab",
    "target": "Insert"
   },
   {
    "seq": "JI",
+   "de": "JI",
    "kind": "tab",
    "target": "Draw",
    "note": "Two-letter unit. Deeper Draw letters differ between Excel and GridCraft; left blank for future contributors."
   },
   {
    "seq": "P",
+   "de": "S",
    "kind": "tab",
    "target": "Page Layout"
   },
   {
    "seq": "M",
+   "de": "O",
    "kind": "tab",
    "target": "Formulas"
   },
   {
    "seq": "A",
+   "de": "V",
    "kind": "tab",
    "target": "Data"
   },
   {
    "seq": "R",
+   "de": "P",
    "kind": "tab",
    "target": "Review"
   },
   {
    "seq": "W",
+   "de": "F",
    "kind": "tab",
    "target": "View"
   },
@@ -66,39 +76,46 @@
   },
   {
    "seq": "HAR",
+   "de": "RRE",
    "kind": "command",
    "target": "home.alignRight"
   },
   {
    "seq": "HAT",
+   "de": "RKB",
    "kind": "command",
    "target": "home.alignTop",
    "excel": "Excel: Top Align"
   },
   {
    "seq": "HAM",
+   "de": "RD",
    "kind": "command",
    "target": "home.alignMiddle",
    "excel": "Excel: Middle Align"
   },
   {
    "seq": "HAB",
+   "de": "RTN",
    "kind": "command",
    "target": "home.alignBottom",
    "excel": "Excel: Bottom Align"
   },
   {
    "seq": "HAL",
+   "de": "RII",
    "kind": "command",
    "target": "home.alignLeft"
   },
   {
    "seq": "HAC",
+   "de": "RRZ",
    "kind": "command",
    "target": "home.alignCenter"
   },
   {
    "seq": "HVS",
+   "de": "RVÜ",
    "kind": "dialog",
    "target": "pasteSpecial"
   },
@@ -110,6 +127,7 @@
   },
   {
    "seq": "HOI",
+   "de": "RFFI",
    "kind": "command",
    "target": "home.autofitColumnWidth"
   },
@@ -121,11 +139,13 @@
   },
   {
    "seq": "WVG",
+   "de": "FX",
    "kind": "command",
    "target": "view.gridlines"
   },
   {
    "seq": "H0",
+   "de": "R0",
    "kind": "command",
    "target": "home.increaseDecimal",
    "excel": "Increase Decimals",
@@ -133,6 +153,7 @@
   },
   {
    "seq": "H1",
+   "de": "R1",
    "kind": "command",
    "target": "home.bold",
    "excel": "Bold",
@@ -140,6 +161,7 @@
   },
   {
    "seq": "H2",
+   "de": "R2",
    "kind": "command",
    "target": "home.italic",
    "excel": "Italic",
@@ -147,12 +169,14 @@
   },
   {
    "seq": "H3",
+   "de": "R3U",
    "kind": "command",
    "excel": "Excel: Underline; fires immediately (not a menu)",
    "target": "home.underline"
   },
   {
    "seq": "H5",
+   "de": "R5",
    "kind": "command",
    "target": "home.decreaseIndent",
    "excel": "Decrease Indent",
@@ -160,6 +184,7 @@
   },
   {
    "seq": "H6",
+   "de": "R6",
    "kind": "command",
    "target": "home.increaseIndent",
    "excel": "Increase Indent",
@@ -167,6 +192,7 @@
   },
   {
    "seq": "H9",
+   "de": "R9",
    "kind": "command",
    "target": "home.decreaseDecimal",
    "excel": "Decrease Decimals",
@@ -174,6 +200,7 @@
   },
   {
    "seq": "HAN",
+   "de": "RN1",
    "kind": "command",
    "excel": "Accounting Format",
    "note": "fires immediately in Excel; deeper aliases dropped as unreachable",
@@ -181,6 +208,7 @@
   },
   {
    "seq": "HAS",
+   "de": "RAS",
    "kind": "command",
    "target": "home.addIns",
    "excel": "Add-ins",
@@ -188,12 +216,14 @@
   },
   {
    "seq": "HB",
+   "de": "RRR",
    "kind": "continue",
    "excel": "Borders Menu",
    "note": "group level:"
   },
   {
    "seq": "HBA",
+   "de": "RRRA",
    "kind": "command",
    "target": "home.borders",
    "excel": "All Borders",
@@ -201,6 +231,7 @@
   },
   {
    "seq": "HBB",
+   "de": "RRRT",
    "kind": "command",
    "target": "home.borders",
    "excel": "Bottom Double Border",
@@ -208,6 +239,7 @@
   },
   {
    "seq": "HBC",
+   "de": "RRRC",
    "kind": "command",
    "target": "home.borders",
    "excel": "Top and Thick Bottom Border",
@@ -215,6 +247,7 @@
   },
   {
    "seq": "HBD",
+   "de": "RRRH",
    "kind": "command",
    "target": "home.borders",
    "excel": "Top and Bottom Border",
@@ -222,6 +255,7 @@
   },
   {
    "seq": "HBE",
+   "de": "RRRF",
    "kind": "command",
    "target": "home.borders",
    "excel": "Erase Border",
@@ -229,6 +263,7 @@
   },
   {
    "seq": "HBG",
+   "de": "RRRE",
    "kind": "command",
    "target": "home.drawBorder",
    "excel": "Draw Border Grid",
@@ -236,6 +271,7 @@
   },
   {
    "seq": "HBH",
+   "de": "RRRD",
    "kind": "command",
    "target": "home.borders",
    "excel": "Thick Bottom Border",
@@ -243,6 +279,7 @@
   },
   {
    "seq": "HBI",
+   "de": "RRRI",
    "kind": "command",
    "target": "home.borders",
    "excel": "Line Color",
@@ -250,6 +287,7 @@
   },
   {
    "seq": "HBL",
+   "de": "RRRS",
    "kind": "command",
    "target": "home.borders",
    "excel": "Left Border",
@@ -257,6 +295,7 @@
   },
   {
    "seq": "HBM",
+   "de": "RRRW",
    "kind": "command",
    "target": "home.borders",
    "excel": "More Borders",
@@ -264,6 +303,7 @@
   },
   {
    "seq": "HBN",
+   "de": "RRRK",
    "kind": "command",
    "target": "home.borders",
    "excel": "No Border",
@@ -271,6 +311,7 @@
   },
   {
    "seq": "HBO",
+   "de": "RRRU",
    "kind": "command",
    "target": "home.borders",
    "excel": "Bottom Border",
@@ -278,6 +319,7 @@
   },
   {
    "seq": "HBP",
+   "de": "RRRO",
    "kind": "command",
    "target": "home.borders",
    "excel": "Top Border",
@@ -285,6 +327,7 @@
   },
   {
    "seq": "HBR",
+   "de": "RRRM",
    "kind": "command",
    "target": "home.borders",
    "excel": "Right Border",
@@ -292,6 +335,7 @@
   },
   {
    "seq": "HBS",
+   "de": "RRRR",
    "kind": "command",
    "target": "home.borders",
    "excel": "Outside Borders",
@@ -306,6 +350,7 @@
   },
   {
    "seq": "HBU",
+   "de": "RRRB",
    "kind": "command",
    "target": "home.borders",
    "excel": "Top and Double Bottom Border",
@@ -313,6 +358,7 @@
   },
   {
    "seq": "HBW",
+   "de": "RRRZ",
    "kind": "command",
    "target": "home.drawBorder",
    "excel": "Draw Border",
@@ -320,6 +366,7 @@
   },
   {
    "seq": "HBY",
+   "de": "RRRN",
    "kind": "command",
    "target": "home.borders",
    "excel": "Line Style",
@@ -327,6 +374,7 @@
   },
   {
    "seq": "HC",
+   "de": "RCK",
    "kind": "command",
    "excel": "Copy",
    "note": "fires immediately in Excel; deeper aliases dropped as unreachable",
@@ -334,6 +382,7 @@
   },
   {
    "seq": "HDC",
+   "de": "RELP",
    "kind": "command",
    "target": "home.deleteColumns",
    "excel": "Delete Columns",
@@ -341,6 +390,7 @@
   },
   {
    "seq": "HDD",
+   "de": "RELH",
    "kind": "dialog",
    "target": "deleteCells",
    "excel": "Delete Cells",
@@ -348,6 +398,7 @@
   },
   {
    "seq": "HDR",
+   "de": "RELB",
    "kind": "command",
    "target": "home.deleteRows",
    "excel": "Delete Rows",
@@ -355,6 +406,7 @@
   },
   {
    "seq": "HDS",
+   "de": "RELE",
    "kind": "command",
    "target": "home.deleteSheet",
    "excel": "Delete Sheet",
@@ -362,6 +414,7 @@
   },
   {
    "seq": "HEA",
+   "de": "RLÖS",
    "kind": "command",
    "target": "edit.clearAll",
    "excel": "Clear All",
@@ -369,6 +422,7 @@
   },
   {
    "seq": "HEC",
+   "de": "RLÖH",
    "kind": "command",
    "target": "edit.clearContents",
    "excel": "Clear Contents",
@@ -376,6 +430,7 @@
   },
   {
    "seq": "HEF",
+   "de": "RLÖF",
    "kind": "command",
    "target": "edit.clearFormats",
    "excel": "Clear Formats",
@@ -383,6 +438,7 @@
   },
   {
    "seq": "HEL",
+   "de": "RLÖC",
    "kind": "command",
    "target": "edit.clearHyperlinks",
    "excel": "Clear Hyperlinks",
@@ -390,6 +446,7 @@
   },
   {
    "seq": "HEM",
+   "de": "RLÖM",
    "kind": "command",
    "target": "edit.clearComments",
    "excel": "Clear Comments and Notes",
@@ -397,6 +454,7 @@
   },
   {
    "seq": "HFC",
+   "de": "RAC",
    "kind": "control",
    "target": "home.fontColor",
    "excel": "Font Color",
@@ -404,6 +462,7 @@
   },
   {
    "seq": "HFDC",
+   "de": "RUUB",
    "kind": "command",
    "target": "home.conditionalFormat",
    "excel": "Find Conditional Formatting",
@@ -411,6 +470,7 @@
   },
   {
    "seq": "HFDF",
+   "de": "RUUN",
    "kind": "dialog",
    "target": "find",
    "excel": "Find",
@@ -418,6 +478,7 @@
   },
   {
    "seq": "HFDG",
+   "de": "RUUG",
    "kind": "dialog",
    "target": "goTo",
    "excel": "Go To",
@@ -425,6 +486,7 @@
   },
   {
    "seq": "HFDM",
+   "de": "RUUT",
    "kind": "command",
    "target": "edit.find",
    "excel": "Find Notes",
@@ -432,6 +494,7 @@
   },
   {
    "seq": "HFDO",
+   "de": "RUUO",
    "kind": "command",
    "target": "home.selectObjects",
    "pending": true,
@@ -440,6 +503,7 @@
   },
   {
    "seq": "HFDP",
+   "de": "RUUW",
    "kind": "command",
    "target": "arrange.selectionPane",
    "excel": "Selection Pane",
@@ -447,6 +511,7 @@
   },
   {
    "seq": "HFDR",
+   "de": "RUUE",
    "kind": "dialog",
    "target": "find",
    "excel": "Replace",
@@ -454,6 +519,7 @@
   },
   {
    "seq": "HFDS",
+   "de": "RUUS",
    "kind": "dialog",
    "target": "goToSpecial",
    "excel": "Go To Special",
@@ -461,6 +527,7 @@
   },
   {
    "seq": "HFF",
+   "de": "RSC",
    "kind": "control",
    "target": "home.fontName",
    "excel": "Font Selection",
@@ -468,6 +535,7 @@
   },
   {
    "seq": "HFG",
+   "de": "RSV",
    "kind": "command",
    "target": "home.increaseFontSize",
    "excel": "Increase Font Size",
@@ -475,12 +543,14 @@
   },
   {
    "seq": "HFI",
+   "de": "RÜ",
    "kind": "continue",
    "excel": "Fill",
    "note": "group level: containment(Fill Up)"
   },
   {
    "seq": "HFIA",
+   "de": "RÜA",
    "kind": "command",
    "target": "home.fillAcrossWorksheets",
    "pending": true,
@@ -489,6 +559,7 @@
   },
   {
    "seq": "HFID",
+   "de": "RÜU",
    "kind": "command",
    "target": "edit.fillDown",
    "excel": "Fill Down",
@@ -496,6 +567,7 @@
   },
   {
    "seq": "HFIF",
+   "de": "RÜI",
    "kind": "command",
    "target": "edit.flashFill",
    "excel": "Flash Fill",
@@ -510,6 +582,7 @@
   },
   {
    "seq": "HFIL",
+   "de": "RÜL",
    "kind": "command",
    "target": "edit.fillLeft",
    "excel": "Fill Left",
@@ -517,6 +590,7 @@
   },
   {
    "seq": "HFIR",
+   "de": "RÜR",
    "kind": "command",
    "target": "edit.fillRight",
    "excel": "Fill Right",
@@ -524,6 +598,7 @@
   },
   {
    "seq": "HFIS",
+   "de": "RÜH",
    "kind": "dialog",
    "target": "series",
    "excel": "Fill Series",
@@ -531,6 +606,7 @@
   },
   {
    "seq": "HFIU",
+   "de": "RÜO",
    "kind": "command",
    "target": "edit.fillUp",
    "excel": "Fill Up",
@@ -538,6 +614,7 @@
   },
   {
    "seq": "HFK",
+   "de": "RJ",
    "kind": "command",
    "target": "home.decreaseFontSize",
    "excel": "Decrease Font Size",
@@ -545,6 +622,7 @@
   },
   {
    "seq": "HFM",
+   "de": "RNZ",
    "kind": "dialog",
    "target": "formatCells",
    "excel": "More Number Formats",
@@ -552,6 +630,7 @@
   },
   {
    "seq": "HFP",
+   "de": "RFO",
    "kind": "command",
    "target": "edit.formatPainter",
    "excel": "Format Painter",
@@ -559,6 +638,7 @@
   },
   {
    "seq": "HFQ",
+   "de": "RUA",
    "kind": "control",
    "excel": "Orientation Menu",
    "note": "group level: containment(Orientation)",
@@ -566,6 +646,7 @@
   },
   {
    "seq": "HFS",
+   "de": "RHC",
    "kind": "control",
    "target": "home.fontSize",
    "excel": "Font Size",
@@ -573,6 +654,7 @@
   },
   {
    "seq": "HH",
+   "de": "RH1",
    "kind": "control",
    "target": "home.fillColor",
    "excel": "Fill Color",
@@ -580,6 +662,7 @@
   },
   {
    "seq": "HIC",
+   "de": "RIEF",
    "kind": "command",
    "target": "home.insertColumns",
    "excel": "Insert Columns",
@@ -594,6 +677,7 @@
   },
   {
    "seq": "HII",
+   "de": "RIEI",
    "kind": "dialog",
    "target": "insertCells",
    "excel": "Insert Cells",
@@ -601,6 +685,7 @@
   },
   {
    "seq": "HIR",
+   "de": "RIEN",
    "kind": "command",
    "target": "home.insertRows",
    "excel": "Insert Rows",
@@ -608,6 +693,7 @@
   },
   {
    "seq": "HIS",
+   "de": "RIET",
    "kind": "command",
    "target": "home.insertSheet",
    "excel": "Insert Sheet",
@@ -615,12 +701,14 @@
   },
   {
    "seq": "HJ",
+   "de": "RM",
    "kind": "continue",
    "excel": "Cell Styles",
    "note": "group level:"
   },
   {
    "seq": "HJN",
+   "de": "RMN",
    "kind": "command",
    "target": "home.newCellStyle",
    "excel": "New Cell Style",
@@ -628,6 +716,7 @@
   },
   {
    "seq": "HK",
+   "de": "RÖ",
    "kind": "command",
    "target": "home.comma",
    "excel": "Comma Style",
@@ -635,18 +724,21 @@
   },
   {
    "seq": "HL",
+   "de": "R8",
    "kind": "continue",
    "excel": "Conditional Formatting",
    "note": "group level: containment(Conditional Formatting)"
   },
   {
    "seq": "HLC",
+   "de": "R8C",
    "kind": "continue",
    "excel": "Clear Rules Menu",
    "note": "group level: containment(Clear Rules)"
   },
   {
    "seq": "HLCE",
+   "de": "R8CG",
    "kind": "command",
    "target": "home.clearRules",
    "excel": "Clear Rules From Sheet",
@@ -654,6 +746,7 @@
   },
   {
    "seq": "HLCS",
+   "de": "R8CE",
    "kind": "command",
    "target": "home.clearRules",
    "excel": "Clear Rules From Cells",
@@ -661,6 +754,7 @@
   },
   {
    "seq": "HLCT",
+   "de": "R8CT",
    "kind": "command",
    "target": "home.clearRules",
    "excel": "Clear Rules From Table",
@@ -668,6 +762,7 @@
   },
   {
    "seq": "HLD",
+   "de": "R8D",
    "kind": "command",
    "target": "home.conditionalFormat",
    "excel": "Data Bars",
@@ -675,6 +770,7 @@
   },
   {
    "seq": "HLH",
+   "de": "R8H",
    "kind": "command",
    "target": "home.conditionalFormat",
    "excel": "Highlight Cells",
@@ -682,6 +778,7 @@
   },
   {
    "seq": "HLN",
+   "de": "R8N",
    "kind": "command",
    "target": "home.conditionalFormat",
    "excel": "New Rule",
@@ -689,6 +786,7 @@
   },
   {
    "seq": "HLR",
+   "de": "R8R",
    "kind": "command",
    "target": "home.manageRules",
    "excel": "Manage Rules",
@@ -696,6 +794,7 @@
   },
   {
    "seq": "HLT",
+   "de": "R8O",
    "kind": "command",
    "target": "home.conditionalFormat",
    "excel": "Top/Bottom Rules",
@@ -703,12 +802,14 @@
   },
   {
    "seq": "HM",
+   "de": "Rß",
    "kind": "continue",
    "excel": "Merge & Center Menu",
    "note": "group level: containment(Merge & Center)"
   },
   {
    "seq": "HMA",
+   "de": "RßD",
    "kind": "command",
    "target": "home.mergeAcross",
    "excel": "Merge Across",
@@ -716,6 +817,7 @@
   },
   {
    "seq": "HMC",
+   "de": "RßV",
    "kind": "command",
    "target": "home.mergeCenter",
    "excel": "Merge & Center",
@@ -723,6 +825,7 @@
   },
   {
    "seq": "HMM",
+   "de": "RßB",
    "kind": "command",
    "target": "home.mergeCells",
    "excel": "Merge Cells",
@@ -730,6 +833,7 @@
   },
   {
    "seq": "HMU",
+   "de": "RßU",
    "kind": "command",
    "target": "home.unmergeCells",
    "excel": "Unmerge Cells",
@@ -737,6 +841,7 @@
   },
   {
    "seq": "HN",
+   "de": "RAZ",
    "kind": "control",
    "target": "home.numberFormat",
    "excel": "Number Format",
@@ -744,6 +849,7 @@
   },
   {
    "seq": "HOA",
+   "de": "RFFO",
    "kind": "command",
    "target": "home.autofitRowHeight",
    "excel": "AutoFit Row Height",
@@ -751,6 +857,7 @@
   },
   {
    "seq": "HOD",
+   "de": "RFFD",
    "kind": "dialog",
    "target": "defaultWidth",
    "excel": "Default Column Width",
@@ -758,6 +865,7 @@
   },
   {
    "seq": "HOE",
+   "de": "RFFE",
    "kind": "command",
    "target": "home.formatCells",
    "excel": "Format Cells",
@@ -765,6 +873,7 @@
   },
   {
    "seq": "HOH",
+   "de": "RFFH",
    "kind": "dialog",
    "target": "rowHeight",
    "excel": "Row Height",
@@ -772,6 +881,7 @@
   },
   {
    "seq": "HOL",
+   "de": "RFFL",
    "kind": "command",
    "target": "home.lockCell",
    "excel": "Lock Cell",
@@ -779,6 +889,7 @@
   },
   {
    "seq": "HOM",
+   "de": "RFFT",
    "kind": "dialog",
    "target": "moveSheet",
    "excel": "Move or Copy Sheet",
@@ -786,6 +897,7 @@
   },
   {
    "seq": "HOP",
+   "de": "RFFZ",
    "kind": "dialog",
    "target": "protectSheet",
    "excel": "Protect Sheet",
@@ -793,6 +905,7 @@
   },
   {
    "seq": "HOR",
+   "de": "RFFU",
    "kind": "dialog",
    "target": "renameSheet",
    "excel": "Rename Sheet",
@@ -800,6 +913,7 @@
   },
   {
    "seq": "HOT",
+   "de": "RFFR",
    "kind": "command",
    "target": "sheet.tabColor",
    "excel": "Tab Color",
@@ -807,6 +921,7 @@
   },
   {
    "seq": "HOUC",
+   "de": "RFFNU",
    "kind": "command",
    "target": "home.hideColumns",
    "excel": "Hide Columns",
@@ -814,6 +929,7 @@
   },
   {
    "seq": "HOUH",
+   "de": "RFFNB",
    "kind": "command",
    "target": "sheet.unhide",
    "excel": "Unhide Sheet",
@@ -821,6 +937,7 @@
   },
   {
    "seq": "HOUL",
+   "de": "RFFND",
    "kind": "command",
    "target": "home.unhideColumns",
    "excel": "Unhide Columns",
@@ -828,6 +945,7 @@
   },
   {
    "seq": "HOUO",
+   "de": "RFFNL",
    "kind": "command",
    "target": "home.unhideRows",
    "excel": "Unhide Rows",
@@ -835,6 +953,7 @@
   },
   {
    "seq": "HOUR",
+   "de": "RFFNZ",
    "kind": "command",
    "target": "home.hideRows",
    "excel": "Hide Rows",
@@ -842,6 +961,7 @@
   },
   {
    "seq": "HOUS",
+   "de": "RFFNS",
    "kind": "command",
    "target": "sheet.hide",
    "excel": "Hide Sheet",
@@ -849,6 +969,7 @@
   },
   {
    "seq": "HOW",
+   "de": "RFFB",
    "kind": "dialog",
    "target": "columnWidth",
    "excel": "Column Width",
@@ -856,12 +977,14 @@
   },
   {
    "seq": "HP",
+   "de": "RP",
    "kind": "command",
    "target": "home.percent",
    "excel": "Excel: Percentage Style"
   },
   {
    "seq": "HSC",
+   "de": "ROSC",
    "kind": "command",
    "target": "data.clearFilter",
    "excel": "Clear Filter",
@@ -869,6 +992,7 @@
   },
   {
    "seq": "HSF",
+   "de": "ROSF",
    "kind": "command",
    "target": "data.filter",
    "excel": "Filter",
@@ -876,6 +1000,7 @@
   },
   {
    "seq": "HSO",
+   "de": "ROSO",
    "kind": "command",
    "target": "data.sortDescending",
    "excel": "Sort Z to A",
@@ -883,6 +1008,7 @@
   },
   {
    "seq": "HSS",
+   "de": "ROSS",
    "kind": "command",
    "target": "data.sortAscending",
    "excel": "Sort A to Z",
@@ -890,6 +1016,7 @@
   },
   {
    "seq": "HSU",
+   "de": "ROSD",
    "kind": "command",
    "target": "data.sort",
    "excel": "Custom Sort",
@@ -897,12 +1024,14 @@
   },
   {
    "seq": "HT",
+   "de": "RG",
    "kind": "continue",
    "excel": "Format as Table",
    "note": "group level:"
   },
   {
    "seq": "HTN",
+   "de": "RGN",
    "kind": "command",
    "target": "table.style",
    "excel": "New Table Style",
@@ -910,6 +1039,7 @@
   },
   {
    "seq": "HTP",
+   "de": "RGP",
    "kind": "command",
    "target": "table.style",
    "excel": "New Pivot Table Style",
@@ -917,12 +1047,14 @@
   },
   {
    "seq": "HU",
+   "de": "RKA",
    "kind": "continue",
    "excel": "AutoSum",
    "note": "group level:"
   },
   {
    "seq": "HUA",
+   "de": "RKAM",
    "kind": "command",
    "target": "formulas.autoSum",
    "excel": "Auto Average",
@@ -930,6 +1062,7 @@
   },
   {
    "seq": "HUC",
+   "de": "RKAA",
    "kind": "command",
    "target": "formulas.autoSum",
    "excel": "Auto Count Numbers",
@@ -937,6 +1070,7 @@
   },
   {
    "seq": "HUI",
+   "de": "RKAN",
    "kind": "command",
    "target": "formulas.autoSum",
    "excel": "Auto Min",
@@ -944,6 +1078,7 @@
   },
   {
    "seq": "HUM",
+   "de": "RKAX",
    "kind": "command",
    "target": "formulas.autoSum",
    "excel": "Auto Max",
@@ -951,6 +1086,7 @@
   },
   {
    "seq": "HV",
+   "de": "RV",
    "kind": "continue",
    "excel": "Paste",
    "note": "group level:"
@@ -970,6 +1106,7 @@
   },
   {
    "seq": "HWW",
+   "de": "RNE",
    "kind": "command",
    "target": "home.wrapText",
    "excel": "Wrap Text",
@@ -977,6 +1114,7 @@
   },
   {
    "seq": "HX",
+   "de": "RX",
    "kind": "command",
    "target": "edit.cut",
    "excel": "Cut",
@@ -984,6 +1122,7 @@
   },
   {
    "seq": "NC1",
+   "de": "ID",
    "kind": "control",
    "target": "insert.chart.column",
    "excel": "Column Chart",
@@ -998,12 +1137,14 @@
   },
   {
    "seq": "NCM",
+   "de": "IN2",
    "kind": "dialog",
    "target": "comment",
    "excel": "Excel: New Comment (modern)"
   },
   {
    "seq": "NCB",
+   "de": "IC2",
    "kind": "command",
    "target": "insert.checkbox",
    "excel": "Checkbox",
@@ -1011,6 +1152,7 @@
   },
   {
    "seq": "ND",
+   "de": "IPU",
    "kind": "control",
    "target": "insert.chart.scatter",
    "excel": "Scatter Chart",
@@ -1018,6 +1160,7 @@
   },
   {
    "seq": "NE",
+   "de": "IAN",
    "kind": "command",
    "target": "insert.equation",
    "pending": true,
@@ -1052,6 +1195,7 @@
   },
   {
    "seq": "NHF",
+   "de": "IKO",
    "kind": "command",
    "target": "pageLayout.headerFooter",
    "excel": "Header & Footer",
@@ -1059,6 +1203,7 @@
   },
   {
    "seq": "NHI",
+   "de": "IE",
    "kind": "control",
    "target": "insert.chart.hierarchy",
    "excel": "Hierarchy Chart",
@@ -1066,6 +1211,7 @@
   },
   {
    "seq": "NI1",
+   "de": "IW1",
    "kind": "command",
    "target": "insert.chart",
    "excel": "Waterfall Chart",
@@ -1073,6 +1219,7 @@
   },
   {
    "seq": "NI2",
+   "de": "IHL",
    "kind": "dialog",
    "target": "insertLink",
    "excel": "Link",
@@ -1080,6 +1227,7 @@
   },
   {
    "seq": "NJ",
+   "de": "I92",
    "kind": "command",
    "target": "insert.object",
    "pending": true,
@@ -1088,6 +1236,7 @@
   },
   {
    "seq": "NM1T",
+   "de": "IM",
    "kind": "command",
    "target": "insert.picture",
    "excel": "SmartArt Picture",
@@ -1095,6 +1244,7 @@
   },
   {
    "seq": "NM2",
+   "de": "IK1",
    "kind": "command",
    "target": "insert.chart",
    "excel": "Map Chart",
@@ -1102,6 +1252,7 @@
   },
   {
    "seq": "NN1",
+   "de": "IIL",
    "kind": "control",
    "target": "insert.chart.line",
    "excel": "Line Chart",
@@ -1109,6 +1260,7 @@
   },
   {
    "seq": "NNS",
+   "de": "IS1",
    "kind": "command",
    "target": "insert.icons",
    "excel": "Icons",
@@ -1116,6 +1268,7 @@
   },
   {
    "seq": "NP",
+   "de": "IB",
    "kind": "continue",
    "excel": "Picture",
    "note": "group level:"
@@ -1136,6 +1289,7 @@
   },
   {
    "seq": "NPI",
+   "de": "IBI",
    "kind": "command",
    "target": "insert.picture",
    "excel": "Place in Cell Menu",
@@ -1143,6 +1297,7 @@
   },
   {
    "seq": "NPO",
+   "de": "IBÜ",
    "kind": "command",
    "target": "insert.picture",
    "excel": "Place over Cells Menu",
@@ -1150,6 +1305,7 @@
   },
   {
    "seq": "NQ",
+   "de": "IKK",
    "kind": "control",
    "target": "insert.chart.pie",
    "excel": "Pie Chart",
@@ -1157,6 +1313,7 @@
   },
   {
    "seq": "NR",
+   "de": "ILM",
    "kind": "command",
    "target": "insert.recommendedCharts",
    "excel": "Recommended Charts",
@@ -1164,6 +1321,7 @@
   },
   {
    "seq": "NSA",
+   "de": "ISA",
    "kind": "control",
    "target": "insert.chart.statistic",
    "excel": "Statistical Chart",
@@ -1171,6 +1329,7 @@
   },
   {
    "seq": "NSC",
+   "de": "IC1",
    "kind": "command",
    "target": "insert.screenshot",
    "pending": true,
@@ -1179,6 +1338,7 @@
   },
   {
    "seq": "NSD",
+   "de": "IN1",
    "kind": "command",
    "target": "insert.chart",
    "excel": "Combo Chart",
@@ -1186,6 +1346,7 @@
   },
   {
    "seq": "NSF",
+   "de": "I91",
    "kind": "command",
    "target": "insert.slicer",
    "pending": false,
@@ -1194,6 +1355,7 @@
   },
   {
    "seq": "NSH",
+   "de": "I2",
    "kind": "command",
    "target": "insert.shape",
    "excel": "Shapes",
@@ -1201,6 +1363,7 @@
   },
   {
    "seq": "NSP",
+   "de": "IFM",
    "kind": "command",
    "target": "insert.recommendedPivotTables",
    "excel": "Recommended PivotTables",
@@ -1208,6 +1371,7 @@
   },
   {
    "seq": "NST",
+   "de": "IÖ",
    "kind": "command",
    "target": "insert.timeline",
    "pending": true,
@@ -1216,6 +1380,7 @@
   },
   {
    "seq": "NSZ",
+   "de": "IIIC",
    "kind": "command",
    "target": "insert.pivotChart",
    "pending": false,
@@ -1224,6 +1389,7 @@
   },
   {
    "seq": "NT",
+   "de": "Iß",
    "kind": "command",
    "target": "insert.table",
    "excel": "Table",
@@ -1231,6 +1397,7 @@
   },
   {
    "seq": "NU",
+   "de": "ISY",
    "kind": "command",
    "target": "insert.symbol",
    "excel": "Symbols",
@@ -1244,6 +1411,7 @@
   },
   {
    "seq": "NV",
+   "de": "IVT",
    "kind": "command",
    "target": "insert.pivotTable",
    "excel": "PivotTable",
@@ -1251,6 +1419,7 @@
   },
   {
    "seq": "NW",
+   "de": "IW2",
    "kind": "command",
    "target": "insert.wordArt",
    "pending": true,
@@ -1259,6 +1428,7 @@
   },
   {
    "seq": "NX",
+   "de": "IÄ",
    "kind": "command",
    "target": "insert.textBox",
    "excel": "Text Box",
@@ -1272,6 +1442,7 @@
   },
   {
    "seq": "NZKSL",
+   "de": "ILL",
    "kind": "dialog",
    "target": "sparkline",
    "excel": "Line Sparkline",
@@ -1279,6 +1450,7 @@
   },
   {
    "seq": "NZKSO",
+   "de": "IQ",
    "kind": "dialog",
    "target": "sparkline",
    "excel": "Column Sparkline",
@@ -1286,6 +1458,7 @@
   },
   {
    "seq": "NZKSW",
+   "de": "IGG",
    "kind": "dialog",
    "target": "sparkline",
    "excel": "Win/Loss Sparkline",
@@ -1306,6 +1479,7 @@
   },
   {
    "seq": "PAE",
+   "de": "SGHB",
    "kind": "command",
    "target": "arrange.sendBackward",
    "excel": "Send Backward",
@@ -1313,6 +1487,7 @@
   },
   {
    "seq": "PAF",
+   "de": "SGEA",
    "kind": "command",
    "target": "arrange.bringForward",
    "excel": "Bring Forward",
@@ -1320,12 +1495,14 @@
   },
   {
    "seq": "PB",
+   "de": "SÜ",
    "kind": "continue",
    "excel": "Breaks",
    "note": "group level:"
   },
   {
    "seq": "PBI",
+   "de": "SÜI",
    "kind": "command",
    "target": "pageLayout.breaks",
    "excel": "Insert Page Break",
@@ -1333,6 +1510,7 @@
   },
   {
    "seq": "PBR",
+   "de": "SÜR",
    "kind": "command",
    "target": "pageLayout.breaks",
    "excel": "Remove Page Break",
@@ -1340,6 +1518,7 @@
   },
   {
    "seq": "PGB",
+   "de": "SM",
    "kind": "command",
    "target": "pageLayout.background",
    "excel": "Background",
@@ -1347,6 +1526,7 @@
   },
   {
    "seq": "PI",
+   "de": "SI",
    "kind": "command",
    "target": "pageLayout.printTitles",
    "excel": "Print Titles",
@@ -1354,12 +1534,14 @@
   },
   {
    "seq": "PM",
+   "de": "S8",
    "kind": "continue",
    "excel": "Margins",
    "note": "group level:"
   },
   {
    "seq": "PMA",
+   "de": "S8B",
    "kind": "command",
    "target": "pageLayout.margins",
    "excel": "Custom Margins",
@@ -1367,6 +1549,7 @@
   },
   {
    "seq": "PO",
+   "de": "S4",
    "kind": "command",
    "target": "pageLayout.orientation",
    "excel": "Orientation",
@@ -1374,6 +1557,7 @@
   },
   {
    "seq": "PPG",
+   "de": "SYU",
    "kind": "command",
    "target": "pageLayout.printGridlines",
    "excel": "Print Gridlines",
@@ -1381,6 +1565,7 @@
   },
   {
    "seq": "PPH",
+   "de": "SYC",
    "kind": "command",
    "target": "pageLayout.printHeadings",
    "excel": "Print Headings",
@@ -1388,12 +1573,14 @@
   },
   {
    "seq": "PR",
+   "de": "SH",
    "kind": "continue",
    "excel": "Print Area",
    "note": "group level:"
   },
   {
    "seq": "PRS",
+   "de": "SHF",
    "kind": "command",
    "target": "pageLayout.printArea",
    "excel": "Set Print Area",
@@ -1401,6 +1588,7 @@
   },
   {
    "seq": "PSP",
+   "de": "SK",
    "kind": "dialog",
    "target": "pageSetup",
    "excel": "Page Setup",
@@ -1408,6 +1596,7 @@
   },
   {
    "seq": "PSZ",
+   "de": "SR",
    "kind": "command",
    "target": "pageLayout.size",
    "excel": "Size",
@@ -1415,6 +1604,7 @@
   },
   {
    "seq": "PTC",
+   "de": "SF",
    "kind": "command",
    "target": "pageLayout.themeColors",
    "excel": "Theme Colors",
@@ -1422,6 +1612,7 @@
   },
   {
    "seq": "PTE",
+   "de": "SE",
    "kind": "command",
    "target": "pageLayout.themeEffects",
    "excel": "Theme Effects",
@@ -1429,6 +1620,7 @@
   },
   {
    "seq": "PTF",
+   "de": "S6",
    "kind": "command",
    "target": "pageLayout.themeFonts",
    "excel": "Theme Fonts",
@@ -1436,12 +1628,14 @@
   },
   {
    "seq": "PTH",
+   "de": "SN",
    "kind": "continue",
    "excel": "Themes",
    "note": "group level:"
   },
   {
    "seq": "PTHB",
+   "de": "SNN",
    "kind": "command",
    "target": "pageLayout.theme",
    "excel": "Browse Themes",
@@ -1449,6 +1643,7 @@
   },
   {
    "seq": "PVG",
+   "de": "SYX",
    "kind": "command",
    "target": "view.gridlines",
    "excel": "View Gridlines",
@@ -1456,6 +1651,7 @@
   },
   {
    "seq": "PVH",
+   "de": "SYA",
    "kind": "command",
    "target": "view.headings",
    "excel": "View Headings",
@@ -1463,12 +1659,14 @@
   },
   {
    "seq": "MA",
+   "de": "OE",
    "kind": "continue",
    "excel": "Remove Arrows Menu",
    "note": "group level: containment(Remove Arrows)"
   },
   {
    "seq": "MAA",
+   "de": "OEP",
    "kind": "command",
    "target": "formulas.removeArrows",
    "excel": "Remove All Arrows",
@@ -1476,6 +1674,7 @@
   },
   {
    "seq": "MAP",
+   "de": "OEV",
    "kind": "command",
    "target": "formulas.removePrecedentArrows",
    "pending": true,
@@ -1484,6 +1683,7 @@
   },
   {
    "seq": "MB",
+   "de": "ON2",
    "kind": "command",
    "target": "formulas.calculateNow",
    "excel": "Calculate Now",
@@ -1491,6 +1691,7 @@
   },
   {
    "seq": "MC",
+   "de": "OW",
    "kind": "command",
    "target": "formulas.createFromSelection",
    "excel": "Create From Selection",
@@ -1498,6 +1699,7 @@
   },
   {
    "seq": "MD",
+   "de": "OS",
    "kind": "command",
    "target": "formulas.traceDependents",
    "excel": "Trace Dependents",
@@ -1505,6 +1707,7 @@
   },
   {
    "seq": "ME",
+   "de": "O9",
    "kind": "control",
    "excel": "Date & Time Menu",
    "note": "group level: containment(Date & Time)",
@@ -1512,6 +1715,7 @@
   },
   {
    "seq": "MF",
+   "de": "OU",
    "kind": "dialog",
    "target": "insertFunction",
    "excel": "Insert Function",
@@ -1519,6 +1723,7 @@
   },
   {
    "seq": "MG",
+   "de": "OT",
    "kind": "control",
    "excel": "Math & Trig Menu",
    "note": "group level: containment(Math & Trig)",
@@ -1526,6 +1731,7 @@
   },
   {
    "seq": "MH",
+   "de": "OF",
    "kind": "command",
    "target": "formulas.showFormulas",
    "excel": "Show Formulas",
@@ -1539,12 +1745,14 @@
   },
   {
    "seq": "MI1",
+   "de": "OI",
    "kind": "control",
    "target": "formulas.financial",
    "excel": "Excel: Financial; first item of the dropdown"
   },
   {
    "seq": "MJ",
+   "de": "OB",
    "kind": "command",
    "target": "formulas.calculateSheet",
    "excel": "Calculate Sheet",
@@ -1552,12 +1760,14 @@
   },
   {
    "seq": "MK",
+   "de": "OH",
    "kind": "continue",
    "excel": "Error Checking Menu",
    "note": "group level: containment(Error Checking)"
   },
   {
    "seq": "MKK",
+   "de": "OHH",
    "kind": "dialog",
    "target": "errorChecking",
    "excel": "Error Checking",
@@ -1565,6 +1775,7 @@
   },
   {
    "seq": "ML",
+   "de": "OL",
    "kind": "control",
    "excel": "Logical Menu",
    "note": "group level: containment(Logical)",
@@ -1572,6 +1783,7 @@
   },
   {
    "seq": "MM",
+   "de": "OAD",
    "kind": "dialog",
    "target": "defineName",
    "excel": "Define Name",
@@ -1579,6 +1791,7 @@
   },
   {
    "seq": "MN",
+   "de": "ON1",
    "kind": "dialog",
    "target": "nameManager",
    "excel": "Name Manager",
@@ -1586,6 +1799,7 @@
   },
   {
    "seq": "MO",
+   "de": "OC",
    "kind": "control",
    "excel": "Lookup & Reference Menu",
    "note": "group level: containment(Lookup & Reference)",
@@ -1593,6 +1807,7 @@
   },
   {
    "seq": "MP",
+   "de": "OP2",
    "kind": "command",
    "target": "formulas.tracePrecedents",
    "excel": "Trace Precedents",
@@ -1600,6 +1815,7 @@
   },
   {
    "seq": "MQ",
+   "de": "OM",
    "kind": "control",
    "excel": "More Functions Menu",
    "note": "group level: containment(More Functions)",
@@ -1607,12 +1823,14 @@
   },
   {
    "seq": "MS",
+   "de": "OV",
    "kind": "continue",
    "excel": "Use in Formula Menu",
    "note": "group level: containment(Use in Formula)"
   },
   {
    "seq": "MSP",
+   "de": "OVN",
    "kind": "command",
    "target": "formulas.pasteName",
    "excel": "Paste Names",
@@ -1621,6 +1839,7 @@
   },
   {
    "seq": "MT",
+   "de": "OX",
    "kind": "control",
    "excel": "Text Menu",
    "note": "group level: containment(Text)",
@@ -1628,12 +1847,14 @@
   },
   {
    "seq": "MU",
+   "de": "OKA",
    "kind": "continue",
    "excel": "AutoSum Menu",
    "note": "group level:"
   },
   {
    "seq": "MUA",
+   "de": "OKAM",
    "kind": "command",
    "target": "formulas.autoSum",
    "excel": "Average",
@@ -1641,6 +1862,7 @@
   },
   {
    "seq": "MUC",
+   "de": "OKAA",
    "kind": "command",
    "target": "formulas.autoSum",
    "excel": "Count Numbers",
@@ -1648,6 +1870,7 @@
   },
   {
    "seq": "MUF",
+   "de": "OKAW",
    "kind": "command",
    "target": "formulas.moreFunctions",
    "excel": "More Functions (AutoSum)",
@@ -1655,6 +1878,7 @@
   },
   {
    "seq": "MUI",
+   "de": "OKAN",
    "kind": "command",
    "target": "formulas.autoSum",
    "excel": "Min",
@@ -1662,6 +1886,7 @@
   },
   {
    "seq": "MUM",
+   "de": "OKAX",
    "kind": "command",
    "target": "formulas.autoSum",
    "excel": "Max",
@@ -1669,6 +1894,7 @@
   },
   {
    "seq": "MUS",
+   "de": "OKAS",
    "kind": "command",
    "target": "formulas.autoSum",
    "excel": "Sum",
@@ -1676,6 +1902,7 @@
   },
   {
    "seq": "MV",
+   "de": "OO",
    "kind": "dialog",
    "target": "evaluateFormula",
    "excel": "Evaluate Formula",
@@ -1683,6 +1910,7 @@
   },
   {
    "seq": "MW",
+   "de": "OÜ",
    "kind": "command",
    "target": "formulas.watchWindow",
    "excel": "Watch Window",
@@ -1690,12 +1918,14 @@
   },
   {
    "seq": "MX",
+   "de": "OQ",
    "kind": "continue",
    "excel": "Calculation Options Menu",
    "note": "group level: containment(Calculation Options)"
   },
   {
    "seq": "MXA",
+   "de": "OQA",
    "kind": "command",
    "target": "formulas.calculationOptions",
    "excel": "Automatic Calculation",
@@ -1703,6 +1933,7 @@
   },
   {
    "seq": "MXM",
+   "de": "OQM",
    "kind": "command",
    "target": "formulas.calculationOptions",
    "excel": "Manual Calculation",
@@ -1710,6 +1941,7 @@
   },
   {
    "seq": "MXP",
+   "de": "OQT",
    "kind": "command",
    "target": "formulas.calculationOptions",
    "excel": "Partial Calculation",
@@ -1717,6 +1949,7 @@
   },
   {
    "seq": "AB",
+   "de": "VI",
    "kind": "dialog",
    "target": "subtotal",
    "excel": "Subtotal",
@@ -1724,6 +1957,7 @@
   },
   {
    "seq": "AC",
+   "de": "VL",
    "kind": "command",
    "target": "data.clearFilter",
    "excel": "Clear Filter",
@@ -1731,6 +1965,7 @@
   },
   {
    "seq": "AD",
+   "de": "V8",
    "kind": "command",
    "target": "data.consolidate",
    "excel": "Consolidate",
@@ -1738,6 +1973,7 @@
   },
   {
    "seq": "AE",
+   "de": "VT",
    "kind": "dialog",
    "target": "textToColumns",
    "excel": "Text to Columns",
@@ -1745,18 +1981,21 @@
   },
   {
    "seq": "AF1",
+   "de": "VV",
    "kind": "continue",
    "excel": "Data from Picture Menu",
    "note": "group level: feature gap; reserved until the command lands"
   },
   {
    "seq": "AF1C",
+   "de": "VVZ",
    "kind": "command",
    "target": "insert.picture",
    "excel": "Picture from Clipboard (source TBD)"
   },
   {
    "seq": "AF1P",
+   "de": "VVB",
    "kind": "command",
    "target": "insert.picture",
    "excel": "Picture from File (source TBD)"
@@ -1771,6 +2010,7 @@
   },
   {
    "seq": "AFC",
+   "de": "V3",
    "kind": "command",
    "target": "data.forecastSheet",
    "pending": false,
@@ -1779,6 +2019,7 @@
   },
   {
    "seq": "AFE",
+   "de": "VFE",
    "kind": "command",
    "target": "data.analyzeData",
    "pending": true,
@@ -1787,6 +2028,7 @@
   },
   {
    "seq": "AFF",
+   "de": "VB",
    "kind": "command",
    "target": "edit.flashFill",
    "excel": "Flash Fill",
@@ -1794,6 +2036,7 @@
   },
   {
    "seq": "AFO",
+   "de": "VD1Q",
    "kind": "command",
    "target": "data.fromOtherSources",
    "pending": true,
@@ -1802,6 +2045,7 @@
   },
   {
    "seq": "AFT",
+   "de": "VFT",
    "kind": "command",
    "target": "data.fromText",
    "pending": true,
@@ -1810,6 +2054,7 @@
   },
   {
    "seq": "AFW",
+   "de": "VM",
    "kind": "command",
    "target": "data.fromWeb",
    "pending": true,
@@ -1818,12 +2063,14 @@
   },
   {
    "seq": "AG",
+   "de": "VGG",
    "kind": "continue",
    "excel": "Group Menu",
    "note": "group level: containment(Group)"
   },
   {
    "seq": "AGA",
+   "de": "VGGU",
    "kind": "command",
    "target": "data.autoOutline",
    "pending": true,
@@ -1832,6 +2079,7 @@
   },
   {
    "seq": "AGG",
+   "de": "VGGG",
    "kind": "command",
    "target": "data.group",
    "excel": "Group",
@@ -1839,6 +2087,7 @@
   },
   {
    "seq": "AH",
+   "de": "VÄ",
    "kind": "command",
    "target": "data.hideDetail",
    "excel": "Hide Detail",
@@ -1846,6 +2095,7 @@
   },
   {
    "seq": "AJ",
+   "de": "Vß",
    "kind": "command",
    "target": "data.showDetail",
    "excel": "Show Detail",
@@ -1853,6 +2103,7 @@
   },
   {
    "seq": "AK",
+   "de": "VK2",
    "kind": "command",
    "target": "data.queriesConnections",
    "excel": "Edit Links",
@@ -1860,6 +2111,7 @@
   },
   {
    "seq": "AM",
+   "de": "V4",
    "kind": "dialog",
    "target": "removeDuplicates",
    "excel": "Remove Duplicates",
@@ -1867,6 +2119,7 @@
   },
   {
    "seq": "AO",
+   "de": "VA",
    "kind": "command",
    "target": "data.queriesConnections",
    "excel": "Queries & Connections",
@@ -1874,6 +2127,7 @@
   },
   {
    "seq": "AP1",
+   "de": "VJ",
    "kind": "command",
    "target": "file.properties",
    "excel": "Properties",
@@ -1881,6 +2135,7 @@
   },
   {
    "seq": "APN",
+   "de": "VD1",
    "kind": "continue",
    "excel": "Get Data (Power Query) Menu",
    "note": "group level: Power Query variants = GAP"
@@ -1895,6 +2150,7 @@
   },
   {
    "seq": "APNE",
+   "de": "VD1P",
    "kind": "command",
    "target": "data.powerQueryEditor",
    "pending": true,
@@ -1926,6 +2182,7 @@
   },
   {
    "seq": "APNS",
+   "de": "VD1L",
    "kind": "command",
    "target": "data.dataSourceSettings",
    "pending": true,
@@ -1942,6 +2199,7 @@
   },
   {
    "seq": "APR",
+   "de": "V6",
    "kind": "command",
    "target": "data.recentSources",
    "pending": true,
@@ -1957,6 +2215,7 @@
   },
   {
    "seq": "APT",
+   "de": "VPT",
    "kind": "command",
    "target": "data.fromTable",
    "pending": true,
@@ -1965,6 +2224,7 @@
   },
   {
    "seq": "AQ",
+   "de": "VW",
    "kind": "command",
    "target": "data.advancedFilter",
    "excel": "Advanced Filter",
@@ -1972,11 +2232,13 @@
   },
   {
    "seq": "AR",
+   "de": "VK1",
    "kind": "continue",
    "note": "group: group: Queries & Connections"
   },
   {
    "seq": "ARA",
+   "de": "VK1L",
    "kind": "command",
    "target": "data.refreshAll",
    "excel": "Refresh All",
@@ -1984,6 +2246,7 @@
   },
   {
    "seq": "ARC",
+   "de": "VK1A",
    "kind": "command",
    "target": "data.cancelRefresh",
    "pending": true,
@@ -1992,6 +2255,7 @@
   },
   {
    "seq": "ARO",
+   "de": "VK1V",
    "kind": "command",
    "target": "data.connectionProperties",
    "pending": true,
@@ -2000,6 +2264,7 @@
   },
   {
    "seq": "ARR",
+   "de": "VK1T",
    "kind": "command",
    "target": "pivot.refresh",
    "excel": "Refresh",
@@ -2007,6 +2272,7 @@
   },
   {
    "seq": "ARS",
+   "de": "VK1S",
    "kind": "command",
    "target": "data.refreshStatus",
    "pending": true,
@@ -2015,6 +2281,7 @@
   },
   {
    "seq": "ASA",
+   "de": "VU",
    "kind": "command",
    "target": "data.sortAscending",
    "excel": "Sort A to Z",
@@ -2022,6 +2289,7 @@
   },
   {
    "seq": "ASD",
+   "de": "VF1",
    "kind": "command",
    "target": "data.sortDescending",
    "excel": "Sort Z to A",
@@ -2029,6 +2297,7 @@
   },
   {
    "seq": "ASS",
+   "de": "VS",
    "kind": "dialog",
    "target": "sort",
    "excel": "Sort",
@@ -2036,6 +2305,7 @@
   },
   {
    "seq": "AT",
+   "de": "V1",
    "kind": "command",
    "target": "data.filter",
    "excel": "Filter",
@@ -2043,12 +2313,14 @@
   },
   {
    "seq": "AU",
+   "de": "VQ",
    "kind": "continue",
    "excel": "Ungroup Menu",
    "note": "group level: containment(Ungroup)"
   },
   {
    "seq": "AUC",
+   "de": "VQF",
    "kind": "command",
    "target": "data.clearOutline",
    "pending": true,
@@ -2057,6 +2329,7 @@
   },
   {
    "seq": "AUU",
+   "de": "VQU",
    "kind": "command",
    "target": "data.ungroup",
    "excel": "Ungroup",
@@ -2064,12 +2337,14 @@
   },
   {
    "seq": "AV",
+   "de": "VÜ",
    "kind": "continue",
    "excel": "Data Validation Menu",
    "note": "group level: containment(Data Validation)"
   },
   {
    "seq": "AVI",
+   "de": "VÜU",
    "kind": "command",
    "target": "data.circleInvalid",
    "excel": "Circle Invalid Data",
@@ -2077,6 +2352,7 @@
   },
   {
    "seq": "AVR",
+   "de": "VÜR",
    "kind": "command",
    "target": "data.clearValidationCircles",
    "pending": true,
@@ -2085,6 +2361,7 @@
   },
   {
    "seq": "AVV",
+   "de": "VÜD",
    "kind": "command",
    "target": "data.validation",
    "excel": "Data Validation",
@@ -2092,11 +2369,13 @@
   },
   {
    "seq": "AW",
+   "de": "V5",
    "kind": "continue",
    "note": "group: group: What-If (goalSeek/scenarioManager/dataTable)"
   },
   {
    "seq": "AWG",
+   "de": "V5W",
    "kind": "dialog",
    "target": "goalSeek",
    "excel": "Goal Seek",
@@ -2104,6 +2383,7 @@
   },
   {
    "seq": "AWS",
+   "de": "V5S",
    "kind": "command",
    "target": "data.scenarioManager",
    "excel": "Scenario Manager",
@@ -2111,6 +2391,7 @@
   },
   {
    "seq": "AWT",
+   "de": "V5T",
    "kind": "command",
    "target": "data.dataTable",
    "excel": "Data Table",
@@ -2118,6 +2399,7 @@
   },
   {
    "seq": "AX",
+   "de": "VO",
    "kind": "command",
    "target": "data.existingConnections",
    "pending": true,
@@ -2126,6 +2408,7 @@
   },
   {
    "seq": "AY",
+   "de": "VE",
    "kind": "command",
    "target": "data.reapply",
    "excel": "Reapply Filter",
@@ -2133,6 +2416,7 @@
   },
   {
    "seq": "RA1",
+   "de": "PB1B",
    "kind": "dialog",
    "target": "accessibility",
    "excel": "Check Accessibility",
@@ -2140,6 +2424,7 @@
   },
   {
    "seq": "RA2",
+   "de": "PH",
    "kind": "command",
    "target": "review.showComments",
    "pending": false,
@@ -2148,6 +2433,7 @@
   },
   {
    "seq": "RC",
+   "de": "PN1",
    "kind": "dialog",
    "target": "comment",
    "excel": "New Comment",
@@ -2155,6 +2441,7 @@
   },
   {
    "seq": "RD",
+   "de": "P4",
    "kind": "command",
    "target": "review.deleteComment",
    "excel": "Delete Comment",
@@ -2162,6 +2449,7 @@
   },
   {
    "seq": "RG",
+   "de": "PD",
    "kind": "command",
    "target": "review.showChanges",
    "pending": true,
@@ -2170,6 +2458,7 @@
   },
   {
    "seq": "RL",
+   "de": "PÜ",
    "kind": "command",
    "target": "review.translate",
    "pending": true,
@@ -2178,6 +2467,7 @@
   },
   {
    "seq": "RN",
+   "de": "PN2",
    "kind": "command",
    "target": "review.nextComment",
    "pending": false,
@@ -2192,6 +2482,7 @@
   },
   {
    "seq": "RPS",
+   "de": "PS2",
    "kind": "dialog",
    "target": "protectSheet",
    "excel": "Protect Sheet",
@@ -2199,6 +2490,7 @@
   },
   {
    "seq": "RPW",
+   "de": "PE",
    "kind": "command",
    "target": "review.protectWorkbook",
    "excel": "Protect Workbook",
@@ -2214,6 +2506,7 @@
   },
   {
    "seq": "RS",
+   "de": "PBE",
    "kind": "dialog",
    "target": "spelling",
    "excel": "Spelling",
@@ -2221,6 +2514,7 @@
   },
   {
    "seq": "RTN",
+   "de": "PN3N",
    "kind": "command",
    "target": "review.newNote",
    "excel": "New Note",
@@ -2228,6 +2522,7 @@
   },
   {
    "seq": "RV",
+   "de": "PV",
    "kind": "command",
    "target": "review.previousComment",
    "pending": false,
@@ -2236,6 +2531,7 @@
   },
   {
    "seq": "WA",
+   "de": "FA2",
    "kind": "command",
    "target": "view.arrangeAll",
    "excel": "Arrange All",
@@ -2243,6 +2539,7 @@
   },
   {
    "seq": "WC",
+   "de": "FF",
    "kind": "command",
    "target": "view.customViews",
    "excel": "Custom Views",
@@ -2250,12 +2547,14 @@
   },
   {
    "seq": "WF",
+   "de": "FP",
    "kind": "continue",
    "excel": "Freeze Panes Menu",
    "note": "group level:"
   },
   {
    "seq": "WFC",
+   "de": "FPE",
    "kind": "command",
    "target": "view.freezeFirstColumn",
    "excel": "Freeze First Column",
@@ -2263,6 +2562,7 @@
   },
   {
    "seq": "WFF",
+   "de": "FPF",
    "kind": "command",
    "target": "view.freezePanes",
    "excel": "Freeze Panes",
@@ -2270,6 +2570,7 @@
   },
   {
    "seq": "WFR",
+   "de": "FPO",
    "kind": "command",
    "target": "view.freezeTopRow",
    "excel": "Freeze Top Row",
@@ -2277,6 +2578,7 @@
   },
   {
    "seq": "WG",
+   "de": "FW",
    "kind": "command",
    "target": "view.zoomToSelection",
    "excel": "Zoom To Selection",
@@ -2284,6 +2586,7 @@
   },
   {
    "seq": "WH",
+   "de": "FL",
    "kind": "command",
    "target": "view.hideWindow",
    "excel": "Hide Window",
@@ -2291,6 +2594,7 @@
   },
   {
    "seq": "WI",
+   "de": "FV1",
    "kind": "command",
    "target": "view.pageBreakPreview",
    "excel": "Page Break Preview",
@@ -2298,6 +2602,7 @@
   },
   {
    "seq": "WJ",
+   "de": "F0",
    "kind": "control",
    "target": "view.zoom",
    "excel": "Zoom To 100%",
@@ -2305,6 +2610,7 @@
   },
   {
    "seq": "WL",
+   "de": "FC",
    "kind": "command",
    "target": "view.normal",
    "excel": "Normal View",
@@ -2312,12 +2618,14 @@
   },
   {
    "seq": "WM",
+   "de": "FM",
    "kind": "continue",
    "excel": "Macros Menu",
    "note": "group level: containment(Macros)"
   },
   {
    "seq": "WMR",
+   "de": "FMR",
    "kind": "command",
    "target": "view.macros",
    "excel": "Record Macro",
@@ -2325,6 +2633,7 @@
   },
   {
    "seq": "WMV",
+   "de": "FMK",
    "kind": "command",
    "target": "view.macros",
    "excel": "View Macros",
@@ -2332,6 +2641,7 @@
   },
   {
    "seq": "WN",
+   "de": "FN2",
    "kind": "command",
    "target": "view.newWindow",
    "excel": "New Window",
@@ -2339,6 +2649,7 @@
   },
   {
    "seq": "WP",
+   "de": "FI",
    "kind": "command",
    "target": "view.pageLayout",
    "excel": "Page Layout View",
@@ -2346,6 +2657,7 @@
   },
   {
    "seq": "WQ",
+   "de": "FDO",
    "kind": "dialog",
    "target": "zoom",
    "excel": "Zoom",
@@ -2353,6 +2665,7 @@
   },
   {
    "seq": "WR",
+   "de": "FQ",
    "kind": "command",
    "target": "view.ruler",
    "excel": "Ruler",
@@ -2360,6 +2673,7 @@
   },
   {
    "seq": "WS",
+   "de": "FT1",
    "kind": "command",
    "target": "view.split",
    "excel": "Split",
@@ -2367,6 +2681,7 @@
   },
   {
    "seq": "WT",
+   "de": "FR",
    "kind": "command",
    "target": "view.resetWindowPosition",
    "pending": true,
@@ -2375,6 +2690,7 @@
   },
   {
    "seq": "WU",
+   "de": "FE2",
    "kind": "command",
    "target": "view.unhideWindow",
    "excel": "Unhide Window",
@@ -2382,6 +2698,7 @@
   },
   {
    "seq": "WVC",
+   "de": "FE1F",
    "kind": "command",
    "target": "view.focusCell",
    "pending": true,
@@ -2390,6 +2707,7 @@
   },
   {
    "seq": "WVF",
+   "de": "FB",
    "kind": "control",
    "target": "view.formulaBar",
    "excel": "Toggle Formula Bar",
@@ -2397,6 +2715,7 @@
   },
   {
    "seq": "WVH",
+   "de": "FA1",
    "kind": "command",
    "target": "view.headings",
    "excel": "Toggle Headings",
@@ -2404,6 +2723,7 @@
   },
   {
    "seq": "WVN",
+   "de": "FK1",
    "kind": "command",
    "target": "view.navigation",
    "pending": true,
@@ -2419,6 +2739,7 @@
   },
   {
    "seq": "WW",
+   "de": "FK2",
    "kind": "command",
    "target": "view.switchWindows",
    "excel": "Switch Windows",
@@ -2461,6 +2782,7 @@
   },
   {
    "seq": "FA",
+   "de": "DH",
    "kind": "command",
    "excel": "Save / Save As page",
    "note": "fires immediately in Excel; deeper aliases dropped as unreachable",
@@ -2468,12 +2790,14 @@
   },
   {
    "seq": "FC",
+   "de": "DL",
    "kind": "command",
    "target": "file.close",
    "excel": "Close workbook"
   },
   {
    "seq": "FEA",
+   "de": "DEF",
    "kind": "command",
    "target": "file.exportPdf",
    "excel": "Export: create PDF/XPS",
@@ -2481,6 +2805,7 @@
   },
   {
    "seq": "FEC",
+   "de": "DEÄ",
    "kind": "command",
    "target": "file.saveAs",
    "excel": "Export: change file type",
@@ -2488,6 +2813,7 @@
   },
   {
    "seq": "FI",
+   "de": "DI",
    "kind": "command",
    "excel": "Info page",
    "note": "fires immediately in Excel; deeper aliases dropped as unreachable",
@@ -2495,6 +2821,7 @@
   },
   {
    "seq": "FN",
+   "de": "DN",
    "kind": "command",
    "target": "file.new",
    "excel": "New page",
@@ -2502,6 +2829,7 @@
   },
   {
    "seq": "FO",
+   "de": "DF",
    "kind": "command",
    "excel": "Open page",
    "note": "fires immediately in Excel; deeper aliases dropped as unreachable",
@@ -2509,6 +2837,7 @@
   },
   {
    "seq": "FP",
+   "de": "DU",
    "kind": "command",
    "target": "file.print",
    "excel": "Print page",
@@ -2516,6 +2845,7 @@
   },
   {
    "seq": "Q",
+   "de": "M",
    "kind": "command",
    "target": "ui.search",
    "pending": true,

@@ -41,11 +41,40 @@ fn rustfmt(src: &str) -> Result<String, String> {
 #[derive(Clone)]
 struct Entry {
     seq: String,
+    /// The sequence in German Excel (empty: not measured there, so not in the German table).
+    de: String,
     kind: String,
     target: String,
     pending: bool,
     excel: String,
     note: String,
+}
+
+/// Letters a localized key tip may use besides ASCII letters and digits (German Excel has Ä, Ö,
+/// Ü and ß units, typed as the character, e.g. Merge & Center is Alt, R, ß).
+const LOCAL_LETTERS: &[char] = &['Ä', 'Ö', 'Ü', 'ß'];
+
+/// Checks a localized table: valid letters, unique sequences, and no finish on a strict prefix
+/// of another sequence (it would fire first and make the longer one unreachable).
+fn check_local(entries: &[Entry], local: impl Fn(&Entry) -> &str, language: &str) -> Result<(), String> {
+    let mut seen = std::collections::HashMap::new();
+    for e in entries.iter().filter(|e| !local(e).is_empty()) {
+        let seq = local(e);
+        let n = seq.chars().count();
+        if n > 7 || !seq.chars().all(|c| c.is_ascii_alphanumeric() || LOCAL_LETTERS.contains(&c)) {
+            return Err(format!("{}: {language} seq {seq:?} must be 1-7 letters or digits (Ä Ö Ü ß allowed)", e.seq));
+        }
+        if let Some(other) = seen.insert(seq.to_string(), e.seq.clone()) {
+            return Err(format!("{}: {language} seq {seq:?} is already used by {other}", e.seq));
+        }
+    }
+    for e in entries.iter().filter(|e| !local(e).is_empty() && matches!(e.kind.as_str(), "command" | "dialog" | "control")) {
+        let seq = local(e);
+        if let Some(deeper) = entries.iter().find(|x| local(x) != seq && local(x).starts_with(seq) && !local(x).is_empty()) {
+            return Err(format!("{}: {language} seq {seq:?} fires before {:?} ({}) can be typed", e.seq, local(deeper), deeper.seq));
+        }
+    }
+    Ok(())
 }
 
 /// 0 = ran and journaled, 1 = ran without a journal step, 2 = errored (params
@@ -160,6 +189,7 @@ fn parse_and_probe(source: &str) -> Result<(Vec<Entry>, Probe), String> {
         }
         entries.push(Entry {
             seq,
+            de: e.get("de").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             kind,
             target,
             pending,
@@ -169,6 +199,7 @@ fn parse_and_probe(source: &str) -> Result<(Vec<Entry>, Probe), String> {
     }
     // JSON order is authoritative and curated: the first entry for a tab is its canonical
     // badge (legacy aliases come later), and groups stay together. Do not sort.
+    check_local(&entries, |e| e.de.as_str(), "German")?;
 
     let live_ids: Vec<String> = entries
         .iter()
@@ -216,16 +247,7 @@ fn render_table(entries: &[Entry]) -> String {
          pub const SEQUENCES: &[(&str, Entry)] = &[\n",
     );
     for e in entries {
-        let value = match e.kind.as_str() {
-            "tab" => format!("Entry::Tab({:?})", e.target),
-            "command" if e.pending => format!("Entry::Finish(Action::Pending({:?}))", e.target),
-            "command" => format!("Entry::Finish(Action::Command({:?}))", e.target),
-            "dialog" => format!("Entry::Finish(Action::Dialog({:?}))", e.target),
-            "control" => format!("Entry::Finish(Action::Control({:?}))", e.target),
-            "continue" => "Entry::Continue".to_string(),
-            // All kinds are validated during parse; anything else cannot occur.
-            _ => String::new(),
-        };
+        let value = entry_value(e);
         let mut comment = String::new();
         if e.pending {
             comment.push_str(" pending");
@@ -249,7 +271,30 @@ fn render_table(entries: &[Entry]) -> String {
         out.push('\n');
     }
     out.push_str("];\n");
+    out.push_str(
+        "\n/// German Excel's sequences (Microsoft 365, German interface), measured in Excel: the same\n\
+         /// entries under their German letters, for the German interface. An entry without a German\n\
+         /// sequence isn't in German Excel's ribbon in that form (Excel 2003 paths, duplicates).\n\
+         pub const SEQUENCES_DE: &[(&str, Entry)] = &[\n",
+    );
+    for e in entries.iter().filter(|e| !e.de.is_empty()) {
+        out.push_str(&format!("    ({:?}, {}), // {}\n", e.de, entry_value(e), e.seq));
+    }
+    out.push_str("];\n");
     out
+}
+
+fn entry_value(e: &Entry) -> String {
+    match e.kind.as_str() {
+        "tab" => format!("Entry::Tab({:?})", e.target),
+        "command" if e.pending => format!("Entry::Finish(Action::Pending({:?}))", e.target),
+        "command" => format!("Entry::Finish(Action::Command({:?}))", e.target),
+        "dialog" => format!("Entry::Finish(Action::Dialog({:?}))", e.target),
+        "control" => format!("Entry::Finish(Action::Control({:?}))", e.target),
+        "continue" => "Entry::Continue".to_string(),
+        // All kinds are validated during parse; anything else cannot occur.
+        _ => String::new(),
+    }
 }
 
 fn test_name(seq: &str) -> String {
@@ -258,6 +303,7 @@ fn test_name(seq: &str) -> String {
 
 fn render_tests(entries: &[Entry], probe: &Probe) -> String {
     let mut out = String::from(HEADER);
+    let mut de_tests = String::new();
     for e in entries {
         let body = match e.kind.as_str() {
             "tab" => format!(
@@ -303,10 +349,19 @@ fn render_tests(entries: &[Entry], probe: &Probe) -> String {
             _ => String::new(),
         };
         out.push_str(&format!("\n#[test]\nfn {}() {{\n    let mut h = harness(blank());\n    {body}\n}}\n", test_name(&e.seq)));
+        // The same check in the German interface, typed with German Excel's letters.
+        if !e.de.is_empty() {
+            let de_body = body
+                .replace(&format!("sequence(&mut h, {:?}, false)", e.seq), &format!("sequence_de(&mut h, {:?})", e.de))
+                .replace(&format!("Some({:?})", e.seq), &format!("Some({:?})", e.de));
+            de_tests.push_str(&format!("\n#[test]\nfn {}de() {{\n    let mut h = german();\n    {de_body}\n}}\n", test_name(&e.seq)));
+        }
     }
+    out.push_str(&de_tests);
     out.push_str(&format!(
-        "\n#[test]\nfn generated_test_count_matches_the_table() {{\n    const EXPECTED: usize = {};\n    assert_eq!(gridcraft_ui_egui::keytips::keytip_table::SEQUENCES.len(), EXPECTED);\n}}\n",
-        entries.len()
+        "\n#[test]\nfn generated_test_count_matches_the_table() {{\n    const EXPECTED: usize = {};\n    assert_eq!(gridcraft_ui_egui::keytips::keytip_table::SEQUENCES.len(), EXPECTED);\n    const EXPECTED_DE: usize = {};\n    assert_eq!(gridcraft_ui_egui::keytips::keytip_table::SEQUENCES_DE.len(), EXPECTED_DE);\n}}\n",
+        entries.len(),
+        entries.iter().filter(|e| !e.de.is_empty()).count()
     ));
     out.push_str(SAMPLE_TEXT_FIRST);
     out
@@ -373,6 +428,29 @@ fn sequence(h: &mut Harness, seq: &str, text_first: bool) {
     for ch in seq.chars() {
         let k = Key::from_name(&ch.to_string()).expect("sequence letters map to keys");
         letter(h, k, text_first);
+    }
+}
+
+fn german() -> Harness {
+    let mut h = harness(blank());
+    h.state_mut().ui.language = gridcraft_ui_egui::i18n::Language::De;
+    h.run_steps(2);
+    h
+}
+
+/// German Excel's letters as a German keyboard reports them: Ä, Ö, Ü and ß have no egui key, so
+/// egui sends the key's US position with the text the layout types.
+fn sequence_de(h: &mut Harness, seq: &str) {
+    key(h, Key::F10);
+    for ch in seq.chars() {
+        let (k, text) = match ch {
+            'Ä' => (Key::Quote, "ä".to_string()),
+            'Ö' => (Key::Semicolon, "ö".to_string()),
+            'Ü' => (Key::OpenBracket, "ü".to_string()),
+            'ß' => (Key::Minus, "ß".to_string()),
+            _ => (Key::from_name(&ch.to_string()).expect("sequence letters map to keys"), ch.to_ascii_lowercase().to_string()),
+        };
+        events(h, [key_event(k, true, Modifiers::NONE), Event::Text(text), key_event(k, false, Modifiers::NONE)]);
     }
 }
 

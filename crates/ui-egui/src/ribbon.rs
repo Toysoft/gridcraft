@@ -6,7 +6,6 @@ use serde_json::json;
 
 use crate::SheetApp;
 use crate::icons::{self, Icon};
-use crate::keytips::keytip_table;
 use crate::theme::{self, Tokens};
 use crate::widgets::{big_button, color_palette, icon_button, small_button, split_button, toggle_button};
 
@@ -214,7 +213,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                             app.ui.ribbon_collapsed = !collapsed;
                         }
                         if app.keytips.prefix() == Some("")
-                            && let Some(sequence) = keytip_table::tab_sequence(tab)
+                            && let Some(sequence) = app.keytips.table().tab_sequence(tab)
                         {
                             keytip(app, ui, sequence, pos2(r.center().x, r.bottom() - 1.0));
                         }
@@ -334,14 +333,14 @@ fn keytip(app: &SheetApp, ui: &Ui, sequence: &str, at: egui::Pos2) {
 
 /// Paint the badge for a control that runs command `id`, when the armed prefix matches.
 fn control_keytip(app: &SheetApp, ui: &Ui, response: &egui::Response, id: &str) {
-    if let Some(sequence) = keytip_table::control_badge(app.keytips.prefix().unwrap_or_default(), id) {
+    if let Some(sequence) = app.keytips.table().control_badge(app.keytips.prefix().unwrap_or_default(), id) {
         keytip(app, ui, sequence, response.rect.center_bottom());
     }
 }
 
 /// Paint the single badge for a menu anchor whose popup items run `targets`.
 fn anchor_keytip(app: &SheetApp, ui: &Ui, response: &egui::Response, targets: &[&str]) {
-    if let Some(sequence) = keytip_table::anchor_badge(app.keytips.prefix().unwrap_or_default(), targets) {
+    if let Some(sequence) = app.keytips.table().anchor_badge(app.keytips.prefix().unwrap_or_default(), targets) {
         keytip(app, ui, sequence, response.rect.center_bottom());
     }
 }
@@ -486,7 +485,7 @@ fn menu_items(app: &mut SheetApp, ui: &mut Ui, items: &[(&str, &str, serde_json:
         }
         let lang = app.ui.language;
         let response = ui.add(egui::Button::new(lang.tr(label)).frame(false).min_size(vec2(220.0, 22.0)));
-        if let Some(sequence) = keytip_table::item_letter(app.keytips.prefix().unwrap_or_default(), id) {
+        if let Some(sequence) = app.keytips.table().item_letter(app.keytips.prefix().unwrap_or_default(), id) {
             keytip(app, ui, sequence, pos2(response.rect.right() - 10.0, response.rect.center().y));
         }
         if response.clicked() {
@@ -508,7 +507,7 @@ fn home(app: &mut SheetApp, ui: &mut Ui) {
     let paste = big_button(ui, Icon::Paste, "Paste", "Paste (⌘V)", true);
     paste.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Paste"));
     for sequence in
-        keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["edit.paste", "edit.pasteSpecial", "dialog:pasteSpecial"])
+        app.keytips.table().group_extension(app.keytips.prefix().unwrap_or_default(), &["edit.paste", "edit.pasteSpecial", "dialog:pasteSpecial"])
     {
         keytip(app, ui, sequence, paste.rect.center_bottom());
     }
@@ -745,7 +744,7 @@ fn home(app: &mut SheetApp, ui: &mut Ui) {
                 (Icon::AlignRight, HAlign::Right, "home.alignRight", "Align Right"),
             ] {
                 let response = toggle_button(ui, icon, st.align.h == h, tip);
-                for sequence in keytip_table::control_badges(app.keytips.prefix().unwrap_or_default(), id) {
+                for sequence in app.keytips.table().control_badges(app.keytips.prefix().unwrap_or_default(), id) {
                     keytip(app, ui, sequence, response.rect.center_bottom());
                 }
                 if response.clicked() {
@@ -855,7 +854,7 @@ fn home(app: &mut SheetApp, ui: &mut Ui) {
     // Cells
     ui.vertical(|ui| {
         let ins = small_button(ui, Icon::Insert, "Insert", "Insert", true);
-        for sequence in keytip_table::group_extension(
+        for sequence in app.keytips.table().group_extension(
             app.keytips.prefix().unwrap_or_default(),
             &["dialog:insertCells", "home.insertRows", "home.insertColumns", "home.insertSheet"],
         ) {
@@ -874,7 +873,7 @@ fn home(app: &mut SheetApp, ui: &mut Ui) {
             );
         });
         let del = small_button(ui, Icon::Delete, "Delete", "Delete", true);
-        for sequence in keytip_table::group_extension(
+        for sequence in app.keytips.table().group_extension(
             app.keytips.prefix().unwrap_or_default(),
             &["dialog:deleteCells", "home.deleteRows", "home.deleteColumns", "home.deleteSheet"],
         ) {
@@ -893,7 +892,7 @@ fn home(app: &mut SheetApp, ui: &mut Ui) {
             );
         });
         let fmt = small_button(ui, Icon::Format, "Format", "Format", true);
-        for sequence in keytip_table::group_extension(
+        for sequence in app.keytips.table().group_extension(
             app.keytips.prefix().unwrap_or_default(),
             &[
                 "dialog:rowHeight",
@@ -971,7 +970,7 @@ fn home(app: &mut SheetApp, ui: &mut Ui) {
             });
         });
         let fill = small_button(ui, Icon::FillDown, "", "Fill", true);
-        for sequence in keytip_table::group_extension(
+        for sequence in app.keytips.table().group_extension(
             app.keytips.prefix().unwrap_or_default(),
             &["edit.fillDown", "edit.fillRight", "edit.fillUp", "edit.fillLeft", "dialog:series", "edit.flashFill"],
         ) {
@@ -992,7 +991,7 @@ fn home(app: &mut SheetApp, ui: &mut Ui) {
             );
         });
         let clear = small_button(ui, Icon::Eraser, "", "Clear", true);
-        for sequence in keytip_table::group_extension(
+        for sequence in app.keytips.table().group_extension(
             app.keytips.prefix().unwrap_or_default(),
             &["edit.clearAll", "edit.clearFormats", "edit.clearContents", "edit.clearComments", "edit.clearHyperlinks"],
         ) {
@@ -1013,7 +1012,7 @@ fn home(app: &mut SheetApp, ui: &mut Ui) {
         });
     });
     let sf = big_button(ui, Icon::SortFilter, "Sort &\nFilter", "Sort & Filter", true);
-    for sequence in keytip_table::group_extension(
+    for sequence in app.keytips.table().group_extension(
         app.keytips.prefix().unwrap_or_default(),
         &["data.sortAscending", "data.sortDescending", "dialog:sort", "data.filter", "data.clearFilter", "data.reapply"],
     ) {
@@ -1035,10 +1034,11 @@ fn home(app: &mut SheetApp, ui: &mut Ui) {
         );
     });
     let fs = big_button(ui, Icon::Find, "Find &\nSelect", "Find & Select", true);
-    for sequence in keytip_table::group_extension(
-        app.keytips.prefix().unwrap_or_default(),
-        &["dialog:find", "dialog:goTo", "dialog:goToSpecial", "edit.goToSpecial"],
-    ) {
+    for sequence in app
+        .keytips
+        .table()
+        .group_extension(app.keytips.prefix().unwrap_or_default(), &["dialog:find", "dialog:goTo", "dialog:goToSpecial", "edit.goToSpecial"])
+    {
         keytip(app, ui, sequence, fs.rect.center_bottom());
     }
     egui::Popup::menu(&fs).show(|ui| {
@@ -1631,7 +1631,7 @@ fn page_layout(app: &mut SheetApp, ui: &mut Ui) {
     });
     sep(ui);
     let m = big_button(ui, Icon::Margins, "Margins", "Margins", true);
-    for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["pageLayout.margins", "dialog:pageSetup"]) {
+    for sequence in app.keytips.table().group_extension(app.keytips.prefix().unwrap_or_default(), &["pageLayout.margins", "dialog:pageSetup"]) {
         keytip(app, ui, sequence, m.rect.center_bottom());
     }
     egui::Popup::menu(&m).show(|ui| {
@@ -1677,7 +1677,7 @@ fn page_layout(app: &mut SheetApp, ui: &mut Ui) {
         );
     });
     let br = big_button(ui, Icon::PageBreak, "Breaks", "Page Breaks", true);
-    for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["pageLayout.breaks"]) {
+    for sequence in app.keytips.table().group_extension(app.keytips.prefix().unwrap_or_default(), &["pageLayout.breaks"]) {
         keytip(app, ui, sequence, br.rect.center_bottom());
     }
     egui::Popup::menu(&br).show(|ui| {
@@ -1857,7 +1857,7 @@ fn formulas(app: &mut SheetApp, ui: &mut Ui) {
     }
     sep(ui);
     let co = big_button(ui, Icon::Calc, "Calculation\nOptions", "Calculation Options", true);
-    for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["formulas.calculationOptions"]) {
+    for sequence in app.keytips.table().group_extension(app.keytips.prefix().unwrap_or_default(), &["formulas.calculationOptions"]) {
         keytip(app, ui, sequence, co.rect.center_bottom());
     }
     egui::Popup::menu(&co).show(|ui| {
@@ -1943,7 +1943,7 @@ fn data(app: &mut SheetApp, ui: &mut Ui) {
         app.open_dialog("removeDuplicates", json!({}));
     }
     let dv = big_button(ui, Icon::Validation, "Data\nValidation", "Data Validation", true);
-    for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["data.validation", "data.circleInvalid"]) {
+    for sequence in app.keytips.table().group_extension(app.keytips.prefix().unwrap_or_default(), &["data.validation", "data.circleInvalid"]) {
         keytip(app, ui, sequence, dv.rect.center_bottom());
     }
     egui::Popup::menu(&dv).show(|ui| {
@@ -1960,7 +1960,7 @@ fn data(app: &mut SheetApp, ui: &mut Ui) {
     sep(ui);
     let wi = big_button(ui, Icon::Calc, "What-If\nAnalysis", "What-If Analysis", true);
     for sequence in
-        keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["dialog:goalSeek", "data.scenarioManager", "data.dataTable"])
+        app.keytips.table().group_extension(app.keytips.prefix().unwrap_or_default(), &["dialog:goalSeek", "data.scenarioManager", "data.dataTable"])
     {
         keytip(app, ui, sequence, wi.rect.center_bottom());
     }
@@ -2167,8 +2167,10 @@ fn view(app: &mut SheetApp, ui: &mut Ui) {
     }
     sep(ui);
     let fp = big_button(ui, Icon::Freeze, "Freeze\nPanes", "Freeze Panes", true);
-    for sequence in
-        keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["view.freezePanes", "view.freezeTopRow", "view.freezeFirstColumn"])
+    for sequence in app
+        .keytips
+        .table()
+        .group_extension(app.keytips.prefix().unwrap_or_default(), &["view.freezePanes", "view.freezeTopRow", "view.freezeFirstColumn"])
     {
         keytip(app, ui, sequence, fp.rect.center_bottom());
     }
@@ -2331,7 +2333,7 @@ fn table_design(app: &mut SheetApp, ui: &mut Ui) {
 fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
     let Some(id) = app.selected_chart else { return };
     let ae = big_button(ui, Icon::Chart, "Add Chart\nElement", "Add Chart Element", true);
-    for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["chart.set"]) {
+    for sequence in app.keytips.table().group_extension(app.keytips.prefix().unwrap_or_default(), &["chart.set"]) {
         keytip(app, ui, sequence, ae.rect.center_bottom());
     }
     egui::Popup::menu(&ae).show(|ui| {
@@ -2360,7 +2362,7 @@ fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
         app.open_dialog("selectData", json!({"chart": id}));
     }
     let ct = big_button(ui, Icon::ChartBar, "Change\nChart Type", "Change Chart Type", true);
-    for sequence in keytip_table::group_extension(
+    for sequence in app.keytips.table().group_extension(
         app.keytips.prefix().unwrap_or_default(),
         &["column", "bar", "line", "area", "pie", "doughnut", "scatter", "radar", "waterfall", "funnel", "treemap"],
     ) {

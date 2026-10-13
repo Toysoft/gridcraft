@@ -59,6 +59,29 @@ fn sequence(h: &mut Harness, seq: &str, text_first: bool) {
     }
 }
 
+fn german() -> Harness {
+    let mut h = harness(blank());
+    h.state_mut().ui.language = gridcraft_ui_egui::i18n::Language::De;
+    h.run_steps(2);
+    h
+}
+
+/// German Excel's letters as a German keyboard reports them: Ä, Ö, Ü and ß have no egui key, so
+/// egui sends the key's US position with the text the layout types.
+fn sequence_de(h: &mut Harness, seq: &str) {
+    key(h, Key::F10);
+    for ch in seq.chars() {
+        let (k, text) = match ch {
+            'Ä' => (Key::Quote, "ä".to_string()),
+            'Ö' => (Key::Semicolon, "ö".to_string()),
+            'Ü' => (Key::OpenBracket, "ü".to_string()),
+            'ß' => (Key::Minus, "ß".to_string()),
+            _ => (Key::from_name(&ch.to_string()).expect("sequence letters map to keys"), ch.to_ascii_lowercase().to_string()),
+        };
+        events(h, [key_event(k, true, Modifiers::NONE), Event::Text(text), key_event(k, false, Modifiers::NONE)]);
+    }
+}
+
 #[test]
 fn keytip_h_() {
     let mut h = harness(blank());
@@ -2740,9 +2763,2421 @@ fn keytip_q_() {
 }
 
 #[test]
+fn keytip_h_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R");
+    assert_eq!(h.state().ui.ribbon_tab, "Home", "H must switch to the Home tab");
+}
+
+#[test]
+fn keytip_n_de() {
+    let mut h = german();
+    sequence_de(&mut h, "I");
+    assert_eq!(h.state().ui.ribbon_tab, "Insert", "N must switch to the Insert tab");
+}
+
+#[test]
+fn keytip_ji_de() {
+    let mut h = german();
+    sequence_de(&mut h, "JI");
+    assert_eq!(h.state().ui.ribbon_tab, "Draw", "JI must switch to the Draw tab");
+}
+
+#[test]
+fn keytip_p_de() {
+    let mut h = german();
+    sequence_de(&mut h, "S");
+    assert_eq!(h.state().ui.ribbon_tab, "Page Layout", "P must switch to the Page Layout tab");
+}
+
+#[test]
+fn keytip_m_de() {
+    let mut h = german();
+    sequence_de(&mut h, "O");
+    assert_eq!(h.state().ui.ribbon_tab, "Formulas", "M must switch to the Formulas tab");
+}
+
+#[test]
+fn keytip_a_de() {
+    let mut h = german();
+    sequence_de(&mut h, "V");
+    assert_eq!(h.state().ui.ribbon_tab, "Data", "A must switch to the Data tab");
+}
+
+#[test]
+fn keytip_r_de() {
+    let mut h = german();
+    sequence_de(&mut h, "P");
+    assert_eq!(h.state().ui.ribbon_tab, "Review", "R must switch to the Review tab");
+}
+
+#[test]
+fn keytip_w_de() {
+    let mut h = german();
+    sequence_de(&mut h, "F");
+    assert_eq!(h.state().ui.ribbon_tab, "View", "W must switch to the View tab");
+}
+
+#[test]
+fn keytip_har_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRE");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.alignRight"), "HAR must journal home.alignRight");
+}
+
+#[test]
+fn keytip_hat_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RKB");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.alignTop"), "HAT must journal home.alignTop");
+}
+
+#[test]
+fn keytip_ham_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RD");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.alignMiddle"), "HAM must journal home.alignMiddle");
+}
+
+#[test]
+fn keytip_hab_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RTN");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.alignBottom"), "HAB must journal home.alignBottom");
+}
+
+#[test]
+fn keytip_hal_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RII");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.alignLeft"), "HAL must journal home.alignLeft");
+}
+
+#[test]
+fn keytip_hac_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRZ");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.alignCenter"), "HAC must journal home.alignCenter");
+}
+
+#[test]
+fn keytip_hvs_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RVÜ");
+    assert!(h.state().dialog.is_some(), "HVS must open the pasteSpecial dialog");
+}
+
+#[test]
+fn keytip_hoi_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFI");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.autofitColumnWidth"), "HOI must journal home.autofitColumnWidth");
+}
+
+#[test]
+fn keytip_wvg_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FX");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.gridlines"), "WVG must journal view.gridlines");
+}
+
+#[test]
+fn keytip_h0_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R0");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.increaseDecimal"), "H0 must journal home.increaseDecimal");
+}
+
+#[test]
+fn keytip_h1_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R1");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.bold"), "H1 must journal home.bold");
+}
+
+#[test]
+fn keytip_h2_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R2");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.italic"), "H2 must journal home.italic");
+}
+
+#[test]
+fn keytip_h3_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R3U");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.underline"), "H3 must journal home.underline");
+}
+
+#[test]
+fn keytip_h5_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R5");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.decreaseIndent"), "H5 must journal home.decreaseIndent");
+}
+
+#[test]
+fn keytip_h6_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R6");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.increaseIndent"), "H6 must journal home.increaseIndent");
+}
+
+#[test]
+fn keytip_h9_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R9");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.decreaseDecimal"), "H9 must journal home.decreaseDecimal");
+}
+
+#[test]
+fn keytip_han_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RN1");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.accounting"), "HAN must journal home.accounting");
+}
+
+#[test]
+fn keytip_has_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RAS");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "HAS must run home.addIns cleanly");
+}
+
+#[test]
+fn keytip_hb_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRR");
+    assert_eq!(h.state().keytips.prefix(), Some("RRR"), "HB must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_hba_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRA");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.borders"), "HBA must journal home.borders");
+}
+
+#[test]
+fn keytip_hbb_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRT");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.borders"), "HBB must journal home.borders");
+}
+
+#[test]
+fn keytip_hbc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRC");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.borders"), "HBC must journal home.borders");
+}
+
+#[test]
+fn keytip_hbd_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRH");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.borders"), "HBD must journal home.borders");
+}
+
+#[test]
+fn keytip_hbe_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRF");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.borders"), "HBE must journal home.borders");
+}
+
+#[test]
+fn keytip_hbg_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRE");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.drawBorder"), "HBG must journal home.drawBorder");
+}
+
+#[test]
+fn keytip_hbh_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRD");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.borders"), "HBH must journal home.borders");
+}
+
+#[test]
+fn keytip_hbi_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRI");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.borders"), "HBI must journal home.borders");
+}
+
+#[test]
+fn keytip_hbl_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRS");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.borders"), "HBL must journal home.borders");
+}
+
+#[test]
+fn keytip_hbm_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRW");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.borders"), "HBM must journal home.borders");
+}
+
+#[test]
+fn keytip_hbn_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRK");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.borders"), "HBN must journal home.borders");
+}
+
+#[test]
+fn keytip_hbo_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRU");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.borders"), "HBO must journal home.borders");
+}
+
+#[test]
+fn keytip_hbp_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRO");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.borders"), "HBP must journal home.borders");
+}
+
+#[test]
+fn keytip_hbr_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRM");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.borders"), "HBR must journal home.borders");
+}
+
+#[test]
+fn keytip_hbs_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRR");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.borders"), "HBS must journal home.borders");
+}
+
+#[test]
+fn keytip_hbu_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRB");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.borders"), "HBU must journal home.borders");
+}
+
+#[test]
+fn keytip_hbw_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRZ");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.drawBorder"), "HBW must journal home.drawBorder");
+}
+
+#[test]
+fn keytip_hby_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RRRN");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.borders"), "HBY must journal home.borders");
+}
+
+#[test]
+fn keytip_hc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RCK");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "edit.copy"), "HC must journal edit.copy");
+}
+
+#[test]
+fn keytip_hdc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RELP");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.deleteColumns"), "HDC must journal home.deleteColumns");
+}
+
+#[test]
+fn keytip_hdd_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RELH");
+    assert!(h.state().dialog.is_some(), "HDD must open the deleteCells dialog");
+}
+
+#[test]
+fn keytip_hdr_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RELB");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.deleteRows"), "HDR must journal home.deleteRows");
+}
+
+#[test]
+fn keytip_hds_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RELE");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "HDS must invoke home.deleteSheet and surface its missing-params error");
+}
+
+#[test]
+fn keytip_hea_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RLÖS");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "edit.clearAll"), "HEA must journal edit.clearAll");
+}
+
+#[test]
+fn keytip_hec_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RLÖH");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "edit.clearContents"), "HEC must journal edit.clearContents");
+}
+
+#[test]
+fn keytip_hef_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RLÖF");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "edit.clearFormats"), "HEF must journal edit.clearFormats");
+}
+
+#[test]
+fn keytip_hel_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RLÖC");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "edit.clearHyperlinks"), "HEL must journal edit.clearHyperlinks");
+}
+
+#[test]
+fn keytip_hem_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RLÖM");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "edit.clearComments"), "HEM must journal edit.clearComments");
+}
+
+#[test]
+fn keytip_hfc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RAC");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "HFC must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_hfdc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RUUB");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.conditionalFormat"), "HFDC must journal home.conditionalFormat");
+}
+
+#[test]
+fn keytip_hfdf_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RUUN");
+    assert!(h.state().dialog.is_some(), "HFDF must open the find dialog");
+}
+
+#[test]
+fn keytip_hfdg_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RUUG");
+    assert!(h.state().dialog.is_some(), "HFDG must open the goTo dialog");
+}
+
+#[test]
+fn keytip_hfdm_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RUUT");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "HFDM must invoke edit.find and surface its missing-params error");
+}
+
+#[test]
+fn keytip_hfdo_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RUUO");
+    assert!(h.state().dialog.is_none(), "HFDO must not open a dialog");
+    assert!(h.state().message.is_none(), "HFDO must not open a message box");
+    assert!(h.state().toast.is_none(), "HFDO must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "HFDO must not journal");
+}
+
+#[test]
+fn keytip_hfdp_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RUUW");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "HFDP must run arrange.selectionPane cleanly");
+}
+
+#[test]
+fn keytip_hfdr_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RUUE");
+    assert!(h.state().dialog.is_some(), "HFDR must open the find dialog");
+}
+
+#[test]
+fn keytip_hfds_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RUUS");
+    assert!(h.state().dialog.is_some(), "HFDS must open the goToSpecial dialog");
+}
+
+#[test]
+fn keytip_hff_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RSC");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "HFF must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_hfg_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RSV");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.increaseFontSize"), "HFG must journal home.increaseFontSize");
+}
+
+#[test]
+fn keytip_hfi_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RÜ");
+    assert_eq!(h.state().keytips.prefix(), Some("RÜ"), "HFI must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_hfia_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RÜA");
+    assert!(h.state().dialog.is_none(), "HFIA must not open a dialog");
+    assert!(h.state().message.is_none(), "HFIA must not open a message box");
+    assert!(h.state().toast.is_none(), "HFIA must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "HFIA must not journal");
+}
+
+#[test]
+fn keytip_hfid_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RÜU");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "edit.fillDown"), "HFID must journal edit.fillDown");
+}
+
+#[test]
+fn keytip_hfif_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RÜI");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "HFIF must invoke edit.flashFill and surface its missing-params error");
+}
+
+#[test]
+fn keytip_hfil_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RÜL");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "edit.fillLeft"), "HFIL must journal edit.fillLeft");
+}
+
+#[test]
+fn keytip_hfir_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RÜR");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "edit.fillRight"), "HFIR must journal edit.fillRight");
+}
+
+#[test]
+fn keytip_hfis_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RÜH");
+    assert!(h.state().dialog.is_some(), "HFIS must open the series dialog");
+}
+
+#[test]
+fn keytip_hfiu_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RÜO");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "edit.fillUp"), "HFIU must journal edit.fillUp");
+}
+
+#[test]
+fn keytip_hfk_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RJ");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.decreaseFontSize"), "HFK must journal home.decreaseFontSize");
+}
+
+#[test]
+fn keytip_hfm_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RNZ");
+    assert!(h.state().dialog.is_some(), "HFM must open the formatCells dialog");
+}
+
+#[test]
+fn keytip_hfp_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFO");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "edit.formatPainter"), "HFP must journal edit.formatPainter");
+}
+
+#[test]
+fn keytip_hfq_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RUA");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "HFQ must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_hfs_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RHC");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "HFS must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_hh_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RH1");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "HH must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_hic_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RIEF");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.insertColumns"), "HIC must journal home.insertColumns");
+}
+
+#[test]
+fn keytip_hii_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RIEI");
+    assert!(h.state().dialog.is_some(), "HII must open the insertCells dialog");
+}
+
+#[test]
+fn keytip_hir_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RIEN");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.insertRows"), "HIR must journal home.insertRows");
+}
+
+#[test]
+fn keytip_his_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RIET");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.insertSheet"), "HIS must journal home.insertSheet");
+}
+
+#[test]
+fn keytip_hj_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RM");
+    assert_eq!(h.state().keytips.prefix(), Some("RM"), "HJ must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_hjn_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RMN");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "HJN must invoke home.newCellStyle and surface its missing-params error");
+}
+
+#[test]
+fn keytip_hk_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RÖ");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.comma"), "HK must journal home.comma");
+}
+
+#[test]
+fn keytip_hl_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R8");
+    assert_eq!(h.state().keytips.prefix(), Some("R8"), "HL must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_hlc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R8C");
+    assert_eq!(h.state().keytips.prefix(), Some("R8C"), "HLC must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_hlce_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R8CG");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.clearRules"), "HLCE must journal home.clearRules");
+}
+
+#[test]
+fn keytip_hlcs_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R8CE");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.clearRules"), "HLCS must journal home.clearRules");
+}
+
+#[test]
+fn keytip_hlct_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R8CT");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.clearRules"), "HLCT must journal home.clearRules");
+}
+
+#[test]
+fn keytip_hld_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R8D");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.conditionalFormat"), "HLD must journal home.conditionalFormat");
+}
+
+#[test]
+fn keytip_hlh_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R8H");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.conditionalFormat"), "HLH must journal home.conditionalFormat");
+}
+
+#[test]
+fn keytip_hln_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R8N");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.conditionalFormat"), "HLN must journal home.conditionalFormat");
+}
+
+#[test]
+fn keytip_hlr_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R8R");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.manageRules"), "HLR must journal home.manageRules");
+}
+
+#[test]
+fn keytip_hlt_de() {
+    let mut h = german();
+    sequence_de(&mut h, "R8O");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.conditionalFormat"), "HLT must journal home.conditionalFormat");
+}
+
+#[test]
+fn keytip_hm_de() {
+    let mut h = german();
+    sequence_de(&mut h, "Rß");
+    assert_eq!(h.state().keytips.prefix(), Some("Rß"), "HM must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_hma_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RßD");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.mergeAcross"), "HMA must journal home.mergeAcross");
+}
+
+#[test]
+fn keytip_hmc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RßV");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.mergeCenter"), "HMC must journal home.mergeCenter");
+}
+
+#[test]
+fn keytip_hmm_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RßB");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.mergeCells"), "HMM must journal home.mergeCells");
+}
+
+#[test]
+fn keytip_hmu_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RßU");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.unmergeCells"), "HMU must journal home.unmergeCells");
+}
+
+#[test]
+fn keytip_hn_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RAZ");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "HN must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_hoa_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFO");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.autofitRowHeight"), "HOA must journal home.autofitRowHeight");
+}
+
+#[test]
+fn keytip_hod_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFD");
+    assert!(h.state().dialog.is_some(), "HOD must open the defaultWidth dialog");
+}
+
+#[test]
+fn keytip_hoe_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFE");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.formatCells"), "HOE must journal home.formatCells");
+}
+
+#[test]
+fn keytip_hoh_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFH");
+    assert!(h.state().dialog.is_some(), "HOH must open the rowHeight dialog");
+}
+
+#[test]
+fn keytip_hol_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFL");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.lockCell"), "HOL must journal home.lockCell");
+}
+
+#[test]
+fn keytip_hom_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFT");
+    assert!(h.state().dialog.is_some(), "HOM must open the moveSheet dialog");
+}
+
+#[test]
+fn keytip_hop_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFZ");
+    assert!(h.state().dialog.is_some(), "HOP must open the protectSheet dialog");
+}
+
+#[test]
+fn keytip_hor_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFU");
+    assert!(h.state().dialog.is_some(), "HOR must open the renameSheet dialog");
+}
+
+#[test]
+fn keytip_hot_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFR");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "sheet.tabColor"), "HOT must journal sheet.tabColor");
+}
+
+#[test]
+fn keytip_houc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFNU");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.hideColumns"), "HOUC must journal home.hideColumns");
+}
+
+#[test]
+fn keytip_houh_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFNB");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "HOUH must invoke sheet.unhide and surface its missing-params error");
+}
+
+#[test]
+fn keytip_houl_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFND");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.unhideColumns"), "HOUL must journal home.unhideColumns");
+}
+
+#[test]
+fn keytip_houo_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFNL");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.unhideRows"), "HOUO must journal home.unhideRows");
+}
+
+#[test]
+fn keytip_hour_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFNZ");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.hideRows"), "HOUR must journal home.hideRows");
+}
+
+#[test]
+fn keytip_hous_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFNS");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "HOUS must invoke sheet.hide and surface its missing-params error");
+}
+
+#[test]
+fn keytip_how_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RFFB");
+    assert!(h.state().dialog.is_some(), "HOW must open the columnWidth dialog");
+}
+
+#[test]
+fn keytip_hp_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RP");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.percent"), "HP must journal home.percent");
+}
+
+#[test]
+fn keytip_hsc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "ROSC");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.clearFilter"), "HSC must journal data.clearFilter");
+}
+
+#[test]
+fn keytip_hsf_de() {
+    let mut h = german();
+    sequence_de(&mut h, "ROSF");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.filter"), "HSF must journal data.filter");
+}
+
+#[test]
+fn keytip_hso_de() {
+    let mut h = german();
+    sequence_de(&mut h, "ROSO");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.sortDescending"), "HSO must journal data.sortDescending");
+}
+
+#[test]
+fn keytip_hss_de() {
+    let mut h = german();
+    sequence_de(&mut h, "ROSS");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.sortAscending"), "HSS must journal data.sortAscending");
+}
+
+#[test]
+fn keytip_hsu_de() {
+    let mut h = german();
+    sequence_de(&mut h, "ROSD");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.sort"), "HSU must journal data.sort");
+}
+
+#[test]
+fn keytip_ht_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RG");
+    assert_eq!(h.state().keytips.prefix(), Some("RG"), "HT must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_htn_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RGN");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "HTN must invoke table.style and surface its missing-params error");
+}
+
+#[test]
+fn keytip_htp_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RGP");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "HTP must invoke table.style and surface its missing-params error");
+}
+
+#[test]
+fn keytip_hu_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RKA");
+    assert_eq!(h.state().keytips.prefix(), Some("RKA"), "HU must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_hua_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RKAM");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.autoSum"), "HUA must journal formulas.autoSum");
+}
+
+#[test]
+fn keytip_huc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RKAA");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.autoSum"), "HUC must journal formulas.autoSum");
+}
+
+#[test]
+fn keytip_hui_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RKAN");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.autoSum"), "HUI must journal formulas.autoSum");
+}
+
+#[test]
+fn keytip_hum_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RKAX");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.autoSum"), "HUM must journal formulas.autoSum");
+}
+
+#[test]
+fn keytip_hv_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RV");
+    assert_eq!(h.state().keytips.prefix(), Some("RV"), "HV must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_hww_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RNE");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "home.wrapText"), "HWW must journal home.wrapText");
+}
+
+#[test]
+fn keytip_hx_de() {
+    let mut h = german();
+    sequence_de(&mut h, "RX");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "edit.cut"), "HX must journal edit.cut");
+}
+
+#[test]
+fn keytip_nc1_de() {
+    let mut h = german();
+    sequence_de(&mut h, "ID");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "NC1 must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_ncm_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IN2");
+    assert!(h.state().dialog.is_some(), "NCM must open the comment dialog");
+}
+
+#[test]
+fn keytip_ncb_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IC2");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "insert.checkbox"), "NCB must journal insert.checkbox");
+}
+
+#[test]
+fn keytip_nd_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IPU");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "ND must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_ne_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IAN");
+    assert!(h.state().dialog.is_none(), "NE must not open a dialog");
+    assert!(h.state().message.is_none(), "NE must not open a message box");
+    assert!(h.state().toast.is_none(), "NE must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "NE must not journal");
+}
+
+#[test]
+fn keytip_nhf_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IKO");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "pageLayout.headerFooter"), "NHF must journal pageLayout.headerFooter");
+}
+
+#[test]
+fn keytip_nhi_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IE");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "NHI must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_ni1_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IW1");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "insert.chart"), "NI1 must journal insert.chart");
+}
+
+#[test]
+fn keytip_ni2_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IHL");
+    assert!(h.state().dialog.is_some(), "NI2 must open the insertLink dialog");
+}
+
+#[test]
+fn keytip_nj_de() {
+    let mut h = german();
+    sequence_de(&mut h, "I92");
+    assert!(h.state().dialog.is_none(), "NJ must not open a dialog");
+    assert!(h.state().message.is_none(), "NJ must not open a message box");
+    assert!(h.state().toast.is_none(), "NJ must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "NJ must not journal");
+}
+
+#[test]
+fn keytip_nm1t_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IM");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "insert.picture"), "NM1T must journal insert.picture");
+}
+
+#[test]
+fn keytip_nm2_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IK1");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "insert.chart"), "NM2 must journal insert.chart");
+}
+
+#[test]
+fn keytip_nn1_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IIL");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "NN1 must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_nns_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IS1");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "insert.icons"), "NNS must journal insert.icons");
+}
+
+#[test]
+fn keytip_np_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IB");
+    assert_eq!(h.state().keytips.prefix(), Some("IB"), "NP must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_npi_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IBI");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "insert.picture"), "NPI must journal insert.picture");
+}
+
+#[test]
+fn keytip_npo_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IBÜ");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "insert.picture"), "NPO must journal insert.picture");
+}
+
+#[test]
+fn keytip_nq_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IKK");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "NQ must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_nr_de() {
+    let mut h = german();
+    sequence_de(&mut h, "ILM");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "NR must invoke insert.recommendedCharts and surface its missing-params error");
+}
+
+#[test]
+fn keytip_nsa_de() {
+    let mut h = german();
+    sequence_de(&mut h, "ISA");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "NSA must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_nsc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IC1");
+    assert!(h.state().dialog.is_none(), "NSC must not open a dialog");
+    assert!(h.state().message.is_none(), "NSC must not open a message box");
+    assert!(h.state().toast.is_none(), "NSC must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "NSC must not journal");
+}
+
+#[test]
+fn keytip_nsd_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IN1");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "insert.chart"), "NSD must journal insert.chart");
+}
+
+#[test]
+fn keytip_nsf_de() {
+    let mut h = german();
+    sequence_de(&mut h, "I91");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "NSF must invoke insert.slicer and surface its missing-params error");
+}
+
+#[test]
+fn keytip_nsh_de() {
+    let mut h = german();
+    sequence_de(&mut h, "I2");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "insert.shape"), "NSH must journal insert.shape");
+}
+
+#[test]
+fn keytip_nsp_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IFM");
+    assert!(
+        h.state().message.is_some() || h.state().toast.is_some(),
+        "NSP must invoke insert.recommendedPivotTables and surface its missing-params error"
+    );
+}
+
+#[test]
+fn keytip_nst_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IÖ");
+    assert!(h.state().dialog.is_none(), "NST must not open a dialog");
+    assert!(h.state().message.is_none(), "NST must not open a message box");
+    assert!(h.state().toast.is_none(), "NST must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "NST must not journal");
+}
+
+#[test]
+fn keytip_nsz_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IIIC");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "NSZ must invoke insert.pivotChart and surface its missing-params error");
+}
+
+#[test]
+fn keytip_nt_de() {
+    let mut h = german();
+    sequence_de(&mut h, "Iß");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "insert.table"), "NT must journal insert.table");
+}
+
+#[test]
+fn keytip_nu_de() {
+    let mut h = german();
+    sequence_de(&mut h, "ISY");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "insert.symbol"), "NU must journal insert.symbol");
+}
+
+#[test]
+fn keytip_nv_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IVT");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "NV must invoke insert.pivotTable and surface its missing-params error");
+}
+
+#[test]
+fn keytip_nw_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IW2");
+    assert!(h.state().dialog.is_none(), "NW must not open a dialog");
+    assert!(h.state().message.is_none(), "NW must not open a message box");
+    assert!(h.state().toast.is_none(), "NW must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "NW must not journal");
+}
+
+#[test]
+fn keytip_nx_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IÄ");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "insert.textBox"), "NX must journal insert.textBox");
+}
+
+#[test]
+fn keytip_nzksl_de() {
+    let mut h = german();
+    sequence_de(&mut h, "ILL");
+    assert!(h.state().dialog.is_some(), "NZKSL must open the sparkline dialog");
+}
+
+#[test]
+fn keytip_nzkso_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IQ");
+    assert!(h.state().dialog.is_some(), "NZKSO must open the sparkline dialog");
+}
+
+#[test]
+fn keytip_nzksw_de() {
+    let mut h = german();
+    sequence_de(&mut h, "IGG");
+    assert!(h.state().dialog.is_some(), "NZKSW must open the sparkline dialog");
+}
+
+#[test]
+fn keytip_pae_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SGHB");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "PAE must invoke arrange.sendBackward and surface its missing-params error");
+}
+
+#[test]
+fn keytip_paf_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SGEA");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "PAF must invoke arrange.bringForward and surface its missing-params error");
+}
+
+#[test]
+fn keytip_pb_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SÜ");
+    assert_eq!(h.state().keytips.prefix(), Some("SÜ"), "PB must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_pbi_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SÜI");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "pageLayout.breaks"), "PBI must journal pageLayout.breaks");
+}
+
+#[test]
+fn keytip_pbr_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SÜR");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "pageLayout.breaks"), "PBR must journal pageLayout.breaks");
+}
+
+#[test]
+fn keytip_pgb_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SM");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "pageLayout.background"), "PGB must journal pageLayout.background");
+}
+
+#[test]
+fn keytip_pi_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SI");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "pageLayout.printTitles"), "PI must journal pageLayout.printTitles");
+}
+
+#[test]
+fn keytip_pm_de() {
+    let mut h = german();
+    sequence_de(&mut h, "S8");
+    assert_eq!(h.state().keytips.prefix(), Some("S8"), "PM must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_pma_de() {
+    let mut h = german();
+    sequence_de(&mut h, "S8B");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "pageLayout.margins"), "PMA must journal pageLayout.margins");
+}
+
+#[test]
+fn keytip_po_de() {
+    let mut h = german();
+    sequence_de(&mut h, "S4");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "pageLayout.orientation"), "PO must journal pageLayout.orientation");
+}
+
+#[test]
+fn keytip_ppg_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SYU");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "pageLayout.printGridlines"), "PPG must journal pageLayout.printGridlines");
+}
+
+#[test]
+fn keytip_pph_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SYC");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "pageLayout.printHeadings"), "PPH must journal pageLayout.printHeadings");
+}
+
+#[test]
+fn keytip_pr_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SH");
+    assert_eq!(h.state().keytips.prefix(), Some("SH"), "PR must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_prs_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SHF");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "pageLayout.printArea"), "PRS must journal pageLayout.printArea");
+}
+
+#[test]
+fn keytip_psp_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SK");
+    assert!(h.state().dialog.is_some(), "PSP must open the pageSetup dialog");
+}
+
+#[test]
+fn keytip_psz_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SR");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "pageLayout.size"), "PSZ must journal pageLayout.size");
+}
+
+#[test]
+fn keytip_ptc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SF");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "pageLayout.themeColors"), "PTC must journal pageLayout.themeColors");
+}
+
+#[test]
+fn keytip_pte_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SE");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "pageLayout.themeEffects"), "PTE must journal pageLayout.themeEffects");
+}
+
+#[test]
+fn keytip_ptf_de() {
+    let mut h = german();
+    sequence_de(&mut h, "S6");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "pageLayout.themeFonts"), "PTF must journal pageLayout.themeFonts");
+}
+
+#[test]
+fn keytip_pth_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SN");
+    assert_eq!(h.state().keytips.prefix(), Some("SN"), "PTH must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_pthb_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SNN");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "pageLayout.theme"), "PTHB must journal pageLayout.theme");
+}
+
+#[test]
+fn keytip_pvg_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SYX");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.gridlines"), "PVG must journal view.gridlines");
+}
+
+#[test]
+fn keytip_pvh_de() {
+    let mut h = german();
+    sequence_de(&mut h, "SYA");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.headings"), "PVH must journal view.headings");
+}
+
+#[test]
+fn keytip_ma_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OE");
+    assert_eq!(h.state().keytips.prefix(), Some("OE"), "MA must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_maa_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OEP");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.removeArrows"), "MAA must journal formulas.removeArrows");
+}
+
+#[test]
+fn keytip_map_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OEV");
+    assert!(h.state().dialog.is_none(), "MAP must not open a dialog");
+    assert!(h.state().message.is_none(), "MAP must not open a message box");
+    assert!(h.state().toast.is_none(), "MAP must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "MAP must not journal");
+}
+
+#[test]
+fn keytip_mb_de() {
+    let mut h = german();
+    sequence_de(&mut h, "ON2");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.calculateNow"), "MB must journal formulas.calculateNow");
+}
+
+#[test]
+fn keytip_mc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OW");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.createFromSelection"), "MC must journal formulas.createFromSelection");
+}
+
+#[test]
+fn keytip_md_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OS");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "MD must run formulas.traceDependents cleanly");
+}
+
+#[test]
+fn keytip_me_de() {
+    let mut h = german();
+    sequence_de(&mut h, "O9");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "ME must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_mf_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OU");
+    assert!(h.state().dialog.is_some(), "MF must open the insertFunction dialog");
+}
+
+#[test]
+fn keytip_mg_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OT");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "MG must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_mh_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OF");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.showFormulas"), "MH must journal formulas.showFormulas");
+}
+
+#[test]
+fn keytip_mi1_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OI");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "MI1 must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_mj_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OB");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.calculateSheet"), "MJ must journal formulas.calculateSheet");
+}
+
+#[test]
+fn keytip_mk_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OH");
+    assert_eq!(h.state().keytips.prefix(), Some("OH"), "MK must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_mkk_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OHH");
+    assert!(h.state().dialog.is_some(), "MKK must open the errorChecking dialog");
+}
+
+#[test]
+fn keytip_ml_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OL");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "ML must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_mm_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OAD");
+    assert!(h.state().dialog.is_some(), "MM must open the defineName dialog");
+}
+
+#[test]
+fn keytip_mn_de() {
+    let mut h = german();
+    sequence_de(&mut h, "ON1");
+    assert!(h.state().dialog.is_some(), "MN must open the nameManager dialog");
+}
+
+#[test]
+fn keytip_mo_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OC");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "MO must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_mp_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OP2");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "MP must run formulas.tracePrecedents cleanly");
+}
+
+#[test]
+fn keytip_mq_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OM");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "MQ must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_ms_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OV");
+    assert_eq!(h.state().keytips.prefix(), Some("OV"), "MS must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_msp_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OVN");
+    assert!(h.state().dialog.is_none(), "MSP must not open a dialog");
+    assert!(h.state().message.is_none(), "MSP must not open a message box");
+    assert!(h.state().toast.is_none(), "MSP must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "MSP must not journal");
+}
+
+#[test]
+fn keytip_mt_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OX");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "MT must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_mu_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OKA");
+    assert_eq!(h.state().keytips.prefix(), Some("OKA"), "MU must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_mua_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OKAM");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.autoSum"), "MUA must journal formulas.autoSum");
+}
+
+#[test]
+fn keytip_muc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OKAA");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.autoSum"), "MUC must journal formulas.autoSum");
+}
+
+#[test]
+fn keytip_muf_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OKAW");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "MUF must run formulas.moreFunctions cleanly");
+}
+
+#[test]
+fn keytip_mui_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OKAN");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.autoSum"), "MUI must journal formulas.autoSum");
+}
+
+#[test]
+fn keytip_mum_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OKAX");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.autoSum"), "MUM must journal formulas.autoSum");
+}
+
+#[test]
+fn keytip_mus_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OKAS");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.autoSum"), "MUS must journal formulas.autoSum");
+}
+
+#[test]
+fn keytip_mv_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OO");
+    assert!(h.state().dialog.is_some(), "MV must open the evaluateFormula dialog");
+}
+
+#[test]
+fn keytip_mw_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OÜ");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "MW must run formulas.watchWindow cleanly");
+}
+
+#[test]
+fn keytip_mx_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OQ");
+    assert_eq!(h.state().keytips.prefix(), Some("OQ"), "MX must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_mxa_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OQA");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.calculationOptions"), "MXA must journal formulas.calculationOptions");
+}
+
+#[test]
+fn keytip_mxm_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OQM");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.calculationOptions"), "MXM must journal formulas.calculationOptions");
+}
+
+#[test]
+fn keytip_mxp_de() {
+    let mut h = german();
+    sequence_de(&mut h, "OQT");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "formulas.calculationOptions"), "MXP must journal formulas.calculationOptions");
+}
+
+#[test]
+fn keytip_ab_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VI");
+    assert!(h.state().dialog.is_some(), "AB must open the subtotal dialog");
+}
+
+#[test]
+fn keytip_ac_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VL");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.clearFilter"), "AC must journal data.clearFilter");
+}
+
+#[test]
+fn keytip_ad_de() {
+    let mut h = german();
+    sequence_de(&mut h, "V8");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "AD must invoke data.consolidate and surface its missing-params error");
+}
+
+#[test]
+fn keytip_ae_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VT");
+    assert!(h.state().dialog.is_some(), "AE must open the textToColumns dialog");
+}
+
+#[test]
+fn keytip_af1_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VV");
+    assert_eq!(h.state().keytips.prefix(), Some("VV"), "AF1 must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_af1c_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VVZ");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "insert.picture"), "AF1C must journal insert.picture");
+}
+
+#[test]
+fn keytip_af1p_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VVB");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "insert.picture"), "AF1P must journal insert.picture");
+}
+
+#[test]
+fn keytip_afc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "V3");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "AFC must invoke data.forecastSheet and surface its missing-params error");
+}
+
+#[test]
+fn keytip_afe_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VFE");
+    assert!(h.state().dialog.is_none(), "AFE must not open a dialog");
+    assert!(h.state().message.is_none(), "AFE must not open a message box");
+    assert!(h.state().toast.is_none(), "AFE must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "AFE must not journal");
+}
+
+#[test]
+fn keytip_aff_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VB");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "AFF must invoke edit.flashFill and surface its missing-params error");
+}
+
+#[test]
+fn keytip_afo_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VD1Q");
+    assert!(h.state().dialog.is_none(), "AFO must not open a dialog");
+    assert!(h.state().message.is_none(), "AFO must not open a message box");
+    assert!(h.state().toast.is_none(), "AFO must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "AFO must not journal");
+}
+
+#[test]
+fn keytip_aft_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VFT");
+    assert!(h.state().dialog.is_none(), "AFT must not open a dialog");
+    assert!(h.state().message.is_none(), "AFT must not open a message box");
+    assert!(h.state().toast.is_none(), "AFT must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "AFT must not journal");
+}
+
+#[test]
+fn keytip_afw_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VM");
+    assert!(h.state().dialog.is_none(), "AFW must not open a dialog");
+    assert!(h.state().message.is_none(), "AFW must not open a message box");
+    assert!(h.state().toast.is_none(), "AFW must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "AFW must not journal");
+}
+
+#[test]
+fn keytip_ag_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VGG");
+    assert_eq!(h.state().keytips.prefix(), Some("VGG"), "AG must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_aga_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VGGU");
+    assert!(h.state().dialog.is_none(), "AGA must not open a dialog");
+    assert!(h.state().message.is_none(), "AGA must not open a message box");
+    assert!(h.state().toast.is_none(), "AGA must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "AGA must not journal");
+}
+
+#[test]
+fn keytip_agg_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VGGG");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.group"), "AGG must journal data.group");
+}
+
+#[test]
+fn keytip_ah_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VÄ");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.hideDetail"), "AH must journal data.hideDetail");
+}
+
+#[test]
+fn keytip_aj_de() {
+    let mut h = german();
+    sequence_de(&mut h, "Vß");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.showDetail"), "AJ must journal data.showDetail");
+}
+
+#[test]
+fn keytip_ak_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VK2");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "AK must run data.queriesConnections cleanly");
+}
+
+#[test]
+fn keytip_am_de() {
+    let mut h = german();
+    sequence_de(&mut h, "V4");
+    assert!(h.state().dialog.is_some(), "AM must open the removeDuplicates dialog");
+}
+
+#[test]
+fn keytip_ao_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VA");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "AO must run data.queriesConnections cleanly");
+}
+
+#[test]
+fn keytip_ap1_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VJ");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "file.properties"), "AP1 must journal file.properties");
+}
+
+#[test]
+fn keytip_apn_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VD1");
+    assert_eq!(h.state().keytips.prefix(), Some("VD1"), "APN must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_apne_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VD1P");
+    assert!(h.state().dialog.is_none(), "APNE must not open a dialog");
+    assert!(h.state().message.is_none(), "APNE must not open a message box");
+    assert!(h.state().toast.is_none(), "APNE must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "APNE must not journal");
+}
+
+#[test]
+fn keytip_apns_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VD1L");
+    assert!(h.state().dialog.is_none(), "APNS must not open a dialog");
+    assert!(h.state().message.is_none(), "APNS must not open a message box");
+    assert!(h.state().toast.is_none(), "APNS must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "APNS must not journal");
+}
+
+#[test]
+fn keytip_apr_de() {
+    let mut h = german();
+    sequence_de(&mut h, "V6");
+    assert!(h.state().dialog.is_none(), "APR must not open a dialog");
+    assert!(h.state().message.is_none(), "APR must not open a message box");
+    assert!(h.state().toast.is_none(), "APR must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "APR must not journal");
+}
+
+#[test]
+fn keytip_apt_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VPT");
+    assert!(h.state().dialog.is_none(), "APT must not open a dialog");
+    assert!(h.state().message.is_none(), "APT must not open a message box");
+    assert!(h.state().toast.is_none(), "APT must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "APT must not journal");
+}
+
+#[test]
+fn keytip_aq_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VW");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "AQ must invoke data.advancedFilter and surface its missing-params error");
+}
+
+#[test]
+fn keytip_ar_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VK1");
+    assert_eq!(h.state().keytips.prefix(), Some("VK1"), "AR must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_ara_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VK1L");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.refreshAll"), "ARA must journal data.refreshAll");
+}
+
+#[test]
+fn keytip_arc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VK1A");
+    assert!(h.state().dialog.is_none(), "ARC must not open a dialog");
+    assert!(h.state().message.is_none(), "ARC must not open a message box");
+    assert!(h.state().toast.is_none(), "ARC must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "ARC must not journal");
+}
+
+#[test]
+fn keytip_aro_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VK1V");
+    assert!(h.state().dialog.is_none(), "ARO must not open a dialog");
+    assert!(h.state().message.is_none(), "ARO must not open a message box");
+    assert!(h.state().toast.is_none(), "ARO must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "ARO must not journal");
+}
+
+#[test]
+fn keytip_arr_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VK1T");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "ARR must invoke pivot.refresh and surface its missing-params error");
+}
+
+#[test]
+fn keytip_ars_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VK1S");
+    assert!(h.state().dialog.is_none(), "ARS must not open a dialog");
+    assert!(h.state().message.is_none(), "ARS must not open a message box");
+    assert!(h.state().toast.is_none(), "ARS must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "ARS must not journal");
+}
+
+#[test]
+fn keytip_asa_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VU");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.sortAscending"), "ASA must journal data.sortAscending");
+}
+
+#[test]
+fn keytip_asd_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VF1");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.sortDescending"), "ASD must journal data.sortDescending");
+}
+
+#[test]
+fn keytip_ass_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VS");
+    assert!(h.state().dialog.is_some(), "ASS must open the sort dialog");
+}
+
+#[test]
+fn keytip_at_de() {
+    let mut h = german();
+    sequence_de(&mut h, "V1");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.filter"), "AT must journal data.filter");
+}
+
+#[test]
+fn keytip_au_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VQ");
+    assert_eq!(h.state().keytips.prefix(), Some("VQ"), "AU must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_auc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VQF");
+    assert!(h.state().dialog.is_none(), "AUC must not open a dialog");
+    assert!(h.state().message.is_none(), "AUC must not open a message box");
+    assert!(h.state().toast.is_none(), "AUC must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "AUC must not journal");
+}
+
+#[test]
+fn keytip_auu_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VQU");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.ungroup"), "AUU must journal data.ungroup");
+}
+
+#[test]
+fn keytip_av_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VÜ");
+    assert_eq!(h.state().keytips.prefix(), Some("VÜ"), "AV must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_avi_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VÜU");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.circleInvalid"), "AVI must journal data.circleInvalid");
+}
+
+#[test]
+fn keytip_avr_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VÜR");
+    assert!(h.state().dialog.is_none(), "AVR must not open a dialog");
+    assert!(h.state().message.is_none(), "AVR must not open a message box");
+    assert!(h.state().toast.is_none(), "AVR must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "AVR must not journal");
+}
+
+#[test]
+fn keytip_avv_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VÜD");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.validation"), "AVV must journal data.validation");
+}
+
+#[test]
+fn keytip_aw_de() {
+    let mut h = german();
+    sequence_de(&mut h, "V5");
+    assert_eq!(h.state().keytips.prefix(), Some("V5"), "AW must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_awg_de() {
+    let mut h = german();
+    sequence_de(&mut h, "V5W");
+    assert!(h.state().dialog.is_some(), "AWG must open the goalSeek dialog");
+}
+
+#[test]
+fn keytip_aws_de() {
+    let mut h = german();
+    sequence_de(&mut h, "V5S");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "AWS must run data.scenarioManager cleanly");
+}
+
+#[test]
+fn keytip_awt_de() {
+    let mut h = german();
+    sequence_de(&mut h, "V5T");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "AWT must invoke data.dataTable and surface its missing-params error");
+}
+
+#[test]
+fn keytip_ax_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VO");
+    assert!(h.state().dialog.is_none(), "AX must not open a dialog");
+    assert!(h.state().message.is_none(), "AX must not open a message box");
+    assert!(h.state().toast.is_none(), "AX must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "AX must not journal");
+}
+
+#[test]
+fn keytip_ay_de() {
+    let mut h = german();
+    sequence_de(&mut h, "VE");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.reapply"), "AY must journal data.reapply");
+}
+
+#[test]
+fn keytip_ra1_de() {
+    let mut h = german();
+    sequence_de(&mut h, "PB1B");
+    assert!(h.state().dialog.is_some(), "RA1 must open the accessibility dialog");
+}
+
+#[test]
+fn keytip_ra2_de() {
+    let mut h = german();
+    sequence_de(&mut h, "PH");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "RA2 must run review.showComments cleanly");
+}
+
+#[test]
+fn keytip_rc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "PN1");
+    assert!(h.state().dialog.is_some(), "RC must open the comment dialog");
+}
+
+#[test]
+fn keytip_rd_de() {
+    let mut h = german();
+    sequence_de(&mut h, "P4");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "review.deleteComment"), "RD must journal review.deleteComment");
+}
+
+#[test]
+fn keytip_rg_de() {
+    let mut h = german();
+    sequence_de(&mut h, "PD");
+    assert!(h.state().dialog.is_none(), "RG must not open a dialog");
+    assert!(h.state().message.is_none(), "RG must not open a message box");
+    assert!(h.state().toast.is_none(), "RG must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "RG must not journal");
+}
+
+#[test]
+fn keytip_rl_de() {
+    let mut h = german();
+    sequence_de(&mut h, "PÜ");
+    assert!(h.state().dialog.is_none(), "RL must not open a dialog");
+    assert!(h.state().message.is_none(), "RL must not open a message box");
+    assert!(h.state().toast.is_none(), "RL must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "RL must not journal");
+}
+
+#[test]
+fn keytip_rn_de() {
+    let mut h = german();
+    sequence_de(&mut h, "PN2");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "RN must invoke review.nextComment and surface its missing-params error");
+}
+
+#[test]
+fn keytip_rps_de() {
+    let mut h = german();
+    sequence_de(&mut h, "PS2");
+    assert!(h.state().dialog.is_some(), "RPS must open the protectSheet dialog");
+}
+
+#[test]
+fn keytip_rpw_de() {
+    let mut h = german();
+    sequence_de(&mut h, "PE");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "review.protectWorkbook"), "RPW must journal review.protectWorkbook");
+}
+
+#[test]
+fn keytip_rs_de() {
+    let mut h = german();
+    sequence_de(&mut h, "PBE");
+    assert!(h.state().dialog.is_some(), "RS must open the spelling dialog");
+}
+
+#[test]
+fn keytip_rtn_de() {
+    let mut h = german();
+    sequence_de(&mut h, "PN3N");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "review.newNote"), "RTN must journal review.newNote");
+}
+
+#[test]
+fn keytip_rv_de() {
+    let mut h = german();
+    sequence_de(&mut h, "PV");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "RV must invoke review.previousComment and surface its missing-params error");
+}
+
+#[test]
+fn keytip_wa_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FA2");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.arrangeAll"), "WA must journal view.arrangeAll");
+}
+
+#[test]
+fn keytip_wc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FF");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.customViews"), "WC must journal view.customViews");
+}
+
+#[test]
+fn keytip_wf_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FP");
+    assert_eq!(h.state().keytips.prefix(), Some("FP"), "WF must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_wfc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FPE");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.freezeFirstColumn"), "WFC must journal view.freezeFirstColumn");
+}
+
+#[test]
+fn keytip_wff_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FPF");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.freezePanes"), "WFF must journal view.freezePanes");
+}
+
+#[test]
+fn keytip_wfr_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FPO");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.freezeTopRow"), "WFR must journal view.freezeTopRow");
+}
+
+#[test]
+fn keytip_wg_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FW");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.zoomToSelection"), "WG must journal view.zoomToSelection");
+}
+
+#[test]
+fn keytip_wh_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FL");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.hideWindow"), "WH must journal view.hideWindow");
+}
+
+#[test]
+fn keytip_wi_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FV1");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.pageBreakPreview"), "WI must journal view.pageBreakPreview");
+}
+
+#[test]
+fn keytip_wj_de() {
+    let mut h = german();
+    sequence_de(&mut h, "F0");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "WJ must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_wl_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FC");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.normal"), "WL must journal view.normal");
+}
+
+#[test]
+fn keytip_wm_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FM");
+    assert_eq!(h.state().keytips.prefix(), Some("FM"), "WM must stay armed waiting for more input");
+}
+
+#[test]
+fn keytip_wmr_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FMR");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "WMR must run view.macros cleanly");
+}
+
+#[test]
+fn keytip_wmv_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FMK");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "WMV must run view.macros cleanly");
+}
+
+#[test]
+fn keytip_wn_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FN2");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.newWindow"), "WN must journal view.newWindow");
+}
+
+#[test]
+fn keytip_wp_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FI");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.pageLayout"), "WP must journal view.pageLayout");
+}
+
+#[test]
+fn keytip_wq_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FDO");
+    assert!(h.state().dialog.is_some(), "WQ must open the zoom dialog");
+}
+
+#[test]
+fn keytip_wr_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FQ");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.ruler"), "WR must journal view.ruler");
+}
+
+#[test]
+fn keytip_ws_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FT1");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.split"), "WS must journal view.split");
+}
+
+#[test]
+fn keytip_wt_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FR");
+    assert!(h.state().dialog.is_none(), "WT must not open a dialog");
+    assert!(h.state().message.is_none(), "WT must not open a message box");
+    assert!(h.state().toast.is_none(), "WT must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "WT must not journal");
+}
+
+#[test]
+fn keytip_wu_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FE2");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.unhideWindow"), "WU must journal view.unhideWindow");
+}
+
+#[test]
+fn keytip_wvc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FE1F");
+    assert!(h.state().dialog.is_none(), "WVC must not open a dialog");
+    assert!(h.state().message.is_none(), "WVC must not open a message box");
+    assert!(h.state().toast.is_none(), "WVC must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "WVC must not journal");
+}
+
+#[test]
+fn keytip_wvf_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FB");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "WVF must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
+}
+
+#[test]
+fn keytip_wvh_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FA1");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "view.headings"), "WVH must journal view.headings");
+}
+
+#[test]
+fn keytip_wvn_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FK1");
+    assert!(h.state().dialog.is_none(), "WVN must not open a dialog");
+    assert!(h.state().message.is_none(), "WVN must not open a message box");
+    assert!(h.state().toast.is_none(), "WVN must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "WVN must not journal");
+}
+
+#[test]
+fn keytip_ww_de() {
+    let mut h = german();
+    sequence_de(&mut h, "FK2");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "WW must run view.switchWindows cleanly");
+}
+
+#[test]
+fn keytip_fa_de() {
+    let mut h = german();
+    sequence_de(&mut h, "DH");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "file.saveAs"), "FA must journal file.saveAs");
+}
+
+#[test]
+fn keytip_fc_de() {
+    let mut h = german();
+    sequence_de(&mut h, "DL");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "file.close"), "FC must journal file.close");
+}
+
+#[test]
+fn keytip_fea_de() {
+    let mut h = german();
+    sequence_de(&mut h, "DEF");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "file.exportPdf"), "FEA must journal file.exportPdf");
+}
+
+#[test]
+fn keytip_fec_de() {
+    let mut h = german();
+    sequence_de(&mut h, "DEÄ");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "file.saveAs"), "FEC must journal file.saveAs");
+}
+
+#[test]
+fn keytip_fi_de() {
+    let mut h = german();
+    sequence_de(&mut h, "DI");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "file.properties"), "FI must journal file.properties");
+}
+
+#[test]
+fn keytip_fn_de() {
+    let mut h = german();
+    sequence_de(&mut h, "DN");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "file.new"), "FN must journal file.new");
+}
+
+#[test]
+fn keytip_fo_de() {
+    let mut h = german();
+    sequence_de(&mut h, "DF");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "file.open"), "FO must journal file.open");
+}
+
+#[test]
+fn keytip_fp_de() {
+    let mut h = german();
+    sequence_de(&mut h, "DU");
+    assert!(h.state().session.journal.iter().any(|(id, _)| id == "file.print"), "FP must journal file.print");
+}
+
+#[test]
+fn keytip_q_de() {
+    let mut h = german();
+    sequence_de(&mut h, "M");
+    assert!(h.state().dialog.is_none(), "Q must not open a dialog");
+    assert!(h.state().message.is_none(), "Q must not open a message box");
+    assert!(h.state().toast.is_none(), "Q must not raise a toast");
+    assert!(h.state().session.journal.is_empty(), "Q must not journal");
+}
+
+#[test]
 fn generated_test_count_matches_the_table() {
     const EXPECTED: usize = 364;
     assert_eq!(gridcraft_ui_egui::keytips::keytip_table::SEQUENCES.len(), EXPECTED);
+    const EXPECTED_DE: usize = 328;
+    assert_eq!(gridcraft_ui_egui::keytips::keytip_table::SEQUENCES_DE.len(), EXPECTED_DE);
 }
 
 #[test]
