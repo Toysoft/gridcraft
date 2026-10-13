@@ -180,7 +180,7 @@ pub fn tool_definitions() -> Vec<Value> {
             "Enter one cell exactly as if typed: a number, text, or a formula starting with = (\"=AVERAGE(B2:B9)\"). \
              Dependent cells recalculate. Returns the command result; use get_cell to read the computed value.",
             obj(
-                json!({"cell": string("Cell, e.g. \"B7\" or \"Sheet2!C3\""), "input": string("Typed input: number, text or =formula")}),
+                json!({"cell": string("Cell, e.g. \"B7\" or \"Sheet2!C3\""), "input": {"type": ["string", "number", "boolean"], "description": "Typed input: number, text or =formula"}}),
                 &["cell", "input"],
             ),
             false,

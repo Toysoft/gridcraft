@@ -75,7 +75,11 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
     {
         s.close_document(0);
     }
-    let i = s.add_document(DocState::new(wb, path, title));
+    let mut doc = DocState::new(wb, path, title);
+    if crate::io::FileKind::from_path(&name).is_none() && gridcraft_xlsx::sniff(&bytes) == gridcraft_xlsx::Format::Xlsx {
+        doc.content_kind = Some(crate::io::FileKind::Xlsx);
+    }
+    let i = s.add_document(doc);
     // The decrypted-workbook notice is for the info bar, not a message box.
     let shown: Vec<&str> = warnings.iter().map(String::as_str).filter(|w| *w != crate::io::DECRYPTED_NOTICE).collect();
     if !shown.is_empty() {
@@ -105,11 +109,16 @@ fn save(s: &mut Session, p: &Json) -> Result<Json> {
         return super::print::export_pdf(s, &json!({"path": path}));
     }
     let d = s.doc_mut()?;
-    let bytes = crate::io::save_bytes(&d.wb, &path)?;
+    // The document's own file keeps the format its content had when opened; any other path
+    // goes by its extension.
+    let kind = crate::io::FileKind::from_path(&path).or(d.content_kind.filter(|_| d.path.as_deref() == Some(path.as_str())));
+    let bytes = match kind {
+        Some(kind) => crate::io::save_bytes_as(&d.wb, &path, kind)?,
+        None => crate::io::save_bytes(&d.wb, &path)?,
+    };
     crate::io::write_file(&path, &bytes)?;
-    let kind = crate::io::FileKind::from_path(&path).unwrap_or(crate::io::FileKind::Xlsx);
     // Only a full-fidelity format clears the dirty flag and becomes the document's file.
-    if matches!(kind, crate::io::FileKind::Xlsx | crate::io::FileKind::Json) {
+    if matches!(kind, Some(crate::io::FileKind::Xlsx | crate::io::FileKind::Json)) {
         d.saved = d.wb.clone();
         d.path = Some(path.clone());
     }

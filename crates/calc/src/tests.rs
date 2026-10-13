@@ -182,6 +182,11 @@ fn errors_and_cycles() {
     assert!(t.get("B1").is_error());
     t.set("C1", "=NOSUCHFN(1)");
     assert_eq!(t.get("C1"), Value::Error(CellError::Name));
+    // `_xludf.` marks a user-defined function, never the built-in of the same name (#726).
+    for f in ["=_xludf.CONCAT(\"a\",\"b\")", "=_xludf.SUM(1,2)", "=_xludf.EOMONTH()"] {
+        t.set("C3", f);
+        assert_eq!(t.get("C3"), Value::Error(CellError::Name), "{f}");
+    }
     t.set("C2", "=1+");
     assert_eq!(t.get("C2"), Value::Error(CellError::Name));
 }

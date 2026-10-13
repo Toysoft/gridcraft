@@ -97,6 +97,9 @@ pub struct CalcReport {
     /// aren't results, so every formula counts as no oracle.
     pub stale_cache: bool,
     pub volatile: usize,
+    /// Matched cells whose producer saved GridCraft's TRUE or FALSE as the number 1 or 0 (no
+    /// `t="b"`, as Business Central's Excel exports do); counted in `matched` too.
+    pub bool_as_number: usize,
     /// The first `max_report` mismatches, primary ones first.
     pub mismatches: Vec<Mismatch>,
     pub functions: BTreeMap<String, FnStat>,
@@ -347,6 +350,13 @@ fn cell_name(wb: &Workbook, (sheet, c): Key) -> String {
     format!("{}!{}", quote_sheet(name), c.a1())
 }
 
+/// Whether the producer cached GridCraft's logical result as the number 1 or 0. Excel types a
+/// logical result `t="b"`; a writer that leaves the type out (`<c><f>TRUE()</f><v>1</v></c>`, as
+/// Business Central's "Open in Excel" exports do) stores the same value, read back as a number.
+pub fn bool_cached_as_number(expected: &Value, actual: &Value) -> bool {
+    matches!((expected, actual), (Value::Number(n), Value::Bool(b)) if *n == if *b { 1.0 } else { 0.0 })
+}
+
 /// Whether GridCraft's `actual` agrees with the producer's `expected`.
 pub fn values_match(expected: &Value, actual: &Value, tolerance: f64) -> bool {
     match (expected, actual) {
@@ -458,7 +468,11 @@ pub fn oracle(cached: &Workbook, fresh: &Workbook, calc: &Calc, trust_cache: boo
                 }
                 None => vec!["(unparsed)".to_string()],
             };
-            let ok = values_match(&cell.value, &actual, opts.tolerance);
+            let bool_as_number = bool_cached_as_number(&cell.value, &actual);
+            let ok = bool_as_number || values_match(&cell.value, &actual, opts.tolerance);
+            if bool_as_number {
+                r.bool_as_number += 1;
+            }
             for n in &funcs {
                 let st = r.functions.entry(n.clone()).or_default();
                 st.checked += 1;
@@ -914,6 +928,7 @@ struct Totals {
     mismatched: usize,
     no_oracle: usize,
     volatile: usize,
+    bool_as_number: usize,
     round_trip_failed: usize,
     round_trip_differing: usize,
     categories: BTreeMap<&'static str, usize>,
@@ -935,6 +950,7 @@ fn totals(reports: &[FileReport]) -> Totals {
         t.mismatched += r.calc.mismatched;
         t.no_oracle += r.calc.no_oracle;
         t.volatile += r.calc.volatile;
+        t.bool_as_number += r.calc.bool_as_number;
         if r.round_trip.error.is_some() {
             t.round_trip_failed += 1;
         }
@@ -995,7 +1011,8 @@ pub fn report_json(reports: &[FileReport], opts: &Options) -> Json {
                 "warnings": r.warnings,
                 "calc": {
                     "formulaCells": c.formula_cells, "checked": c.checked, "matched": c.matched, "mismatched": c.mismatched,
-                    "noOracle": c.no_oracle, "staleCache": c.stale_cache, "volatile": c.volatile, "mismatches": mismatches, "functions": functions_json(&c.functions),
+                    "noOracle": c.no_oracle, "staleCache": c.stale_cache, "volatile": c.volatile, "boolAsNumber": c.bool_as_number,
+                    "mismatches": mismatches, "functions": functions_json(&c.functions),
                     "signatures": c.signatures,
                 },
                 "roundTrip": {"error": r.round_trip.error, "differing": r.round_trip.differing(), "categories": categories},
@@ -1009,7 +1026,7 @@ pub fn report_json(reports: &[FileReport], opts: &Options) -> Json {
         "files": files,
         "totals": {
             "files": t.files, "opened": t.opened, "failedToOpen": t.failed, "formulaCells": t.formula_cells, "checked": t.checked,
-            "matched": t.matched, "mismatched": t.mismatched, "noOracle": t.no_oracle, "volatile": t.volatile,
+            "matched": t.matched, "mismatched": t.mismatched, "noOracle": t.no_oracle, "volatile": t.volatile, "boolAsNumber": t.bool_as_number,
             "roundTripFailed": t.round_trip_failed, "roundTripDiffering": t.round_trip_differing, "categoriesDiffering": t.categories,
         },
         "functions": functions_json(&t.functions),
@@ -1047,6 +1064,9 @@ fn print_human(reports: &[FileReport], opts: &Options) {
         );
         if c.stale_cache {
             outln!("  (the producer asked for a full recalculation on load: its cached values aren't results)");
+        }
+        if c.bool_as_number > 0 {
+            outln!("  ({} matched TRUE/FALSE results were saved by the producer as 1/0, without t=\"b\")", c.bool_as_number);
         }
         for m in &c.mismatches {
             let tag = if m.primary { "mismatch" } else { "  (downstream)" };
@@ -1144,6 +1164,9 @@ fn print_human(reports: &[FileReport], opts: &Options) {
         t.no_oracle,
         t.volatile
     );
+    if t.bool_as_number > 0 {
+        outln!("booleans saved as 1/0 by the producer: {} (counted as matched)", t.bool_as_number);
+    }
     let cats: Vec<String> = t.categories.iter().map(|(c, n)| format!("{c} {n}")).collect();
     outln!(
         "round trip: {} of {} files differ{}{}",
@@ -1246,6 +1269,31 @@ mod tests {
         let wb = book(&[("A1", "=1+2", n(3.0000000001))]);
         assert_eq!(check(&wb, &Options::default()).calc.matched, 1);
         assert_eq!(check(&wb, &Options { tolerance: 1e-12, ..Default::default() }).calc.mismatched, 1);
+    }
+
+    /// Business Central writes TRUE and FALSE as `<c><f>TRUE()</f><v>1</v></c>`, without `t="b"`:
+    /// the cache holds the right value under a number type, so it matches and is counted apart.
+    #[test]
+    fn booleans_cached_as_numbers_match_and_are_counted_apart() {
+        let wb = book(&[
+            ("A1", "=TRUE()", n(1.0)),
+            ("B1", "=FALSE()", n(0.0)),
+            ("C1", "=TRUE()", Value::Bool(true)),
+            ("D1", "=1=1", n(0.0)),
+            ("E1", "=TRUE()+0", n(1.0)),
+        ]);
+        let r = check(&wb, &Options::default());
+        assert_eq!((r.calc.checked, r.calc.matched, r.calc.mismatched), (5, 4, 1));
+        // A cached 0 for TRUE is still a mismatch, and a number result is compared as a number.
+        assert_eq!(r.calc.mismatches[0].cell, "Sheet1!D1");
+        assert_eq!(r.calc.signatures.get("number → bool"), Some(&1));
+        assert_eq!(r.calc.bool_as_number, 2);
+        let v = report_json(std::slice::from_ref(&r), &Options::default());
+        assert_eq!((v["files"][0]["calc"]["boolAsNumber"].clone(), v["totals"]["boolAsNumber"].clone()), (json!(2), json!(2)));
+        assert!(bool_cached_as_number(&n(1.0), &Value::Bool(true)));
+        assert!(!bool_cached_as_number(&n(1.0), &Value::Bool(false)));
+        assert!(!bool_cached_as_number(&n(2.0), &Value::Bool(true)));
+        assert!(!bool_cached_as_number(&Value::Bool(true), &n(1.0)));
     }
 
     #[test]
@@ -1396,7 +1444,19 @@ mod tests {
         assert_eq!(keys(f), set(&["path", "opened", "error", "warnings", "calc", "roundTrip"]));
         assert_eq!(
             keys(&f["calc"]),
-            set(&["formulaCells", "checked", "matched", "mismatched", "noOracle", "staleCache", "volatile", "mismatches", "functions", "signatures"])
+            set(&[
+                "formulaCells",
+                "checked",
+                "matched",
+                "mismatched",
+                "noOracle",
+                "staleCache",
+                "volatile",
+                "boolAsNumber",
+                "mismatches",
+                "functions",
+                "signatures"
+            ])
         );
         assert_eq!(f["calc"]["signatures"], json!({"number → number": 1}));
         assert_eq!(keys(&f["calc"]["mismatches"][0]), set(&["cell", "formula", "expected", "actual", "kind", "functions", "primary"]));
@@ -1435,6 +1495,7 @@ mod tests {
                 "mismatched",
                 "noOracle",
                 "volatile",
+                "boolAsNumber",
                 "roundTripFailed",
                 "roundTripDiffering",
                 "categoriesDiffering"

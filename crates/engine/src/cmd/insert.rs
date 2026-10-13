@@ -153,7 +153,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Link",
             ["Insert", "Links"],
             Some("Cmd+K"),
-            "{cell?, target: \"https://…\" | \"Sheet2!A1\" | \"mailto:…\", text?, tooltip?, remove?: bool}",
+            "{cell?, target: \"https://…\" | \"Book.xlsx\" | \"Sheet2!A1\" | \"mailto:…\", text?, tooltip?, remove?: bool}",
             has_doc,
             insert_link
         ),
@@ -1166,6 +1166,7 @@ fn insert_link(s: &mut Session, p: &Json) -> Result<Json> {
     };
     let text = str_param(p, "text").map(str::to_string);
     let tooltip = str_param(p, "tooltip").map(str::to_string);
+    let external = links_outside(&s.doc()?.wb, sheet, &target);
     edit(s, |cx| {
         let link_style = cx.wb.styles.derive(cx.wb.sheet(sheet).map(|sh| sh.style_id(at)).unwrap_or_default(), |st| {
             st.font.color = Color::Theme(10, 0);
@@ -1177,10 +1178,28 @@ fn insert_link(s: &mut Session, p: &Json) -> Result<Json> {
         } else {
             sh.set_style(at, link_style);
         }
-        sh.hyperlinks.insert(at, Hyperlink { target: target.clone(), tooltip: tooltip.clone() });
+        sh.hyperlinks.insert(at, Hyperlink { target: target.clone(), tooltip: tooltip.clone(), external });
         cx.touch(sheet, at);
         Ok(Json::Null)
     })
+}
+
+/// Sorts a link target as the two pages of Excel's Insert Hyperlink dialog do: "Place in This
+/// Document" is a sheet reference, a defined name or `#…`; anything else ("Existing File or Web
+/// Page") is outside the workbook and saved as a relationship.
+fn links_outside(wb: &Workbook, sheet: usize, target: &str) -> bool {
+    let t = target.trim();
+    if t.starts_with('#') || wb.name(t, sheet).is_some() || wb.table(t).is_some() {
+        return false;
+    }
+    let (on, body) = split_sheet(t);
+    // Sheet names can't hold `: \ / ? * [ ]`, so `https://…!A1` or `C:\…!A1` is no sheet reference,
+    // and `Book.xlsx#Sheet1!A1` is a place in another file unless a sheet has that name.
+    let on_sheet = on.is_none_or(|name| {
+        wb.sheets.iter().any(|s| s.name.eq_ignore_ascii_case(&name))
+            || (!name.is_empty() && !name.contains([':', '\\', '/', '?', '*', '[', ']', '#']))
+    });
+    !(on_sheet && RangeRef::parse(body).is_some())
 }
 
 fn comment(s: &mut Session, p: &Json, threaded: bool) -> Result<Json> {

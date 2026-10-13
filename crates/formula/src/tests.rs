@@ -64,6 +64,7 @@ fn normalises() {
     assert_eq!(rt("=sum(a1:b2)"), "SUM(A1:B2)");
     assert_eq!(rt("= 1 + 2"), "1+2");
     assert_eq!(rt("_xlfn.XLOOKUP(1,A:A,B:B)"), "XLOOKUP(1,A:A,B:B)");
+    assert_eq!(rt("_XLUDF.concat(\"a\",\"b\")"), "_xludf.CONCAT(\"a\",\"b\")");
     assert_eq!(rt("true"), "TRUE");
     assert_eq!(rt("'Sheet1'!A1"), "Sheet1!A1");
 }

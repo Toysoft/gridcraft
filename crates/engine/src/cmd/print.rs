@@ -2055,6 +2055,23 @@ mod tests {
     }
 
     #[test]
+    fn export_pdf_without_a_path_returns_bytes_and_never_opens_a_dialog() {
+        let mut s = s();
+        for params in [json!({}), json!({"path": ""}), json!({"path": null})] {
+            let r = s.execute("file.exportPdf", params).unwrap();
+            assert!(r.get("path").is_none(), "no file is written without a path");
+            let bytes = crate::io::base64_decode(r["base64"].as_str().unwrap()).unwrap();
+            assert!(bytes.starts_with(b"%PDF-"));
+        }
+        assert!(s.take_ui_requests().is_empty(), "a programmatic call never queues a dialog");
+        // Headless callers (CLI, MCP) get the same bytes, not an error.
+        assert!(s.execute_headless("file.exportPdf", json!({})).is_ok());
+        // With no workbook open it is a clear error, not a panic.
+        let mut none = Session::new();
+        assert!(none.execute("file.exportPdf", json!({})).is_err());
+    }
+
+    #[test]
     fn bands_unit() {
         let b = bands(0, 9, |_| 10.0, |_| 35.0, &[], 100);
         assert_eq!(b, vec![(0, 2), (3, 5), (6, 8), (9, 9)]);
