@@ -157,6 +157,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             insert_link
         ),
+        cmd!(
+            "link.open",
+            "Open Hyperlink",
+            [],
+            None,
+            "{url?: \"https://…\" | \"mailto:…\" | \"Sheet2!A1\", cell?} (default: the cell's link); only http, https and mailto are opened, any other scheme is an error; the UI asks before opening",
+            has_doc,
+            open_link
+        ),
         cmd!("review.newNote", "New Note", ["Review", "Notes"], Some("Shift+F2"), "{cell?, text, author?}", has_doc, |s, p| comment(s, p, false)),
         cmd!("review.newComment", "New Comment", ["Review", "Comments"], Some("Cmd+Shift+F2"), "{cell?, text, author?}", has_doc, |s, p| comment(
             s, p, true
@@ -310,7 +319,10 @@ fn insert_table(s: &mut Session, p: &Json) -> Result<Json> {
             range: r,
             header_row: true,
             totals_row: false,
-            columns: names.into_iter().map(|n| TableColumn { name: n, totals: TotalsFn::None, totals_label: None, formula: None }).collect(),
+            columns: names
+                .into_iter()
+                .map(|n| TableColumn { name: n, totals: TotalsFn::None, totals_label: None, formula: None, unique_name: None, xml: None })
+                .collect(),
             style,
             banded_rows: true,
             banded_cols: false,
@@ -318,6 +330,8 @@ fn insert_table(s: &mut Session, p: &Json) -> Result<Json> {
             last_col: false,
             filter_button: true,
             filter: vec![],
+            table_type: None,
+            connection_id: None,
         });
         cx.structural = true;
         Ok(json!({"table": name, "range": r.a1()}))
@@ -1182,6 +1196,31 @@ fn insert_link(s: &mut Session, p: &Json) -> Result<Json> {
         cx.touch(sheet, at);
         Ok(Json::Null)
     })
+}
+
+/// Follows a link: a reference selects it, an `http`/`https`/`mailto` address is handed to the
+/// host (`UiRequest::OpenUrl`); anything else is refused ([`crate::links::classify`]). Opens no
+/// dialog; the interactive click asks for confirmation first, in the UI.
+fn open_link(s: &mut Session, p: &Json) -> Result<Json> {
+    let target = match str_param(p, "url").or_else(|| str_param(p, "target")) {
+        Some(t) => t.to_string(),
+        None => {
+            let sheet = target_sheet(s, p)?;
+            let at = cell_param_on(s, p, "cell", sheet)?.unwrap_or(s.doc()?.selection.active);
+            let Some(h) = s.doc()?.wb.sheet(sheet).and_then(|sh| sh.hyperlinks.get(&at)) else {
+                return Err(EngineError::Other("There's no hyperlink in this cell.".into()));
+            };
+            h.target.clone()
+        }
+    };
+    match crate::links::classify(&target) {
+        crate::links::LinkKind::Internal(r) => super::edit::go_to(s, &json!({"reference": r.trim_start_matches('#')})),
+        crate::links::LinkKind::External(u) => {
+            s.ui_requests.push(crate::UiRequest::OpenUrl(u.clone()));
+            Ok(json!({"opened": u}))
+        }
+        crate::links::LinkKind::Refused(why) => Err(EngineError::Other(why)),
+    }
 }
 
 /// Sorts a link target as the two pages of Excel's Insert Hyperlink dialog do: "Place in This

@@ -291,6 +291,26 @@ fn circular_references_without_iterative_calculation() {
 }
 
 #[test]
+fn date_text_coerces_in_the_workbook_date_system() {
+    for (sys, serial) in [(gridcraft_core::DateSystem::D1900, 1462.0), (gridcraft_core::DateSystem::D1904, 0.0)] {
+        let mut t = T::new();
+        t.wb.date_system = sys;
+        t.set("A1", "'1/1/1904");
+        t.set("B1", "=A1+0");
+        t.set("C1", "=VALUE(A1)");
+        t.set("D1", "=-A1");
+        t.set("E1", "=DATEVALUE(A1)");
+        t.set("F1", "=NUMBERVALUE(A1)");
+        assert_eq!(t.get("A1"), Value::from("1/1/1904"));
+        assert_eq!(t.num("B1"), serial, "{sys:?}");
+        assert_eq!(t.num("C1"), serial, "{sys:?}");
+        assert_eq!(t.num("D1"), -serial, "{sys:?}");
+        assert_eq!(t.num("E1"), serial, "{sys:?}");
+        assert_eq!(t.num("F1"), serial, "{sys:?}");
+    }
+}
+
+#[test]
 fn operators() {
     let mut t = T::new();
     t.set("A1", "=\"a\"&1&TRUE");
@@ -366,6 +386,8 @@ fn arrays_do_not_spill_in_tables() {
         last_col: false,
         filter_button: false,
         filter: vec![],
+        table_type: None,
+        connection_id: None,
     });
     t.set("C4", "=SEQUENCE(2)");
     t.set("E1", "=SEQUENCE(4)");
@@ -423,6 +445,22 @@ fn references_functions() {
     assert_eq!(t.num("B3"), 50.0);
     t.set("B4", "=INDIRECT(\"A\"&4)");
     assert_eq!(t.num("B4"), 40.0);
+    // With a1 = FALSE the text must be R1C1: A1-style text is #REF!, not read as A1.
+    t.set("C1", "=INDIRECT(\"R3C1\",FALSE)");
+    assert_eq!(t.num("C1"), 30.0);
+    t.set("C2", "=INDIRECT(\"A3\",FALSE)");
+    assert_eq!(t.get("C2"), Value::Error(CellError::Ref));
+    // Defined names don't depend on the reference style.
+    t.wb.names.push(gridcraft_model::DefinedName {
+        name: "Third".into(),
+        scope: None,
+        formula: "Sheet1!$A$3".into(),
+        comment: String::new(),
+        hidden: false,
+    });
+    t.calc.rebuild(&t.wb);
+    t.set("C3", "=INDIRECT(\"Third\",FALSE)");
+    assert_eq!(t.num("C3"), 30.0);
     t.set("B5", "=SUM(A1:INDEX(A1:A4,3))");
     assert_eq!(t.num("B5"), 60.0);
     t.set("B6", "=SUM(A:A)");
@@ -719,7 +757,14 @@ fn subtotal_skips_filtered_rows() {
         range: gridcraft_core::RangeRef::parse("A1:A7").unwrap(),
         header_row: true,
         totals_row: false,
-        columns: vec![gridcraft_model::TableColumn { name: "Amount".into(), totals: Default::default(), totals_label: None, formula: None }],
+        columns: vec![gridcraft_model::TableColumn {
+            name: "Amount".into(),
+            totals: Default::default(),
+            totals_label: None,
+            formula: None,
+            unique_name: None,
+            xml: None,
+        }],
         style: String::new(),
         banded_rows: false,
         banded_cols: false,
@@ -727,6 +772,8 @@ fn subtotal_skips_filtered_rows() {
         last_col: false,
         filter_button: true,
         filter: crit(),
+        table_type: None,
+        connection_id: None,
     });
     sh.autofilter = Some(AutoFilter { range: gridcraft_core::RangeRef::parse("C1:C7").unwrap(), criteria: crit() });
     // Rows 3 and 5 are filtered out; row 9 (outside both filters) is hidden by hand.

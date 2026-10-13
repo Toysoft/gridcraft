@@ -398,6 +398,18 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Bottom Margin" => "Margines dolny",
         "Header Margin" => "Margines nagłówka",
         "Footer Margin" => "Margines stopki",
+        // Recent list ages. Counts are never one; weeks, months and years are abbreviated because
+        // their Polish plural changes with the number (2 tygodnie, 5 tygodni).
+        "Modified" => "Zmodyfikowano",
+        "Not available" => "Niedostępne",
+        "Just now" => "Przed chwilą",
+        "Yesterday" => "Wczoraj",
+        "{n} min ago" => "{n} min temu",
+        "{n} h ago" => "{n} godz. temu",
+        "{n} days ago" => "{n} dni temu",
+        "{n} weeks ago" => "{n} tyg. temu",
+        "{n} months ago" => "{n} mies. temu",
+        "{n} years ago" => "{n} l. temu",
         // Format Cells dialog (looked up through `Language::tr` since storytold/gridcraft#788).
         "Format Cells" => "Formatuj komórki",
         "Cancel" => "Anuluj",

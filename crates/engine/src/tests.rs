@@ -561,6 +561,28 @@ fn insert_delete_rows_adjust() {
 }
 
 #[test]
+fn deleting_a_multi_area_row_selection_removes_every_area_and_undoes_once() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [[1], [2], [3], [4], [5], [6]]})).unwrap();
+    s.execute("cell.set", json!({"cell": "B1", "input": "=A6"})).unwrap();
+    // Ctrl-select rows 2, 4 and 5:6 (A1 refs are 1-based).
+    let sel = &mut s.doc_mut().unwrap().selection;
+    sel.ranges = vec![gridcraft_core::RangeRef::rows(1, 1), gridcraft_core::RangeRef::rows(3, 3), gridcraft_core::RangeRef::rows(4, 5)];
+    sel.active = CellRef::new(4, 0);
+    s.doc_mut().unwrap().undo.clear();
+    s.execute("home.deleteRows", json!({})).unwrap();
+    assert_eq!((v(&s, "A1"), v(&s, "A2"), v(&s, "A3")), (Value::Number(1.0), Value::Number(3.0), Value::Empty));
+    assert_eq!(s.execute("cell.get", json!({"cell": "B1"})).unwrap()["formula"], "=#REF!");
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!((1..=6).map(|r| v(&s, &format!("A{r}"))).collect::<Vec<_>>(), (1..=6).map(|n| Value::Number(n as f64)).collect::<Vec<_>>());
+    assert!(s.doc().unwrap().undo.is_empty(), "one undo step restored all rows");
+    // The explicit list form behaves the same, for columns too.
+    s.execute("range.setValues", json!({"range": "A1", "values": [[1, 2, 3, 4]]})).unwrap();
+    s.execute("home.deleteColumns", json!({"cols": "A:A,C:C"})).unwrap();
+    assert_eq!((v(&s, "A1"), v(&s, "B1"), v(&s, "C1")), (Value::Number(2.0), Value::Number(4.0), Value::Empty));
+}
+
+#[test]
 fn move_columns_reorders_without_overwriting_and_undoes_once() {
     let mut s = s();
     s.execute("range.setValues", json!({"range": "A1", "values": [[1, 2, 3, 4, 5, 6, 7, 8]]})).unwrap();
@@ -1045,6 +1067,87 @@ fn spill_references_roundtrip_through_xlsx() {
     assert_eq!(s.execute("cell.get", json!({"cell": "C1"})).unwrap()["formula"], "=SUM(B1#)");
     assert_eq!(s.doc().unwrap().wb.names[0].formula, "Sheet1!$B$1#");
     assert_eq!((v(&s, "C1"), v(&s, "C2")), (Value::Number(10.0), Value::Number(4.0)));
+}
+
+/// Fixture for the open-time row fit (issue #833): `row_info` = (size, custom, hidden) for
+/// row 5 (index 4), `None` = no row entry at all. Cell A5 = "plain big bold" — whole-cell
+/// font 20pt with `big_font`, plain 11pt without (a tall plain row's fit removes its entry).
+/// 11pt cell in A1 for contrast rows. Built with the model API, never through commands —
+/// commands would auto-fit the rows — and exported with `write_xlsx`, which omits `ht` for
+/// rows without a size: exactly the bug's input.
+fn big_font_workbook(row_info: Option<(f32, bool, bool)>, big_font: bool) -> Vec<u8> {
+    let mut wb = gridcraft_model::Workbook::new();
+    let big = wb.styles.derive(gridcraft_model::StyleId::DEFAULT, |s| s.font.size = 20.0);
+    let sh = wb.sheet_mut(0).unwrap();
+    sh.set_value(CellRef::new(0, 0), Value::text("small"));
+    sh.set_value(CellRef::new(4, 0), Value::text("plain big bold"));
+    if big_font {
+        sh.set_style(CellRef::new(4, 0), big);
+    }
+    if let Some((size, custom, hidden)) = row_info {
+        let e = sh.rows.entry(4).or_default();
+        e.size = Some(size);
+        e.custom = custom;
+        e.hidden = hidden;
+    }
+    gridcraft_xlsx::write_xlsx(&wb).unwrap()
+}
+
+#[test] // A — the issue's repro
+fn open_grows_default_height_rows_to_their_font() {
+    let default_h = gridcraft_model::Workbook::new().active().unwrap().row_height(0);
+    let mut s = Session::new();
+    s.execute("file.open", json!({"name": "bigfont.xlsx", "base64": crate::io::base64_encode(&big_font_workbook(None, true))})).unwrap();
+    let h = s.doc().unwrap().wb.active().unwrap().row_height(4);
+    assert!(h >= 30.0, "20pt cell must grow its default-height row on open, got {h}");
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(0), default_h, "11pt row stays default");
+}
+
+#[test] // B — Review Focus 1
+fn open_keeps_custom_height_rows() {
+    let mut s = Session::new();
+    s.execute("file.open", json!({"name": "custom.xlsx", "base64": crate::io::base64_encode(&big_font_workbook(Some((25.0, true, false)), true))}))
+        .unwrap();
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), 25.0, "custom-height rows are left alone on open");
+}
+
+#[test] // C — Review Focus 2 (Some→Some: the fit shrinks the row, the clamp keeps the taller height)
+fn open_never_shrinks_taller_auto_rows() {
+    let mut s = Session::new();
+    s.execute("file.open", json!({"name": "tall.xlsx", "base64": crate::io::base64_encode(&big_font_workbook(Some((60.0, false, false)), true))}))
+        .unwrap();
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), 60.0, "open is grow-only: a 60px auto-height row keeps its height");
+}
+
+#[test] // C′ — Review Focus 2 (Some→None: a plain tall row's entry is removed by the fit, the clamp restores it)
+fn open_restores_height_of_plain_rows_the_fit_removed() {
+    let mut s = Session::new();
+    s.execute(
+        "file.open",
+        json!({"name": "tall-plain.xlsx", "base64": crate::io::base64_encode(&big_font_workbook(Some((60.0, false, false)), false))}),
+    )
+    .unwrap();
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), 60.0, "a tall plain row keeps its height after the fit removes its entry");
+}
+
+#[test] // D — Review Focus 5
+fn open_fitting_keeps_hidden_rows_hidden() {
+    let mut s = Session::new();
+    s.execute("file.open", json!({"name": "hidden.xlsx", "base64": crate::io::base64_encode(&big_font_workbook(Some((20.0, false, true)), true))}))
+        .unwrap();
+    let sh = s.doc().unwrap().wb.active().unwrap();
+    let info = sh.rows.get(&4).unwrap();
+    assert!(info.size.is_some_and(|h| h >= 20.0), "hidden row grows or keeps its height, got {:?}", info.size);
+    assert!(info.hidden, "fitting a hidden row must not unhide it");
+}
+
+#[test] // E — Review Focus 4
+fn open_leaves_plain_workbooks_untouched() {
+    let mut s = Session::new();
+    s.execute("file.open", json!({"name": "plain.xlsx", "base64": crate::io::base64_encode(&big_font_workbook(None, false))})).unwrap();
+    let sh = s.doc().unwrap().wb.active().unwrap();
+    assert!(sh.rows.get(&0).is_none_or(|i| i.size.is_none()), "11pt default rows get no height entry");
+    assert!(sh.rows.values().all(|i| i.size.is_none()), "no row gains a height entry");
 }
 
 #[test]
@@ -1618,6 +1721,82 @@ fn saving_an_opened_semicolon_csv_keeps_semicolons() {
     let bytes = crate::io::base64_decode(saved["base64"].as_str().unwrap()).unwrap();
     assert!(bytes.starts_with(b"1;511;184;"));
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A workbook whose B1 is `=[1]Sheet1!A1`, linked to `link` (an external relationship target).
+fn linked_workbook(link: &str) -> Vec<u8> {
+    use std::io::{Cursor, Write};
+    const NS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    let types = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/externalLinks/externalLink1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml"/></Types>"#.to_string();
+    let rels = format!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{NS_REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>"#
+    );
+    let book = format!(
+        r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="{NS_REL}"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets><externalReferences><externalReference r:id="rId2"/></externalReferences></workbook>"#
+    );
+    let book_rels = format!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{NS_REL}/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="{NS_REL}/externalLink" Target="externalLinks/externalLink1.xml"/></Relationships>"#
+    );
+    let sheet = r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="B1"><f>[1]Sheet1!A1</f><v>10</v></c></row></sheetData></worksheet>"#.to_string();
+    let link_part = format!(
+        r#"<externalLink xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="{NS_REL}"><externalBook r:id="rId1"><sheetNames><sheetName val="Sheet1"/></sheetNames><sheetDataSet><sheetData sheetId="0"><row r="1"><cell r="A1"><v>10</v></cell></row></sheetData></sheetDataSet></externalBook></externalLink>"#
+    );
+    let link_rels = format!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{NS_REL}/externalLinkPath" Target="{link}" TargetMode="External"/></Relationships>"#
+    );
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, data) in [
+        ("[Content_Types].xml", types),
+        ("_rels/.rels", rels),
+        ("xl/workbook.xml", book),
+        ("xl/_rels/workbook.xml.rels", book_rels),
+        ("xl/worksheets/sheet1.xml", sheet),
+        ("xl/externalLinks/externalLink1.xml", link_part),
+        ("xl/externalLinks/_rels/externalLink1.xml.rels", link_rels),
+    ] {
+        zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+        zip.write_all(data.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+/// The target of the linked workbook in a saved file.
+fn link_target(path: &std::path::Path) -> String {
+    use std::io::Read;
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(std::fs::read(path).unwrap())).unwrap();
+    let mut rels = String::new();
+    zip.by_name("xl/externalLinks/_rels/externalLink1.xml.rels").unwrap().read_to_string(&mut rels).unwrap();
+    let (_, after) = rels.split_once("Target=\"").unwrap();
+    after.split_once('"').unwrap().0.to_string()
+}
+
+/// Save As into another folder keeps the link on the same file, as Excel does: the relative path
+/// is rewritten from the new folder (#801).
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn save_as_into_another_folder_keeps_linked_workbooks_on_the_same_file() {
+    #[allow(clippy::disallowed_methods)] // native-only test: a unique temp dir name
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let a = std::env::temp_dir().join(format!("gridcraft-links-{}-{nonce}", std::process::id()));
+    let b = a.join("b");
+    std::fs::create_dir_all(&b).unwrap();
+    let dest = a.join("Dest.xlsx");
+    std::fs::write(&dest, linked_workbook("Source.xlsx")).unwrap();
+    let mut s = s();
+    s.execute("file.open", json!({"path": dest})).unwrap();
+    s.execute("file.saveAs", json!({"path": b.join("Dest.xlsx")})).unwrap();
+    assert_eq!(link_target(&b.join("Dest.xlsx")), "../Source.xlsx");
+    // Saved again into the folder it was read from, the path is the one it was read with.
+    s.execute("file.saveAs", json!({"path": a.join("Copy.xlsx")})).unwrap();
+    assert_eq!(link_target(&a.join("Copy.xlsx")), "Source.xlsx");
+    // Read from a subfolder and saved into its parent, the path goes down into the subfolder.
+    let deep = b.join("Deep.xlsx");
+    std::fs::write(&deep, linked_workbook("Source.xlsx")).unwrap();
+    let mut s = Session::new();
+    s.execute("file.open", json!({"path": deep})).unwrap();
+    s.execute("file.saveAs", json!({"path": a.join("Deep.xlsx")})).unwrap();
+    assert_eq!(link_target(&a.join("Deep.xlsx")), "b/Source.xlsx");
+    std::fs::remove_dir_all(a).unwrap();
 }
 
 /// A typo like `report.cvs` must not quietly write an XLSX under that name and adopt it as the
@@ -3041,6 +3220,22 @@ fn a_decrypted_workbook_never_overwrites_its_encrypted_original() {
     assert!(s.take_ui_requests().iter().any(|r| matches!(r, crate::UiRequest::Dialog(name, _) if name == "saveAs")));
     assert_eq!(std::fs::read(&path).unwrap(), bytes, "the encrypted original is untouched");
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn link_open_refuses_every_scheme_but_http_https_and_mailto() {
+    let mut s = s();
+    s.execute("insert.link", json!({"cell": "A1", "target": "file:///etc/passwd"})).unwrap();
+    s.take_ui_requests();
+    for url in ["file:///etc/passwd", "smb://h/s", "\\\\h\\s", "JAVASCRIPT:1"] {
+        assert!(s.execute("link.open", json!({"url": url})).is_err(), "{url}");
+    }
+    assert!(s.execute("link.open", json!({"cell": "A1"})).is_err());
+    assert!(s.take_ui_requests().is_empty());
+    s.execute("link.open", json!({"url": "HTTPS://example.org/a"})).unwrap();
+    assert_eq!(s.take_ui_requests(), vec![crate::UiRequest::OpenUrl("HTTPS://example.org/a".into())]);
+    s.execute("link.open", json!({"url": "B2"})).unwrap();
+    assert!(s.take_ui_requests().is_empty());
 }
 
 #[test]

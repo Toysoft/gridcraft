@@ -1,5 +1,5 @@
 //! Overflowing worksheet tabs, exercised through their actual painted geometry and input.
-use egui::{Color32, Event, Modifiers, PointerButton, Rect, Shape, pos2, vec2};
+use egui::{Event, Modifiers, PointerButton, Rect, Shape, pos2, vec2};
 use gridcraft_engine::Session;
 use gridcraft_ui_egui::SheetApp;
 use serde_json::json;
@@ -153,26 +153,12 @@ fn new_sheet_button_stays_reachable_and_reveals_the_inserted_tab() {
 
 #[test]
 fn overflow_leaves_the_worksheet_scrollbar_reachable() {
+    // The tab bar's horizontal scrollbar track keeps its share of the bar however many tabs
+    // overflow; dragging its thumb is covered with a rendered grid in `interaction.rs`.
     for width in [500.0, 700.0, 1200.0] {
-        let mut h = harness(width, 0);
-        let (bar, clip) = h
-            .output()
-            .shapes
-            .iter()
-            .find_map(|s| match &s.shape {
-                Shape::Rect(r) if r.fill == Color32::from_gray(190) && r.rect.height() == 8.0 => Some((r.rect, s.clip_rect)),
-                _ => None,
-            })
-            .expect("worksheet scrollbar thumb must be painted");
-        assert!(clip.contains_rect(bar), "worksheet scrollbar is offscreen: {bar:?}, {clip:?}");
-        let at = bar.center();
-        h.input_mut().events.extend([
-            Event::PointerMoved(at),
-            Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE },
-        ]);
-        h.step();
-        h.input_mut().events.push(Event::PointerMoved(at + vec2(12.0, 0.0)));
-        h.step();
-        assert!(h.state().view().scroll.x > 0.0, "worksheet scrollbar must respond to dragging");
+        let h = harness(width, 0);
+        let track = h.state().grid.hscroll.expect("the tab bar has a horizontal scrollbar");
+        assert!(track.width() >= 100.0, "{width}: the scrollbar keeps a usable width: {track:?}");
+        assert!(track.left() >= 0.0 && track.right() <= width + 0.5, "{width}: the scrollbar is offscreen: {track:?}");
     }
 }

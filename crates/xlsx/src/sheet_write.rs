@@ -1032,6 +1032,12 @@ fn table_xml(t: &Table, cols: &[String], name: &str, id: u32, out: &mut Out) -> 
     } else {
         s.push_str(" totalsRowShown=\"0\"");
     }
+    if let Some(ty) = &t.table_type {
+        let _ = write!(s, " tableType=\"{}\"", esc_attr(ty));
+    }
+    if let Some(c) = t.connection_id {
+        let _ = write!(s, " connectionId=\"{c}\"");
+    }
     s.push('>');
     if t.header_row && t.filter_button {
         let end_row = if t.totals_row { t.range.end.row.saturating_sub(1).max(t.range.start.row) } else { t.range.end.row };
@@ -1041,7 +1047,11 @@ fn table_xml(t: &Table, cols: &[String], name: &str, id: u32, out: &mut Out) -> 
     let _ = write!(s, "<tableColumns count=\"{}\">", cols.len());
     for (i, name) in cols.iter().enumerate() {
         let col = t.columns.get(i);
-        let _ = write!(s, "<tableColumn id=\"{}\" name=\"{}\"", i + 1, esc_attr(&encode_xstring(name)));
+        let _ = write!(s, "<tableColumn id=\"{}\"", i + 1);
+        if let Some(u) = col.and_then(|c| c.unique_name.as_ref()) {
+            let _ = write!(s, " uniqueName=\"{}\"", esc_attr(u));
+        }
+        let _ = write!(s, " name=\"{}\"", esc_attr(&encode_xstring(name)));
         let totals = col.map(|c| c.totals).unwrap_or_default();
         if t.totals_row {
             let f = match totals {
@@ -1064,7 +1074,8 @@ fn table_xml(t: &Table, cols: &[String], name: &str, id: u32, out: &mut Out) -> 
         }
         let calc = col.and_then(|c| c.formula.as_ref()).filter(|f| !f.is_empty());
         let custom = if t.totals_row && totals == TotalsFn::Custom { col.and_then(|c| c.totals_label.as_ref()) } else { None };
-        if calc.is_none() && custom.is_none() {
+        let xml = col.and_then(|c| c.xml.as_ref());
+        if calc.is_none() && custom.is_none() && xml.is_none() {
             s.push_str("/>");
             continue;
         }
@@ -1074,6 +1085,13 @@ fn table_xml(t: &Table, cols: &[String], name: &str, id: u32, out: &mut Out) -> 
         }
         if let Some(f) = custom {
             let _ = write!(s, "<totalsRowFormula>{}</totalsRowFormula>", esc(&text_to_file(f)));
+        }
+        if let Some(x) = xml {
+            let _ = write!(s, "<xmlColumnPr mapId=\"{}\" xpath=\"{}\"", x.map_id, esc_attr(&x.xpath));
+            if x.denormalized {
+                s.push_str(" denormalized=\"1\"");
+            }
+            let _ = write!(s, " xmlDataType=\"{}\"/>", esc_attr(&x.data_type));
         }
         s.push_str("</tableColumn>");
     }

@@ -41,7 +41,12 @@ pub fn parse_input(s: &str, sys: DateSystem) -> Parsed {
 
 /// Numeric text as arithmetic coerces it ("1,000", "50%", "$3", "1/2/2020", "10:00").
 pub fn parse_number_text(s: &str) -> Option<f64> {
-    parse_numeric(s.trim(), DateSystem::D1900).map(|(n, _)| n)
+    parse_number_text_in(s, DateSystem::D1900)
+}
+
+/// Like [`parse_number_text`], with date text read in the given workbook date system.
+pub fn parse_number_text_in(s: &str, sys: DateSystem) -> Option<f64> {
+    parse_numeric(s.trim(), sys).map(|(n, _)| n)
 }
 
 fn parse_numeric(t: &str, sys: DateSystem) -> Option<(f64, Option<&'static str>)> {

@@ -1,7 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (ink XLSX preservation; icons still pending) · **Target:** Microsoft Excel (Microsoft 365)
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (§8: PivotTable values on rows) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (rows auto-fit oversized fonts on open and whole-row/column formatting) · **Target:** Microsoft Excel (Microsoft 365)
 
 Every known shortfall against Excel, one entry each, ranked by user impact (what blocks someone
 using GridCraft for real work first). This is the work list: pick from the top, check the open
@@ -169,6 +168,7 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | rows auto-fit oversized fonts on open and whole-row/column formatting (#833) |
 | 2026-10-12 | minor | Page Layout view: dragging margins on the rulers (#792) removed from the §14 remainder |
 | 2026-10-12 | minor | §13: Forecast Sheet Forecast Start (hindcast) landed (#785) |
 | 2026-10-12 | minor | §17: ink geometry survives XLSX saves; the icon portion of #551 remains |

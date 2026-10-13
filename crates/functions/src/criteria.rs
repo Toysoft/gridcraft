@@ -138,9 +138,10 @@ impl Criterion {
                 match self.op {
                     Op::Eq => blank,
                     Op::Ne => !blank,
-                    // "<" / ">" with nothing: Excel compares against "" for text cells.
+                    // "<" / ">" with nothing: Excel compares against "" for text cells, but an
+                    // empty string never matches ("<=" and ">=" count it in neither).
                     _ => match &v {
-                        Value::Text(t) => cmp_op(self.op, compare_text(t, "")),
+                        Value::Text(t) if !t.is_empty() => cmp_op(self.op, compare_text(t, "")),
                         _ => false,
                     },
                 }
@@ -233,19 +234,25 @@ fn tokenize(pattern: &str) -> Vec<Tok> {
     while let Some(c) = it.next() {
         match c {
             '~' => match it.next() {
-                Some(n) => out.extend(n.to_lowercase().map(Tok::Char)),
+                Some(n) => out.extend(std::iter::once(lower_char(n)).map(Tok::Char)),
                 None => out.push(Tok::Char('~')),
             },
             '*' => out.push(Tok::Star),
             '?' => out.push(Tok::Any),
-            c => out.extend(c.to_lowercase().map(Tok::Char)),
+            c => out.extend(std::iter::once(lower_char(c)).map(Tok::Char)),
         }
     }
     out
 }
 
+/// Lowercase one char to exactly one char, so positions in the lowered text match the original
+/// (U+0130 `İ` folds to `i`, like `fold` in text.rs).
+fn lower_char(c: char) -> char {
+    c.to_lowercase().next().unwrap_or(c)
+}
+
 fn lower_chars(s: &str) -> Vec<char> {
-    s.chars().flat_map(char::to_lowercase).collect()
+    s.chars().map(lower_char).collect()
 }
 
 /// Whether the pattern contains an unescaped wildcard.
@@ -355,6 +362,9 @@ mod tests {
         assert!(m("<>", Value::from("a")));
         assert!(!m("<>", Value::Empty));
         assert!(m("TRUE", Value::Bool(true)));
+        // A bare "<=" or ">=" never matches an empty string (Excel 365: COUNTIF(="", "<=") is 0).
+        assert!(!m("<=", Value::from("")));
+        assert!(!m(">=", Value::from("")));
         assert!(m("<b", Value::from("apple")));
         assert!(!m("<b", Value::Number(1.0)));
         assert!(m("#N/A", Value::Error(CellError::NA)));
@@ -382,6 +392,8 @@ mod tests {
         assert_eq!(wildcard_find("b?d", "abxxd bcd", 0), Some(6));
         assert_eq!(wildcard_find("c*", "abcd", 0), Some(2));
         assert_eq!(wildcard_find("z", "abcd", 0), None);
+        assert_eq!(wildcard_find("b", "a\u{130}bc", 0), Some(2));
+        assert!(wildcard_match("i*", "\u{130}stanbul"));
         assert!(has_wildcards("a*"));
         assert!(!has_wildcards("abc"));
     }
