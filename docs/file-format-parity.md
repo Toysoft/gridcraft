@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (CSV/text open follows the Automatic Data Conversion options; trailing decimal zeros; previously trivial: XLSX chart sheets are kept on save (#727)) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (dates and times in CSV/text can stay text; previously minor: CSV/text open follows the Automatic Data Conversion options; trailing decimal zeros) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -41,7 +41,7 @@ and repair-free opening remain unverified.
 
 | Format | Excel | GridCraft read | GridCraft write | Notes |
 |---|---|---|---|---|
-| `.csv` UTF-8 / Windows / Mac / MS-DOS | R/W | yes (UTF-8 and UTF-16 BOMs, UTF-8, Windows-1252 fallback; delimiter detection; File › Options › Data › Automatic Data Conversion decides which fields become numbers, so IDs like `0042`, `124412140710` or `1244121406E6` can stay text; optionally `720.0` keeps its `.0`) | yes (UTF-8 without BOM, CRLF; a file opened as CSV is saved with the separator it was read with, so a `;` file stays `;`; otherwise `,`) | Writes the **displayed** values like Excel (number formats applied, formula results, never column-width `#####`). No encoding choice on save. Re-import of a single-column export splits text (#127). A used range that would write more than 512 MiB is refused with an error before allocation (#528). |
+| `.csv` UTF-8 / Windows / Mac / MS-DOS | R/W | yes (UTF-8 and UTF-16 BOMs, UTF-8, Windows-1252 fallback; delimiter detection; File › Options › Data › Automatic Data Conversion decides which fields become numbers, so IDs like `0042`, `124412140710` or `1244121406E6` can stay text; optionally `720.0` keeps its `.0`, and dates and times like `2.6.70` stay text) | yes (UTF-8 without BOM, CRLF; a file opened as CSV is saved with the separator it was read with, so a `;` file stays `;`; otherwise `,`) | Writes the **displayed** values like Excel (number formats applied, formula results, never column-width `#####`). No encoding choice on save. Re-import of a single-column export splits text (#127). A used range that would write more than 512 MiB is refused with an error before allocation (#528). |
 | `.txt` tab-delimited, Unicode text | R/W | yes (`.txt`, `.tsv`, `.tab`) | yes (displayed values) | Text Import Wizard options partly via Text to Columns |
 | `.prn` formatted text (space-delimited) | R/W | no | no | |
 | `.dif`, `.slk` (SYLK) | R/W | no | no | Small, legacy |
@@ -83,6 +83,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | "Convert text that looks like a date or time to a date" (on by default): off, `2.6.70`, `3/4/2026` and `10:30` open as text and save back as written (#506) |
 | 2026-10-12 | minor | "Remove trailing zeros after the decimal separator" (on by default): off, `720.0` opens as 720 formatted `0.0` and saves back as `720.0` |
 | 2026-10-12 | minor | CSV/TSV/text open follows the Automatic Data Conversion options (leading zeros, long numbers, digits around E) |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |

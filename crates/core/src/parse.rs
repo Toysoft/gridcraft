@@ -17,8 +17,9 @@ pub struct Parsed {
 /// Excel's File › Options › Data › Automatic Data Conversion, for entering, pasting and loading
 /// text (CSV): which number-like text becomes a number. The default converts everything, like
 /// Excel and like GridCraft before the options existed; each switch only keeps more input as text.
-/// (Excel's fourth option, continuous letters and numbers to a date, has no counterpart: GridCraft
-/// never converts `12JAN2026`.)
+/// Excel's fourth option, continuous letters and numbers to a date, stops conversions GridCraft
+/// never makes (`12JAN2026` is always text); in its place [`Self::convert_dates`] covers every date
+/// and time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct DataConversion {
@@ -42,6 +43,11 @@ pub struct DataConversion {
     /// decimal zeros gets a number format that shows them (`720.0` → `0.0`, `3.10` → `0.00`), so the
     /// grid shows it as written and a saved CSV writes it back the same. It stays a number.
     pub remove_trailing_zeros: bool,
+    /// "Convert text that looks like a date or time to a date", GridCraft's addition in the place of
+    /// Excel's fourth option: on (the default, as in Excel) `3/4/2026`, `2.6.70`, `4-Mar-2026` and
+    /// `10:30` become dates and times. Off, they stay text, as written; numbers and fractions
+    /// (`1 1/2`) still convert.
+    pub convert_dates: bool,
 }
 
 /// `0.0` … `0.000000000000000`: the formats that keep trailing zeros
@@ -107,6 +113,7 @@ impl Default for DataConversion {
             long_number_digits: GENERAL_DIGITS,
             digits_around_e: true,
             remove_trailing_zeros: true,
+            convert_dates: true,
         }
     }
 }
@@ -115,7 +122,7 @@ impl DataConversion {
     /// Every conversion on, like Excel's "Enable all default data conversions" checkbox. Off,
     /// everything number-like is kept as written.
     pub fn all(&self) -> bool {
-        self.remove_leading_zeros && self.keep_first_15_digits && self.digits_around_e && self.remove_trailing_zeros
+        self.remove_leading_zeros && self.keep_first_15_digits && self.digits_around_e && self.remove_trailing_zeros && self.convert_dates
     }
 
     /// Whether `plain`, text [`parse_plain`] read as the number `n`, may become one. Digits are
@@ -223,7 +230,9 @@ fn parse_numeric(t: &str, sys: DateSystem, conv: &DataConversion) -> Option<(f64
     if let Some(r) = parse_fraction(t) {
         return Some((r, Some("# ?/?")));
     }
-    if let Some(r) = parse_datetime(t, sys) {
+    if conv.convert_dates
+        && let Some(r) = parse_datetime(t, sys)
+    {
         return Some(r);
     }
     None
@@ -616,6 +625,7 @@ mod tests {
             long_number_digits: 1,
             digits_around_e: false,
             remove_trailing_zeros: false,
+            convert_dates: false,
         };
         assert_eq!(with("'5", none), Value::text("5"));
         assert_eq!(with("TRUE", none), Value::Bool(true));
@@ -655,6 +665,41 @@ mod tests {
     }
 
     #[test]
+    fn dates_and_times_stay_text_when_not_converted() {
+        let off = DataConversion { convert_dates: false, ..DataConversion::default() };
+        let with = |s: &str| parse_input_with(s, DateSystem::D1900, &off);
+        // Converted by default: `2.6.70` is 6 February 1970 (m.d.yy), as en-US reads it.
+        assert_eq!(p("2.6.70"), Parsed { value: Value::Number(25605.0), format: Some("m/d/yyyy") });
+        for kept in [
+            "2.6.70",
+            "3/4/2026",
+            "2026-03-04",
+            "4-Mar-2026",
+            "Mar 4, 2026",
+            "4 March 2026",
+            "Mar-26",
+            "1/2",
+            "10:30",
+            "10:30:15 PM",
+            "25:00",
+            "10/7/2026 18:00",
+            " 3/4/2026 ",
+        ] {
+            assert!(p(kept).value.is_number(), "{kept} converts by default");
+            assert_eq!(with(kept), Parsed { value: Value::text(kept), format: None }, "{kept}");
+        }
+        // Numbers, fractions and the other kinds of entry are unaffected.
+        assert_eq!(with("720"), p("720"));
+        assert_eq!(with("1 1/2"), p("1 1/2"));
+        assert_eq!(with("$1,234.50"), p("$1,234.50"));
+        assert_eq!(with("12.5%"), p("12.5%"));
+        assert_eq!(with("TRUE").value, Value::Bool(true));
+        // Arithmetic still reads date text, as it reads `0123` whatever the options say.
+        assert_eq!(parse_number_text("3/4/2026"), p("3/4/2026").value.as_f64());
+        assert!(!off.all());
+    }
+
+    #[test]
     fn data_conversion_json() {
         // Prefs saved before the options existed (or with some missing) get Excel's defaults.
         let old: DataConversion = serde_json::from_str("{}").unwrap();
@@ -667,12 +712,13 @@ mod tests {
                 keep_first_15_digits: false,
                 long_number_digits: 11,
                 digits_around_e: false,
-                remove_trailing_zeros: true
+                remove_trailing_zeros: true,
+                convert_dates: true
             }
         );
         assert_eq!(
             serde_json::to_value(some).unwrap(),
-            serde_json::json!({"removeLeadingZeros": true, "keepFirst15Digits": false, "longNumberDigits": 11, "digitsAroundE": false, "removeTrailingZeros": true})
+            serde_json::json!({"removeLeadingZeros": true, "keepFirst15Digits": false, "longNumberDigits": 11, "digitsAroundE": false, "removeTrailingZeros": true, "convertDates": true})
         );
     }
 

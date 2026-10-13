@@ -52,9 +52,10 @@ texture handles instead of cycling through the cache every frame.
 
 File › Options › Data copies Excel's Automatic Data Conversion list (enable all, remove leading
 zeros, keep first 15 digits of long numbers, convert digits around "E"; Excel's fourth option,
-continuous letters and numbers to a date, has no counterpart because GridCraft never makes that
-conversion). The options apply to typing, pasting and opening CSV/text files, as in Excel, and are
-an application preference (`Prefs::data_conversion`, `app.dataConversion`), not workbook state.
+continuous letters and numbers to a date, stops a conversion GridCraft never makes, so its place
+holds a broader date option, below). The options apply to typing, pasting and opening CSV/text
+files, as in Excel, and are an application preference (`Prefs::data_conversion`,
+`app.dataConversion`), not workbook state.
 All default on, so nothing changes until someone opts out.
 
 One deliberate difference: with "Keep first 15 digits of long numbers and display in scientific
@@ -75,6 +76,17 @@ them (`0.0`, `0.00`, `#.00`), as `1,234.50` already gets `#,##0.00`. It stays a 
 shows it as written; and since CSV export writes displayed values, the saved file has `720.0` again.
 It is one of the conversions "Enable all" sets, so unchecking that keeps everything as written. As
 with every automatic format, a cell that already has a format keeps it.
+
+In the place of Excel's fourth option, GridCraft has *Convert text that looks like a date or time
+to a date*, on by default (today's behaviour). Excel's box only keeps runs like `SEPT2` or
+`12JAN2026` as text, which GridCraft never converts; Excel's other date and time conversions can't
+be switched off, and GridCraft's couldn't either, so `2.6.70` (a version or part number) opened as
+6 February 1970 and saved back as
+`2/6/1970` (#506). Off, every date and time (`3/4/2026`, `2.6.70`, `4-Mar-2026`, `1/2`, `10:30`) stays
+text, as written, when typed, pasted or opened; numbers and fractions (`1 1/2`) still convert, and
+formulas still read date text (`=DATEVALUE("3/4/2026")`), as they read `0123` whatever the options
+say. It is one of the conversions "Enable all" sets. A Text Import Wizard with a type per column
+would be the finer tool; this is the switch for files that must come back as they were.
 
 ## Ctrl+wheel zoom steps along its own ladder, not Excel's 15-point steps
 

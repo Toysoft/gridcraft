@@ -1060,9 +1060,18 @@ fn data_conversion_options(app: &mut SheetApp, ui: &mut Ui) {
         {
             app.run_or_alert("app.dataConversion", json!({"digitsAroundE": e}));
         }
-        // Excel's fourth option has nothing to switch off: GridCraft never makes this conversion.
-        ui.add_enabled(false, egui::Checkbox::new(&mut false, lang.tr("Convert continuous letters and numbers to a date")))
-            .on_disabled_hover_text(lang.tr("GridCraft never makes this conversion: 12JAN2026 stays text."));
+        // In the place of Excel's fourth option (continuous letters and numbers to a date), which
+        // stops a conversion GridCraft never makes: this one covers every date and time.
+        let mut dates = c.convert_dates;
+        if ui
+            .checkbox(&mut dates, lang.tr("Convert text that looks like a date or time to a date"))
+            .on_hover_text(lang.tr(
+                "Off: 2.6.70, 3/4/2026 and 10:30 stay text, as written. Not an Excel option; it also covers Excel's \"Convert continuous letters and numbers to a date\" (12JAN2026 is always text in GridCraft).",
+            ))
+            .changed()
+        {
+            app.run_or_alert("app.dataConversion", json!({"convertDates": dates}));
+        }
     });
     ui.add_space(6.0);
     dim(ui, lang.tr("Data conversion settings apply to every workbook; they are not saved in the file."));

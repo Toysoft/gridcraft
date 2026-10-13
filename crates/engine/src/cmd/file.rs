@@ -30,7 +30,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Automatic Data Conversion",
             [],
             None,
-            "{all?: bool, removeLeadingZeros?: bool, keepFirst15Digits?: bool, longNumberDigits?: 1..15, digitsAroundE?: bool, removeTrailingZeros?: bool} → the settings (File › Options › Data; for typing, pasting and opening CSV/text files; {} only reports). keepFirst15Digits:false keeps numbers with more than longNumberDigits digits as text (default 11: only what General shows exactly as written converts), remembered; longNumberDigits without keepFirst15Digits also unchecks it; removeTrailingZeros (GridCraft's addition, default on): off gives 720.0 the format 0.0 so it shows and saves as written; all sets the four checkboxes",
+            "{all?: bool, removeLeadingZeros?: bool, keepFirst15Digits?: bool, longNumberDigits?: 1..15, digitsAroundE?: bool, removeTrailingZeros?: bool, convertDates?: bool} → the settings (File › Options › Data; for typing, pasting and opening CSV/text files; {} only reports). keepFirst15Digits:false keeps numbers with more than longNumberDigits digits as text (default 11: only what General shows exactly as written converts), remembered; longNumberDigits without keepFirst15Digits also unchecks it; removeTrailingZeros (GridCraft's addition, default on): off gives 720.0 the format 0.0 so it shows and saves as written; convertDates (GridCraft's addition, default on): off keeps text like 3/4/2026, 2.6.70 or 10:30 as text; all sets the five checkboxes",
             always,
             data_conversion
         ),
@@ -238,12 +238,14 @@ fn data_conversion(s: &mut Session, p: &Json) -> Result<Json> {
     let keep15 = flag("keepFirst15Digits")?;
     let e = flag("digitsAroundE")?;
     let trailing = flag("removeTrailingZeros")?;
+    let dates = flag("convertDates")?;
     let c = &mut s.prefs.data_conversion;
     if let Some(on) = all {
         c.remove_leading_zeros = on;
         c.keep_first_15_digits = on;
         c.digits_around_e = on;
         c.remove_trailing_zeros = on;
+        c.convert_dates = on;
     }
     if let Some(on) = zeros {
         c.remove_leading_zeros = on;
@@ -262,6 +264,9 @@ fn data_conversion(s: &mut Session, p: &Json) -> Result<Json> {
     if let Some(on) = trailing {
         c.remove_trailing_zeros = on;
     }
+    if let Some(on) = dates {
+        c.convert_dates = on;
+    }
     Ok(data_conversion_json(c))
 }
 
@@ -273,6 +278,7 @@ fn data_conversion_json(c: &gridcraft_core::parse::DataConversion) -> Json {
         "longNumberDigits": c.long_number_digits,
         "digitsAroundE": c.digits_around_e,
         "removeTrailingZeros": c.remove_trailing_zeros,
+        "convertDates": c.convert_dates,
     })
 }
 

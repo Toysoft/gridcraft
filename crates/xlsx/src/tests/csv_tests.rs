@@ -67,6 +67,7 @@ fn data_conversion_options_apply_to_fields() {
         long_number_digits: 11,
         digits_around_e: false,
         remove_trailing_zeros: true,
+        convert_dates: true,
     });
     assert_eq!(v(&wb, 0, 10), Value::text("124412140710"));
     assert_eq!(v(&wb, 1, 10), Value::text("1244121406E6"));

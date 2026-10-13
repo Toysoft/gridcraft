@@ -3228,20 +3228,20 @@ fn a_decrypted_workbook_never_overwrites_its_encrypted_original() {
 fn data_conversion_command_sets_reports_and_validates() {
     let mut s = s();
     let report = |s: &mut Session| s.execute("app.dataConversion", json!({})).unwrap();
-    let defaults = json!({"all": true, "removeLeadingZeros": true, "keepFirst15Digits": true, "longNumberDigits": 11, "digitsAroundE": true, "removeTrailingZeros": true});
+    let defaults = json!({"all": true, "removeLeadingZeros": true, "keepFirst15Digits": true, "longNumberDigits": 11, "digitsAroundE": true, "removeTrailingZeros": true, "convertDates": true});
     assert_eq!(report(&mut s), defaults);
     // Unchecking the long-number box uses 11 (what General shows without scientific notation)
     // until a limit is given; giving one unchecks it.
     let r = s.execute("app.dataConversion", json!({"keepFirst15Digits": false})).unwrap();
     assert_eq!(
         r,
-        json!({"all": false, "removeLeadingZeros": true, "keepFirst15Digits": false, "longNumberDigits": 11, "digitsAroundE": true, "removeTrailingZeros": true})
+        json!({"all": false, "removeLeadingZeros": true, "keepFirst15Digits": false, "longNumberDigits": 11, "digitsAroundE": true, "removeTrailingZeros": true, "convertDates": true})
     );
     s.execute("app.dataConversion", json!({"keepFirst15Digits": true})).unwrap();
     let r = s.execute("app.dataConversion", json!({"longNumberDigits": 13, "digitsAroundE": false})).unwrap();
     assert_eq!(
         r,
-        json!({"all": false, "removeLeadingZeros": true, "keepFirst15Digits": false, "longNumberDigits": 13, "digitsAroundE": false, "removeTrailingZeros": true})
+        json!({"all": false, "removeLeadingZeros": true, "keepFirst15Digits": false, "longNumberDigits": 13, "digitsAroundE": false, "removeTrailingZeros": true, "convertDates": true})
     );
     // The limit is remembered through the checkbox and through "all".
     s.execute("app.dataConversion", json!({"keepFirst15Digits": true})).unwrap();
@@ -3249,12 +3249,12 @@ fn data_conversion_command_sets_reports_and_validates() {
     let r = s.execute("app.dataConversion", json!({"all": false})).unwrap();
     assert_eq!(
         r,
-        json!({"all": false, "removeLeadingZeros": false, "keepFirst15Digits": false, "longNumberDigits": 13, "digitsAroundE": false, "removeTrailingZeros": false})
+        json!({"all": false, "removeLeadingZeros": false, "keepFirst15Digits": false, "longNumberDigits": 13, "digitsAroundE": false, "removeTrailingZeros": false, "convertDates": false})
     );
     let r = s.execute("app.dataConversion", json!({"all": true})).unwrap();
     assert_eq!(
         r,
-        json!({"all": true, "removeLeadingZeros": true, "keepFirst15Digits": true, "longNumberDigits": 13, "digitsAroundE": true, "removeTrailingZeros": true})
+        json!({"all": true, "removeLeadingZeros": true, "keepFirst15Digits": true, "longNumberDigits": 13, "digitsAroundE": true, "removeTrailingZeros": true, "convertDates": true})
     );
     // A limit can be set while the box stays on.
     let r = s.execute("app.dataConversion", json!({"keepFirst15Digits": true, "longNumberDigits": 11})).unwrap();
@@ -3267,6 +3267,7 @@ fn data_conversion_command_sets_reports_and_validates() {
         json!({"longNumberDigits": 11.5}),
         json!({"longNumberDigits": "11"}),
         json!({"digitsAroundE": "no"}),
+        json!({"convertDates": "yes"}),
         json!({"all": false, "removeLeadingZeros": 1}),
     ] {
         assert!(s.execute("app.dataConversion", bad.clone()).is_err(), "{bad}");
@@ -3361,6 +3362,40 @@ fn cut_list_round_trips_exactly_with_conversions_off() {
     assert!(saved.starts_with("1;720.0;579.0;K1_led_1;HDF_BIJELI;3.0;"), "{saved}");
 }
 
+/// #506: a field like `2.6.70` (a version, a part number) opened as 6 February 1970, and saving wrote
+/// `2/6/1970`. With "Convert text that looks like a date or time to a date" off, every such field
+/// stays text and the file saves back as it was; numbers still convert.
+#[test]
+fn csv_dates_and_times_stay_as_written_with_date_conversion_off() {
+    const FILE: &str = "code;version;when;at;qty\r\nA1;2.6.70;3/4/2026;10:30;5\r\nB2;1.2.3;4-Mar-2026;1/2;7.5\r\n";
+    let open = |s: &mut Session| {
+        s.execute("file.open", json!({"name": "parts.csv", "base64": crate::io::base64_encode(FILE.as_bytes())})).unwrap();
+        String::from_utf8(crate::io::save_bytes(&s.doc().unwrap().wb, "parts.csv").unwrap()).unwrap()
+    };
+    // The default converts, as Excel does: the version comes back as a date.
+    let mut s = s();
+    let saved = open(&mut s);
+    assert_eq!(v(&s, "B2"), Value::Number(25605.0));
+    assert!(saved.contains(";2/6/1970;"), "{saved}");
+    // Off: dates and times stay text, exactly as written; numbers are still numbers.
+    let mut s = self::s();
+    let r = s.execute("app.dataConversion", json!({"convertDates": false})).unwrap();
+    assert_eq!((r["convertDates"].clone(), r["all"].clone()), (json!(false), json!(false)));
+    let saved = open(&mut s);
+    assert_eq!(saved, FILE);
+    for (cell, text) in [("B2", "2.6.70"), ("C2", "3/4/2026"), ("D2", "10:30"), ("C3", "4-Mar-2026"), ("D3", "1/2")] {
+        assert_eq!(v(&s, cell), Value::text(text), "{cell}");
+    }
+    assert_eq!((v(&s, "E2"), v(&s, "E3")), (Value::Number(5.0), Value::Number(7.5)));
+    // Typing and pasting follow the same setting; formulas still read date text.
+    s.execute("cell.set", json!({"cell": "F1", "input": "2.6.70"})).unwrap();
+    assert_eq!(v(&s, "F1"), Value::text("2.6.70"));
+    s.execute("edit.paste", json!({"at": "F2", "text": "3/4/2026\t10:30\r\n"})).unwrap();
+    assert_eq!((v(&s, "F2"), v(&s, "G2")), (Value::text("3/4/2026"), Value::text("10:30")));
+    s.execute("cell.set", json!({"cell": "H1", "input": "=DATEVALUE(\"3/4/2026\")"})).unwrap();
+    assert!(v(&s, "H1").is_number());
+}
+
 #[test]
 fn typed_decimal_places_show_as_written() {
     let shown = |s: &Session, a: &str| {
@@ -3401,7 +3436,7 @@ fn data_conversion_is_a_saved_preference() {
     let saved = serde_json::to_value(&s.prefs).unwrap();
     assert_eq!(
         saved["dataConversion"],
-        json!({"removeLeadingZeros": true, "keepFirst15Digits": false, "longNumberDigits": 11, "digitsAroundE": false, "removeTrailingZeros": true})
+        json!({"removeLeadingZeros": true, "keepFirst15Digits": false, "longNumberDigits": 11, "digitsAroundE": false, "removeTrailingZeros": true, "convertDates": true})
     );
     let back: crate::Prefs = serde_json::from_value(saved).unwrap();
     assert_eq!(back.data_conversion, s.prefs.data_conversion);
