@@ -224,7 +224,15 @@ fn parse_date(t: &str, sys: DateSystem) -> Option<(f64, &'static str)> {
         }
         if let (Some(m), Some(d), Some(y)) = (num(a), num(b), num(c)) {
             let y = if c.len() <= 2 { if y < 30 { 2000 + y } else { 1900 + y } } else { y };
-            return valid_ymd(sys, y, m, d).map(|s| (s, "m/d/yyyy"));
+            if let Some(s) = valid_ymd(sys, y, m, d) {
+                return Some((s, "m/d/yyyy"));
+            }
+            // Day-first fallback (issue #1071): a first component of 13..=31 can never be a
+            // month, so `31/12/2026` is unambiguous — read it as day/month/year instead of
+            // leaving a valid date as text. Ambiguous inputs (both components ≤ 12) keep the
+            // en-US month-first reading above; `valid_ymd` still rejects impossible dates
+            // such as `31/4/2026`, so those stay text.
+            return valid_ymd(sys, y, d, m).map(|s| (s, "m/d/yyyy"));
         }
         // 4-Mar-2026
         if let (Some(d), Some(m), Some(y)) = (num(a), month_from_name(b), num(c)) {
@@ -240,6 +248,14 @@ fn parse_date(t: &str, sys: DateSystem) -> Option<(f64, &'static str)> {
             let y = current_year();
             if (1..=12).contains(&m) && (1..=31).contains(&d) {
                 return valid_ymd(sys, y, m, d).map(|s| (s, "d-mmm"));
+            }
+            // Day-first fallback, as in the three-component form above: `25/12` can only be
+            // 25 December, never a month 25.
+            if (13..=31).contains(&m)
+                && (1..=12).contains(&d)
+                && let Some(s) = valid_ymd(sys, y, d, m)
+            {
+                return Some((s, "d-mmm"));
             }
             // m/yyyy
             if (1..=12).contains(&m) && b.len() == 4 {
@@ -382,6 +398,32 @@ mod tests {
         assert_eq!(p("25:00").value, Value::Number(25.0 / 24.0));
         assert_eq!(p("25:00").format, Some("[h]:mm:ss"));
         assert_eq!(p("23:59").format, Some("h:mm"));
+    }
+
+    #[test]
+    fn unambiguous_day_first_dates() {
+        // A first component of 13..=31 can never be a month, so these are read day-first
+        // (issue #1071) instead of staying text; they equal their month-first spellings.
+        assert_eq!(p("31/12/2026").value, Value::Number(46387.0));
+        assert_eq!(p("31/12/2026").value, p("12/31/2026").value);
+        assert_eq!(p("13/6/2026").value, Value::Number(46186.0));
+        assert_eq!(p("13/6/2026").value, p("6/13/2026").value);
+        assert_eq!(p("29/2/2024").value, Value::Number(45351.0));
+        assert_eq!(p("29/2/2024").value, p("2/29/2024").value);
+        // The other separators and two-digit years follow the same fallback.
+        assert_eq!(p("31-12-26").value, p("12/31/2026").value);
+        assert_eq!(p("31.12.2026").value, p("12/31/2026").value);
+        // Two-component form: day/month in the current year.
+        assert_eq!(p("25/12").value, p("12/25").value);
+        assert!(matches!(p("25/12").value, Value::Number(_)));
+        // Impossible day-first dates stay text, as do doubly-invalid ones.
+        assert_eq!(p("31/4/2026").value, Value::text("31/4/2026"));
+        assert_eq!(p("29/2/2026").value, Value::text("29/2/2026"));
+        assert_eq!(p("13/13/2026").value, Value::text("13/13/2026"));
+        // Ambiguous inputs (both components ≤ 12) keep the en-US month-first reading:
+        // 8/6/2026 is 6 August (serial 46240), not 8 June (serial 46181).
+        assert_eq!(p("8/6/2026").value, Value::Number(46240.0));
+        assert_eq!(p("10/7/2026").value, Value::Number(46302.0));
     }
 
     #[test]
