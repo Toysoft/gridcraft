@@ -503,7 +503,7 @@ fn select_col(s: &mut Session, _: &Json) -> Result<Json> {
     Ok(json!({"selection": d.selection.a1()}))
 }
 
-fn go_to(s: &mut Session, p: &Json) -> Result<Json> {
+pub(super) fn go_to(s: &mut Session, p: &Json) -> Result<Json> {
     let Some(reference) = str_param(p, "reference").or_else(|| str_param(p, "range")) else { return Err(bad("edit.goTo", "missing `reference`")) };
     // A defined name or table?
     let d = s.doc()?;

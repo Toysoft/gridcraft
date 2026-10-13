@@ -777,11 +777,90 @@ fn parse_cache_is_bounded() {
     assert!(text_function(&Value::Number(1.0), "0.00\"0\"", S).is_ok());
     assert_eq!(parse_cache::parses() - before, 1);
 
-    // A very long code is parsed on every call and not stored.
-    let long = format!("0\"{}\"", "x".repeat(parse_cache::MAX_CODE_LEN));
+    // A code too long (in bytes) for the cache is parsed on every call and not stored. Two-byte
+    // characters keep it under the 255-character cap that TEXT() refuses past.
+    let long = format!("0\"{}\"", "é".repeat(parse_cache::MAX_CODE_LEN / 2 + 8));
     let before = parse_cache::parses();
     for _ in 0..3 {
         assert!(text_function(&Value::Number(1.0), &long, S).is_ok());
     }
     assert_eq!(parse_cache::parses() - before, 3);
+}
+
+#[test]
+fn fraction_denominator_with_65536_zeros_does_not_panic() {
+    // `{:0>n$}` panics for a width above u16::MAX; the cap keeps this out of reach of `parse`,
+    // so the renderer is driven with the uncapped parser.
+    let code = format!("# ?/{}", "0".repeat(65_536));
+    let fmt = NumberFormat::parse_uncapped(&code);
+    let text = format_value(&Value::Number(0.5), &fmt, S).text;
+    assert!(text.starts_with(" 1/"), "{text}");
+    // And a denominator with fewer digits than zeros is still zero padded.
+    assert_eq!(f("# ?/000", 0.5), " 1/002");
+}
+
+#[test]
+fn format_codes_are_capped_at_255_characters() {
+    let ok = format!("0{}", "0".repeat(254));
+    let long = format!("0{}", "0".repeat(255));
+    assert_eq!(ok.chars().count(), MAX_FORMAT_CODE_CHARS);
+    assert!(text_function(&Value::Number(1.0), &ok, S).is_ok());
+    assert_eq!(text_function(&Value::Number(1.0), &long, S), Err(CellError::Value));
+    // Capped codes display as General.
+    assert_eq!(f(&long, 0.5), "0.5");
+    // Characters are counted, not bytes: 255 two-byte characters are fine, 256 are not.
+    let multi_ok = "é".repeat(255);
+    assert!(multi_ok.len() > 255);
+    assert!(text_function(&Value::Number(1.0), &multi_ok, S).is_ok());
+    assert_eq!(text_function(&Value::Number(1.0), &"é".repeat(256), S), Err(CellError::Value));
+    // 65536 zeros through the public API: no panic, TEXT is #VALUE!.
+    let huge = format!("# ?/{}", "0".repeat(65_536));
+    assert_eq!(text_function(&Value::Number(0.5), &huge, S), Err(CellError::Value));
+    assert_eq!(f(&huge, 0.5), "0.5");
+}
+
+/// Parses and renders `code` on a worker thread; panics if that takes more than 20 s, so a quadratic
+/// parser fails the test instead of hanging CI. Not a benchmark: at this size an O(n^2) pass takes
+/// minutes and an O(n) pass milliseconds, so the margin is decades wide.
+fn finishes_in_time(code: String) -> String {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        // Uncapped: `parse` turns a code past 255 characters into General before the parser sees it.
+        let _ = tx.send(format_value(&Value::Number(1234.5), &NumberFormat::parse_uncapped(&code), S).text);
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(20)).expect("format code did not parse and render in time")
+}
+
+#[test]
+fn hostile_codes_parse_in_linear_time() {
+    let n = 1_000_000;
+    // Unclosed brackets, a run of commas after a digit, a run of fraction bars.
+    assert!(finishes_in_time("[".repeat(n)).starts_with('['));
+    finishes_in_time(format!("0{}", ",".repeat(n)));
+    finishes_in_time(format!("0{}", "/".repeat(n)));
+    finishes_in_time(format!("0{}0", ",".repeat(n)));
+    // Unclosed brackets mixed with semicolons: each is a literal and a section separator stays one.
+    finishes_in_time("[;".repeat(n / 2));
+}
+
+#[test]
+fn unclosed_bracket_is_a_literal_in_both_passes() {
+    // Sections still split after an unclosed `[`.
+    assert_eq!(f("[0;0", 5.0), "[5");
+    assert_eq!(f("0;[0", -5.0), "[5");
+    assert_eq!(f("0;-0;[", 0.0), "[");
+    assert_eq!(parse::parse_sections("0;[Red-0").len(), 2);
+    assert_eq!(parse::parse_sections("[0;0").len(), 2);
+}
+
+#[test]
+fn closed_brackets_still_hold_their_semicolons() {
+    assert_eq!(f("[Red]0;[Blue]-0", -5.0), "-5");
+    assert_eq!(f("[>=100]0.0;0", 150.0), "150.0");
+    assert_eq!(f("[$-409]0.00", 2.5), "2.50");
+    assert_eq!(f("[$€-2] #,##0", 1234.0), "€ 1,234");
+    assert_eq!(parse::parse_sections("[Red]0;[Blue]0").len(), 2);
+    assert_eq!(parse::parse_sections("[unknown;x]0;0").len(), 2);
+    assert_eq!(f("0\\[0", 5.0), "0[5");
+    assert_eq!(f("\"[\"0;0", 5.0), "[5");
 }

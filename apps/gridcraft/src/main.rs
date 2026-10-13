@@ -201,6 +201,13 @@ fn services() -> Services {
 
 /// Opens a URL or file with the system's default application.
 fn open_with_system(target: &str) {
+    // Last line of defence behind `link.open` and the click prompt: the system only ever gets
+    // http, https and mailto addresses.
+    let gridcraft_engine::links::LinkKind::External(target) = gridcraft_engine::links::classify(target) else {
+        log::warn!("refused to open {target:?}: only http, https and mailto links are opened");
+        return;
+    };
+    let target = target.as_str();
     let cmd = if cfg!(target_os = "macos") {
         "open"
     } else if cfg!(windows) {

@@ -407,6 +407,7 @@ impl<'h> Evaluator<'h> {
             };
         }
         let v = self.value(x);
+        let sys = self.host.workbook().date_system;
         Ev::V(map_unary(
             &v,
             &|n| match op {
@@ -416,6 +417,7 @@ impl<'h> Evaluator<'h> {
                 UnOp::At | UnOp::Spill | UnOp::Trim(_) => Value::number(n),
             },
             op == UnOp::Plus,
+            sys,
         ))
     }
 
@@ -502,7 +504,7 @@ impl<'h> Evaluator<'h> {
                 let mut acc = self.value(left);
                 while let Some((o, r)) = rest.pop() {
                     let y = self.value(r);
-                    acc = binary_values(o, &acc, &y);
+                    acc = binary_values(o, &acc, &y, self.host.workbook().date_system);
                 }
                 Ev::V(acc)
             }
@@ -1165,16 +1167,18 @@ impl<'h> Evaluator<'h> {
                 v.scalar().to_bool().unwrap_or(true)
             }
         };
-        let text = if a1 {
-            text
+        // With a1 = FALSE, text that isn't R1C1 can still be a name, but never an A1 reference.
+        let (text, a1_ok) = if a1 {
+            (text, true)
         } else {
             match r1c1_to_a1(&text, self.at) {
-                Ok(Some(a1_text)) => a1_text,
-                Ok(None) => text,
+                Ok(Some(a1_text)) => (a1_text, true),
+                Ok(None) => (text, false),
                 Err(e) => return err(e),
             }
         };
         match gridcraft_formula::parse(&text) {
+            Ok(Expr::Ref(_)) if !a1_ok => err(CellError::Ref),
             Ok(e @ (Expr::Ref(_) | Expr::Name(_) | Expr::Struct(_))) => match self.eval(&e) {
                 r @ Ev::R(_) => r,
                 _ => err(CellError::Ref),
@@ -1593,12 +1597,12 @@ impl Acc {
 
 // ---------------------------------------------------------------- operators
 
-fn map_unary(v: &Value, f: &dyn Fn(f64) -> Value, plus: bool) -> Value {
+fn map_unary(v: &Value, f: &dyn Fn(f64) -> Value, plus: bool, sys: gridcraft_core::DateSystem) -> Value {
     match v {
-        Value::Array(a) => Value::from(Array { rows: a.rows, cols: a.cols, data: a.data.iter().map(|x| map_unary(x, f, plus)).collect() }),
+        Value::Array(a) => Value::from(Array { rows: a.rows, cols: a.cols, data: a.data.iter().map(|x| map_unary(x, f, plus, sys)).collect() }),
         Value::Error(e) => Value::Error(*e),
         Value::Text(_) if plus => v.clone(),
-        other => match other.to_number() {
+        other => match other.to_number_in(sys) {
             Ok(n) => f(n),
             Err(e) => Value::Error(e),
         },
@@ -1651,18 +1655,18 @@ fn zip3(c: &Array, t: &Value, f: &Value, g: impl Fn(&Value, &Value, &Value) -> V
     Value::from(Array { rows, cols, data })
 }
 
-pub fn binary_values(op: BinOp, x: &Value, y: &Value) -> Value {
-    zip2(x, y, |a, b| binary_scalar(op, a, b))
+pub fn binary_values(op: BinOp, x: &Value, y: &Value, sys: gridcraft_core::DateSystem) -> Value {
+    zip2(x, y, |a, b| binary_scalar(op, a, b, sys))
 }
 
-fn binary_scalar(op: BinOp, a: &Value, b: &Value) -> Value {
+fn binary_scalar(op: BinOp, a: &Value, b: &Value, sys: gridcraft_core::DateSystem) -> Value {
     if let Value::Error(e) = a {
         return Value::Error(*e);
     }
     if let Value::Error(e) = b {
         return Value::Error(*e);
     }
-    let num = |f: fn(f64, f64) -> Value| match (a.to_number(), b.to_number()) {
+    let num = |f: fn(f64, f64) -> Value| match (a.to_number_in(sys), b.to_number_in(sys)) {
         (Ok(x), Ok(y)) => f(x, y),
         (Err(e), _) | (_, Err(e)) => Value::Error(e),
     };

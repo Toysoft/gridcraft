@@ -7,6 +7,8 @@
 
 use std::sync::Arc;
 
+use crate::sheet::Visibility;
+
 /// A relationship from an owning part (the package root, the workbook or a sheet, or a kept part)
 /// to a kept part or to an external target.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -43,6 +45,19 @@ pub struct PreservedXml {
     pub xml: String,
 }
 
+/// A chart sheet (a sheet that holds one chart and no cells) kept as it was in the source file. Its
+/// part, drawing, chart, style and colour parts are in [`Preserved::parts`]; the workbook
+/// relationship to it is in [`Preserved::rels`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PreservedSheet {
+    pub name: String,
+    pub visibility: Visibility,
+    /// The id of the workbook relationship to the chart sheet part, in the source file.
+    pub rel_id: String,
+    /// How many worksheets come before it: its position among the model's sheets.
+    pub before: usize,
+}
+
 /// Unmodelled content kept for one owner (the workbook, which also holds package-root content,
 /// or one sheet).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -58,11 +73,18 @@ pub struct Preserved {
     /// The sheet's legacy VML drawing when kept elements need its shapes (form controls, OLE
     /// objects). Its own relationships point into `parts`.
     pub vml: Option<PreservedPart>,
+    /// Chart sheets, in file order (workbook owner only).
+    pub sheets: Vec<PreservedSheet>,
 }
 
 impl Preserved {
     pub fn is_empty(&self) -> bool {
-        self.package_rels.is_empty() && self.rels.is_empty() && self.parts.is_empty() && self.elements.is_empty() && self.vml.is_none()
+        self.package_rels.is_empty()
+            && self.rels.is_empty()
+            && self.parts.is_empty()
+            && self.elements.is_empty()
+            && self.vml.is_none()
+            && self.sheets.is_empty()
     }
     /// Total bytes held.
     pub fn byte_len(&self) -> usize {
