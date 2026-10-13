@@ -1069,6 +1069,87 @@ fn spill_references_roundtrip_through_xlsx() {
     assert_eq!((v(&s, "C1"), v(&s, "C2")), (Value::Number(10.0), Value::Number(4.0)));
 }
 
+/// Fixture for the open-time row fit (issue #833): `row_info` = (size, custom, hidden) for
+/// row 5 (index 4), `None` = no row entry at all. Cell A5 = "plain big bold" — whole-cell
+/// font 20pt with `big_font`, plain 11pt without (a tall plain row's fit removes its entry).
+/// 11pt cell in A1 for contrast rows. Built with the model API, never through commands —
+/// commands would auto-fit the rows — and exported with `write_xlsx`, which omits `ht` for
+/// rows without a size: exactly the bug's input.
+fn big_font_workbook(row_info: Option<(f32, bool, bool)>, big_font: bool) -> Vec<u8> {
+    let mut wb = gridcraft_model::Workbook::new();
+    let big = wb.styles.derive(gridcraft_model::StyleId::DEFAULT, |s| s.font.size = 20.0);
+    let sh = wb.sheet_mut(0).unwrap();
+    sh.set_value(CellRef::new(0, 0), Value::text("small"));
+    sh.set_value(CellRef::new(4, 0), Value::text("plain big bold"));
+    if big_font {
+        sh.set_style(CellRef::new(4, 0), big);
+    }
+    if let Some((size, custom, hidden)) = row_info {
+        let e = sh.rows.entry(4).or_default();
+        e.size = Some(size);
+        e.custom = custom;
+        e.hidden = hidden;
+    }
+    gridcraft_xlsx::write_xlsx(&wb).unwrap()
+}
+
+#[test] // A — the issue's repro
+fn open_grows_default_height_rows_to_their_font() {
+    let default_h = gridcraft_model::Workbook::new().active().unwrap().row_height(0);
+    let mut s = Session::new();
+    s.execute("file.open", json!({"name": "bigfont.xlsx", "base64": crate::io::base64_encode(&big_font_workbook(None, true))})).unwrap();
+    let h = s.doc().unwrap().wb.active().unwrap().row_height(4);
+    assert!(h >= 30.0, "20pt cell must grow its default-height row on open, got {h}");
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(0), default_h, "11pt row stays default");
+}
+
+#[test] // B — Review Focus 1
+fn open_keeps_custom_height_rows() {
+    let mut s = Session::new();
+    s.execute("file.open", json!({"name": "custom.xlsx", "base64": crate::io::base64_encode(&big_font_workbook(Some((25.0, true, false)), true))}))
+        .unwrap();
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), 25.0, "custom-height rows are left alone on open");
+}
+
+#[test] // C — Review Focus 2 (Some→Some: the fit shrinks the row, the clamp keeps the taller height)
+fn open_never_shrinks_taller_auto_rows() {
+    let mut s = Session::new();
+    s.execute("file.open", json!({"name": "tall.xlsx", "base64": crate::io::base64_encode(&big_font_workbook(Some((60.0, false, false)), true))}))
+        .unwrap();
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), 60.0, "open is grow-only: a 60px auto-height row keeps its height");
+}
+
+#[test] // C′ — Review Focus 2 (Some→None: a plain tall row's entry is removed by the fit, the clamp restores it)
+fn open_restores_height_of_plain_rows_the_fit_removed() {
+    let mut s = Session::new();
+    s.execute(
+        "file.open",
+        json!({"name": "tall-plain.xlsx", "base64": crate::io::base64_encode(&big_font_workbook(Some((60.0, false, false)), false))}),
+    )
+    .unwrap();
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), 60.0, "a tall plain row keeps its height after the fit removes its entry");
+}
+
+#[test] // D — Review Focus 5
+fn open_fitting_keeps_hidden_rows_hidden() {
+    let mut s = Session::new();
+    s.execute("file.open", json!({"name": "hidden.xlsx", "base64": crate::io::base64_encode(&big_font_workbook(Some((20.0, false, true)), true))}))
+        .unwrap();
+    let sh = s.doc().unwrap().wb.active().unwrap();
+    let info = sh.rows.get(&4).unwrap();
+    assert!(info.size.is_some_and(|h| h >= 20.0), "hidden row grows or keeps its height, got {:?}", info.size);
+    assert!(info.hidden, "fitting a hidden row must not unhide it");
+}
+
+#[test] // E — Review Focus 4
+fn open_leaves_plain_workbooks_untouched() {
+    let mut s = Session::new();
+    s.execute("file.open", json!({"name": "plain.xlsx", "base64": crate::io::base64_encode(&big_font_workbook(None, false))})).unwrap();
+    let sh = s.doc().unwrap().wb.active().unwrap();
+    assert!(sh.rows.get(&0).is_none_or(|i| i.size.is_none()), "11pt default rows get no height entry");
+    assert!(sh.rows.values().all(|i| i.size.is_none()), "no row gains a height entry");
+}
+
 #[test]
 fn tables_and_structured_refs() {
     let mut s = s();

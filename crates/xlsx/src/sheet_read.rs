@@ -9,6 +9,7 @@ use gridcraft_formula::Expr;
 use gridcraft_model::{
     AutoFilter, Cell, CfOperator, CfRule, CfValueKind, Comment, CondFormat, EditRange, ErrorStyle, FilterCriterion, Formula, Hyperlink, LineInfo,
     Orientation, PasswordHash, Sheet, SheetProtection, Sparkline, SparklineKind, Table, TableColumn, TotalsFn, Validation, ValidationKind,
+    XmlColumnPr,
 };
 
 use crate::IoError;
@@ -831,12 +832,24 @@ pub fn read_table(cx: &mut Ctx<'_>, x: &El) -> Option<Table> {
                         totals,
                         totals_label,
                         formula: c.child("calculatedColumnFormula").map(|f| from_file(f.text.trim())),
+                        unique_name: c.attr("uniqueName").map(str::to_string),
+                        xml: c.child("xmlColumnPr").and_then(|x| {
+                            Some(XmlColumnPr {
+                                map_id: x.attr_u32("mapId")?,
+                                xpath: x.attr("xpath")?.to_string(),
+                                data_type: x.attr("xmlDataType").unwrap_or("string").to_string(),
+                                denormalized: x.flag("denormalized", false),
+                            })
+                        }),
                     }
                 })
                 .collect()
         })
         .unwrap_or_default();
     let si = x.child("tableStyleInfo");
+    // Only XML tables are kept as such: a query table's definition hangs off the table part, which
+    // is rewritten, so it would lose it.
+    let xml_table = x.attr("tableType") == Some("xml");
     Some(Table {
         id: x.attr_u32("id").unwrap_or(0),
         name,
@@ -851,6 +864,8 @@ pub fn read_table(cx: &mut Ctx<'_>, x: &El) -> Option<Table> {
         last_col: si.is_some_and(|s| s.flag("showLastColumn", false)),
         filter_button: x.child("autoFilter").is_some(),
         filter: x.child("autoFilter").and_then(|e| read_autofilter(cx, e)).map(|af| af.criteria).unwrap_or_default(),
+        table_type: xml_table.then(|| "xml".to_string()),
+        connection_id: x.attr_u32("connectionId").filter(|_| xml_table),
     })
 }
 

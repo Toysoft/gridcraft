@@ -838,7 +838,14 @@ fn table_resize(s: &mut Session, p: &Json) -> Result<Json> {
         for (i, h) in headers.iter().enumerate() {
             let name = if h.is_empty() { format!("Column{}", i + 1) } else { h.clone() };
             let existing = t.columns.iter().find(|c| c.name.eq_ignore_ascii_case(&name)).cloned();
-            cols.push(existing.unwrap_or(TableColumn { name, totals: TotalsFn::None, totals_label: None, formula: None }));
+            cols.push(existing.unwrap_or(TableColumn {
+                name,
+                totals: TotalsFn::None,
+                totals_label: None,
+                formula: None,
+                unique_name: None,
+                xml: None,
+            }));
         }
         t.columns = cols;
         t.range = r;

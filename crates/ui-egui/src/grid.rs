@@ -3573,6 +3573,8 @@ mod tests {
             last_col: false,
             filter_button: true,
             filter: vec![],
+            table_type: None,
+            connection_id: None,
         };
         let mut sh = Sheet::new("S");
         sh.tables.push(table(1, 0, 2));

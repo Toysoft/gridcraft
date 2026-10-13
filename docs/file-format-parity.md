@@ -1,11 +1,6 @@
 # File-format parity
 
 > **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (XLSX chart sheets are kept on save (#727); previously minor: CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (CSV and TSV export is capped at 512 MiB and refuses a larger used range with an error (#528); previously minor: CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (`.xls` import reads the calculation settings) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (editable ink round-trips as DrawingML geometry) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (`.xls` array formulas fill their range on recalculation) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (macOS Open With offers GridCraft for `.xlsb` and `.ods`) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**

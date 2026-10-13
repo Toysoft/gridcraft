@@ -384,6 +384,26 @@ fn language_switch_translates_the_ribbon_and_persists() {
 }
 
 #[test]
+fn pivot_fields_pane_follows_the_interface_language() {
+    // #858: the PivotTable Fields pane and its field menus stayed in English after switching to Spanish.
+    let mut h = harness(blank());
+    h.state_mut().run("range.setValues", json!({"range": "A1:B3", "values": [["Region", "Sales"], ["North", 10], ["South", 20]]})).unwrap();
+    h.state_mut().run("insert.pivotTable", json!({"source": "Sheet1!$A$1:$B$3", "rows": ["Region"]})).unwrap();
+    h.state_mut().run("app.language.set", json!({"language": "es"})).unwrap();
+    h.run_steps(4);
+    for label in ["Campos de tabla dinámica", "Filas", "Valores", "Actualizar", "Campo calculado…"] {
+        assert!(h.query_by_label(label).is_some(), "the pane shows `{label}`");
+    }
+    assert!(h.query_by_label("PivotTable Fields").is_none());
+    h.get_by_label("Region ▾").click();
+    h.run_steps(2);
+    for label in ["Mover a rótulos de columna", "Agrupar por años", "Quitar campo"] {
+        assert!(h.query_by_label(label).is_some(), "the field menu shows `{label}`");
+    }
+    assert!(h.query_by_label("Remove Field").is_none());
+}
+
+#[test]
 fn format_cells_draws_its_labels_in_the_interface_language() {
     let mut h = harness(blank());
     h.state_mut().run("app.language.set", json!({"language": "de"})).unwrap();
