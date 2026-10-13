@@ -141,8 +141,9 @@ pub fn write_xlsx_as(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> 
 /// CSV import options.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CsvOptions {
-    /// Field separator; `0` auto-detects comma, semicolon or tab.
-    pub delimiter: u8,
+    /// Field separator, any character; `'\0'` detects it: the file's `sep=` first line, else
+    /// comma, semicolon or tab.
+    pub delimiter: char,
     pub quote: u8,
     pub date_system: DateSystem,
     /// Interpret fields like typed input (numbers, dates, booleans…); otherwise keep text.
@@ -151,7 +152,7 @@ pub struct CsvOptions {
 
 impl Default for CsvOptions {
     fn default() -> Self {
-        CsvOptions { delimiter: b',', quote: b'"', date_system: DateSystem::D1900, parse_values: true }
+        CsvOptions { delimiter: ',', quote: b'"', date_system: DateSystem::D1900, parse_values: true }
     }
 }
 

@@ -165,21 +165,42 @@ pub fn split_fields(text: &str, delimiters: &[char], quote: char, consecutive: b
     out
 }
 
+/// Excel's first line `sep=;`: the delimiter it names, and the text after that line (which isn't data).
+fn sep_line(text: &str) -> Option<(char, &str)> {
+    if text.get(..4)? != "sep=" {
+        return None;
+    }
+    let rest = text.get(4..)?;
+    let d = rest.chars().next().filter(|d| !matches!(d, '\r' | '\n'))?;
+    let after = rest.get(d.len_utf8()..)?;
+    let after = match after.strip_prefix("\r\n").or_else(|| after.strip_prefix(['\r', '\n'])) {
+        Some(a) => a,
+        None if after.is_empty() => after,
+        None => return None,
+    };
+    Some((d, after))
+}
+
 pub fn read_csv(bytes: &[u8], opts: &CsvOptions) -> Result<Workbook, IoError> {
-    let text = decode_text(bytes);
+    let decoded = decode_text(bytes);
     let quote = if opts.quote == 0 { '"' } else { opts.quote as char };
-    let delim = if opts.delimiter == 0 { sniff_delimiter(&text, quote) } else { opts.delimiter } as char;
+    // Without a given delimiter, a `sep=` first line names it (and is hidden, as in Excel); else it's sniffed.
+    let (delim, text) = match (opts.delimiter, sep_line(&decoded)) {
+        ('\0', Some((d, rest))) => (d, rest),
+        ('\0', None) => (char::from(sniff_delimiter(&decoded, quote)), decoded.as_str()),
+        (d, _) => (d, decoded.as_str()),
+    };
     if delim == quote {
         return Err(IoError::Format("the delimiter and quote character must differ".into()));
     }
     let mut wb = Workbook::new();
     wb.date_system = opts.date_system;
-    wb.csv_delimiter = u8::try_from(delim).ok();
+    wb.csv_delimiter = u8::try_from(delim).ok().filter(u8::is_ascii);
     let mut sheet = Sheet::new("Sheet1");
     let mut styles = std::mem::take(&mut wb.styles);
     let mut fmt_cache: Vec<(&'static str, StyleId)> = vec![];
     let mut row: u32 = 0;
-    split_records(&text, Delimited { delimiters: &[delim], quote, consecutive: false, lines: true }, |rec| {
+    split_records(text, Delimited { delimiters: &[delim], quote, consecutive: false, lines: true }, |rec| {
         if row >= MAX_ROWS {
             return false;
         }

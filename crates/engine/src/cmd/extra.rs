@@ -158,7 +158,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "From Text/CSV",
             ["Data", "Get & Transform Data"],
             None,
-            "{path | text, delimiter?: \",\", sheet?: new sheet name} → imports into a new sheet as a table",
+            "{path | text, delimiter?: one character (default: detected like File › Open: the file's `sep=` line, else comma, semicolon or tab), sheet?: new sheet name} → imports into a new sheet as a table",
             has_doc,
             from_csv
         ),
@@ -884,10 +884,13 @@ fn from_csv(s: &mut Session, p: &Json) -> Result<Json> {
             }
             out
         } else {
-            let delim = str_param(p, "delimiter")
-                .and_then(|d| d.chars().next())
-                .unwrap_or(if text.lines().next().is_some_and(|l| l.contains('\t')) { '\t' } else { ',' });
-            let opts = gridcraft_xlsx::CsvOptions { delimiter: delim as u8, ..Default::default() };
+            // No delimiter given: detected as File › Open does (a `sep=` line, else comma, semicolon or tab).
+            let delimiter = match str_param(p, "delimiter").map(|d| (d.chars().next(), d.chars().nth(1))) {
+                None => '\0',
+                Some((Some(d), None)) => d,
+                Some(_) => return Err(bad("data.fromTextCsv", "`delimiter` must be one character")),
+            };
+            let opts = gridcraft_xlsx::CsvOptions { delimiter, ..Default::default() };
             let wb = gridcraft_xlsx::read_csv(&bytes, &opts).map_err(|e| EngineError::Other(e.to_string()))?;
             let sh = wb.sheet(0).ok_or(EngineError::NoDocument)?;
             let Some(u) = sh.used_range() else { return Err(EngineError::Other("The file is empty.".into())) };

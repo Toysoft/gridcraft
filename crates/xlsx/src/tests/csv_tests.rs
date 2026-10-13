@@ -68,7 +68,7 @@ fn encodings() {
     }
     assert_eq!(decode_text(&be), "ß");
     assert_eq!(decode_text(&[0x80, b'a', 0xE9]), "€aé");
-    let wb = read_csv(&le, &CsvOptions { delimiter: 0, ..Default::default() }).unwrap();
+    let wb = read_csv(&le, &CsvOptions { delimiter: '\0', ..Default::default() }).unwrap();
     assert_eq!(v(&wb, 0, 0), Value::text("ü"));
     assert_eq!(v(&wb, 0, 1), Value::Number(1.0));
 }
@@ -83,14 +83,14 @@ fn delimiter_sniffing() {
     assert_eq!(sniff_delimiter("alpha;beta\r\ngamma\r\n", '"'), b',');
     assert_eq!(sniff_delimiter("alpha\tbeta\r\ngamma\r\n", '"'), b',');
     assert_eq!(sniff_delimiter("a;b\r\n\r\nc;d\r\n", '"'), b';');
-    let wb = read_csv(b"x;y\n1,5;2", &CsvOptions { delimiter: 0, ..Default::default() }).unwrap();
+    let wb = read_csv(b"x;y\n1,5;2", &CsvOptions { delimiter: '\0', ..Default::default() }).unwrap();
     assert_eq!(v(&wb, 1, 1), Value::Number(2.0));
     // The workbook remembers the separator it was read with, sniffed or given.
     assert_eq!(wb.csv_delimiter, Some(b';'));
-    assert_eq!(read_csv(b"a\tb", &CsvOptions { delimiter: 0, ..Default::default() }).unwrap().csv_delimiter, Some(b'\t'));
+    assert_eq!(read_csv(b"a\tb", &CsvOptions { delimiter: '\0', ..Default::default() }).unwrap().csv_delimiter, Some(b'\t'));
     assert_eq!(read_csv(b"a;b", &CsvOptions::default()).unwrap().csv_delimiter, Some(b','));
     assert_eq!(Workbook::new().csv_delimiter, None);
-    assert!(read_csv(b"a", &CsvOptions { delimiter: b'"', ..Default::default() }).is_err());
+    assert!(read_csv(b"a", &CsvOptions { delimiter: '"', ..Default::default() }).is_err());
 }
 
 #[test]
@@ -212,4 +212,34 @@ fn a_quote_inside_a_field_is_a_character() {
     let wb = read_csv(b"Item,Size\nPipe 12\" long,5\n", &CsvOptions::default()).unwrap();
     assert_eq!(v(&wb, 1, 0), Value::text("Pipe 12\" long"));
     assert_eq!(v(&wb, 1, 1), Value::Number(5.0));
+}
+
+#[test]
+fn a_sep_line_names_the_delimiter() {
+    // Excel honours a first line `sep=X`: it splits on X and doesn't show the line.
+    let auto = CsvOptions { delimiter: '\0', ..Default::default() };
+    for (src, d) in [("sep=|\r\nA|B\r\n1|2", b'|'), ("sep=;\nA;B\n1;2", b';'), ("sep=,\nA,B\n1,2", b',')] {
+        let wb = read_csv(src.as_bytes(), &auto).unwrap();
+        assert_eq!(v(&wb, 0, 0), Value::text("A"), "{src}");
+        assert_eq!(v(&wb, 1, 1), Value::Number(2.0), "{src}");
+        assert_eq!(wb.csv_delimiter, Some(d), "{src}");
+    }
+    // A given delimiter wins and the line stays data; `sep=` with nothing after it isn't one.
+    let wb = read_csv(b"sep=|\na|b", &CsvOptions::default()).unwrap();
+    assert_eq!(v(&wb, 0, 0), Value::text("sep=|"));
+    assert_eq!(v(&read_csv(b"sep=\na", &auto).unwrap(), 0, 0), Value::text("sep="));
+    assert_eq!(v(&read_csv(b"sep=ab\nc", &auto).unwrap(), 0, 0), Value::text("sep=ab"));
+}
+
+#[test]
+fn any_character_can_be_the_delimiter() {
+    // A full-width semicolon (U+FF1B), as in Chinese files; it isn't remembered for saving.
+    let wb = read_csv("名称；数量\n苹果；3".as_bytes(), &CsvOptions { delimiter: '；', ..Default::default() }).unwrap();
+    assert_eq!(v(&wb, 1, 0), Value::text("苹果"));
+    assert_eq!(v(&wb, 1, 1), Value::Number(3.0));
+    assert_eq!(wb.csv_delimiter, None);
+    // A character whose low byte is a comma (U+012C) doesn't split at commas.
+    let wb = read_csv("a,bĬc".as_bytes(), &CsvOptions { delimiter: 'Ĭ', ..Default::default() }).unwrap();
+    assert_eq!(v(&wb, 0, 0), Value::text("a,b"));
+    assert_eq!(v(&wb, 0, 1), Value::text("c"));
 }

@@ -3282,3 +3282,23 @@ fn paste_special_validation_moves_relative_references() {
     assert!(!ok(&mut s, "C3", "5"), "the pasted rule checks C3, not A1");
     assert!(ok(&mut s, "C3", "20"));
 }
+
+#[test]
+fn from_text_csv_detects_the_delimiter_like_file_open() {
+    let mut s = s();
+    // Semicolons, as a German Excel writes them: three columns, not split at the decimal commas.
+    let r = s.execute("data.fromTextCsv", json!({"text": "Name;Value;Pct\r\nr1;1,5;12,5 %\r\n", "sheet": "Semi"})).unwrap();
+    assert_eq!(r["cols"], 3);
+    assert_eq!(v(&s, "A1"), Value::text("Name"));
+    assert_eq!(v(&s, "B2"), Value::text("1,5"));
+    assert_eq!(v(&s, "C2"), Value::text("12,5 %"));
+    // A `sep=` first line names the delimiter and isn't imported.
+    let r = s.execute("data.fromTextCsv", json!({"text": "sep=|\nA|B\n1|2\n", "sheet": "Pipe"})).unwrap();
+    assert_eq!(r["rows"], 2);
+    assert_eq!(v(&s, "A1"), Value::text("A"));
+    assert_eq!(v(&s, "B2"), Value::Number(2.0));
+    // A given delimiter can be any one character; a word is refused, not read as its first letter.
+    s.execute("data.fromTextCsv", json!({"text": "a；b\n1；2", "delimiter": "；", "sheet": "Wide"})).unwrap();
+    assert_eq!(v(&s, "B2"), Value::Number(2.0));
+    assert!(s.execute("data.fromTextCsv", json!({"text": "a,b", "delimiter": "tab"})).is_err());
+}
