@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (rows auto-fit oversized fonts on open and whole-row/column formatting) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (§1, §8: PivotTables made in GridCraft checked in Excel 365) · **Target:** Microsoft Excel (Microsoft 365)
 
 Every known shortfall against Excel, one entry each, ranked by user impact (what blocks someone
 using GridCraft for real work first). This is the work list: pick from the top, check the open
@@ -19,9 +19,10 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 ### 1. XLSX output not proven in Excel or on real files (FF)
 - **Missing:** a run over a real-world XLSX corpus, and confirmation that Excel opens what we save
   with no repair prompt (PivotTables, charts, CF, validation, dynamic arrays, tables).
-- **Evidence:** round-trip tests cover our own files only (`crates/xlsx/src/tests/`); PivotTable
-  round-trip noted as "unverified in real Excel" since 10-07; #64 (dynamic-array flag) shows the
-  class of bug.
+- **Evidence:** round-trip tests cover our own files only (`crates/xlsx/src/tests/`); PivotTables
+  made in GridCraft were opened and refreshed in Excel 365 on 10-13 (one feature per file), which
+  found and fixed files Excel refused (TRUE/FALSE or errors in the source) and layouts Excel
+  changed on refresh; #64 (dynamic-array flag) shows the class of bug.
 - **Impact:** the main format; a repair prompt or silent loss destroys trust.
 - **Estimate:** 15–25 h, plus owner time in Excel. [file-format-parity.md](file-format-parity.md)
 
@@ -77,7 +78,7 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
   routine in business.
 - **Estimate:** 14–21 h (`.xls` styles and objects 10–15, encryption 4–6). [file-format-parity.md](file-format-parity.md)
 
-### 8. PivotTables: no slicers, calculated items, PivotCharts; unverified in Excel (F)
+### 8. PivotTables: no slicers, calculated items, PivotCharts (F)
 - **Evidence:** `parity-checklist.md` missing `insert.slicer`, `insert.timeline`,
   `insert.pivotChart`, `table.insertSlicer`; calculated items and GETPIVOTDATA missing (calculated fields
   and values on rows done).
@@ -168,6 +169,7 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | §1, §8: PivotTables made in GridCraft checked in Excel 365; the layout, blank-value, Show Values As, date-group, cache-flag, report-filter and PivotChart differences it found are fixed |
 | 2026-10-12 | minor | rows auto-fit oversized fonts on open and whole-row/column formatting (#833) |
 | 2026-10-12 | minor | Page Layout view: dragging margins on the rulers (#792) removed from the §14 remainder |
 | 2026-10-12 | minor | §13: Forecast Sheet Forecast Start (hindcast) landed (#785) |
