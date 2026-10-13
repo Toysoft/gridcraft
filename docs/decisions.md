@@ -5,9 +5,9 @@
 PR #98 builds on the persisted `UiState.language` introduced by #31 and extended by #104.
 Español, Deutsch, Português (Brasil) and Русский select their function table and separators;
 there is no competing locale setting. Formula syntax without a translation table (English,
-Japanese, Chinese, Korean, and for now Czech and French) stays English. The editor translates
-to canonical English before engine commands, and translates back only for display. API,
-clipboard and XLSX syntax remain stable. Existing names override aliases.
+Japanese, Chinese, Korean, and for now Czech, French and Serbian) stays English. The editor
+translates to canonical English before engine commands, and translates back only for display.
+API, clipboard and XLSX syntax remain stable. Existing names override aliases.
 
 Each formula language is data (`crates/formula/src/input/<language>.rs`: names, booleans,
 errors, table specifiers, separators) behind one `Dialect` table, so a language is added by a

@@ -16,8 +16,8 @@ mod pt;
 mod ru;
 
 /// Formula-entry syntax selected by the interface language. Interface languages without a
-/// formula table (Japanese, Chinese and Korean Excel use English names; Czech has no table yet)
-/// use [`FormulaLocale::En`].
+/// formula table (Japanese, Chinese and Korean Excel use English names; Czech, French and Serbian
+/// have no table yet) use [`FormulaLocale::En`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FormulaLocale {
     #[default]
@@ -342,6 +342,18 @@ fn normalize(
                 *name = alias.to_string();
             }
             for arg in args {
+                // A worksheet function passed by name (`BYROW(A1:C3;SOMA)`, saved as `_xleta.SUM`)
+                // is spelled like its call. A local boolean word stays a boolean.
+                if let Expr::Name(function) = arg
+                    && !bound(function, bindings)
+                    && (display || locale.boolean(function).is_none())
+                {
+                    let alias = if display { locale.function_name(function) } else { locale.canonical_name(function) };
+                    if alias != function.as_str() && (!display || (!bound(alias, bindings) && locale.boolean(alias).is_none())) {
+                        *function = alias.to_string();
+                        continue;
+                    }
+                }
                 normalize(arg, locale, known_name, bindings, depth + 1, display)?;
             }
         }

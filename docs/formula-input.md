@@ -33,7 +33,8 @@ For example, `=SI(VERDADERO;SUMA(1,5;2,25);0)` (Spanish), `=WENN(WAHR;SUMME({1.2
 Names, booleans and errors are case-insensitive in any script (`zählenwenn`, `сумм`). Functions
 without a local name keep their English name, and canonical English names, booleans and errors
 are also accepted with the language's separators. English mode retains comma arguments, decimal
-points and comma array columns; it does not silently translate local names.
+points and comma array columns; it does not silently translate local names. A function passed by
+name (`BYROW(A1:C3;SOMA)`, `GROUPBY(…;SUMME)`) uses the same local name as its call.
 
 ## Where it applies
 

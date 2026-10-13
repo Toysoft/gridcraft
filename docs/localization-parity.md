@@ -26,7 +26,7 @@ right-to-left sheets and full complex-script support. Part of
   separators, at the editor boundary only; files and APIs keep canonical English
   ([formula-input.md](formula-input.md)). The names come from machine-translated Microsoft pages
   (two agreeing signals per entry, sources in `crates/formula/src/input/`) and have no native
-  review. French and Czech formulas stay English. Number and date formats are en-US only
+  review. French, Czech and Serbian formulas stay English. Number and date formats are en-US only
   (`crates/numfmt` says "en-US only"); PR #163 (German formulas and numbers) is open.
 - **Script support.** System-font fallback for CJK, Thai and Hebrew landed in #38 (closes #32;
   #142 is still open pending confirmation). There is no complex-text shaping: Arabic and

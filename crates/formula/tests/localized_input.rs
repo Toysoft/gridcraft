@@ -52,6 +52,7 @@ fn every_language_round_trips_canonical_formulas() {
         "XLOOKUP(1,A:A,B:B,#N/A)+IFNA(#GETTING_DATA,#SPILL!)",
         "SUM(1:3)+ROWS($2:$2)",
         "CEILING.MATH(2.5)+T.TEST(A1:A3,B1:B3,2,1)",
+        "BYROW(A1:B2,SUM)+GROUPBY(A1:A3,B1:B3,AVERAGE)",
     ] {
         let expected = print(&parse(formula).unwrap());
         for locale in FormulaLocale::ALL {
@@ -84,6 +85,20 @@ fn names_shadow_local_function_names_in_any_script() {
     let known = |name: &str| name == "СУММ";
     assert_eq!(print(&parse_input("СУММ(1)", Ru, known).unwrap()), "СУММ(1)");
     assert_eq!(print_input(&parse("SUM(1)").unwrap(), Ru, known).unwrap(), "SUM(1)");
+}
+
+#[test]
+fn functions_passed_by_name_are_spelled_in_the_language() {
+    // GROUPBY(…,SUM) and BYROW(…,SUM) take a worksheet function by name, saved as `_xleta.SUM`.
+    assert_eq!(canonical("NACHZEILE(A1:B3;SUMME)", De), "BYROW(A1:B3,SUM)");
+    assert_eq!(canonical("AGRUPARPOR(A2:A9;B2:B9;soma)", PtBr), "GROUPBY(A2:A9,B2:B9,SUM)");
+    assert_eq!(shown("_xlfn.GROUPBY(A2:A9,B2:B9,_xleta.SUM)", PtBr), "AGRUPARPOR(A2:A9;B2:B9;SOMA)");
+    assert_eq!(canonical("WIERSZAMI(A1:B3;suma)", Pl), "BYROW(A1:B3,SUM)");
+    assert_eq!(shown("_xlfn.GROUPBY(A2:A9,B2:B9,_xleta.SUM)", Pl), "GRUPUJ.WEDŁUG(A2:A9;B2:B9;SUMA)");
+    // A defined name with the local spelling is still the name.
+    let known = |name: &str| name == "SUMME";
+    assert_eq!(print(&parse_input("NACHZEILE(A1:B3;SUMME)", De, known).unwrap()), "BYROW(A1:B3,SUMME)");
+    assert_eq!(print_input(&parse("BYROW(A1:B3,SUM)").unwrap(), De, known).unwrap(), "NACHZEILE(A1:B3;SUM)");
 }
 
 #[test]
