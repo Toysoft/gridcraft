@@ -245,39 +245,6 @@ fn area_param(cmd: &str, v: Option<&str>) -> Result<&'static str> {
     }
 }
 
-fn func_param(v: Option<&str>) -> Option<PivotFunc> {
-    Some(match v?.to_ascii_lowercase().as_str() {
-        "sum" => PivotFunc::Sum,
-        "count" | "counta" => PivotFunc::Count,
-        "average" | "avg" | "mean" => PivotFunc::Average,
-        "max" => PivotFunc::Max,
-        "min" => PivotFunc::Min,
-        "product" => PivotFunc::Product,
-        "countnumbers" | "countnums" | "count numbers" => PivotFunc::CountNumbers,
-        "stddev" => PivotFunc::StdDev,
-        "stddevp" => PivotFunc::StdDevP,
-        "var" => PivotFunc::Var,
-        "varp" => PivotFunc::VarP,
-        _ => return None,
-    })
-}
-
-fn func_name(f: PivotFunc) -> &'static str {
-    match f {
-        PivotFunc::Sum => "sum",
-        PivotFunc::Count => "count",
-        PivotFunc::Average => "average",
-        PivotFunc::Max => "max",
-        PivotFunc::Min => "min",
-        PivotFunc::Product => "product",
-        PivotFunc::CountNumbers => "countNumbers",
-        PivotFunc::StdDev => "stdDev",
-        PivotFunc::StdDevP => "stdDevP",
-        PivotFunc::Var => "var",
-        PivotFunc::VarP => "varP",
-    }
-}
-
 fn show_as_param(v: &str) -> Option<PivotShowAs> {
     Some(match v.to_ascii_lowercase().as_str() {
         "normal" | "none" => PivotShowAs::Normal,
@@ -425,7 +392,7 @@ fn unique_value_name(pt: &PivotTable, base: &str, except: Option<usize>) -> Stri
 }
 
 fn auto_name(f: PivotFunc, field: &str) -> String {
-    format!("{} of {field}", pv::func_caption(f))
+    format!("{} of {field}", f.caption())
 }
 
 /// Adds `field` to an area (moving it out of the other axis areas).
@@ -675,7 +642,16 @@ fn insert_pivot(s: &mut Session, p: &Json) -> Result<Json> {
                     Json::String(n) => add_to_area("insert.pivotTable", pt, &src, n, area, None, None, None)?,
                     Json::Object(_) => {
                         let n = str_param(f, "field").ok_or_else(|| bad("insert.pivotTable", "a field object needs `field`"))?;
-                        add_to_area("insert.pivotTable", pt, &src, n, area, func_param(str_param(f, "func")), str_param(f, "name"), None)?;
+                        add_to_area(
+                            "insert.pivotTable",
+                            pt,
+                            &src,
+                            n,
+                            area,
+                            str_param(f, "func").and_then(PivotFunc::parse),
+                            str_param(f, "name"),
+                            None,
+                        )?;
                         let by = group_param(str_param(f, "group"));
                         if let Some(by) = by.filter(|b| *b != PivotDateGroup::None)
                             && matches!(area, "rows" | "columns")
@@ -746,7 +722,7 @@ fn pivot_json(wb: &Workbook, si: usize, pt: &PivotTable) -> Json {
         "source": pt.source,
         "rows": pt.rows.iter().map(|f| json!({"field": f.source_col, "sort": sort_name(f.sort), "group": group_name(f.date_group), "collapsed": f.collapsed_items})).collect::<Vec<_>>(),
         "columns": pt.columns.iter().map(|f| json!({"field": f.source_col, "sort": sort_name(f.sort), "group": group_name(f.date_group), "collapsed": f.collapsed_items})).collect::<Vec<_>>(),
-        "values": pt.values.iter().map(|v| json!({"field": v.source_col, "func": func_name(v.func), "name": v.name, "showAs": show_as_name(v.show_as), "numberFormat": v.number_format})).collect::<Vec<_>>(),
+        "values": pt.values.iter().map(|v| json!({"field": v.source_col, "func": v.func.name(), "name": v.name, "showAs": show_as_name(v.show_as), "numberFormat": v.number_format})).collect::<Vec<_>>(),
         "filters": pt.filters.iter().map(|f| json!({"field": f.source_col, "selected": f.selected, "report": !in_axes(pt, &f.source_col)})).collect::<Vec<_>>(),
         "layout": layout_name(pt.layout),
         "grandTotalsRows": pt.grand_totals_rows,
@@ -835,7 +811,7 @@ fn add_field(s: &mut Session, p: &Json) -> Result<Json> {
     let field = str_param(p, "field").ok_or_else(|| bad(C, "missing `field`"))?.to_string();
     let area = area_param(C, str_param(p, "area"))?;
     let func = match str_param(p, "func") {
-        Some(f) => Some(func_param(Some(f)).ok_or_else(|| bad(C, format!("unknown function `{f}`")))?),
+        Some(f) => Some(PivotFunc::parse(f).ok_or_else(|| bad(C, format!("unknown function `{f}`")))?),
         None => None,
     };
     let name = str_param(p, "name").map(str::to_string);
@@ -1014,7 +990,7 @@ fn value_settings(s: &mut Session, p: &Json) -> Result<Json> {
     let field = str_param(p, "field").map(str::to_string);
     let index = u32_param(p, "index").map(|v| v as usize);
     let func = match str_param(p, "func") {
-        Some(f) => Some(func_param(Some(f)).ok_or_else(|| bad(C, format!("unknown function `{f}`")))?),
+        Some(f) => Some(PivotFunc::parse(f).ok_or_else(|| bad(C, format!("unknown function `{f}`")))?),
         None => None,
     };
     let show = match str_param(p, "showAs") {
@@ -1891,6 +1867,17 @@ mod tests {
             let r = find_row(&s, key).unwrap();
             assert_eq!(val(&s, &CellRef::new(r, 5).a1()), Value::Number(rank), "{key}");
         }
+    }
+
+    #[test]
+    fn count_numbers_is_captioned_like_count() {
+        // Excel 365 captions a new Count Numbers value field "Count of Units", as it does Count.
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "values": [{"field": "Units", "func": "countNumbers"}]})).unwrap();
+        assert_eq!(pt(&s).values[0].name, "Count of Units");
+        assert_eq!(pt(&s).values[0].func, gridcraft_model::PivotFunc::CountNumbers);
+        let l = s.execute("pivot.list", json!({})).unwrap();
+        assert_eq!(l[0]["values"][0]["func"], "countNumbers");
     }
 
     #[test]

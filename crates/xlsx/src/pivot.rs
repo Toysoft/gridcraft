@@ -64,55 +64,6 @@ fn same(a: &str, b: &str) -> bool {
     a.to_lowercase() == b.to_lowercase()
 }
 
-fn func_name(f: PivotFunc) -> &'static str {
-    match f {
-        PivotFunc::Sum => "sum",
-        PivotFunc::Count => "count",
-        PivotFunc::Average => "average",
-        PivotFunc::Max => "max",
-        PivotFunc::Min => "min",
-        PivotFunc::Product => "product",
-        PivotFunc::CountNumbers => "countNums",
-        PivotFunc::StdDev => "stdDev",
-        PivotFunc::StdDevP => "stdDevp",
-        PivotFunc::Var => "var",
-        PivotFunc::VarP => "varp",
-    }
-}
-
-fn func_from(s: &str) -> Option<PivotFunc> {
-    Some(match s {
-        "sum" => PivotFunc::Sum,
-        "count" => PivotFunc::Count,
-        "average" => PivotFunc::Average,
-        "max" => PivotFunc::Max,
-        "min" => PivotFunc::Min,
-        "product" => PivotFunc::Product,
-        "countNums" => PivotFunc::CountNumbers,
-        "stdDev" => PivotFunc::StdDev,
-        "stdDevp" => PivotFunc::StdDevP,
-        "var" => PivotFunc::Var,
-        "varp" => PivotFunc::VarP,
-        _ => return None,
-    })
-}
-
-fn func_caption(f: PivotFunc) -> &'static str {
-    match f {
-        PivotFunc::Sum => "Sum",
-        PivotFunc::Count => "Count",
-        PivotFunc::Average => "Average",
-        PivotFunc::Max => "Max",
-        PivotFunc::Min => "Min",
-        PivotFunc::Product => "Product",
-        PivotFunc::CountNumbers => "Count",
-        PivotFunc::StdDev => "StdDev",
-        PivotFunc::StdDevP => "StdDevp",
-        PivotFunc::Var => "Var",
-        PivotFunc::VarP => "Varp",
-    }
-}
-
 fn group_by_name(g: PivotDateGroup) -> &'static str {
     match g {
         PivotDateGroup::Years => "years",
@@ -990,7 +941,7 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
         let mut used: Vec<String> = Vec::new();
         for (i, v) in &vals {
             let base = if v.name.trim().is_empty() {
-                format!("{} of {}", func_caption(v.func), c.fields.get(*i).map(|f| f.name.as_str()).unwrap_or(""))
+                format!("{} of {}", v.func.caption(), c.fields.get(*i).map(|f| f.name.as_str()).unwrap_or(""))
             } else {
                 v.name.clone()
             };
@@ -1003,7 +954,7 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
             used.push(n.clone());
             let _ = write!(s, "<dataField name=\"{}\" fld=\"{i}\"", esc_attr(&n));
             if v.func != PivotFunc::Sum {
-                let _ = write!(s, " subtotal=\"{}\"", func_name(v.func));
+                let _ = write!(s, " subtotal=\"{}\"", v.func.file_name());
             }
             let base_field = row_idx.first().or(col_idx.first()).copied().unwrap_or(0);
             match v.show_as {
@@ -1399,7 +1350,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
             let Some(f) = cache.fields.get(i) else { continue };
             let func = match d.attr("subtotal") {
                 None => PivotFunc::Sum,
-                Some(s) => func_from(s).unwrap_or_else(|| {
+                Some(s) => PivotFunc::parse(s).unwrap_or_else(|| {
                     cx.warn(format!("PivotTable function {s} is not supported; using Sum"));
                     PivotFunc::Sum
                 }),
@@ -1430,7 +1381,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 .attr_u32("numFmtId")
                 .filter(|id| *id != 0)
                 .and_then(|id| crate::tables::builtin_format(id).map(str::to_string).or_else(|| cx.num_fmts.get(&id).cloned()));
-            let name = d.attr("name").map(str::to_string).unwrap_or_else(|| format!("{} of {}", func_caption(func), f.name));
+            let name = d.attr("name").map(str::to_string).unwrap_or_else(|| format!("{} of {}", func.caption(), f.name));
             pt.values.push(PivotValue { source_col: f.name.clone(), func, name, show_as, number_format });
         }
     }

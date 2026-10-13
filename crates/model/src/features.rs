@@ -939,6 +939,80 @@ pub enum PivotFunc {
     VarP,
 }
 
+impl PivotFunc {
+    /// Every function, in the order of Excel's Value Field Settings list.
+    pub const ALL: [PivotFunc; 11] = [
+        PivotFunc::Sum,
+        PivotFunc::Count,
+        PivotFunc::Average,
+        PivotFunc::Max,
+        PivotFunc::Min,
+        PivotFunc::Product,
+        PivotFunc::CountNumbers,
+        PivotFunc::StdDev,
+        PivotFunc::StdDevP,
+        PivotFunc::Var,
+        PivotFunc::VarP,
+    ];
+
+    /// The word Excel puts in front of a new value field's name ("Sum of Sales"). Count Numbers
+    /// is captioned "Count", as in Excel.
+    pub fn caption(self) -> &'static str {
+        match self {
+            PivotFunc::Sum => "Sum",
+            PivotFunc::Count | PivotFunc::CountNumbers => "Count",
+            PivotFunc::Average => "Average",
+            PivotFunc::Max => "Max",
+            PivotFunc::Min => "Min",
+            PivotFunc::Product => "Product",
+            PivotFunc::StdDev => "StdDev",
+            PivotFunc::StdDevP => "StdDevp",
+            PivotFunc::Var => "Var",
+            PivotFunc::VarP => "Varp",
+        }
+    }
+
+    /// The name commands take and report (`countNumbers`, `stdDevP`).
+    pub fn name(self) -> &'static str {
+        match self {
+            PivotFunc::Sum => "sum",
+            PivotFunc::Count => "count",
+            PivotFunc::Average => "average",
+            PivotFunc::Max => "max",
+            PivotFunc::Min => "min",
+            PivotFunc::Product => "product",
+            PivotFunc::CountNumbers => "countNumbers",
+            PivotFunc::StdDev => "stdDev",
+            PivotFunc::StdDevP => "stdDevP",
+            PivotFunc::Var => "var",
+            PivotFunc::VarP => "varP",
+        }
+    }
+
+    /// The name in an XLSX file (`dataField@subtotal`: `countNums`, `stdDevp`, `varp`).
+    pub fn file_name(self) -> &'static str {
+        match self {
+            PivotFunc::CountNumbers => "countNums",
+            PivotFunc::StdDevP => "stdDevp",
+            PivotFunc::VarP => "varp",
+            f => f.name(),
+        }
+    }
+
+    /// A function from its name, case-insensitively: the command name, the file name or a
+    /// common alias (`avg`, `counta`, `count numbers`).
+    pub fn parse(s: &str) -> Option<PivotFunc> {
+        let s = s.trim().to_ascii_lowercase();
+        let alias = match s.as_str() {
+            "counta" => Some(PivotFunc::Count),
+            "avg" | "mean" => Some(PivotFunc::Average),
+            "count numbers" => Some(PivotFunc::CountNumbers),
+            _ => None,
+        };
+        alias.or_else(|| PivotFunc::ALL.into_iter().find(|f| f.name().eq_ignore_ascii_case(&s) || f.file_name().eq_ignore_ascii_case(&s)))
+    }
+}
+
 /// Show-values-as transform.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PivotShowAs {
@@ -1044,5 +1118,26 @@ impl Default for PivotTable {
             values_on_rows: false,
             values_position: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod pivot_func_tests {
+    use super::PivotFunc;
+
+    #[test]
+    fn captions_and_names_round_trip() {
+        // Excel 365's captions; Count Numbers is captioned like Count ("Count of Units").
+        let captions: Vec<&str> = PivotFunc::ALL.iter().map(|f| f.caption()).collect();
+        assert_eq!(captions, ["Sum", "Count", "Average", "Max", "Min", "Product", "Count", "StdDev", "StdDevp", "Var", "Varp"]);
+        for f in PivotFunc::ALL {
+            assert_eq!(PivotFunc::parse(f.name()), Some(f));
+            assert_eq!(PivotFunc::parse(f.file_name()), Some(f));
+            assert_eq!(PivotFunc::parse(&f.name().to_uppercase()), Some(f));
+        }
+        assert_eq!(PivotFunc::CountNumbers.file_name(), "countNums");
+        assert_eq!(PivotFunc::parse("avg"), Some(PivotFunc::Average));
+        assert_eq!(PivotFunc::parse("Count Numbers"), Some(PivotFunc::CountNumbers));
+        assert_eq!(PivotFunc::parse("median"), None);
     }
 }

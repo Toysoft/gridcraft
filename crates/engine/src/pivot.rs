@@ -398,23 +398,6 @@ impl Acc {
     }
 }
 
-/// Excel's caption verb for a function ("Sum of Sales").
-pub fn func_caption(f: PivotFunc) -> &'static str {
-    match f {
-        PivotFunc::Sum => "Sum",
-        PivotFunc::Count => "Count",
-        PivotFunc::Average => "Average",
-        PivotFunc::Max => "Max",
-        PivotFunc::Min => "Min",
-        PivotFunc::Product => "Product",
-        PivotFunc::CountNumbers => "Count Numbers",
-        PivotFunc::StdDev => "StdDev",
-        PivotFunc::StdDevP => "StdDevp",
-        PivotFunc::Var => "Var",
-        PivotFunc::VarP => "Varp",
-    }
-}
-
 // ---------------------------------------------------------------- trees
 
 #[derive(Clone, Debug)]
