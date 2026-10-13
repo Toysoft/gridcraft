@@ -103,6 +103,7 @@ fn copy_publishes_run_spans_with_the_cells_own_style() {
     assert!(calls[0].contains("font-weight:bold;"), "cell style on the td, got: {}", calls[0]);
     assert!(calls[0].contains("<span style=\"font-weight:normal;\">plain </span>"), "got: {}", calls[0]);
     assert!(calls[0].contains("<span style=\"color:#FF0000;\">red</span>"), "got: {}", calls[0]);
+    assert_eq!(calls[0].matches("<span").count(), 3, "all three runs emit spans, got: {}", calls[0]);
 }
 
 #[test]

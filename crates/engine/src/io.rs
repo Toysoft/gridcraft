@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 
 use gridcraft_core::{CellRef, RangeRef};
-use gridcraft_model::{RunFont, Sheet, Underline, VertAlign, Workbook};
+use gridcraft_model::{Color, RunFont, Sheet, Underline, VertAlign, Workbook};
 
 use crate::{EngineError, Result};
 
@@ -228,10 +228,14 @@ fn html_cell_css(wb: &Workbook, sh: &Sheet, c: CellRef) -> String {
 /// its delta, never the merged font).
 fn run_span_css(delta: &RunFont, wb: &Workbook) -> String {
     let mut css = String::new();
-    if let Some(c) = &delta.color
-        && let Some(h) = c.hex(&wb.theme)
-    {
-        let _ = write!(css, "color:{h};");
+    if let Some(c) = &delta.color {
+        // A run's automatic colour renders as unconditionally black (run_color), so the copy
+        // pins black instead of letting the span inherit the <td>'s cell colour.
+        if matches!(c, Color::Auto) {
+            css.push_str("color:#000000;");
+        } else if let Some(h) = c.hex(&wb.theme) {
+            let _ = write!(css, "color:{h};");
+        }
     }
     match delta.bold {
         Some(true) => css.push_str("font-weight:bold;"),
@@ -729,6 +733,13 @@ mod tests {
         assert_eq!(run_span_css(&delta, &wb), "font-family:\"Bad&quot;Name&amp;\";");
     }
 
+    #[test]
+    fn run_span_css_copies_auto_as_black_like_the_renderer() {
+        let wb = Workbook::new();
+        let delta = RunFont { color: Some(Color::Auto), ..RunFont::default() };
+        assert_eq!(run_span_css(&delta, &wb), "color:#000000;");
+    }
+
     /// Seeds a rich-text cell straight into the model, the way the XLSX reader does.
     fn rich_cell(text: &str, runs: Vec<(u32, u32, RunFont)>) -> Workbook {
         let mut wb = Workbook::new();
@@ -751,7 +762,7 @@ mod tests {
 
     #[test]
     fn range_html_drops_runs_that_do_not_match_the_text() {
-        // A gap: runs cover 0..6 and 7..12 of a 12-byte text.
+        // A gap: runs cover 0..6 and 7..12 of a 15-byte text.
         let text = "plain red plain";
         let wb = rich_cell(text, vec![(0, 6, RunFont::default()), (7, 5, RunFont::default())]);
         let html = range_html(&wb, 0, RangeRef::cell(CellRef::new(0, 0)), text).unwrap();
