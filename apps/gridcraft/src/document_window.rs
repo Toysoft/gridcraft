@@ -12,6 +12,9 @@ pub struct DocumentWindow {
     last_edited: Option<bool>,
     /// The file the title-bar icon was loaded for, so it is loaded only when the file changes.
     pub doc_icon_path: Option<String>,
+    /// A native drag took the mouse over: egui never sees that gesture's release, so the next
+    /// frame's input owes it a synthetic one ([`Self::take_synthetical_up`]).
+    drag_in_flight: bool,
 }
 
 impl DocumentWindow {
@@ -27,6 +30,18 @@ impl DocumentWindow {
         use winit::platform::macos::WindowExtMacOS;
         // The dot on the close button; standard even for an untitled document with changes.
         window.set_document_edited(dirty);
+    }
+
+    /// Mark the mouse as taken over: called when the native drag session accepted the gesture.
+    pub fn drag_began(&mut self) {
+        self.drag_in_flight = true;
+    }
+
+    /// The release egui is owed after a taken-over gesture, once: the drag session consumes the
+    /// mouse, so winit delivers no mouse-up, and egui would otherwise believe the button still
+    /// down — every later move re-entering a drag (the title bar's window drag included).
+    pub fn take_synthetical_up(&mut self) -> bool {
+        std::mem::take(&mut self.drag_in_flight)
     }
 }
 

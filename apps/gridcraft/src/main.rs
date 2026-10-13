@@ -60,11 +60,19 @@ impl eframe::App for App {
                 self.0.doc_icon = path.and_then(|p| document_window::load_doc_icon(ctx, &p));
             }
             // A drag of the title-bar icon becomes a native drag of the file.
-            if let Some(p) = self.0.drag_file.take()
-                && let Some(w) = frame.winit_window()
-                && let Err(e) = gridcraft_macos_window::begin_file_drag(w.as_ref(), &p)
-            {
-                log::warn!("document drag of {p}: {e}");
+            if let Some(p) = self.0.drag_file.take() {
+                match frame
+                    .winit_window()
+                    .ok_or(gridcraft_macos_window::Error::Window)
+                    .and_then(|w| gridcraft_macos_window::begin_file_drag(w.as_ref(), &p))
+                {
+                    // The session owns the mouse until the drop: egui never sees the release, so
+                    // the next frame's input owes it one (raw_input_hook), or egui believes the
+                    // button still down and every later move re-enters a drag — the title bar's
+                    // window drag included.
+                    Ok(()) => self.3.drag_began(),
+                    Err(e) => log::warn!("document drag of {p}: {e}"),
+                }
             }
         }
         #[cfg(not(target_os = "macos"))]
@@ -81,6 +89,27 @@ impl eframe::App for App {
             if let Some(p) = f.path().to_str().map(str::to_string).filter(|p| !p.is_empty()) {
                 self.0.open_path(&p);
             }
+        }
+        // The native document drag took the mouse over: deliver the release egui will never see,
+        // and drop the pointer, so no leftover drag state re-enters a drag on the next move.
+        #[cfg(target_os = "macos")]
+        if self.3.take_synthetical_up() {
+            let pos = raw
+                .events
+                .iter()
+                .rev()
+                .find_map(|e| match e {
+                    egui::Event::PointerMoved(pos) => Some(*pos),
+                    _ => None,
+                })
+                .unwrap_or(egui::Pos2::ZERO);
+            raw.events.push(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            raw.events.push(egui::Event::PointerGone);
         }
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

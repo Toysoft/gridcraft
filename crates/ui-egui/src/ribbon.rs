@@ -131,7 +131,10 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                 if let Some(tex) = app.doc_icon.as_ref() {
                     ui.painter().image(tex.id(), icon_rect, Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)), Color32::WHITE);
                 }
-                let icon = ui.interact(icon_rect, ui.id().with("doc_icon"), Sense::click_and_drag());
+                // Grabbed by feel, like the native proxy icon: the hit area reaches past the
+                // drawn icon (a miss here lands on the window drag instead, which feels broken).
+                let grab = icon_rect.expand(6.0);
+                let icon = ui.interact(grab, ui.id().with("doc_icon"), Sense::click_and_drag());
                 if icon.drag_started()
                     && let Some(p) = app.session.active().and_then(|d| d.path.clone())
                 {
