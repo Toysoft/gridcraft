@@ -3325,3 +3325,17 @@ fn from_text_csv_keeps_field_text_and_number_formats() {
     assert_eq!(v(&s, "F2"), Value::Number(1_234_567.89));
     assert_eq!(fmt("F2"), "#,##0.00");
 }
+
+#[test]
+fn from_text_csv_reads_a_bracketed_header_as_csv() {
+    // `[ID],Name` isn't JSON: it's read as CSV, as File › Open reads it.
+    let mut s = s();
+    s.execute("data.fromTextCsv", json!({"text": "[ID],Name\n1,a\n", "sheet": "Ids"})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::text("[ID]"));
+    assert_eq!(v(&s, "B1"), Value::text("Name"));
+    assert_eq!(v(&s, "A2"), Value::Number(1.0));
+    // A JSON array of objects is still one column per key.
+    s.execute("data.getData", json!({"text": "[{\"k\": \"x\", \"n\": 2}, {\"n\": 3}]", "sheet": "Json"})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::text("k"));
+    assert_eq!(v(&s, "B3"), Value::Number(3.0));
+}

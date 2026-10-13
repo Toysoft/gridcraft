@@ -865,9 +865,20 @@ fn from_csv(s: &mut Session, p: &Json) -> Result<Json> {
     };
     let text = String::from_utf8_lossy(&bytes);
     let sys = s.doc()?.wb.date_system;
-    let block = if text.trim_start().starts_with('[') {
-        // JSON array of objects → rows.
-        let arr: Vec<Json> = serde_json::from_str(&text).map_err(|e| bad("data.getData", e.to_string()))?;
+    // A JSON array of objects → rows. Text that only starts with `[` (a CSV header `[ID],Name`)
+    // is CSV; a `.json` file must be JSON.
+    let json_file = str_param(p, "path").is_some_and(|x| x.to_ascii_lowercase().ends_with(".json"));
+    let arr = if json_file || text.trim_start().starts_with('[') {
+        match serde_json::from_str::<Vec<Json>>(&text) {
+            Ok(arr) if arr.iter().all(Json::is_object) => Some(arr),
+            Ok(_) if json_file => return Err(bad("data.getData", "expected a JSON array of objects")),
+            Err(e) if json_file => return Err(bad("data.getData", e.to_string())),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let block = if let Some(arr) = arr {
         json_block(&arr, sys)
     } else {
         // No delimiter given: detected as File › Open does (a `sep=` line, else comma, semicolon or tab).
