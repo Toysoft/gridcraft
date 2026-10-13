@@ -295,6 +295,7 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
     }
 
     let mut w = format!("{XML_DECL}<workbook xmlns=\"{NS_MAIN}\" xmlns:r=\"{NS_REL}\">");
+    w.push_str(&crate::passthrough::workbook_elements(wb, "fileVersion"));
     w.push_str(if wb.date_system == gridcraft_core::DateSystem::D1904 { "<workbookPr date1904=\"1\"/>" } else { "<workbookPr/>" });
     if wb.protected_structure {
         let pw = wb.structure_password.as_ref().map(|h| crate::sheet_write::password_attrs(h, "workbook")).unwrap_or_default();
@@ -331,6 +332,10 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
     }
     w.push_str("/>");
     w.push_str(&pivots.workbook_xml(&mut wb_rels));
+    let exts = crate::passthrough::workbook_elements(wb, "ext");
+    if !exts.is_empty() {
+        let _ = write!(w, "<extLst>{exts}</extLst>");
+    }
     w.push_str("</workbook>");
 
     // Workbook-level parts.

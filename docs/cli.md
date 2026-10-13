@@ -78,6 +78,11 @@ exactly. Skipped, and counted separately:
 - *volatile*: `RAND`, `RANDARRAY`, `RANDBETWEEN`, `NOW`, `TODAY`, `INFO`, `CELL("filename")`, names that use them, and
   every formula that reads such a cell (through the dependency graph).
 
+A logical result the producer cached as the number 1 or 0, without `t="b"` (Business Central's "Open in Excel"
+exports write `<c><f>TRUE()</f><v>1</v></c>`), holds the same value: it matches GridCraft's TRUE or FALSE and is also
+counted as *booleans saved as 1/0* (`boolAsNumber`). Excel types logical results, so on files it saved this count
+should be 0; a non-zero count there would point at a formula where GridCraft returns a logical and Excel a number.
+
 Each mismatch lists the cell, formula, expected (cached) and actual (GridCraft) values and the functions the formula
 calls. Mismatches roll up by function: *checked* (formula cells calling it), *mismatched*, and *primary* (mismatched
 while none of the cell's precedents mismatch — the likely culprit, as opposed to a downstream effect). They also roll
@@ -111,6 +116,7 @@ added, a changed meaning bumps the version):
     "calc": {
       "formulaCells": 3, "checked": 2, "matched": 1, "mismatched": 1, "noOracle": 1, "volatile": 0,
       "staleCache": false,             // fullCalcOnLoad: nothing compared
+      "boolAsNumber": 0,               // matched TRUE/FALSE results the producer saved as 1/0 (no t="b")
       "mismatches": [{"cell": "Sheet1!B1", "formula": "=SUM(A1:A2)", "expected": 7, "actual": 6,
                       "kind": "numeric",  // numeric | text | bool | error | blank (GridCraft empty) | type
                       "functions": ["SUM"], "primary": true}],
@@ -124,7 +130,7 @@ added, a changed meaning bumps the version):
     }
   }],
   "totals": {"files": 1, "opened": 1, "failedToOpen": 0, "formulaCells": 3, "checked": 2, "matched": 1,
-             "mismatched": 1, "noOracle": 1, "volatile": 0, "roundTripFailed": 0, "roundTripDiffering": 1,
+             "mismatched": 1, "noOracle": 1, "volatile": 0, "boolAsNumber": 0, "roundTripFailed": 0, "roundTripDiffering": 1,
              "categoriesDiffering": {"values": 1}},
   "functions": [{"name": "SUM", "checked": 1, "mismatched": 1, "primary": 1}],  // all files, most mismatched first
   "signatures": {"number → number": 1}

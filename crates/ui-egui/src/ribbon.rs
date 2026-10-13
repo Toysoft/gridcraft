@@ -131,6 +131,9 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                 }
                 let share = small_button(ui, Icon::Share, "Share", "Share: export or save a copy", true);
                 egui::Popup::menu(&share).show(|ui| {
+                    if ui.button("Export as PDF…").clicked() {
+                        app.run_or_alert("file.exportPdf", json!({}));
+                    }
                     for (label, fmt) in
                         [("Save a Copy as Excel Workbook (.xlsx)…", "xlsx"), ("Export as CSV…", "csv"), ("Export as Web Page (.html)…", "html")]
                     {
@@ -373,7 +376,7 @@ struct ComboState {
 }
 
 /// What the user did with an [`editable_combo`].
-enum ComboResult {
+pub(crate) enum ComboResult {
     None,
     /// A row was applied: clicked or Enter on the highlighted row.
     Picked(String),
@@ -384,7 +387,7 @@ enum ComboResult {
 /// Excel-style dropdown: a filter field (type to narrow the list) plus arrow/Enter selection.
 /// `items` are `(value, display)`; the value is what comes back. When `forced` (keytip invoke)
 /// or clicked, the popup opens, focuses the filter field, and selects its text.
-fn editable_combo(
+pub(crate) fn editable_combo(
     ui: &mut Ui,
     anchor: &egui::Response,
     salt: &'static str,
@@ -2032,9 +2035,6 @@ fn review(app: &mut SheetApp, ui: &mut Ui) {
     control_keytip(app, ui, &__k, "dialog:comment");
     if __k.clicked() {
         app.open_dialog("comment", json!({"threaded": true}));
-    }
-    if big_button(ui, Icon::Comment, "Show\nComments", "Comments pane", false).clicked() {
-        app.grid.pane = Some("comments".into());
     }
     let __k = big_button(ui, Icon::Delete, "Delete", "Delete Comment", false);
     control_keytip(app, ui, &__k, "review.deleteComment");
