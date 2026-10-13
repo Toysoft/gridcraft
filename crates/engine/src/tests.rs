@@ -1,5 +1,5 @@
 use gridcraft_core::{CellRef, Value};
-use gridcraft_model::{Cell, CellRuns, Color, Run, RunFont, StyleId};
+use gridcraft_model::{Cell, CellRuns, Color, Run, RunFont, StyleId, Underline, VertAlign};
 use serde_json::json;
 
 use crate::Session;
@@ -2087,6 +2087,169 @@ fn fontcolor_chars_roundtrips_xlsx() {
     reopen(&mut s);
     assert_eq!(v(&s, "A1"), Value::text("black red green"));
     assert_eq!(runs_of(&s, "A1"), Some(runs), "the runs survive the XLSX round trip");
+}
+
+// The rest of the Font group over a character range: bold/italic/underline/… with `chars`
+// (issue #776).
+
+#[test]
+fn bold_chars_toggles_mixed_to_all() {
+    let mut s = s();
+    // A bold run plus a plain run; `chars` covers both and no `on` is given.
+    s.execute(
+        "cell.set",
+        json!({
+            "cell": "A1",
+            "input": "bold plain",
+            "runs": {"runs": [
+                {"start": 0, "len": 4, "font": {"bold": true}},
+                {"start": 4, "len": 6, "font": {}}
+            ]}
+        }),
+    )
+    .unwrap();
+    s.execute("home.bold", json!({"cell": "A1", "chars": [0, 10]})).unwrap();
+    let expected = CellRuns { runs: vec![Run { start: 0, len: 10, font: RunFont { bold: Some(true), ..runs_none_font() } }] };
+    assert_eq!(runs_of(&s, "A1"), Some(expected), "not everything covered was bold, so bold it all");
+}
+
+#[test]
+fn bold_chars_unbolds_when_all_covered() {
+    let mut s = s();
+    s.execute(
+        "cell.set",
+        json!({
+            "cell": "A1",
+            "input": "all bold",
+            "runs": {"runs": [{"start": 0, "len": 8, "font": {"bold": true}}]}
+        }),
+    )
+    .unwrap();
+    s.execute("home.bold", json!({"cell": "A1", "chars": [0, 8]})).unwrap();
+    let expected = CellRuns { runs: vec![Run { start: 0, len: 8, font: RunFont { bold: Some(false), ..runs_none_font() } }] };
+    assert_eq!(runs_of(&s, "A1"), Some(expected), "everything covered was bold, so unbold");
+}
+
+#[test]
+fn underline_chars_style_double() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "hello"})).unwrap();
+    s.execute("home.underline", json!({"cell": "A1", "chars": [0, 5], "on": true, "style": "double"})).unwrap();
+    let expected = CellRuns { runs: vec![Run { start: 0, len: 5, font: RunFont { underline: Some(Underline::Double), ..runs_none_font() } }] };
+    assert_eq!(runs_of(&s, "A1"), Some(expected));
+}
+
+#[test]
+fn superscript_chars_sets_vert() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "x2 = 4"})).unwrap();
+    s.execute("home.superscript", json!({"cell": "A1", "chars": [1, 1], "on": true})).unwrap();
+    let expected = CellRuns {
+        runs: vec![
+            Run { start: 0, len: 1, font: runs_none_font() },
+            Run { start: 1, len: 1, font: RunFont { vert: Some(VertAlign::Superscript), ..runs_none_font() } },
+            Run { start: 2, len: 4, font: runs_none_font() },
+        ],
+    };
+    assert_eq!(runs_of(&s, "A1"), Some(expected));
+}
+
+#[test]
+fn fontsize_and_fontname_chars() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "styled text"})).unwrap();
+    s.execute("home.fontSize", json!({"cell": "A1", "chars": [0, 6], "size": 14})).unwrap();
+    s.execute("home.fontName", json!({"cell": "A1", "chars": [7, 4], "name": "Georgia"})).unwrap();
+    let expected = CellRuns {
+        runs: vec![
+            Run { start: 0, len: 6, font: RunFont { size: Some(14.0), ..runs_none_font() } },
+            Run { start: 6, len: 1, font: runs_none_font() },
+            Run { start: 7, len: 4, font: RunFont { name: Some("Georgia".into()), ..runs_none_font() } },
+        ],
+    };
+    assert_eq!(runs_of(&s, "A1"), Some(expected));
+}
+
+#[test]
+fn increasefontsize_chars_steps_each_covered_run() {
+    let mut s = s();
+    // Two runs at 11pt and 14pt: one shared delta cannot express both results — each covered
+    // run steps from its own size.
+    s.execute(
+        "cell.set",
+        json!({
+            "cell": "A1",
+            "input": "big small",
+            "runs": {"runs": [
+                {"start": 0, "len": 3, "font": {"size": 11.0}},
+                {"start": 3, "len": 6, "font": {"size": 14.0}}
+            ]}
+        }),
+    )
+    .unwrap();
+    s.execute("home.increaseFontSize", json!({"cell": "A1", "chars": [0, 9]})).unwrap();
+    let expected = CellRuns {
+        runs: vec![
+            Run { start: 0, len: 3, font: RunFont { size: Some(12.0), ..runs_none_font() } },
+            Run { start: 3, len: 6, font: RunFont { size: Some(15.0), ..runs_none_font() } },
+        ],
+    };
+    assert_eq!(runs_of(&s, "A1"), Some(expected));
+    // Decreasing only the first run steps that run back on its own.
+    s.execute("home.decreaseFontSize", json!({"cell": "A1", "chars": [0, 3]})).unwrap();
+    let expected = CellRuns {
+        runs: vec![
+            Run { start: 0, len: 3, font: RunFont { size: Some(11.0), ..runs_none_font() } },
+            Run { start: 3, len: 6, font: RunFont { size: Some(15.0), ..runs_none_font() } },
+        ],
+    };
+    assert_eq!(runs_of(&s, "A1"), Some(expected));
+}
+
+#[test]
+fn formatcells_chars_font_only() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "hello"})).unwrap();
+    s.execute("home.formatCells", json!({"cell": "A1", "chars": [0, 5], "style": {"font": {"bold": true}}})).unwrap();
+    let expected = CellRuns { runs: vec![Run { start: 0, len: 5, font: RunFont { bold: Some(true), ..runs_none_font() } }] };
+    assert_eq!(runs_of(&s, "A1"), Some(expected));
+    // Any other style part alongside `chars` is rejected.
+    let before = s.doc().unwrap().wb.clone();
+    let e = s
+        .execute("home.formatCells", json!({"cell": "A1", "chars": [0, 5], "style": {"font": {"italic": true}, "fill": {"color": "#FFFF00"}}}))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("font"), "{e}");
+    assert_eq!(s.doc().unwrap().wb, before, "the rejected style leaves the workbook as it was");
+}
+
+#[test]
+fn formatcells_chars_empty_style_errors() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "hello"})).unwrap();
+    let before = s.doc().unwrap().wb.clone();
+    for style in [json!({}), json!({"fill": {"color": "#FFFF00"}}), json!({"numFmt": "0.00"})] {
+        let e = s.execute("home.formatCells", json!({"cell": "A1", "chars": [0, 5], "style": style})).unwrap_err().to_string();
+        assert!(e.contains("font"), "{e}");
+    }
+    assert_eq!(s.doc().unwrap().wb, before, "the rejected styles leave the workbook as it was");
+}
+
+/// `chars` speaks characters; the runs are byte-based. On "héllo" the é is two bytes, so
+/// `chars: [1, 1]` covers bytes 1..3.
+#[test]
+fn chars_offsets_are_characters_not_bytes() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "héllo"})).unwrap();
+    s.execute("home.bold", json!({"cell": "A1", "chars": [1, 1]})).unwrap();
+    let expected = CellRuns {
+        runs: vec![
+            Run { start: 0, len: 1, font: runs_none_font() },
+            Run { start: 1, len: 2, font: RunFont { bold: Some(true), ..runs_none_font() } },
+            Run { start: 3, len: 3, font: runs_none_font() },
+        ],
+    };
+    assert_eq!(runs_of(&s, "A1"), Some(expected));
 }
 
 #[test]
