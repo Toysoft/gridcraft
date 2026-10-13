@@ -830,7 +830,7 @@ fn text_to_columns(s: &mut Session, p: &Json) -> Result<Json> {
                         .map(|p| chars.get(p[0]..p[1]).map(|s| s.iter().collect::<String>().trim().to_string()).unwrap_or_default())
                         .collect()
                 }
-                None => split_delimited(&text, &delims, consecutive, quote),
+                None => gridcraft_xlsx::split_fields(&text, &delims, quote, consecutive),
             };
             for (j, part) in parts.into_iter().enumerate() {
                 out.push((CellRef::new(dest.row + i as u32, dest.col + j as u32), part));
@@ -856,37 +856,6 @@ fn text_to_columns(s: &mut Session, p: &Json) -> Result<Json> {
         Ok(())
     })?;
     ok()
-}
-
-fn split_delimited(text: &str, delims: &[char], consecutive: bool, quote: char) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut in_q = false;
-    let mut last_delim = false;
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == quote {
-            if in_q && chars.peek() == Some(&quote) {
-                cur.push(quote);
-                chars.next();
-            } else {
-                in_q = !in_q;
-            }
-            continue;
-        }
-        if !in_q && delims.contains(&c) {
-            if consecutive && last_delim {
-                continue;
-            }
-            out.push(std::mem::take(&mut cur));
-            last_delim = true;
-            continue;
-        }
-        last_delim = false;
-        cur.push(c);
-    }
-    out.push(cur);
-    out
 }
 
 // ---------------------------------------------------------------- validation
@@ -1501,9 +1470,9 @@ mod tests {
 
     #[test]
     fn split() {
-        assert_eq!(split_delimited("a,b,,c", &[','], false, '"'), ["a", "b", "", "c"]);
-        assert_eq!(split_delimited("a,b,,c", &[','], true, '"'), ["a", "b", "c"]);
-        assert_eq!(split_delimited("\"x,y\",z", &[','], false, '"'), ["x,y", "z"]);
+        assert_eq!(gridcraft_xlsx::split_fields("a,b,,c", &[','], '"', false), ["a", "b", "", "c"]);
+        assert_eq!(gridcraft_xlsx::split_fields("a,b,,c", &[','], '"', true), ["a", "b", "c"]);
+        assert_eq!(gridcraft_xlsx::split_fields("\"x,y\",z", &[','], '"', false), ["x,y", "z"]);
     }
 
     #[test]
@@ -1519,5 +1488,20 @@ mod tests {
         assert_eq!(v(&s, "B1"), Value::text("'007"));
         assert_eq!(v(&s, "A2"), Value::text("'t Hooft"));
         assert_eq!(v(&s, "B2"), Value::Number(5.0));
+    }
+
+    #[test]
+    fn text_to_columns_reads_a_quote_inside_a_field_as_a_character() {
+        // Excel 365: `Pipe 12" long` | 5 | EUR. The qualifier only opens a quoted field at its start.
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("range.setValues", json!({"range": "A1", "values": [["Pipe 12\" long,5,EUR"], ["\"a, b\",c"]]})).unwrap();
+        s.execute("data.textToColumns", json!({"range": "A1:A2", "delimiters": [","]})).unwrap();
+        let v = |s: &Session, a: &str| s.doc().unwrap().wb.sheet(0).unwrap().value(CellRef::parse(a).unwrap());
+        assert_eq!(v(&s, "A1"), Value::text("Pipe 12\" long"));
+        assert_eq!(v(&s, "B1"), Value::Number(5.0));
+        assert_eq!(v(&s, "C1"), Value::text("EUR"));
+        assert_eq!(v(&s, "A2"), Value::text("a, b"));
+        assert_eq!(v(&s, "B2"), Value::text("c"));
     }
 }

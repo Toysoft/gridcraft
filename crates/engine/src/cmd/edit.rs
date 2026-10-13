@@ -848,50 +848,10 @@ fn numeric_from_html(cell: &mut Cell, field: &str, html: Option<&crate::clip_htm
 /// Tab-separated text with Excel-style quoting.
 pub(crate) fn parse_tsv(text: &str) -> Vec<Vec<String>> {
     let mut rows = Vec::new();
-    let mut row = Vec::new();
-    let mut field = String::new();
-    let mut chars = text.chars().peekable();
-    let mut quoted = false;
-    let mut at_start = true;
-    while let Some(c) = chars.next() {
-        if quoted {
-            if c == '"' {
-                if chars.peek() == Some(&'"') {
-                    field.push('"');
-                    chars.next();
-                } else {
-                    quoted = false;
-                }
-            } else {
-                field.push(c);
-            }
-            continue;
-        }
-        match c {
-            '"' if at_start => {
-                quoted = true;
-                at_start = false;
-            }
-            '\t' => {
-                row.push(std::mem::take(&mut field));
-                at_start = true;
-            }
-            '\r' => {}
-            '\n' => {
-                row.push(std::mem::take(&mut field));
-                rows.push(std::mem::take(&mut row));
-                at_start = true;
-            }
-            _ => {
-                field.push(c);
-                at_start = false;
-            }
-        }
-    }
-    if !field.is_empty() || !row.is_empty() {
-        row.push(field);
-        rows.push(row);
-    }
+    gridcraft_xlsx::split_records(text, gridcraft_xlsx::Delimited { delimiters: &['\t'], quote: '"', consecutive: false, lines: true }, |r| {
+        rows.push(r);
+        true
+    });
     rows
 }
 

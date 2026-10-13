@@ -1,7 +1,7 @@
 use gridcraft_core::{CellRef, DateSystem, Value};
 use gridcraft_model::{Sheet, Workbook};
 
-use crate::csv::{decode_text, sniff_delimiter};
+use crate::csv::{decode_text, sniff_delimiter, split_fields};
 use crate::{CsvOptions, Format, IoError, read_csv, sniff, write_csv, write_csv_limited};
 
 fn v(wb: &Workbook, r: u32, c: u32) -> Value {
@@ -194,4 +194,22 @@ fn the_cap_counts_the_bytes_the_cells_hold_and_accepted_exports_keep_every_posit
     // A tab is one byte, like a comma.
     let tabs = write_csv_limited(&s, b'\t', 14, text_of(&s)).unwrap();
     assert_eq!(tabs.len(), 14);
+}
+
+#[test]
+fn a_quote_inside_a_field_is_a_character() {
+    // Text to Columns and CSV open alike: the qualifier opens a quoted field only at its start.
+    // Excel 365 gives `Pipe 12" long` | 5 | EUR, not one cell.
+    let q = '"';
+    assert_eq!(split_fields("Pipe 12\" long,5,EUR", &[','], q, false), ["Pipe 12\" long", "5", "EUR"]);
+    assert_eq!(split_fields("5'10\" tall,180,cm", &[','], q, false), ["5'10\" tall", "180", "cm"]);
+    assert_eq!(split_fields("x \"y, z\" w,1", &[','], q, false), ["x \"y", " z\" w", "1"]);
+    // A quoted field: delimiters inside it, doubled qualifiers as one (#119).
+    assert_eq!(split_fields("\"say \"\"hi\"\", ok\",x", &[','], q, false), ["say \"hi\", ok", "x"]);
+    assert_eq!(split_fields("a;b,c", &[',', ';'], q, false), ["a", "b", "c"]);
+    assert_eq!(split_fields("a,,b", &[','], q, true), ["a", "b"]);
+    assert_eq!(split_fields("a\nb,c", &[','], q, false), ["a\nb", "c"], "one cell's line break stays in its field");
+    let wb = read_csv(b"Item,Size\nPipe 12\" long,5\n", &CsvOptions::default()).unwrap();
+    assert_eq!(v(&wb, 1, 0), Value::text("Pipe 12\" long"));
+    assert_eq!(v(&wb, 1, 1), Value::Number(5.0));
 }

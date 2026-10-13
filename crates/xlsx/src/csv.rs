@@ -87,18 +87,34 @@ pub fn sniff_delimiter(text: &str, quote: char) -> u8 {
     best.0
 }
 
-/// Splits CSV text into records of fields.
-fn parse_records(text: &str, delim: char, quote: char, mut on_record: impl FnMut(Vec<String>) -> bool) {
+/// How delimited text is split into fields: by CSV open, paste and Text to Columns alike.
+#[derive(Clone, Copy, Debug)]
+pub struct Delimited<'a> {
+    /// Any of these separates two fields.
+    pub delimiters: &'a [char],
+    /// The text qualifier. It opens a quoted field only at the start of a field (elsewhere it is
+    /// an ordinary character, as in `12" pipe`); inside one, a doubled qualifier is a literal one.
+    pub quote: char,
+    /// Delimiters in a row count as one (Text to Columns' "Treat consecutive delimiters as one").
+    pub consecutive: bool,
+    /// A line break outside quotes ends a record (files, pasted text); otherwise it belongs to
+    /// the field (one cell's text).
+    pub lines: bool,
+}
+
+/// Splits `text` into records of fields; `on_record` returns `false` to stop.
+pub fn split_records(text: &str, d: Delimited<'_>, mut on_record: impl FnMut(Vec<String>) -> bool) {
     let mut field = String::new();
     let mut record: Vec<String> = vec![];
     let mut in_q = false;
     let mut chars = text.chars().peekable();
     let mut field_started_quoted = false;
+    let mut last_delim = false;
     while let Some(c) = chars.next() {
         if in_q {
-            if c == quote {
-                if chars.peek() == Some(&quote) {
-                    field.push(quote);
+            if c == d.quote {
+                if chars.peek() == Some(&d.quote) {
+                    field.push(d.quote);
                     chars.next();
                 } else {
                     in_q = false;
@@ -108,13 +124,19 @@ fn parse_records(text: &str, delim: char, quote: char, mut on_record: impl FnMut
             }
             continue;
         }
-        if c == quote && field.is_empty() && !field_started_quoted {
+        if d.delimiters.contains(&c) {
+            if !(d.consecutive && last_delim) {
+                record.push(std::mem::take(&mut field));
+                field_started_quoted = false;
+            }
+            last_delim = true;
+            continue;
+        }
+        last_delim = false;
+        if c == d.quote && field.is_empty() && !field_started_quoted {
             in_q = true;
             field_started_quoted = true;
-        } else if c == delim {
-            record.push(std::mem::take(&mut field));
-            field_started_quoted = false;
-        } else if c == '\r' || c == '\n' {
+        } else if d.lines && (c == '\r' || c == '\n') {
             if c == '\r' && chars.peek() == Some(&'\n') {
                 chars.next();
             }
@@ -133,6 +155,16 @@ fn parse_records(text: &str, delim: char, quote: char, mut on_record: impl FnMut
     }
 }
 
+/// One line of text (a cell's) split into fields; see [`Delimited`].
+pub fn split_fields(text: &str, delimiters: &[char], quote: char, consecutive: bool) -> Vec<String> {
+    let mut out = Vec::new();
+    split_records(text, Delimited { delimiters, quote, consecutive, lines: false }, |r| {
+        out = r;
+        false
+    });
+    out
+}
+
 pub fn read_csv(bytes: &[u8], opts: &CsvOptions) -> Result<Workbook, IoError> {
     let text = decode_text(bytes);
     let quote = if opts.quote == 0 { '"' } else { opts.quote as char };
@@ -147,7 +179,7 @@ pub fn read_csv(bytes: &[u8], opts: &CsvOptions) -> Result<Workbook, IoError> {
     let mut styles = std::mem::take(&mut wb.styles);
     let mut fmt_cache: Vec<(&'static str, StyleId)> = vec![];
     let mut row: u32 = 0;
-    parse_records(&text, delim, quote, |rec| {
+    split_records(&text, Delimited { delimiters: &[delim], quote, consecutive: false, lines: true }, |rec| {
         if row >= MAX_ROWS {
             return false;
         }
