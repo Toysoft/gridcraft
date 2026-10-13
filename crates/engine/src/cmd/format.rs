@@ -63,7 +63,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Font Color",
             ["Home", "Font"],
             None,
-            "{range?, color: \"#C00000\" | \"auto\" | {theme: 4, tint: -0.25}}",
+            "{range?, chars?, color: \"#C00000\" | \"auto\" | {theme: 4, tint: -0.25}}",
             has_doc,
             font_color
         ),
@@ -261,6 +261,86 @@ pub(crate) fn apply_style(s: &mut Session, p: &Json, f: impl Fn(&mut Style)) -> 
     })
 }
 
+/// The `chars: [start, len]` param — character-indexed, as the public API speaks — as a byte
+/// range into `text`, by counting `char_indices`. Errors when `chars` is missing or not a
+/// two-number array, covers no characters, or reaches past the text; ranges so derived always
+/// land on UTF-8 boundaries.
+fn chars_bytes(text: &str, p: &Json) -> Result<std::ops::Range<usize>> {
+    let malformed = || bad("chars", "`chars` must be [start, len] in characters");
+    let arr = p.get("chars").and_then(Json::as_array).ok_or_else(malformed)?;
+    let start = arr.first().and_then(Json::as_u64).ok_or_else(malformed)?;
+    let len = arr.get(1).and_then(Json::as_u64).ok_or_else(malformed)?;
+    if len == 0 {
+        return Err(bad("chars", "`chars` must cover at least one character"));
+    }
+    // `last` is the char index just past the range; byte offsets are the positions of the chars
+    // at indexes `start` and `last - 1` (counted, so hostile offsets just miss the text).
+    let last = start.checked_add(len).ok_or_else(malformed)?;
+    let start_one = start.checked_add(1).ok_or_else(malformed)?;
+    let (mut start_byte, mut end_byte) = (None, None);
+    let mut nth: u64 = 0;
+    for (i, c) in text.char_indices() {
+        nth += 1;
+        if nth == start_one {
+            start_byte = Some(i);
+        }
+        if nth == last {
+            end_byte = Some(i.saturating_add(c.len_utf8()));
+            break;
+        }
+    }
+    match (start_byte, end_byte) {
+        (Some(start), Some(end)) => Ok(start..end),
+        _ => Err(bad("chars", format!("`chars` [{start}, {len}] reaches past the cell's text"))),
+    }
+}
+
+/// Formats a character range of one cell's text with a font delta (the `chars` path of the Font
+/// commands, e.g. `home.fontColor {cell, chars, color}`). Requires `cell` (or a one-cell
+/// `range`) naming a cell that holds plain text; the cell's value is untouched — the runs
+/// side-table carries the format. A result that is flat again deletes the side-table entry.
+pub(crate) fn apply_run_font(s: &mut Session, p: &Json, delta: RunFont) -> Result<Json> {
+    if str_param(p, "cell").is_none() && str_param(p, "range").is_none() {
+        return Err(bad("chars", "`chars` needs `cell` (or a one-cell `range`) naming the text to format"));
+    }
+    let sheet = target_sheet(s, p)?;
+    let ranges = target_ranges(s, p)?;
+    let Some(r) = ranges.first().copied() else { return Err(bad("chars", "`chars` needs `cell` (or a one-cell `range`)")) };
+    if ranges.len() > 1 || !r.is_single() {
+        return Err(bad("chars", "`chars` formats a range within one cell: pass `cell`, or a one-cell `range`"));
+    }
+    let at = r.start;
+    if s.doc()?.wb.sheet(sheet).is_some_and(|sh| sh.protection.as_ref().is_some_and(|pr| !pr.format_cells)) {
+        return Err(EngineError::Other("The cell or chart you're trying to change is on a protected sheet.".into()));
+    }
+    let d = s.doc()?;
+    let Some(sh) = d.wb.sheet(sheet) else { return Err(EngineError::Other("no such sheet".into())) };
+    let not_text = || bad("chars", "the cell must hold plain text (not a formula or number) to format characters");
+    let text = match sh.cell(at) {
+        Some(cell) if cell.formula.is_none() => cell.value.as_text().ok_or_else(not_text)?.to_string(),
+        _ => return Err(not_text()),
+    };
+    let len = u32::try_from(text.len()).map_err(|_| not_text())?;
+    let range = chars_bytes(&text, p)?;
+    // A cell without runs behaves like one all-default run over its text.
+    let current =
+        sh.cell_runs.get(&at).cloned().unwrap_or_else(|| CellRuns { runs: vec![gridcraft_model::Run { start: 0, len, font: RunFont::default() }] });
+    let formatted = current.format_range(&text, range, &delta).map_err(|_| bad("home.*", "too many runs"))?;
+    edit(s, |cx| {
+        let sh = cx.sheet_mut(sheet)?;
+        match formatted {
+            Some(runs) => {
+                sh.cell_runs.insert(at, runs);
+            }
+            // Flat again: drop the entry rather than store an empty run list.
+            None => {
+                sh.cell_runs.remove(&at);
+            }
+        }
+        Ok(Json::Null)
+    })
+}
+
 /// The style of the active cell (what toggles read).
 pub(crate) fn active_style(s: &Session) -> Result<Style> {
     let d = s.doc()?;
@@ -333,6 +413,10 @@ pub(crate) fn color_param(v: Option<&Json>) -> Option<Color> {
 
 fn font_color(s: &mut Session, p: &Json) -> Result<Json> {
     let c = color_param(p.get("color")).ok_or_else(|| bad("home.fontColor", "missing or invalid `color`"))?;
+    if p.get("chars").is_some() {
+        // A character range: the delta goes onto the cell's runs, not its cell style.
+        return apply_run_font(s, p, RunFont { color: Some(c), ..RunFont::default() });
+    }
     apply_style(s, p, |st| st.font.color = c)
 }
 

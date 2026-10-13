@@ -1981,6 +1981,114 @@ fn remove_duplicates_compacts_runs_and_cut_moves_them() {
     assert!(runs_of(&s, "F7").is_none(), "copy-paste pastes flat text");
 }
 
+// Formatting a character range of a cell's text: `home.fontColor {cell, chars, color}` (issue #776).
+
+#[test]
+fn fontcolor_chars_builds_runs_on_flat_text() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "black red green"})).unwrap();
+    s.execute("home.fontColor", json!({"cell": "A1", "chars": [6, 3], "color": "#FF0000"})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::text("black red green"), "the grid text is unchanged by character formatting");
+    // A flat cell behaves like one all-default run: the overlay splits it around bytes 6..9.
+    let expected = CellRuns {
+        runs: vec![
+            Run { start: 0, len: 6, font: runs_none_font() },
+            Run { start: 6, len: 3, font: RunFont { color: Some(Color::Rgb(0xFF0000)), ..runs_none_font() } },
+            Run { start: 9, len: 6, font: runs_none_font() },
+        ],
+    };
+    assert_eq!(runs_of(&s, "A1"), Some(expected));
+}
+
+#[test]
+fn fontcolor_chars_extends_existing_runs() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "black red green"})).unwrap();
+    s.execute("home.fontColor", json!({"cell": "A1", "chars": [6, 3], "color": "#FF0000"})).unwrap();
+    s.execute("home.fontColor", json!({"cell": "A1", "chars": [10, 5], "color": "#00B050"})).unwrap();
+    // The second command only overlays "green" (chars 10..15); the red run survives untouched.
+    let expected = CellRuns {
+        runs: vec![
+            Run { start: 0, len: 6, font: runs_none_font() },
+            Run { start: 6, len: 3, font: RunFont { color: Some(Color::Rgb(0xFF0000)), ..runs_none_font() } },
+            Run { start: 9, len: 1, font: runs_none_font() },
+            Run { start: 10, len: 5, font: RunFont { color: Some(Color::Rgb(0x00B050)), ..runs_none_font() } },
+        ],
+    };
+    assert_eq!(runs_of(&s, "A1"), Some(expected));
+}
+
+#[test]
+fn fontcolor_chars_errors() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "=1+2"})).unwrap();
+    s.execute("cell.set", json!({"cell": "A2", "input": "42"})).unwrap();
+    s.execute("cell.set", json!({"cell": "A3", "input": "black red green"})).unwrap();
+    let before = s.doc().unwrap().wb.clone();
+    let cases = [
+        ("a formula cell", json!({"cell": "A1", "chars": [0, 1], "color": "#FF0000"})),
+        ("a numeric cell", json!({"cell": "A2", "chars": [0, 1], "color": "#FF0000"})),
+        ("a zero-length chars", json!({"cell": "A3", "chars": [6, 0], "color": "#FF0000"})),
+        ("chars past the text", json!({"cell": "A3", "chars": [999999, 3], "color": "#FF0000"})),
+        ("chars without a cell", json!({"chars": [6, 3], "color": "#FF0000"})),
+    ];
+    for (why, p) in cases {
+        let e = s.execute("home.fontColor", p).unwrap_err().to_string();
+        assert!(e.contains("chars") || e.contains("home.fontColor"), "{why}: {e}");
+        assert_eq!(s.doc().unwrap().wb, before, "{why}: the workbook is unchanged by the failed command");
+    }
+}
+
+#[test]
+fn fontcolor_chars_cap_errors() {
+    let mut s = s();
+    // A cell at the cap: 8 191 alternating one-byte runs plus a three-byte tail run over
+    // "a".repeat(8 194). Formatting one character inside the tail splits it, and the result
+    // would exceed MAX_RUNS_PER_CELL.
+    let text = "a".repeat(gridcraft_model::MAX_RUNS_PER_CELL + 2);
+    let mut runs: Vec<Run> = (0..(gridcraft_model::MAX_RUNS_PER_CELL - 1) as u32)
+        .map(|i| Run { start: i, len: 1, font: if i % 2 == 0 { RunFont { bold: Some(true), ..runs_none_font() } } else { runs_none_font() } })
+        .collect();
+    runs.push(Run { start: (gridcraft_model::MAX_RUNS_PER_CELL - 1) as u32, len: 3, font: runs_none_font() });
+    s.execute("cell.set", json!({"cell": "A1", "input": text, "runs": serde_json::to_value(CellRuns { runs }).unwrap()})).unwrap();
+    let before = s.doc().unwrap().wb.clone();
+    let e = s.execute("home.fontColor", json!({"cell": "A1", "chars": [8192, 1], "color": "#FF0000"})).unwrap_err().to_string();
+    assert!(e.contains("too many runs"), "{e}");
+    assert_eq!(s.doc().unwrap().wb, before, "the capped format leaves the workbook as it was");
+}
+
+#[test]
+fn fontcolor_chars_undo_restores_runs() {
+    let mut s = s();
+    let runs = repro_runs();
+    let text = add_runs_cell(&mut s, "A3", runs.clone());
+    // Green over the leading "this" (chars 0..4) overlays the first (auto-coloured) run only.
+    s.execute("home.fontColor", json!({"cell": "A3", "chars": [0, 4], "color": "#00B050"})).unwrap();
+    let expected = CellRuns {
+        runs: vec![
+            Run { start: 0, len: 4, font: RunFont { color: Some(Color::Rgb(0x00B050)), ..runs_none_font() } },
+            Run { start: 4, len: 10, font: RunFont { color: Some(Color::Auto), ..runs_none_font() } },
+            Run { start: 14, len: 13, font: RunFont { color: Some(Color::Rgb(0xFF0000)), ..runs_none_font() } },
+            Run { start: 27, len: 14, font: RunFont { color: Some(Color::Rgb(0x00B050)), ..runs_none_font() } },
+        ],
+    };
+    assert_eq!(runs_of(&s, "A3"), Some(expected), "the overlay splits only the covered run");
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(v(&s, "A3"), Value::text(text.as_str()));
+    assert_eq!(runs_of(&s, "A3"), Some(runs), "one undo restores the exact prior runs");
+}
+
+#[test]
+fn fontcolor_chars_roundtrips_xlsx() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "black red green"})).unwrap();
+    s.execute("home.fontColor", json!({"cell": "A1", "chars": [6, 3], "color": "#FF0000"})).unwrap();
+    let runs = runs_of(&s, "A1").expect("the character format built runs");
+    reopen(&mut s);
+    assert_eq!(v(&s, "A1"), Value::text("black red green"));
+    assert_eq!(runs_of(&s, "A1"), Some(runs), "the runs survive the XLSX round trip");
+}
+
 #[test]
 fn calculation_options_enable_iterative_calculation() {
     let mut s = s();
