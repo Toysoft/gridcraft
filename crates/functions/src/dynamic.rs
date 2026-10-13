@@ -695,10 +695,6 @@ fn prepare(fields: &[&Array], values: &Array, fh: Option<i64>, filter: Option<&A
     Ok(Prepared { field_headers, value_headers, show_headers: show, rows })
 }
 
-fn key_row(a: &Array, r: usize) -> Vec<Value> {
-    (0..a.cols).map(|c| a.get(r, c).cloned().unwrap_or(Value::Empty)).collect()
-}
-
 /// A key as GROUPBY / PIVOTBY show it: a blank key groups and sorts as blank (last) but shows as
 /// 0, as a reference to a blank cell does.
 fn shown_key(v: &Value) -> Value {
@@ -711,46 +707,217 @@ fn gap() -> Value {
     Value::from("")
 }
 
-/// Distinct keys in first-seen order, then sorted (by `sort` = ±column index within the key; 0
-/// keeps all keys ascending).
-fn distinct_keys(keys: &[Vec<Value>], sort: i64) -> Vec<Vec<Value>> {
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    for k in keys {
-        if seen.insert(row_key(k)) {
-            out.push(k.clone());
-        }
-    }
-    let width = out.first().map_or(0, Vec::len);
-    let mut orders = vec![1i64; width];
-    if sort != 0 {
-        let i = sort.unsigned_abs() as usize;
-        if i >= 1 && i <= width {
-            if let Some(o) = orders.get_mut(i - 1) {
-                *o = sort.signum();
-            }
-            // Sort key column first.
-            out.sort_by(|a, b| {
-                let ka = vec![a.get(i - 1).cloned().unwrap_or(Value::Empty)];
-                let kb = vec![b.get(i - 1).cloned().unwrap_or(Value::Empty)];
-                cmp_keys(&ka, &kb, &[sort.signum()]).then_with(|| cmp_keys(a, b, &vec![1; width]))
-            });
-            return out;
-        }
-    }
-    out.sort_by(|a, b| cmp_keys(a, b, &orders));
-    out
+/// How GROUPBY / PIVOTBY order the keys of an axis (their sort order argument).
+#[derive(Clone, Debug, PartialEq)]
+enum Order {
+    /// By the key columns: a direction per column (1 ascending, -1 descending) and the columns
+    /// in priority order. Grouped keys always sort outer column first, within their groups; a
+    /// flat table (GROUPBY's field_relationship 1) sorts by the columns in priority order.
+    Keys { dirs: Vec<i64>, priority: Vec<usize> },
+    /// By a value column (0-based), ascending (1) or descending (-1): groups by their total at
+    /// each level, keys by their own value.
+    Value(usize, i64),
 }
 
-/// A sort order names a key column or, past them, a value column (1-based, negative for
-/// descending); 0 or an index past the last column is #VALUE! (Excel).
-fn check_sort(sort: i64, keys: usize, values: usize) -> R<()> {
-    let i = usize::try_from(sort.unsigned_abs()).unwrap_or(usize::MAX);
-    if i == 0 || i > keys.saturating_add(values) { Err(CellError::Value) } else { Ok(()) }
+impl Order {
+    fn ascending(keys: usize) -> Order {
+        Order::Keys { dirs: vec![1; keys], priority: (0..keys).collect() }
+    }
+}
+
+/// The sort order argument: one index (a key column, or past the keys a value column) or a list
+/// of key columns, 1-based and negative for descending. 0, an index past the last column, a value
+/// column in a list or a column listed twice is #VALUE! (Excel).
+fn parse_order(v: Option<&Value>, keys: usize, values: usize) -> R<Order> {
+    let Some(v) = v else { return Ok(Order::ascending(keys)) };
+    if let Value::Error(e) = v {
+        return Err(*e);
+    }
+    let a = as_array(v);
+    if a.rows > 1 && a.cols > 1 {
+        return Err(CellError::Value);
+    }
+    let list = int_list(v).map_err(|_| CellError::Value)?;
+    let col = |i: i64| usize::try_from(i.unsigned_abs()).unwrap_or(usize::MAX);
+    match list.as_slice() {
+        [i] => {
+            let c = col(*i);
+            if c == 0 {
+                Err(CellError::Value)
+            } else if c <= keys {
+                let mut dirs = vec![1; keys];
+                if let Some(d) = dirs.get_mut(c - 1) {
+                    *d = i.signum();
+                }
+                let priority = std::iter::once(c - 1).chain((0..keys).filter(|&x| x != c - 1)).collect();
+                Ok(Order::Keys { dirs, priority })
+            } else if c - keys <= values {
+                Ok(Order::Value(c - keys - 1, i.signum()))
+            } else {
+                Err(CellError::Value)
+            }
+        }
+        list => {
+            let mut dirs = vec![1; keys];
+            let mut listed = vec![false; keys];
+            let mut priority = Vec::with_capacity(keys);
+            for &i in list {
+                let c = col(i);
+                match listed.get_mut(c.wrapping_sub(1)) {
+                    Some(seen) if c >= 1 && !*seen => *seen = true,
+                    _ => return Err(CellError::Value),
+                }
+                if let Some(d) = dirs.get_mut(c - 1) {
+                    *d = i.signum();
+                }
+                priority.push(c - 1);
+            }
+            if priority.is_empty() {
+                return Err(CellError::Value);
+            }
+            priority.extend((0..keys).filter(|&x| !listed.get(x).copied().unwrap_or(true)));
+            Ok(Order::Keys { dirs, priority })
+        }
+    }
+}
+
+/// `a` against `b` in direction `dir`; blanks stay last either way.
+fn cmp_dir(a: &Value, b: &Value, dir: i64) -> Ordering {
+    cmp_keys(std::slice::from_ref(a), std::slice::from_ref(b), &[dir])
+}
+
+/// A line of a GROUPBY / PIVOTBY axis: a key or the grand total.
+struct Line {
+    /// The cells shown for it: the key, or the total's label then empty text.
+    cells: Vec<Value>,
+    /// The data rows it covers, in order.
+    rows: Vec<usize>,
+}
+
+/// A key prefix of an axis (its first `level` key columns): a node of the key hierarchy.
+struct Prefix {
+    level: usize,
+    parent: usize,
+    /// The first data row with this prefix: its spelling is the one shown.
+    first: usize,
+    rows: Vec<usize>,
+}
+
+/// An axis of GROUPBY / PIVOTBY: what orders its keys and which totals it gets.
+struct Axis<'o> {
+    order: &'o Order,
+    /// Keys are a flat table (GROUPBY's field_relationship 1), not groups within groups.
+    flat: bool,
+    /// Grand total after the keys (> 0), before them (< 0), or none (0).
+    depth: i64,
+}
+
+/// The lines of an axis with keys `keys` over the data rows `rows`: each distinct key (grouped
+/// case-insensitively, spelled as first seen) in order, and the grand total. `value_of` gives a
+/// group's value in the column a value sort orders by.
+fn axis_lines(keys: &Array, rows: &[usize], axis: &Axis, value_of: &mut dyn FnMut(&[usize], usize) -> Value) -> Vec<Line> {
+    let k = keys.cols;
+    // Prefix 0 is the root; each other prefix is its parent plus one key value.
+    let mut prefixes = vec![Prefix { level: 0, parent: 0, first: 0, rows: Vec::new() }];
+    let mut intern: HashMap<(usize, String), usize> = HashMap::new();
+    let mut leaves: Vec<usize> = Vec::new();
+    for &r in rows {
+        let mut cur = 0;
+        for c in 0..k {
+            let id = key_of(keys.get(r, c).unwrap_or(&Value::Empty));
+            let next = prefixes.len();
+            let p = *intern.entry((cur, id)).or_insert(next);
+            if p == next {
+                prefixes.push(Prefix { level: c + 1, parent: cur, first: r, rows: Vec::new() });
+                if c + 1 == k {
+                    leaves.push(p);
+                }
+            }
+            if let Some(x) = prefixes.get_mut(p) {
+                x.rows.push(r);
+            }
+            cur = p;
+        }
+    }
+    let shown = |p: usize, c: usize| prefixes.get(p).and_then(|x| keys.get(x.first, c)).cloned().unwrap_or(Value::Empty);
+    // Each key's prefixes, outermost first: path[c] is the prefix of its first c + 1 columns.
+    let path = |leaf: usize| -> Vec<usize> {
+        let mut path = Vec::with_capacity(k);
+        let mut cur = leaf;
+        while let Some(p) = prefixes.get(cur).filter(|p| p.level > 0) {
+            path.push(cur);
+            cur = p.parent;
+        }
+        path.reverse();
+        path
+    };
+    let mut paths: Vec<Vec<usize>> = leaves.iter().map(|&l| path(l)).collect();
+    match axis.order {
+        Order::Value(vc, dir) => {
+            // The value of each group that is compared (every level, or the keys of a flat
+            // table); ties keep the keys ascending.
+            let values: Vec<Value> =
+                prefixes.iter().map(|p| if p.level == 0 || (axis.flat && p.level < k) { Value::Empty } else { value_of(&p.rows, *vc) }).collect();
+            let value = |p: usize| values.get(p).cloned().unwrap_or(Value::Empty);
+            if axis.flat {
+                paths.sort_by(|a, b| {
+                    let (la, lb) = (a.last().copied().unwrap_or(0), b.last().copied().unwrap_or(0));
+                    cmp_dir(&value(la), &value(lb), *dir)
+                        .then_with(|| (0..k).map(|c| cmp_dir(&shown(la, c), &shown(lb, c), 1)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal))
+                });
+            } else {
+                paths.sort_by(|a, b| {
+                    let Some((pa, pb)) = a.iter().zip(b).find(|(x, y)| x != y) else { return Ordering::Equal };
+                    let c = prefixes.get(*pa).map_or(1, |p| p.level) - 1;
+                    cmp_dir(&value(*pa), &value(*pb), *dir).then_with(|| cmp_dir(&shown(*pa, c), &shown(*pb, c), 1))
+                });
+            }
+        }
+        Order::Keys { dirs, priority } => {
+            let dir = |c: usize| dirs.get(c).copied().unwrap_or(1);
+            if axis.flat {
+                paths.sort_by(|a, b| {
+                    let (la, lb) = (a.last().copied().unwrap_or(0), b.last().copied().unwrap_or(0));
+                    priority.iter().map(|&c| cmp_dir(&shown(la, c), &shown(lb, c), dir(c))).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
+                });
+            } else {
+                paths.sort_by(|a, b| {
+                    let Some((pa, pb)) = a.iter().zip(b).find(|(x, y)| x != y) else { return Ordering::Equal };
+                    let c = prefixes.get(*pa).map_or(1, |p| p.level) - 1;
+                    cmp_dir(&shown(*pa, c), &shown(*pb, c), dir(c))
+                });
+            }
+        }
+    }
+    let total = || {
+        let mut cells = vec![Value::from("Total")];
+        cells.resize(k, gap());
+        Line { cells, rows: rows.to_vec() }
+    };
+    let line = |p: usize| {
+        let Some(x) = prefixes.get(p) else { return Line { cells: vec![gap(); k], rows: Vec::new() } };
+        let mut cells: Vec<Value> = (0..x.level).map(|c| shown_key(&shown(p, c))).collect();
+        cells.resize(k, gap());
+        Line { cells, rows: x.rows.clone() }
+    };
+    let mut out = Vec::with_capacity(paths.len().saturating_add(1));
+    if axis.depth < 0 {
+        out.push(total());
+    }
+    out.extend(paths.iter().filter_map(|path| path.last()).map(|&leaf| line(leaf)));
+    if axis.depth > 0 {
+        out.push(total());
+    }
+    out
 }
 
 fn opt_arr(args: &[Arg], i: usize) -> R<Option<Array>> {
     if has(args, i) { Ok(Some(arr_arg(args, i)?)) } else { Ok(None) }
+}
+
+/// Argument `i` as a value, `None` when missing or blank.
+fn opt_value(args: &[Arg], i: usize) -> R<Option<Value>> {
+    if has(args, i) { Ok(Some(arg(args, i)?.value.clone())) } else { Ok(None) }
 }
 
 /// An aggregation the host supplies to [`groupby_with`] / [`pivotby_with`]: given the values of
@@ -769,72 +936,52 @@ fn groupby(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
     groupby_with(args, &mut |vs, _| aggregate(f, vs))
 }
 
+/// The values of value column `c` in data rows `rows`.
+fn column_values<'a>(vals: &'a Array, rows: &[usize], c: usize) -> Vec<&'a Value> {
+    rows.iter().filter_map(|&r| vals.get(r, c)).collect()
+}
+
 /// GROUPBY with the aggregation given by the host (a LAMBDA, or a function given by name such as
 /// PERCENTOF) instead of argument 2, which is ignored.
 pub fn groupby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
     let rf = arr_arg(args, 0)?;
     let vals = arr_arg(args, 1)?;
     let fh = opt_count(args, 3)?;
-    let total = opt_count(args, 4)?.unwrap_or(1);
-    let sort = opt_count(args, 5)?.unwrap_or(1);
-    check_sort(sort, rf.cols, vals.cols)?;
+    let depth = opt_count(args, 4)?.unwrap_or(1);
+    let order = parse_order(opt_value(args, 5)?.as_ref(), rf.cols, vals.cols)?;
     let filter = opt_arr(args, 6)?;
-    let p = prepare(&[&rf], &vals, fh, filter.as_ref())?;
-    let keys: Vec<Vec<Value>> = p.rows.iter().map(|&r| key_row(&rf, r)).collect();
-    let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
-    for (k, &r) in keys.iter().zip(p.rows.iter()) {
-        groups.entry(row_key(k)).or_default().push(r);
-    }
-    let sort_in_keys = if sort.unsigned_abs() as usize <= rf.cols { sort } else { 0 };
-    let mut ordered = distinct_keys(&keys, sort_in_keys);
-    // Each value column in full: what a two-argument aggregation (PERCENTOF) measures against.
-    let all: Vec<Vec<&Value>> = (0..vals.cols).map(|c| p.rows.iter().filter_map(|&r| vals.get(r, c)).collect()).collect();
-    let mut agg_row = |rows: &[usize]| -> Vec<Value> {
-        (0..vals.cols)
-            .map(|c| {
-                let vs: Vec<&Value> = rows.iter().filter_map(|&r| vals.get(r, c)).collect();
-                agg(&vs, all.get(c).map_or(&[], Vec::as_slice))
-            })
-            .collect()
+    // field_relationship: 0 groups within groups, 1 a flat table.
+    let flat = match opt_count(args, 7)? {
+        None | Some(0) => false,
+        Some(1) => true,
+        Some(_) => return Err(CellError::Value),
     };
-    let mut lines: Vec<Vec<Value>> = ordered
-        .drain(..)
-        .map(|k| {
-            let rows = groups.get(&row_key(&k)).cloned().unwrap_or_default();
-            let mut line: Vec<Value> = k.iter().map(shown_key).collect();
-            line.extend(agg_row(&rows));
-            line
-        })
-        .collect();
-    // Sorting by a value column.
-    if sort.unsigned_abs() as usize > rf.cols {
-        let ci = sort.unsigned_abs() as usize - 1;
-        lines
-            .sort_by(|a, b| cmp_keys(&[a.get(ci).cloned().unwrap_or(Value::Empty)], &[b.get(ci).cloned().unwrap_or(Value::Empty)], &[sort.signum()]));
-    }
-    let mut out = Vec::new();
+    let p = prepare(&[&rf], &vals, fh, filter.as_ref())?;
+    // Each value column in full: what a two-argument aggregation (PERCENTOF) measures against.
+    let all: Vec<Vec<&Value>> = (0..vals.cols).map(|c| column_values(&vals, &p.rows, c)).collect();
+    let against = |c: usize| all.get(c).map_or(&[][..], Vec::as_slice);
+    let axis = Axis { order: &order, flat, depth };
+    let lines = axis_lines(&rf, &p.rows, &axis, &mut |rows, c| agg(&column_values(&vals, rows, c), against(c)));
+    check_output_size(lines.len().saturating_add(usize::from(p.show_headers)), rf.cols.saturating_add(vals.cols))?;
+    let mut out = Vec::with_capacity(lines.len().saturating_add(1));
     if p.show_headers {
         let mut h = p.field_headers.first().cloned().unwrap_or_default();
         h.extend(p.value_headers.iter().cloned());
         out.push(h);
     }
-    let mut total_line = vec![Value::from("Total")];
-    total_line.resize(rf.cols, gap());
-    total_line.extend(agg_row(&p.rows));
-    if total < 0 {
-        out.push(total_line);
-        out.extend(lines);
-    } else {
-        out.extend(lines);
-        if total > 0 {
-            out.push(total_line);
+    for line in lines {
+        let mut cells = line.cells;
+        for c in 0..vals.cols {
+            cells.push(agg(&column_values(&vals, &line.rows, c), against(c)));
         }
+        out.push(cells);
     }
     from_rows(out, &Value::Empty)
 }
 
-/// Height and width of a PIVOTBY grid: `header_rows` (one per column field, plus the value-name row) and
-/// `body_rows` (row keys plus the total row), each `lead` row-field cells wide plus `value_cols` cells per column key.
+/// Height and width of a PIVOTBY grid: `header_rows` (column fields' items, plus the names when
+/// shown) and `body_rows` (row lines), each `lead` row-field cells wide plus `value_cols` cells
+/// per column line.
 fn pivot_dims(header_rows: usize, body_rows: usize, col_keys: usize, value_cols: usize, lead: usize) -> (usize, usize) {
     (header_rows.saturating_add(body_rows), col_keys.saturating_mul(value_cols).saturating_add(lead))
 }
@@ -852,57 +999,40 @@ pub fn pivotby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
     let vals = arr_arg(args, 2)?;
     let fh = opt_count(args, 4)?;
     let row_total = opt_count(args, 5)?.unwrap_or(1);
-    let row_sort = opt_count(args, 6)?.unwrap_or(1);
     let col_total = opt_count(args, 7)?.unwrap_or(1);
-    let col_sort = opt_count(args, 8)?.unwrap_or(1);
-    check_sort(row_sort, rf.cols, vals.cols)?;
-    check_sort(col_sort, cf.cols, vals.cols)?;
+    let row_order = parse_order(opt_value(args, 6)?.as_ref(), rf.cols, vals.cols)?;
+    let col_order = parse_order(opt_value(args, 8)?.as_ref(), cf.cols, vals.cols)?;
+    // Rows sort by a value through the total column, columns through the total row: without that
+    // total, Excel keeps the keys' order.
+    let row_order = if col_total == 0 && matches!(row_order, Order::Value(..)) { Order::ascending(rf.cols) } else { row_order };
+    let col_order = if row_total == 0 && matches!(col_order, Order::Value(..)) { Order::ascending(cf.cols) } else { col_order };
     let filter = opt_arr(args, 9)?;
     let p = prepare(&[&rf, &cf], &vals, fh, filter.as_ref())?;
-    let rkeys: Vec<Vec<Value>> = p.rows.iter().map(|&r| key_row(&rf, r)).collect();
-    let ckeys: Vec<Vec<Value>> = p.rows.iter().map(|&r| key_row(&cf, r)).collect();
-    let rk = distinct_keys(&rkeys, if row_sort.unsigned_abs() as usize <= rf.cols { row_sort } else { 0 });
-    let ck = distinct_keys(&ckeys, if col_sort.unsigned_abs() as usize <= cf.cols { col_sort } else { 0 });
-    let mut cell: HashMap<(String, String), Vec<usize>> = HashMap::new();
-    for ((r, c), &i) in rkeys.iter().zip(ckeys.iter()).zip(p.rows.iter()) {
-        cell.entry((row_key(r), row_key(c))).or_default().push(i);
-    }
-    let mut agg_cell = |rows: &[usize], against: &[&Value], c: usize| -> Value {
-        // Excel fills the row / column combinations without data with empty text.
-        if rows.is_empty() {
-            return gap();
-        }
-        let vs: Vec<&Value> = rows.iter().filter_map(|&r| vals.get(r, c)).collect();
-        agg(&vs, against)
+    let all: Vec<Vec<&Value>> = (0..vals.cols).map(|c| column_values(&vals, &p.rows, c)).collect();
+    let rlines = {
+        let axis = Axis { order: &row_order, flat: false, depth: row_total };
+        // A row's value is its total column's cell: measured against every value.
+        axis_lines(&rf, &p.rows, &axis, &mut |rows, c| agg(&column_values(&vals, rows, c), all.get(c).map_or(&[][..], Vec::as_slice)))
     };
-    let rows_for = |r: Option<&Vec<Value>>, c: Option<&Vec<Value>>| -> Vec<usize> {
-        let rkey = r.map(|k| row_key(k));
-        let ckey = c.map(|k| row_key(k));
-        p.rows
-            .iter()
-            .zip(rkeys.iter().zip(ckeys.iter()))
-            .filter(|(_, (a, b))| rkey.as_ref().is_none_or(|k| *k == row_key(a)) && ckey.as_ref().is_none_or(|k| *k == row_key(b)))
-            .map(|(&i, _)| i)
-            .collect()
+    let clines = {
+        let axis = Axis { order: &col_order, flat: false, depth: col_total };
+        // A column's value is its total row's cell: measured against the column's values.
+        axis_lines(&cf, &p.rows, &axis, &mut |rows, c| {
+            let vs = column_values(&vals, rows, c);
+            agg(&vs, &vs)
+        })
     };
-    let mut cols: Vec<Option<&Vec<Value>>> = ck.iter().map(Some).collect();
-    if col_total > 0 {
-        cols.push(None);
-    } else if col_total < 0 {
-        cols.insert(0, None);
-    }
     let lead = rf.cols;
     // With headers shown, a row with the column fields' names above their items, and one with
     // the row fields' and the values' names below them.
     let show = p.show_headers;
     let header_rows = cf.cols.saturating_add(2 * usize::from(show));
-    let body_rows = rk.len().saturating_add(usize::from(row_total != 0));
     // Reject before building any header or body row: every column-field header row is as wide as the whole grid.
-    let (height, width) = pivot_dims(header_rows, body_rows, cols.len(), vals.cols, lead);
+    let (height, width) = pivot_dims(header_rows, rlines.len(), clines.len(), vals.cols, lead);
     if height.saturating_mul(width) > MAX_CELLS {
         return Err(CellError::Num);
     }
-    let mut out: Vec<Vec<Value>> = Vec::new();
+    let mut out: Vec<Vec<Value>> = Vec::with_capacity(height);
     if show {
         let names: Vec<String> = p.field_headers.get(1).map_or(&[][..], Vec::as_slice).iter().map(Value::display).collect();
         let mut line = vec![gap(); lead];
@@ -913,63 +1043,53 @@ pub fn pivotby_with(args: &[Arg], agg: Aggregation) -> R<Value> {
     // Column header rows: one per column field.
     for level in 0..cf.cols {
         let mut line = vec![gap(); lead];
-        for c in &cols {
-            for _ in 0..vals.cols {
-                line.push(match c {
-                    Some(k) => k.get(level).map_or_else(gap, shown_key),
-                    None if level == 0 => Value::from("Total"),
-                    None => gap(),
-                });
-            }
+        for c in &clines {
+            let cell = c.cells.get(level).cloned().unwrap_or_else(gap);
+            line.extend(std::iter::repeat_n(cell, vals.cols));
         }
         out.push(line);
     }
     if show {
         let mut line: Vec<Value> = p.field_headers.first().cloned().unwrap_or_default();
         line.resize(lead, gap());
-        for _ in &cols {
+        for _ in &clines {
             line.extend(p.value_headers.iter().cloned());
         }
         out.push(line);
     }
-    // What a two-argument aggregation (PERCENTOF) measures each cell against, per output column
-    // and value column: the column group's values, or every value for the total column.
-    let against: Vec<Vec<Vec<&Value>>> = cols
-        .iter()
-        .map(|c| {
-            let rows = rows_for(None, *c);
-            (0..vals.cols).map(|vc| rows.iter().filter_map(|&r| vals.get(r, vc)).collect()).collect()
-        })
-        .collect();
-    let mut body_line = |r: Option<&Vec<Value>>| -> Vec<Value> {
-        let mut line: Vec<Value> = match r {
-            Some(k) => k.iter().map(shown_key).collect(),
-            None => {
-                let mut l = vec![Value::from("Total")];
-                l.resize(lead, gap());
-                l
-            }
-        };
-        for (ci, c) in cols.iter().enumerate() {
-            let rows = match (r, c) {
-                (Some(rk), Some(ck)) => cell.get(&(row_key(rk), row_key(ck))).cloned().unwrap_or_default(),
-                _ => rows_for(r, *c),
-            };
-            for vc in 0..vals.cols {
-                let of = against.get(ci).and_then(|a| a.get(vc)).map_or(&[][..], Vec::as_slice);
-                line.push(agg_cell(&rows, of, vc));
+    // The column lines each data row belongs to, and what a two-argument aggregation (PERCENTOF)
+    // measures each cell against: its column's values.
+    let mut member: Vec<Vec<usize>> = vec![Vec::new(); vals.rows];
+    for (ci, c) in clines.iter().enumerate() {
+        for &r in &c.rows {
+            if let Some(m) = member.get_mut(r) {
+                m.push(ci);
             }
         }
-        line
-    };
-    if row_total < 0 {
-        out.push(body_line(None));
     }
-    for k in &rk {
-        out.push(body_line(Some(k)));
-    }
-    if row_total > 0 {
-        out.push(body_line(None));
+    let against: Vec<Vec<Vec<&Value>>> = clines.iter().map(|c| (0..vals.cols).map(|vc| column_values(&vals, &c.rows, vc)).collect()).collect();
+    for rl in rlines {
+        let mut cells: Vec<Vec<usize>> = vec![Vec::new(); clines.len()];
+        for &r in &rl.rows {
+            for &ci in member.get(r).map_or(&[][..], Vec::as_slice) {
+                if let Some(c) = cells.get_mut(ci) {
+                    c.push(r);
+                }
+            }
+        }
+        let mut line = rl.cells;
+        for (ci, rows) in cells.iter().enumerate() {
+            for vc in 0..vals.cols {
+                // Excel fills the row / column combinations without data with empty text.
+                line.push(if rows.is_empty() {
+                    gap()
+                } else {
+                    let of = against.get(ci).and_then(|a| a.get(vc)).map_or(&[][..], Vec::as_slice);
+                    agg(&column_values(&vals, rows, vc), of)
+                });
+            }
+        }
+        out.push(line);
     }
     from_rows(out, &Value::Empty)
 }
@@ -1342,6 +1462,58 @@ mod tests {
         let cf = av(arr(vec![vec![tv("C1"), tv("C2")], vec![tv("x"), tv("p")]]));
         let r = ev("PIVOTBY", vec![c(vec![tv("R"), tv("a")]), cf, c(vec![tv("V"), nv(1.0)]), t("SUM"), n(3.0)]);
         assert_eq!(rows_of(&r)[0][1], tv("C1, C2"));
+    }
+
+    /// The sort orders of GROUPBY / PIVOTBY as Excel (Microsoft 365) applies them.
+    #[test]
+    fn groupby_and_pivotby_sort_orders() {
+        use crate::Arg;
+        let c = |v: Vec<Value>| av(arr(v.into_iter().map(|x| vec![x]).collect()));
+        let m = |v: Vec<Vec<Value>>| av(arr(v));
+        let order = |v: &[f64]| av(row(v));
+        let two = || m(vec![vec![tv("b"), tv("x")], vec![tv("a"), tv("y")], vec![tv("b"), tv("a")], vec![tv("a"), tv("b")]]);
+        let gb = |sort: Arg, rel: Option<f64>| {
+            let mut args = vec![two(), av(col(&[1.0, 2.0, 3.0, 4.0])), t("SUM"), empty(), n(0.0), sort];
+            if let Some(r) = rel {
+                args.extend([empty(), n(r)]);
+            }
+            ev("GROUPBY", args)
+        };
+        let keys = |v: &Value| rows_of(v).iter().map(|l| format!("{} {}", l[0].display(), l[1].display())).collect::<Vec<_>>();
+        // Grouped keys sort within their groups: by the inner key, by a list, by the value.
+        assert_eq!(keys(&gb(n(2.0), None)), ["a b", "a y", "b a", "b x"]);
+        assert_eq!(keys(&gb(order(&[1.0, -2.0]), None)), ["a y", "a b", "b x", "b a"]);
+        assert_eq!(keys(&gb(order(&[2.0, 1.0]), None)), ["a b", "a y", "b a", "b x"]);
+        assert_eq!(keys(&gb(av(col(&[-1.0, 2.0])), None)), ["b a", "b x", "a b", "a y"]);
+        assert_eq!(keys(&gb(n(-3.0), None)), ["a b", "a y", "b a", "b x"]);
+        // A flat table (field_relationship 1) sorts by the column alone.
+        assert_eq!(keys(&gb(n(2.0), Some(1.0))), ["b a", "a b", "b x", "a y"]);
+        assert_eq!(keys(&gb(n(-3.0), Some(1.0))), ["a b", "b a", "a y", "b x"]);
+        is_err(gb(n(2.0), Some(2.0)), CellError::Value);
+        // A list names key columns, each once.
+        for bad in [&[1.0, 3.0][..], &[1.0, 1.0], &[1.0, -1.0], &[-1.0, 3.0]] {
+            is_err(gb(order(bad), None), CellError::Value);
+        }
+        // By value: ties keep the keys ascending, errors come last; a value column past the first.
+        let r = ev("GROUPBY", vec![c(vec![tv("c"), tv("a"), tv("b")]), av(col(&[1.0, 2.0, 1.0])), t("SUM"), empty(), n(1.0), n(2.0)]);
+        assert_eq!(rows_of(&r).iter().map(|l| l[0].clone()).collect::<Vec<_>>(), [tv("b"), tv("c"), tv("a"), tv("Total")]);
+        let vals = c(vec![nv(1.0), Value::Error(CellError::NA), nv(2.0)]);
+        let r = ev("GROUPBY", vec![c(vec![tv("a"), tv("b"), tv("c")]), vals, t("SUM"), empty(), n(1.0), n(2.0)]);
+        assert_eq!(rows_of(&r).iter().map(|l| l[0].clone()).collect::<Vec<_>>(), [tv("a"), tv("c"), tv("b"), tv("Total")]);
+        let vals = m(vec![vec![nv(3.0), nv(30.0)], vec![nv(1.0), nv(40.0)], vec![nv(2.0), nv(10.0)]]);
+        let r = ev("GROUPBY", vec![c(vec![tv("a"), tv("b"), tv("c")]), vals, t("SUM"), empty(), n(1.0), n(3.0)]);
+        assert_eq!(rows_of(&r).iter().map(|l| l[0].clone()).collect::<Vec<_>>(), [tv("c"), tv("a"), tv("b"), tv("Total")]);
+        // PIVOTBY: rows by the total column, columns by the total row; without that total, by key.
+        let pv = |cols: Vec<Value>, rs: Arg, ct: Arg, cs: Arg| {
+            let args = vec![c(vec![tv("a"), tv("b"), tv("c")]), c(cols), av(col(&[3.0, 1.0, 2.0])), t("SUM"), empty(), empty(), rs, ct, cs];
+            rows_of(&ev("PIVOTBY", args))
+        };
+        let r = pv(vec![tv("x"), tv("x"), tv("y")], n(2.0), empty(), empty());
+        assert_eq!(r.iter().map(|l| l[0].clone()).collect::<Vec<_>>(), [tv(""), tv("b"), tv("c"), tv("a"), tv("Total")]);
+        let r = pv(vec![tv("x"), tv("y"), tv("z")], empty(), empty(), n(2.0));
+        assert_eq!(r[0], [tv(""), tv("y"), tv("z"), tv("x"), tv("Total")]);
+        let r = pv(vec![tv("x"), tv("x"), tv("y")], n(2.0), n(0.0), empty());
+        assert_eq!(r.iter().map(|l| l[0].clone()).collect::<Vec<_>>(), [tv(""), tv("a"), tv("b"), tv("c"), tv("Total")]);
     }
 
     /// Arguments Excel (Microsoft 365) rejects with #VALUE!.
