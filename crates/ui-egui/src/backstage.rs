@@ -962,6 +962,12 @@ fn options(app: &mut SheetApp, ui: &mut Ui) {
         app.run_or_alert("view.formulaBar", json!({"on": formula_bar}));
     }
     ui.add_space(18.0);
+    section(ui, lang, "Options|Editing");
+    let mut autocomplete = app.ui.autocomplete;
+    if ui.checkbox(&mut autocomplete, lang.tr("Enable AutoComplete for cell values")).changed() {
+        app.run_or_alert("options.autoComplete", json!({"on": autocomplete}));
+    }
+    ui.add_space(18.0);
     section(ui, lang, "Options|Save");
     let mut autosave = app.grid.autosave();
     if ui.checkbox(&mut autosave, lang.tr("Save .xlsx workbooks automatically after every change")).changed() {

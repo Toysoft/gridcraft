@@ -398,6 +398,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Bottom Margin" => "Margines dolny",
         "Header Margin" => "Margines nagłówka",
         "Footer Margin" => "Margines stopki",
+        "Enable AutoComplete for cell values" => "Włącz autouzupełnianie wartości komórek",
         // Recent list ages. Counts are never one; weeks, months and years are abbreviated because
         // their Polish plural changes with the number (2 tygodnie, 5 tygodni).
         "Modified" => "Zmodyfikowano",
