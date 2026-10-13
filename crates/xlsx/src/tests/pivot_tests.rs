@@ -730,6 +730,23 @@ fn report_filter_item_indexes_the_fields_items() {
 }
 
 #[test]
+fn grouped_dates_with_blanks_are_not_marked_unmixed() {
+    // Excel keeps a date grouping only if the cache field doesn't deny its blanks: with a blank
+    // date it writes containsBlank="1" and no containsSemiMixedTypes="0".
+    let date_flags = |wb: &Workbook| -> String {
+        let parts = unzip(&write_xlsx(wb).unwrap());
+        let c = String::from_utf8(parts.get("xl/pivotCache/pivotCacheDefinition2.xml").unwrap().clone()).unwrap();
+        let at = c.find("<cacheField name=\"Date\"").unwrap();
+        let si = at + c[at..].find("<sharedItems").unwrap();
+        c[si..si + c[si..].find(" min").unwrap()].to_string()
+    };
+    let mut wb = workbook();
+    assert_eq!(date_flags(&wb), "<sharedItems containsSemiMixedTypes=\"0\" containsNonDate=\"0\" containsDate=\"1\" containsString=\"0\"");
+    wb.sheet_mut(0).unwrap().cells.set(at("C3"), Cell::default());
+    assert_eq!(date_flags(&wb), "<sharedItems containsNonDate=\"0\" containsDate=\"1\" containsString=\"0\" containsBlank=\"1\"");
+}
+
+#[test]
 fn values_ahead_of_column_fields_read_last() {
     let table = r#"<pivotTableDefinition name="ValuesFirst" cacheId="1"><location ref="C1:F4"/><pivotFields><pivotField axis="axisCol"><items><item x="0"/><item x="1"/><item t="default"/></items></pivotField><pivotField dataField="1"/></pivotFields><colFields count="2"><field x="-2"/><field x="0"/></colFields><dataFields><dataField name="Sum of V" fld="1"/><dataField name="Count of V" fld="1" subtotal="count"/></dataFields></pivotTableDefinition>"#;
     let (wb, _) = read_xlsx(&with_pivot(table, Some(GOOD_CACHE))).unwrap();

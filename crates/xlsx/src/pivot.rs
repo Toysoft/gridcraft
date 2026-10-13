@@ -709,7 +709,12 @@ fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem) -> String {
         if f.col.is_some() {
             s.push_str("<sharedItems");
             if let Some(g) = &f.group {
-                s.push_str(" containsSemiMixedTypes=\"0\" containsNonDate=\"0\" containsDate=\"1\" containsString=\"0\"");
+                // As Excel writes a date column: blanks make it semi-mixed. Excel drops the grouping
+                // of a field that says containsSemiMixedTypes="0" next to containsBlank="1".
+                if !st.blank {
+                    s.push_str(" containsSemiMixedTypes=\"0\"");
+                }
+                s.push_str(" containsNonDate=\"0\" containsDate=\"1\" containsString=\"0\"");
                 if st.blank {
                     s.push_str(" containsBlank=\"1\"");
                 }
