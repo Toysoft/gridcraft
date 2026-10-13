@@ -397,6 +397,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Options|General" => "常规",
         "Options|Save" => "保存",
         "Show formula bar" => "显示编辑栏",
+        "Enable AutoComplete for cell values" => "为单元格值启用记忆式键入",
         "Save .xlsx workbooks automatically after every change" => "每次更改后自动保存 .xlsx 工作簿",
         "Workbook calculation" => "工作簿计算",
         "Enable iterative calculation" => "启用迭代计算",
