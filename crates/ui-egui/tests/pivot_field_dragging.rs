@@ -362,3 +362,51 @@ fn holding_a_drag_near_the_area_edge_scrolls_to_later_fields() {
     assert!(pt.values.iter().position(|v| v.name == "Sum of Sales").unwrap() > 4);
     assert_eq!(pt.values.len(), 11);
 }
+
+#[test]
+fn virtual_values_moves_between_axes_but_not_into_values_or_outside() {
+    let mut h = harness();
+    h.state_mut().session.execute("pivot.addField", json!({"field":"Sales","area":"values","name":"Second sales"})).unwrap();
+    h.run_steps(3);
+    assert!(h.query_by_label("Σ Values ▾").is_some());
+    let start = button(&h, "Σ Values");
+    let end = empty_area(&h, "Rows");
+    drag(&mut h, start, end);
+    let pt = &h.state().session.active().unwrap().wb.active().unwrap().pivots[0];
+    assert!(pt.values_on_rows);
+    assert_eq!(pt.values.len(), 2);
+    assert!(h.query_by_label("Σ Values ▾").is_some());
+    h.state_mut().session.active_mut().unwrap().undo.clear();
+    let start = button(&h, "Σ Values");
+    let end = empty_area(&h, "Values");
+    drag(&mut h, start, end);
+    let start = button(&h, "Σ Values");
+    let end = empty_area(&h, "Filters");
+    drag(&mut h, start, end);
+    let start = button(&h, "Σ Values");
+    drag(&mut h, start, pos2(400.0, 300.0));
+    let d = h.state().session.active().unwrap();
+    assert!(d.wb.active().unwrap().pivots[0].values_on_rows);
+    assert_eq!(d.wb.active().unwrap().pivots[0].values.len(), 2);
+    assert!(d.undo.is_empty());
+    let start = button(&h, "Σ Values");
+    let end = empty_area(&h, "Columns");
+    drag(&mut h, start, end);
+    assert!(!h.state().session.active().unwrap().wb.active().unwrap().pivots[0].values_on_rows);
+}
+
+#[test]
+fn ordinary_row_drag_across_virtual_values_updates_its_visible_order() {
+    let mut h = harness();
+    h.state_mut().session.execute("pivot.addField", json!({"field":"Product","area":"rows"})).unwrap();
+    h.state_mut().session.execute("pivot.addField", json!({"field":"Sales","area":"values","name":"Second sales"})).unwrap();
+    h.state_mut().session.execute("pivot.moveField", json!({"field":"Σ Values","from":"columns","to":"rows","position":0})).unwrap();
+    h.run_steps(3);
+    h.state_mut().session.active_mut().unwrap().undo.clear();
+    let virtual_rect = h.get_by_label("Σ Values ▾").rect();
+    let start = button(&h, "Region");
+    drag(&mut h, start, pos2(virtual_rect.center().x, virtual_rect.top() + 1.0));
+    let pt = &h.state().session.active().unwrap().wb.active().unwrap().pivots[0];
+    assert_eq!(pt.rows.iter().map(|f| f.source_col.as_str()).collect::<Vec<_>>(), ["Region", "Product"]);
+    assert_eq!(pt.values_position, Some(1));
+}
