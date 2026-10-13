@@ -469,9 +469,17 @@ fn load_fallback(fonts: &mut FontDefinitions, han: HanOrder) -> Vec<String> {
     keys
 }
 
+/// On the web there are no system font files to load, so a pan-CJK face ships inside the binary
+/// instead: egui's bundled fonts stop at Latin, and without a fallback a Chinese, Japanese or
+/// Korean workbook shows tofu boxes even though the text was read correctly. The face covers
+/// Simplified Chinese (the widest Han charset) plus kana, so it fronts the chain for either Han
+/// order. Nothing is loaded from the host; the bytes are `include_bytes!`-static.
 #[cfg(target_arch = "wasm32")]
-fn load_fallback(_fonts: &mut FontDefinitions, _han: HanOrder) -> Vec<String> {
-    Vec::new()
+fn load_fallback(fonts: &mut FontDefinitions, _han: HanOrder) -> Vec<String> {
+    const NOTO_SANS_SC: &[u8] = include_bytes!("../assets/fonts/noto-sans-sc/NotoSansSC-Regular.otf");
+    let key = "sys-cjk-han-zh";
+    fonts.font_data.insert(key.to_string(), Arc::new(FontData::from_static(NOTO_SANS_SC)));
+    vec![key.to_string()]
 }
 
 /// Every fallback face we look for, in chain order: `(key, candidate files)`. One file per script
