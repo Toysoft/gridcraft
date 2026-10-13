@@ -640,6 +640,86 @@ fn column_fields_with_two_values_and_no_row_fields_have_no_label_column() {
 }
 
 #[test]
+fn cache_flags_count_booleans_and_errors_as_strings() {
+    // The columns of an Excel 365 reference workbook, with the flags Excel writes for them. A
+    // file with containsString="0" next to <b> or <e> items can't be opened by Excel at all.
+    let mut wb = Workbook::new();
+    let rows: [[Value; 7]; 5] = [
+        ["Name", "BoolOnly", "NumBool", "ErrOnly", "NumErr", "TextBool", "BoolBlank"].map(Value::text),
+        [
+            Value::text("a"),
+            Value::Bool(true),
+            Value::number(1.0),
+            Value::Error(gridcraft_core::CellError::Div0),
+            Value::number(1.0),
+            Value::text("x"),
+            Value::Bool(true),
+        ],
+        [
+            Value::text("b"),
+            Value::Bool(false),
+            Value::Bool(true),
+            Value::Error(gridcraft_core::CellError::Div0),
+            Value::Error(gridcraft_core::CellError::NA),
+            Value::Bool(true),
+            Value::Empty,
+        ],
+        [
+            Value::text("c"),
+            Value::Bool(true),
+            Value::number(2.5),
+            Value::Error(gridcraft_core::CellError::Div0),
+            Value::number(3.0),
+            Value::text("y"),
+            Value::Bool(false),
+        ],
+        [
+            Value::text("d"),
+            Value::Bool(false),
+            Value::Bool(false),
+            Value::Error(gridcraft_core::CellError::Div0),
+            Value::Error(gridcraft_core::CellError::Div0),
+            Value::Bool(false),
+            Value::Bool(true),
+        ],
+    ];
+    let data = wb.sheet_mut(0).unwrap();
+    for (r, row) in rows.iter().enumerate() {
+        for (c, v) in row.iter().enumerate() {
+            if !v.is_empty() {
+                data.cells.set(CellRef::new(r as u32, c as u32), Cell::value(v.clone()));
+            }
+        }
+    }
+    data.pivots.push(PivotTable {
+        name: "Types".into(),
+        source: "Sheet1!$A$1:$G$5".into(),
+        anchor: at("J3"),
+        rows: vec![field("Name")],
+        values: vec![PivotValue { source_col: "Name".into(), func: PivotFunc::Count, name: "Count of Name".into(), ..PivotValue::default() }],
+        last_range: Some(rr("J3:K8")),
+        ..PivotTable::default()
+    });
+    let parts = unzip(&write_xlsx(&wb).unwrap());
+    let c = String::from_utf8(parts.get("xl/pivotCache/pivotCacheDefinition1.xml").unwrap().clone()).unwrap();
+    let flags = |name: &str| -> String {
+        let at = c.find(&format!("<cacheField name=\"{name}\"")).unwrap();
+        let si = at + c[at..].find("<sharedItems").unwrap();
+        let end = si + c[si..].find('>').unwrap();
+        c[si..end].split(" count=").next().unwrap().trim_end_matches('/').to_string()
+    };
+    assert_eq!(flags("BoolOnly"), "<sharedItems");
+    assert_eq!(flags("NumBool"), "<sharedItems containsMixedTypes=\"1\" containsNumber=\"1\" minValue=\"1\" maxValue=\"2.5\"");
+    assert_eq!(flags("ErrOnly"), "<sharedItems");
+    assert_eq!(flags("NumErr"), "<sharedItems containsMixedTypes=\"1\" containsNumber=\"1\" containsInteger=\"1\" minValue=\"1\" maxValue=\"3\"");
+    assert_eq!(flags("TextBool"), "<sharedItems");
+    assert_eq!(flags("BoolBlank"), "<sharedItems containsBlank=\"1\"");
+    let (back, report) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
+    assert!(report.warnings.iter().all(|w| !w.to_lowercase().contains("pivot")), "{:?}", report.warnings);
+    assert_eq!(back.sheet(0).unwrap().pivots.len(), 1);
+}
+
+#[test]
 fn values_ahead_of_column_fields_read_last() {
     let table = r#"<pivotTableDefinition name="ValuesFirst" cacheId="1"><location ref="C1:F4"/><pivotFields><pivotField axis="axisCol"><items><item x="0"/><item x="1"/><item t="default"/></items></pivotField><pivotField dataField="1"/></pivotFields><colFields count="2"><field x="-2"/><field x="0"/></colFields><dataFields><dataField name="Sum of V" fld="1"/><dataField name="Count of V" fld="1" subtotal="count"/></dataFields></pivotTableDefinition>"#;
     let (wb, _) = read_xlsx(&with_pivot(table, Some(GOOD_CACHE))).unwrap();

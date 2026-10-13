@@ -210,8 +210,13 @@ impl Stats {
             Value::Array(_) => self.add(&v.scalar()),
         }
     }
+    /// Text, booleans or errors: Excel counts all three as strings in a cache field's flags.
+    fn strings(&self) -> bool {
+        self.text || self.boolean || self.error
+    }
+    /// Kinds of values for `containsMixedTypes`: strings (text, booleans, errors) and numbers.
     fn kinds(&self) -> usize {
-        [self.text, self.number, self.boolean, self.error].iter().filter(|b| **b).count()
+        usize::from(self.strings()) + usize::from(self.number)
     }
 }
 
@@ -572,7 +577,7 @@ fn build_cache(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Option<Cac
     for f in fields.iter_mut() {
         if f.group.is_some() {
             f.itemized = false;
-        } else if f.col.is_some() && (f.stats.text || f.stats.boolean || f.stats.error) {
+        } else if f.col.is_some() && f.stats.strings() {
             f.itemized = true;
         }
     }
@@ -711,11 +716,12 @@ fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem) -> String {
                 }
                 let _ = g;
             } else {
-                let semi = st.text || st.blank || st.boolean || st.error;
-                if !semi {
+                // Flags as Excel 365 writes them; it refuses a file whose flags deny the booleans
+                // or errors among the items (containsString="0" next to <b> or <e>).
+                if !st.strings() && !st.blank {
                     s.push_str(" containsSemiMixedTypes=\"0\"");
                 }
-                if !st.text {
+                if !st.strings() {
                     s.push_str(" containsString=\"0\"");
                 }
                 if st.blank {
