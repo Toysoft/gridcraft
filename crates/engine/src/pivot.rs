@@ -963,7 +963,12 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
     let ctx = Ctx { pt, rows: row_fields.clone(), row_items, row_fmts: row_fmts.clone(), vpos, val_names: val_names.clone() };
     let mut lines: Vec<Line> = Vec::new();
     if row_levels == 0 {
-        lines.push(Line { kind: LineKind::Item(false), leaf: true, path: vec![], values: true, labels: vec![], vi: None });
+        // Column fields and one value field: Excel labels the data line with the value's caption.
+        let labels = match val_names.first() {
+            Some(name) if k == 1 && !cols.is_empty() => vec![(0, Value::text(name.as_str()), 0, None)],
+            _ => vec![],
+        };
+        lines.push(Line { kind: LineKind::Item(false), leaf: true, path: vec![], values: true, labels, vi: None });
     } else {
         if pt.layout == PivotLayout::Tabular {
             ctx.flatten_tabular(&row_tree, 0, None, &mut Vec::new(), &[], &mut lines);
@@ -1016,7 +1021,10 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
     }
 
     let compact = pt.layout == PivotLayout::Compact;
-    let l = if row_levels == 0 && cols.is_empty() {
+    // No row fields: no label column, except that column fields with one value field label the
+    // data line with the value's caption (Excel 365; with two or more values the report starts at
+    // the first column item).
+    let l = if row_levels == 0 && (cols.is_empty() || k > 1) {
         0
     } else if compact {
         1
@@ -1091,27 +1099,33 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
     if cols.is_empty() {
         let r = g.push_row(RowKind::Header)?;
         row_header(&mut g, r);
+        // Values on rows, no column field: Excel leaves the one data column's header empty.
         for (j, (_, vi)) in data_cols.iter().enumerate() {
-            match vi {
-                Some(vi) => g.set(r, l + j, Value::text(val_name(*vi)), CellKind::Header, 0, None),
-                // Values on rows, no column field: the one data column is the grand total.
-                None if on_rows => g.set(r, l + j, Value::text("Total"), CellKind::Header, 0, None),
-                None => {}
+            if let Some(vi) = vi {
+                g.set(r, l + j, Value::text(val_name(*vi)), CellKind::Header, 0, None);
             }
         }
     } else {
-        // The caption row holds the value field's caption (one value field) and, with headers
-        // shown, the column caption. With headers off and nothing to show in it, Excel leaves it out.
-        let value_caption = l > 0 && k == 1;
+        // The caption row holds the value field's caption (one value field, with row fields; without
+        // them the caption labels the data line instead, see `lines`) and, with headers shown, the
+        // column caption. With headers off and nothing to show in it, Excel leaves it out.
+        let value_caption = l > 0 && k == 1 && row_levels > 0;
         if value_caption || headers_on {
             let cap = g.push_row(RowKind::Header)?;
             if value_caption {
                 g.set(cap, 0, Value::text(val_name(0)), CellKind::Header, 0, None);
             }
             if headers_on {
-                let caption =
-                    if compact { "Column Labels".to_string() } else { col_fields.first().map(|f| f.source_col.clone()).unwrap_or_default() };
-                g.set(cap, l, Value::text(caption), CellKind::Header, 0, None);
+                // Compact: "Column Labels". Outline and tabular name each column field from the
+                // first data column on, Σ Values as "Values".
+                let names: Vec<String> = if compact {
+                    vec!["Column Labels".to_string()]
+                } else {
+                    col_fields.iter().map(|f| f.source_col.clone()).chain(values_in_cols.then(|| "Values".to_string())).collect()
+                };
+                for (i, name) in names.into_iter().enumerate() {
+                    g.set(cap, l + i, Value::text(name), CellKind::Header, 0, None);
+                }
             }
         }
         let levels = cols.len() + usize::from(values_in_cols);

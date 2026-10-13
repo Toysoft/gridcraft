@@ -840,16 +840,18 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
     let row_levels = row_idx.len() + usize::from(row_values.is_some());
     // Σ Values alone in Columns: its row is hidden (hideValuesRow, below), so the value captions are
     // the header row, which Excel 365 counts as row 0. Column fields take a row each, Σ Values among
-    // them, below a caption row. The caption row holds the value's caption (one value field) and,
-    // with headers shown, the column caption; Excel leaves it out when it would be empty
-    // (firstHeaderRow 0).
+    // them, below a caption row. The caption row holds the value's caption (one value field and row
+    // fields) and, with headers shown, the column caption; Excel leaves it out when it would be
+    // empty (firstHeaderRow 0).
     let (first_header_row, first_data_row) = if col_idx.is_empty() {
         (usize::from(col_values.is_none()), 1)
     } else {
-        let caption_row = pt.show_headers || k == 1;
+        let caption_row = pt.show_headers || (k == 1 && row_levels > 0);
         (usize::from(caption_row), usize::from(caption_row) + col_idx.len() + usize::from(col_values.is_some()))
     };
-    let first_data_col = if row_levels == 0 && col_idx.is_empty() {
+    // No row fields: no label column, unless column fields hold one value field (its caption
+    // labels the data line).
+    let first_data_col = if row_levels == 0 && (col_idx.is_empty() || col_values.is_some()) {
         0
     } else if compact {
         1

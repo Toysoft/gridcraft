@@ -621,6 +621,25 @@ fn date_groups_sorted_ascending_are_written_without_sort_type() {
 }
 
 #[test]
+fn column_fields_with_two_values_and_no_row_fields_have_no_label_column() {
+    // Excel 365 writes firstDataRow="3" firstDataCol="0" for Region in Columns with two values.
+    let mut wb = workbook();
+    {
+        let p = wb.sheet_mut(1).unwrap().pivots.get_mut(2).unwrap();
+        p.columns = std::mem::take(&mut p.rows);
+        p.values.push(PivotValue { source_col: "Sales".into(), func: PivotFunc::Sum, name: "Sum of Sales".into(), ..PivotValue::default() });
+    }
+    let parts = unzip(&write_xlsx(&wb).unwrap());
+    let t3 = String::from_utf8(parts.get("xl/pivotTables/pivotTable3.xml").unwrap().clone()).unwrap();
+    assert!(t3.contains("firstHeaderRow=\"1\" firstDataRow=\"3\" firstDataCol=\"0\""), "{t3}");
+    // With one value field its caption labels the data line in the first column.
+    wb.sheet_mut(1).unwrap().pivots[2].values.pop();
+    let parts = unzip(&write_xlsx(&wb).unwrap());
+    let t3 = String::from_utf8(parts.get("xl/pivotTables/pivotTable3.xml").unwrap().clone()).unwrap();
+    assert!(t3.contains("firstHeaderRow=\"1\" firstDataRow=\"2\" firstDataCol=\"1\""), "{t3}");
+}
+
+#[test]
 fn values_ahead_of_column_fields_read_last() {
     let table = r#"<pivotTableDefinition name="ValuesFirst" cacheId="1"><location ref="C1:F4"/><pivotFields><pivotField axis="axisCol"><items><item x="0"/><item x="1"/><item t="default"/></items></pivotField><pivotField dataField="1"/></pivotFields><colFields count="2"><field x="-2"/><field x="0"/></colFields><dataFields><dataField name="Sum of V" fld="1"/><dataField name="Count of V" fld="1" subtotal="count"/></dataFields></pivotTableDefinition>"#;
     let (wb, _) = read_xlsx(&with_pivot(table, Some(GOOD_CACHE))).unwrap();

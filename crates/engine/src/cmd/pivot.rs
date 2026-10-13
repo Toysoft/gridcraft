@@ -1773,6 +1773,81 @@ mod tests {
     }
 
     #[test]
+    fn captions_without_row_fields_and_with_values_on_rows() {
+        // Cell for cell what Excel 365 shows after a refresh, in all three layouts.
+        for layout in ["compact", "outline", "tabular"] {
+            // Column fields, one value field: the caption labels the data line (A5), not A3.
+            let mut s = sales();
+            s.execute("insert.pivotTable", json!({"columns": ["Region"], "values": ["Sales"]})).unwrap();
+            s.execute("pivot.layout", json!({"layout": layout})).unwrap();
+            assert_eq!(val(&s, "A3"), Value::Empty, "{layout}");
+            assert_eq!(text(&s, "B4"), "East", "{layout}");
+            assert_eq!(text(&s, "A5"), "Sum of Sales", "{layout}");
+            assert_eq!(val(&s, "B5"), Value::Number(415.0), "{layout}");
+            // Column fields, two value fields: no label column, the items start in A.
+            let mut s = sales();
+            s.execute("insert.pivotTable", json!({"columns": ["Region"], "values": ["Sales", "Units"]})).unwrap();
+            s.execute("pivot.layout", json!({"layout": layout})).unwrap();
+            assert_eq!(text(&s, "A4"), "East", "{layout}");
+            assert_eq!(text(&s, "A5"), "Sum of Sales", "{layout}");
+            assert_eq!(text(&s, "B5"), "Sum of Units", "{layout}");
+            assert_eq!(val(&s, "A6"), Value::Number(415.0), "{layout}");
+            assert_eq!(pt(&s).last_range.unwrap().a1(), "A3:H6", "{layout}");
+            // Σ Values on rows without a column field: the data column has no header.
+            let mut s = sales();
+            s.execute("insert.pivotTable", json!({"rows": ["Region"], "values": ["Sales", "Units"]})).unwrap();
+            s.execute("pivot.moveField", json!({"field": "Σ Values", "from": "columns", "to": "rows"})).unwrap();
+            s.execute("pivot.layout", json!({"layout": layout})).unwrap();
+            let last = pt(&s).last_range.unwrap();
+            assert_eq!(val(&s, &CellRef::new(last.start.row, last.end.col).a1()), Value::Empty, "{layout}");
+        }
+    }
+
+    #[test]
+    fn outline_caption_row_names_every_column_field() {
+        // Outline and tabular name each column field in the caption row, Σ Values as "Values"
+        // (Excel 365: B3 Region, C3 Product; with two values B3 Product, C3 Values).
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"columns": ["Region", "Product"], "values": ["Sales"]})).unwrap();
+        s.execute("pivot.layout", json!({"layout": "outline"})).unwrap();
+        assert_eq!(text(&s, "B3"), "Region");
+        assert_eq!(text(&s, "C3"), "Product");
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Product"], "values": ["Sales", "Units"]})).unwrap();
+        s.execute("pivot.layout", json!({"layout": "tabular"})).unwrap();
+        assert_eq!(text(&s, "B3"), "Product");
+        assert_eq!(text(&s, "C3"), "Values");
+        // Compact keeps the one "Column Labels" caption.
+        s.execute("pivot.layout", json!({"layout": "compact"})).unwrap();
+        assert_eq!(text(&s, "B3"), "Column Labels");
+        assert_eq!(val(&s, "C3"), Value::Empty);
+    }
+
+    #[test]
+    fn headers_off_leave_out_an_empty_caption_row() {
+        // With headers off, Excel 365 drops the caption row above the column items unless it holds
+        // the value's caption (one value field and row fields).
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"columns": ["Region"], "values": ["Sales"]})).unwrap();
+        s.execute("pivot.layout", json!({"showHeaders": false})).unwrap();
+        assert_eq!(text(&s, "B3"), "East");
+        assert_eq!(text(&s, "A4"), "Sum of Sales");
+        assert_eq!(pt(&s).last_range.unwrap().a1(), "A3:E4");
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Product"], "values": ["Sales", "Units"]})).unwrap();
+        s.execute("pivot.layout", json!({"showHeaders": false})).unwrap();
+        assert_eq!(text(&s, "B3"), "Apples");
+        assert_eq!(text(&s, "B4"), "Sum of Sales");
+        assert_eq!(text(&s, "A5"), "East");
+        // One value field with row fields: the caption row keeps the value's caption.
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Product"], "values": ["Sales"]})).unwrap();
+        s.execute("pivot.layout", json!({"showHeaders": false})).unwrap();
+        assert_eq!(text(&s, "A3"), "Sum of Sales");
+        assert_eq!(text(&s, "B4"), "Apples");
+    }
+
+    #[test]
     fn date_grouping_by_quarter_and_month() {
         let mut s = sales();
         s.execute("insert.pivotTable", json!({"rows": ["Date"], "values": ["Sales"]})).unwrap();
@@ -1916,11 +1991,11 @@ mod tests {
         assert_eq!(val(&s, "B13"), Value::Number(TOTAL));
         assert_eq!(text(&s, "A14"), "Total Sum of Units");
         assert_eq!(val(&s, "B14"), Value::Number(72.0));
-        // Tabular, no column field: "Total" heads the data column, as Excel saves it.
+        // Tabular, no column field: the data column has no header (Excel 365 refreshes it empty).
         s.execute("pivot.layout", json!({"layout": "tabular"})).unwrap();
         assert_eq!(text(&s, "A3"), "Region");
         assert_eq!(text(&s, "B3"), "Values");
-        assert_eq!(text(&s, "C3"), "Total");
+        assert_eq!(val(&s, "C3"), Value::Empty);
         s.execute("pivot.layout", json!({"layout": "compact"})).unwrap();
         // Σ Values before Region: the value fields are the outer items.
         s.execute("pivot.moveField", json!({"field": "Values", "from": "rows", "to": "rows", "position": 0})).unwrap();
