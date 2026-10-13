@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (XLSX chart sheets are kept on save (#727); previously minor: CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (cell readingOrder persists through commands and XLSX) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -10,6 +10,8 @@ Excel's list comes from Microsoft's public "File formats that are supported in E
 documentation (the Office bundle is off limits under this repo's clean-room rule). GridCraft's
 support comes from `crates/engine/src/io.rs` (`FileKind`), `crates/xlsx/src` and the tests in
 `crates/xlsx/src/tests/` (round-trip, fixtures, malformed input, CSV, ODS, XLSB, XLS, PivotTables).
+
+Cell text now uses shared Unicode bidi layout while retaining logical source indexes for editing, copy and XLSX. Format Cells exposes Context, Left to right and Right to left reading direction, independent of sheet geometry. OOXML Context uses the first non-whitespace character. Optional direction preserves absent versus explicit Context in differential styles. The renderer is pinned to a reviewed egui 0.36.2 backport with real-font, editing, accessibility and WASM checks. Physical screen-reader behavior remains unverified.
 
 ## Workbook formats
 
@@ -85,6 +87,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Alignment readingOrder 0/1/2 survives cell, named-style and differential-style round-trips; Format Cells exposes reading direction and CF priority preserves unspecified inheritance |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |
 | 2026-10-12 | trivial | CSV and TSV export is capped at 512 MiB and refuses a larger used range with an error (#528) |
 | 2026-10-12 | minor | `.xls` import reads the calculation settings (CalcMode, CalcIter, CalcCount, CalcDelta, CalcPrecision), so circular models calculate instead of showing `#CIRC!` (#724) |
