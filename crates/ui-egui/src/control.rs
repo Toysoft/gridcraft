@@ -530,16 +530,10 @@ mod tests {
         let mut session = gridcraft_engine::Session::new();
         session.new_workbook();
         let runs = black_red();
-        session
-            .run("cell.set", json!({"cell": "A1", "input": "black red", "runs": serde_json::to_value(&runs).unwrap()}))
-            .unwrap();
+        session.run("cell.set", json!({"cell": "A1", "input": "black red", "runs": serde_json::to_value(&runs).unwrap()})).unwrap();
         let mut app = SheetApp::new(session, crate::Services::default());
         let ctx = egui::Context::default();
-        for (method, params) in [
-            ("ui.edit.begin", json!({})),
-            ("ui.edit.text", json!({"text": "blackx red"})),
-            ("ui.edit.commit", json!({})),
-        ] {
+        for (method, params) in [("ui.edit.begin", json!({})), ("ui.edit.text", json!({"text": "blackx red"})), ("ui.edit.commit", json!({}))] {
             let Outcome::Done(reply) = handle(&mut app, &ctx, method, &params) else {
                 panic!("{method} must answer immediately");
             };

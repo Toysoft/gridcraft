@@ -2051,10 +2051,12 @@ fn fill_values_and_formats_leave_runs_alone() {
 #[test]
 fn autofill_series_rebases_runs() {
     let mut s = s();
-    let runs = CellRuns { runs: vec![
-        Run { start: 0, len: 5, font: runs_none_font() },
-        Run { start: 5, len: 1, font: RunFont { bold: Some(true), ..runs_none_font() } },
-    ] };
+    let runs = CellRuns {
+        runs: vec![
+            Run { start: 0, len: 5, font: runs_none_font() },
+            Run { start: 5, len: 1, font: RunFont { bold: Some(true), ..runs_none_font() } },
+        ],
+    };
     s.execute("cell.set", json!({"cell": "A1", "input": "Item 1", "runs": serde_json::to_value(&runs).unwrap()})).unwrap();
     s.execute("edit.autoFill", json!({"source": "A1", "target": "A1:A3"})).unwrap();
     assert_eq!(v(&s, "A2"), Value::text("Item 2"));
@@ -2068,10 +2070,12 @@ fn autofill_series_rebases_runs() {
 #[test]
 fn series_fill_widening_number_rebases() {
     let mut s = s();
-    let runs = CellRuns { runs: vec![
-        Run { start: 0, len: 5, font: runs_none_font() },
-        Run { start: 5, len: 1, font: RunFont { bold: Some(true), ..runs_none_font() } },
-    ] };
+    let runs = CellRuns {
+        runs: vec![
+            Run { start: 0, len: 5, font: runs_none_font() },
+            Run { start: 5, len: 1, font: RunFont { bold: Some(true), ..runs_none_font() } },
+        ],
+    };
     s.execute("cell.set", json!({"cell": "A1", "input": "Item 9", "runs": serde_json::to_value(&runs).unwrap()})).unwrap();
     s.execute("edit.autoFill", json!({"source": "A1", "target": "A1:A2"})).unwrap();
     assert_eq!(v(&s, "A2"), Value::text("Item 10"));
