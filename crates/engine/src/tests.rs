@@ -3031,6 +3031,7 @@ fn icon_set_thresholds_from_files_pick_the_icon() {
             thresholds: vec![CfValueKind::Percent(0.0), CfValueKind::Number(10.0), CfValueKind::Number(25.0)],
             reverse: false,
             show_value: true,
+            greater: vec![],
         },
         priority: 1,
         stop_if_true: false,

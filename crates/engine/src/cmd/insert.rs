@@ -188,7 +188,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Conditional Formatting",
             ["Home", "Styles"],
             None,
-            "{range?, rule: {type: cellIs|expression|containsText|beginsWith|endsWith|blanks|noBlanks|errors|noErrors|duplicate|unique|top10|aboveAverage|timePeriod|colorScale|dataBar|iconSet, operator?, value?, value2?, formula?, text?, rank?, bottom?, percent?, below?, period?, colors?: [..], color?, set?, style?: {font..fill..}|preset: lightRedFill|redText|yellowFill|greenFill|redBorder|lightRedFillDarkRedText…}}",
+            "{range?, rule: {type: cellIs|expression|containsText|beginsWith|endsWith|blanks|noBlanks|errors|noErrors|duplicate|unique|top10|aboveAverage|timePeriod|colorScale|dataBar|iconSet, operator?, value?, value2?, formula?, text?, rank?, bottom?, percent?, below?, period?, colors?: [..], color?, set?, thresholds?: [{type: num|percent|percentile|formula, value, operator?: \">=\"|\">\"}], style?: {font..fill..}|preset: lightRedFill|redText|yellowFill|greenFill|redBorder|lightRedFillDarkRedText…}}",
             has_doc,
             add_cf
         ),
@@ -1434,12 +1434,21 @@ fn add_cf(s: &mut Session, p: &Json) -> Result<Json> {
             gradient: rule.get("gradient").and_then(Json::as_bool).unwrap_or(true),
             show_value: true,
         },
-        "iconSet" => CfRule::IconSet {
-            set: g("set").unwrap_or_else(|| "3TrafficLights1".into()),
-            thresholds: vec![],
-            reverse: rule.get("reverse").and_then(Json::as_bool).unwrap_or(false),
-            show_value: true,
-        },
+        "iconSet" => {
+            // Optional thresholds from the lowest up, one per icon after the first (or one per
+            // icon, the first being the lower bound, as in the file): {type, value, operator:
+            // ">=" (the default) or ">"}.
+            let list = rule.get("thresholds").and_then(Json::as_array).map(Vec::as_slice).unwrap_or_default();
+            let thresholds: Vec<CfValueKind> = list.iter().map(|t| value_kind(Some(t), CfValueKind::Percent(0.0))).collect();
+            let greater: Vec<bool> = list.iter().map(|t| t.get("operator").and_then(Json::as_str) == Some(">")).collect();
+            CfRule::IconSet {
+                set: g("set").unwrap_or_else(|| "3TrafficLights1".into()),
+                thresholds,
+                reverse: rule.get("reverse").and_then(Json::as_bool).unwrap_or(false),
+                show_value: true,
+                greater: if greater.contains(&true) { greater } else { Vec::new() },
+            }
+        }
         other => return Err(bad("home.conditionalFormat", format!("unknown rule type `{other}`"))),
     };
     edit(s, |cx| {

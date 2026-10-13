@@ -730,13 +730,19 @@ fn write_cell(
 }
 
 fn cfvo_xml(v: &CfValueKind) -> String {
+    cfvo_xml_gte(v, false)
+}
+
+/// A `cfvo`; `greater` writes `gte="0"`, an icon threshold the value must exceed (">").
+fn cfvo_xml_gte(v: &CfValueKind, greater: bool) -> String {
+    let gte = if greater { " gte=\"0\"" } else { "" };
     match v {
-        CfValueKind::Min => "<cfvo type=\"min\"/>".into(),
-        CfValueKind::Max => "<cfvo type=\"max\"/>".into(),
-        CfValueKind::Number(n) => format!("<cfvo type=\"num\" val=\"{}\"/>", num(*n)),
-        CfValueKind::Percent(n) => format!("<cfvo type=\"percent\" val=\"{}\"/>", num(*n)),
-        CfValueKind::Percentile(n) => format!("<cfvo type=\"percentile\" val=\"{}\"/>", num(*n)),
-        CfValueKind::Formula(f) => format!("<cfvo type=\"formula\" val=\"{}\"/>", esc_attr(&text_to_file(f))),
+        CfValueKind::Min => format!("<cfvo type=\"min\"{gte}/>"),
+        CfValueKind::Max => format!("<cfvo type=\"max\"{gte}/>"),
+        CfValueKind::Number(n) => format!("<cfvo type=\"num\" val=\"{}\"{gte}/>", num(*n)),
+        CfValueKind::Percent(n) => format!("<cfvo type=\"percent\" val=\"{}\"{gte}/>", num(*n)),
+        CfValueKind::Percentile(n) => format!("<cfvo type=\"percentile\" val=\"{}\"{gte}/>", num(*n)),
+        CfValueKind::Formula(f) => format!("<cfvo type=\"formula\" val=\"{}\"{gte}/>", esc_attr(&text_to_file(f))),
     }
 }
 
@@ -874,7 +880,7 @@ fn cf_rule_xml(cf: &CondFormat, priority: u32, out: &mut Out) -> String {
             if *color == Color::Auto { "rgb=\"FF638EC6\"".to_string() } else { color_attrs(color) },
             if *gradient { String::new() } else { solid_bar_ext(priority) }
         ),
-        CfRule::IconSet { set, thresholds, reverse, show_value } => {
+        CfRule::IconSet { set, thresholds, reverse, show_value, greater } => {
             let mut b = format!("<iconSet iconSet=\"{}\"", esc_attr(set));
             if *reverse {
                 b.push_str(" reverse=\"1\"");
@@ -886,13 +892,14 @@ fn cf_rule_xml(cf: &CondFormat, priority: u32, out: &mut Out) -> String {
             // CT_IconSet needs one cfvo per icon (minOccurs 2); the first is the lower bound.
             let k = icon_count(set);
             let defaults = default_icon_thresholds(set);
-            let cfvos: Vec<&CfValueKind> = match thresholds.len() {
-                n if n == k => thresholds.iter().collect(),
-                n if n + 1 == k => defaults.iter().take(1).chain(thresholds).collect(),
-                _ => defaults.iter().collect(),
+            let own = thresholds.iter().enumerate().map(|(i, t)| (t, greater.get(i).copied().unwrap_or(false)));
+            let cfvos: Vec<(&CfValueKind, bool)> = match thresholds.len() {
+                n if n == k => own.collect(),
+                n if n + 1 == k => defaults.iter().take(1).map(|t| (t, false)).chain(own).collect(),
+                _ => defaults.iter().map(|t| (t, false)).collect(),
             };
-            for t in cfvos {
-                b.push_str(&cfvo_xml(t));
+            for (t, gt) in cfvos {
+                b.push_str(&cfvo_xml_gte(t, gt));
             }
             b.push_str("</iconSet>");
             format!("<cfRule type=\"iconSet\" priority=\"{priority}\"{stop}>{b}</cfRule>")

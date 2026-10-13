@@ -642,11 +642,14 @@ fn read_cf(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
             }
             "iconSet" => {
                 let Some(is) = r.child("iconSet") else { continue };
+                // `gte="0"`: the value must exceed the threshold (Excel's ">").
+                let greater: Vec<bool> = is.kids("cfvo").map(|c| !c.flag("gte", true)).collect();
                 CfRule::IconSet {
                     set: is.attr("iconSet").unwrap_or("3TrafficLights1").to_string(),
                     thresholds: cfvos(is),
                     reverse: is.flag("reverse", false),
                     show_value: is.flag("showValue", true),
+                    greater: if greater.contains(&true) { greater } else { Vec::new() },
                 }
             }
             other => {

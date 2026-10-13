@@ -221,6 +221,10 @@ pub enum CfRule {
         thresholds: Vec<CfValueKind>,
         reverse: bool,
         show_value: bool,
+        /// Per threshold (same index as `thresholds`), true when a value must exceed it, Excel's
+        /// ">" (`gte="0"`), instead of reaching it (">=", the default). Empty: all ">=".
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        greater: Vec<bool>,
     },
 }
 

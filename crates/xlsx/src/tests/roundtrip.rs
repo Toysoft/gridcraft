@@ -158,6 +158,7 @@ fn sample() -> Workbook {
             thresholds: vec![CfValueKind::Percent(0.0), CfValueKind::Percent(33.0), CfValueKind::Percent(67.0)],
             reverse: true,
             show_value: false,
+            greater: vec![false, true, true],
         },
     ];
     for (i, rule) in cfs.into_iter().enumerate() {
@@ -827,7 +828,7 @@ fn icon_sets_always_write_one_cfvo_per_icon() {
     {
         s.cond_formats.push(CondFormat {
             ranges: vec![rr(&format!("A{}", i + 1))],
-            rule: CfRule::IconSet { set: set.into(), thresholds, reverse: false, show_value: true },
+            rule: CfRule::IconSet { set: set.into(), thresholds, reverse: false, show_value: true, greater: vec![] },
             priority: i as u32 + 1,
             stop_if_true: false,
         });
@@ -857,6 +858,37 @@ fn icon_sets_always_write_one_cfvo_per_icon() {
         })
         .collect();
     assert_eq!(rules, [3, 4, 5]);
+}
+
+/// An icon threshold the value must exceed (Excel's ">") is `gte="0"` on its `cfvo` (#1160),
+/// also when the lower bound is left out and gets prepended.
+#[test]
+fn icon_set_greater_than_thresholds_roundtrip() {
+    let mut wb = Workbook::new();
+    let s = wb.sheet_mut(0).unwrap();
+    s.cond_formats.push(CondFormat {
+        ranges: vec![rr("A1:A11")],
+        rule: CfRule::IconSet {
+            set: "3TrafficLights1".into(),
+            thresholds: vec![CfValueKind::Number(3.0), CfValueKind::Number(6.0)],
+            reverse: false,
+            show_value: true,
+            greater: vec![true, false],
+        },
+        priority: 1,
+        stop_if_true: false,
+    });
+    let bytes = write_xlsx(&wb).unwrap();
+    let (xml, _) = sheet1_xml(&bytes);
+    assert!(xml.contains("<cfvo type=\"percent\" val=\"0\"/><cfvo type=\"num\" val=\"3\" gte=\"0\"/><cfvo type=\"num\" val=\"6\"/>"), "{xml}");
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    match &back.sheet(0).unwrap().cond_formats[0].rule {
+        CfRule::IconSet { thresholds, greater, .. } => {
+            assert_eq!(thresholds.len(), 3);
+            assert_eq!(greater, &[false, true, false]);
+        }
+        other => panic!("{other:?}"),
+    }
 }
 
 /// Files have no `@` operator: Excel writes `@x` as `_xlfn.SINGLE(x)` in a dynamic-array

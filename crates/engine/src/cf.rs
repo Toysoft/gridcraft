@@ -256,22 +256,27 @@ impl CfCache {
                     }
                     None
                 }
-                CfRule::IconSet { set, thresholds, reverse, show_value } => {
+                CfRule::IconSet { set, thresholds, reverse, show_value, greater } => {
                     if let Some(n) = v.as_f64() {
                         let k = icon_count(set);
                         // One threshold per icon, the first being the lower bound (as in the file);
-                        // also accept the lower bound left out, else Excel's defaults.
+                        // also accept the lower bound left out, else Excel's defaults. `skip` is
+                        // the index in `thresholds` (and `greater`) of the first cut.
                         let defaults;
-                        let lower = match thresholds.len() {
-                            n if n == k => thresholds.get(1..).unwrap_or_default(),
-                            n if n + 1 == k => thresholds.as_slice(),
+                        let (lower, skip) = match thresholds.len() {
+                            n if n == k => (thresholds.get(1..).unwrap_or_default(), 1),
+                            n if n + 1 == k => (thresholds.as_slice(), 0),
                             _ => {
                                 defaults = default_icon_thresholds(set);
-                                defaults.get(1..).unwrap_or_default()
+                                (defaults.get(1..).unwrap_or_default(), usize::MAX)
                             }
                         };
-                        let cuts: Vec<f64> = lower.iter().map(|t| threshold(wb, sheet, c, &st, t)).collect();
-                        let mut idx = cuts.iter().filter(|cut| n >= **cut).count();
+                        let cuts: Vec<(f64, bool)> = lower
+                            .iter()
+                            .enumerate()
+                            .map(|(i, t)| (threshold(wb, sheet, c, &st, t), greater.get(i.saturating_add(skip)).copied().unwrap_or(false)))
+                            .collect();
+                        let mut idx = cuts.iter().filter(|(cut, gt)| if *gt { n > *cut } else { n >= *cut }).count();
                         if *reverse {
                             idx = k - 1 - idx.min(k - 1);
                         }
@@ -409,5 +414,34 @@ mod tests {
         let mut cache = CfCache::new();
         let mut look = |a: &str| cache.look(&d.wb, 0, CellRef::parse(a).unwrap()).and_then(|l| l.style).is_some();
         assert_eq!([look("A1"), look("A2")], [true, false]);
+    }
+
+    #[test]
+    fn icon_thresholds_with_greater_than() {
+        // Issue #1160, measured in Excel (3 traffic lights over 0..10): a value exactly on a ">"
+        // threshold stays on the lower icon; on a ">=" threshold it moves up.
+        let mut s = crate::Session::new();
+        s.new_workbook();
+        let column: Vec<[u32; 1]> = (0..=10).map(|n| [n]).collect();
+        for col in ["A", "B", "C"] {
+            s.execute("range.setValues", json!({"range": format!("{col}1"), "values": column})).unwrap();
+        }
+        let num = |v: u32, op: &str| json!({"type": "num", "value": v, "operator": op});
+        for (range, thresholds) in [
+            ("A1:A11", json!([num(3, ">="), num(6, ">=")])),
+            ("B1:B11", json!([num(3, ">"), num(6, ">")])),
+            ("C1:C11", json!([{"type": "percent", "value": 30, "operator": ">"}, {"type": "percent", "value": 70, "operator": ">"}])),
+        ] {
+            let rule = json!({"type": "iconSet", "set": "3TrafficLights1", "thresholds": thresholds});
+            s.execute("home.conditionalFormat", json!({"range": range, "rule": rule})).unwrap();
+        }
+        let d = s.doc().unwrap();
+        let mut cache = CfCache::new();
+        // Icons of the values 3, 4, 6 and 7 (rows 4, 5, 7 and 8).
+        let mut col =
+            |c: &str| [4, 5, 7, 8].map(|r| cache.look(&d.wb, 0, CellRef::parse(&format!("{c}{r}")).unwrap()).and_then(|l| l.icon).map(|i| i.1));
+        assert_eq!(col("A"), [Some(1), Some(1), Some(2), Some(2)], ">= 3, >= 6");
+        assert_eq!(col("B"), [Some(0), Some(1), Some(1), Some(2)], "> 3, > 6");
+        assert_eq!(col("C"), [Some(0), Some(1), Some(1), Some(1)], "> 30 %, > 70 %");
     }
 }
