@@ -60,6 +60,10 @@ impl eframe::App for App {
                 self.0.doc_icon = path.and_then(|p| document_window::load_doc_icon(ctx, &p));
             }
             // A drag of the title-bar icon becomes a native drag of the file.
+            if let Some(w) = frame.winit_window() {
+                // Hold the window where it stood while the drag owns the mouse.
+                self.3.pin(w);
+            }
             if let Some(p) = self.0.drag_file.take() {
                 match frame
                     .winit_window()
@@ -70,7 +74,11 @@ impl eframe::App for App {
                     // the next frame's input owes it one (raw_input_hook), or egui believes the
                     // button still down and every later move re-enters a drag — the title bar's
                     // window drag included.
-                    Ok(()) => self.3.drag_began(),
+                    Ok(()) => {
+                        if let Some(w) = frame.winit_window() {
+                            self.3.drag_began(w);
+                        }
+                    }
                     Err(e) => log::warn!("document drag of {p}: {e}"),
                 }
             }

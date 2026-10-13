@@ -13,8 +13,13 @@ pub struct DocumentWindow {
     /// The file the title-bar icon was loaded for, so it is loaded only when the file changes.
     pub doc_icon_path: Option<String>,
     /// A native drag took the mouse over: egui never sees that gesture's release, so the next
-    /// frame's input owes it a synthetic one ([`Self::take_synthetical_up`]).
+    /// frame's input owes it a synthetic one ([`Self::take_synthetical_up`]), and the window's
+    /// position is pinned until the session ends ([`Self::pin`]) — a drag cancelled under the
+    /// held button (the app losing focus, say) hands the gesture back to the system, which would
+    /// otherwise drag the window along with the cursor.
     drag_in_flight: bool,
+    /// The window position at hand-off, in logical points.
+    drag_origin: Option<egui::Pos2>,
 }
 
 impl DocumentWindow {
@@ -33,15 +38,37 @@ impl DocumentWindow {
     }
 
     /// Mark the mouse as taken over: called when the native drag session accepted the gesture.
-    pub fn drag_began(&mut self) {
+    /// Remembers where the window stood, so the pin ([`Self::pin`]) can hold it there.
+    pub fn drag_began(&mut self, window: &winit::window::Window) {
         self.drag_in_flight = true;
+        let scale = window.scale_factor() as f32;
+        self.drag_origin = window.outer_position().ok().map(|p| egui::Pos2::new(p.x as f32 / scale, p.y as f32 / scale));
+    }
+
+    /// Hold the window where the hand-off found it while the drag session is live. Returns
+    /// whether the drag is still in flight; `false` once the frame released it
+    /// ([`Self::take_synthetical_up`]).
+    pub fn pin(&mut self, window: &winit::window::Window) -> bool {
+        if !self.drag_in_flight {
+            return false;
+        }
+        let scale = window.scale_factor() as f32;
+        if let (Some(o), Some(p)) = (self.drag_origin, window.outer_position().ok()) {
+            let now = egui::Pos2::new(p.x as f32 / scale, p.y as f32 / scale);
+            if (now.x - o.x).abs() > 0.5 || (now.y - o.y).abs() > 0.5 {
+                window.set_outer_position(winit::dpi::LogicalPosition::new(o.x, o.y));
+            }
+        }
+        true
     }
 
     /// The release egui is owed after a taken-over gesture, once: the drag session consumes the
     /// mouse, so winit delivers no mouse-up, and egui would otherwise believe the button still
     /// down — every later move re-entering a drag (the title bar's window drag included).
     pub fn take_synthetical_up(&mut self) -> bool {
-        std::mem::take(&mut self.drag_in_flight)
+        let was = std::mem::take(&mut self.drag_in_flight);
+        self.drag_origin = None;
+        was
     }
 }
 

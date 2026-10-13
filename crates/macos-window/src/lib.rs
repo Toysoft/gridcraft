@@ -30,9 +30,9 @@ use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send, runtime::NSObject, runtime::NSObjectProtocol};
 use objc2_app_kit::{
     NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSDragOperation, NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource,
-    NSEvent, NSEventMask, NSEventType, NSWorkspace,
+    NSEvent, NSEventMask, NSEventType, NSWindow, NSWorkspace,
 };
-use objc2_core_foundation::CGSize;
+use objc2_core_foundation::{CGPoint, CGSize};
 use objc2_foundation::{NSArray, NSDictionary, NSPoint, NSRect, NSString, NSURL};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -168,9 +168,21 @@ define_class!(
         #[unsafe(method(draggingSession:endedAtPoint:operation:))]
         fn draggingSession_endedAtPoint_operation(&self, _session: &NSDraggingSession, point: NSPoint, operation: NSDragOperation) {
             log::debug!("drag session ended at {point:?}, operation {:?}", operation);
+            // The session is over, the gesture is back with the system (the mouse may still be
+            // down when the drag was cancelled — by the app losing focus, say): let the window be
+            // moved again.
+            if let Some(w) = DRAG_WINDOW.with(|w| w.borrow_mut().take()) {
+                w.setMovable(true);
+            }
         }
     }
 );
+
+// The window of the live drag, held so its movability can be restored when the session ends (see
+// the ended callback above).
+thread_local! {
+    static DRAG_WINDOW: std::cell::RefCell<Option<Retained<NSWindow>>> = const { std::cell::RefCell::new(None) };
+}
 
 // Keeps the drag sources of recent drags alive. AppKit holds the source only for the session, and
 // the session outlives this call; parking it here (the last few, bounded) costs a few bytes each
@@ -199,19 +211,18 @@ pub fn begin_file_drag(window: &impl HasWindowHandle, path: &str) -> Result<(), 
             e
         }
     };
-    // The image anchors at the cursor: the event's location, in window coordinates, is where the
-    // press is right now.
-    let at = event.locationInWindow();
-    log::debug!("beginning file drag of {path} from event {at:?}");
+    log::debug!("beginning file drag of {path}");
 
     let file = NSString::from_str(path);
     let url = NSURL::fileURLWithPath_isDirectory(&file, false);
     let item = NSDraggingItem::initWithPasteboardWriter(mtm.alloc::<NSDraggingItem>(), ProtocolObject::from_ref(&*url));
-    // The image while dragging is the file's Finder icon, at its natural size, under the cursor.
+    // The image while dragging is the file's Finder icon. The frame is a template: the session
+    // positions the image under the cursor itself, so only the size matters here — anchoring it
+    // at a window-coordinate point made the whole window jump across the screen on drag.
     let icon = NSWorkspace::sharedWorkspace().iconForFile(&file);
     let size = icon.size();
     unsafe {
-        item.setDraggingFrame_contents(NSRect::new(at, size), Some(&icon));
+        item.setDraggingFrame_contents(NSRect::new(CGPoint::ZERO, size), Some(&icon));
     }
     // NSObject's `init` completes the allocation; the class overrides no initializer.
     let source: Retained<FileDragSource> = unsafe { msg_send![super(mtm.alloc::<FileDragSource>().set_ivars(())), init] };
@@ -221,6 +232,11 @@ pub fn begin_file_drag(window: &impl HasWindowHandle, path: &str) -> Result<(), 
     let _session = unsafe {
         // Cast: the window was found through its AppKit view, on the main thread.
         let w = &*(ns_window as *mut objc2_app_kit::NSWindow);
+        // While the session owns the mouse the window must not move: when the drag is cancelled
+        // under the held button (the app losing focus, say) the gesture falls back to the system,
+        // which would otherwise drag the window along with the cursor. Restored when the session
+        // ends (see `FileDragSource`).
+        w.setMovable(false);
         w.beginDraggingSessionWithItems_event_source(&items, &event, ProtocolObject::from_ref(&*source))
     };
     DRAG_SOURCES.with(|s| {
@@ -230,6 +246,12 @@ pub fn begin_file_drag(window: &impl HasWindowHandle, path: &str) -> Result<(), 
         }
         s.push(source);
     });
+    DRAG_WINDOW.with(|w| {
+        // Retain the window for the session's lifetime (+1; released when replaced or dropped).
+        let retained_ptr: *mut NSWindow = unsafe { msg_send![ns_window, retain] };
+        *w.borrow_mut() = Some(unsafe { Retained::from_raw(retained_ptr).ok_or(Error::Window)? });
+        Ok::<(), Error>(())
+    })?;
     Ok(())
 }
 
