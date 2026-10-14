@@ -1166,6 +1166,12 @@ pub(crate) fn paint_quadrant(
         if text.is_empty() {
             continue;
         }
+        // egui positions no combining marks: decomposed Vietnamese (`e` + U+0302 + U+0301, from
+        // macOS, the web or an input method set to combining Unicode) is drawn composed (`ế`).
+        // The stored value is untouched.
+        if let std::borrow::Cow::Owned(composed) = gridcraft_pdf::compose_vietnamese(&text) {
+            text = composed;
+        }
         let color = ncolor.unwrap_or(lk.text_color);
         let halign = match st.align.h {
             HAlign::General => match v {
@@ -2579,6 +2585,16 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
     if ctx.memory(|m| m.focused()).is_none() {
         resp.request_focus();
     }
+    // Input methods (the Windows Vietnamese Telex keyboard, Chinese, Japanese, Korean) compose only
+    // while the window allows IME, which egui does only for a focused text field. Allow it over the
+    // active cell, so the first word typed into a cell composes as well: without it the first key
+    // arrived raw and the input method took over mid-word (Telex `awn` became `aưn`, not `ăn`).
+    if let Some(active) = app.session.active().map(|d| d.selection.active) {
+        let r = geo.mirror_rect(geo.cell_rect(sh, active));
+        ctx.output_mut(|o| {
+            o.ime = Some(egui::output::IMEOutput { rect: r, cursor_rect: r, purpose: Default::default(), should_interrupt_composition: false })
+        });
+    }
     // The grid owns arrows, Tab and Escape (egui would otherwise move focus between widgets).
     ctx.memory_mut(|m| {
         m.set_focus_lock_filter(resp.id, egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true })
@@ -2590,7 +2606,8 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
             if !m.alt && (m.ctrl || m.command || (m.shift && *key == egui::Key::Space)))
     });
     let page = ((geo.cells.height() / geo.z) / sh.default_row_height).floor().max(1.0) as i64;
-    for ev in events {
+    let mut events = events.into_iter();
+    while let Some(ev) = events.next() {
         match ev {
             egui::Event::Copy => {
                 app.copy_to_clipboard(ctx, "edit.copy");
@@ -2605,6 +2622,21 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
                 if let Some(ed) = app.editor.as_mut() {
                     ed.caret = ed.text.chars().count();
                 }
+                forward_to_editor(app, ctx, events);
+                return;
+            }
+            // An input method's first composition starts the edit; the editor carries it on.
+            egui::Event::Ime(egui::ImeEvent::Preedit { ref text, .. }) if !text.is_empty() && !shortcut_pressed => {
+                app.begin_edit(Some(String::new()), false);
+                forward_to_editor(app, ctx, std::iter::once(ev).chain(events));
+                return;
+            }
+            egui::Event::Ime(egui::ImeEvent::Commit(text)) if !shortcut_pressed && text.chars().any(|c| !c.is_control()) => {
+                app.begin_edit(Some(text), false);
+                if let Some(ed) = app.editor.as_mut() {
+                    ed.caret = ed.text.chars().count();
+                }
+                forward_to_editor(app, ctx, events);
                 return;
             }
             egui::Event::Key { key, physical_key, pressed: true, modifiers: m, .. } => {
@@ -2686,6 +2718,19 @@ fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo:
             }
             _ => {}
         }
+    }
+}
+
+/// Hands the keyboard events left in this frame, after the one that started an edit, to the new
+/// cell editor in the next frame instead of dropping them: an input method that rewrites what was
+/// typed (Unikey and EVKey send Backspace and the accented letter in one burst) or a fast typist
+/// can put several in one frame. Pointer events are not replayed.
+fn forward_to_editor(app: &mut SheetApp, ctx: &egui::Context, rest: impl Iterator<Item = egui::Event>) {
+    let rest: Vec<egui::Event> =
+        rest.filter(|e| matches!(e, egui::Event::Text(_) | egui::Event::Key { .. } | egui::Event::Ime(_) | egui::Event::Paste(_))).collect();
+    if !rest.is_empty() {
+        app.synthetic.push_front(rest);
+        ctx.request_repaint();
     }
 }
 

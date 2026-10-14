@@ -1,19 +1,27 @@
 //! A tiny, self-contained PDF 1.7 writer for GridCraft's print and PDF export.
 //!
 //! - The 14 standard fonts (no embedding) with WinAnsiEncoding, plus approximate width tables
-//!   ([`text_width`]) so callers can measure, align and wrap text.
+//!   ([`text_width`]) so callers can measure, align and wrap text. Text WinAnsi can't encode
+//!   (Vietnamese `ạ ế ơ đ`, Greek, Cyrillic, Central European letters) is set in an embedded,
+//!   subset TrueType face standing in for the standard font (see `embed`), composed to NFC first
+//!   for Vietnamese ([`compose_vietnamese`]).
 //! - Vector drawing: rectangles, lines (solid or dashed), polygons, circles (Bézier), clipping.
 //! - RGBA images as RGB image XObjects with a soft mask for alpha (run-length encoded).
 //! - Coordinates are points with a **top-left origin** (y grows down); text `y` is the baseline.
 //!
-//! Streams are written uncompressed (images use the trivial RunLengthDecode filter) so the crate
-//! needs no dependencies.
+//! Streams are written uncompressed (images use the trivial RunLengthDecode filter); the only
+//! dependency is the font parser for embedded faces.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod embed;
 mod metrics;
+mod vi;
+
+pub use vi::compose_vietnamese;
 
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 /// RGB colour, 0–255 per channel.
 pub type Rgb = [u8; 3];
@@ -135,7 +143,7 @@ impl Font {
         }
         match c {
             '—' | '…' | '‰' | '™' => 1000,
-            _ => metrics::fold(c).and_then(ascii).unwrap_or(match self {
+            _ => metrics::fold(c).or_else(|| vi::base_letter(c)).and_then(ascii).unwrap_or(match self {
                 Font::TimesRoman | Font::TimesItalic | Font::TimesBold | Font::TimesBoldItalic => 500,
                 _ => 556,
             }),
@@ -145,8 +153,9 @@ impl Font {
 
 /// Width of `text` in points when set in `font` at `size` points.
 pub fn text_width(font: Font, size: f32, text: &str) -> f32 {
-    // u64: a u32 sum overflows for ~8 million characters.
-    let units: u64 = text.chars().map(|c| u64::from(font.char_width(c))).sum();
+    // u64: a u32 sum overflows for ~8 million characters. Decomposed Vietnamese is measured as
+    // it is drawn, composed (a combining mark would otherwise count as a letter).
+    let units: u64 = compose_vietnamese(text).chars().map(|c| u64::from(font.char_width(c))).sum();
     units as f32 * size / 1000.0
 }
 
@@ -187,6 +196,11 @@ pub fn win_ansi(c: char) -> u8 {
         '\t' => b' ',
         _ => b'?',
     }
+}
+
+/// Whether WinAnsiEncoding can encode every character of `text`.
+fn win_ansi_covers(text: &str) -> bool {
+    text.chars().all(|c| c == '?' || win_ansi(c) != b'?')
 }
 
 /// A PDF literal string `( … )` for `text` in WinAnsiEncoding.
@@ -266,6 +280,9 @@ pub struct Page {
     height: f32,
     content: String,
     fonts: [bool; 12],
+    /// Glyphs drawn with the embedded Unicode face standing in for each standard font.
+    unicode: [embed::Usage; 12],
+    faces: Arc<embed::Faces>,
     images: Vec<ImageData>,
     depth: u32,
 }
@@ -460,15 +477,38 @@ impl Page {
             return;
         }
         let fi = font.index();
-        if let Some(f) = self.fonts.get_mut(fi) {
-            *f = true;
-        }
+        let text = compose_vietnamese(text);
+        // Text WinAnsi can't encode goes to the embedded face when there is one (else `?`).
+        let unicode = if win_ansi_covers(&text) { None } else { self.faces.get(font) };
+        let (resource, shown) = match unicode {
+            Some(face) => {
+                let mut hex = String::with_capacity(text.len() * 4 + 2);
+                hex.push('<');
+                for (c, g) in face.glyphs(&text) {
+                    let g = g.unwrap_or(0);
+                    if g != 0
+                        && let Some(u) = self.unicode.get_mut(fi)
+                    {
+                        u.entry(g).or_insert(c);
+                    }
+                    let _ = write!(hex, "{g:04X}");
+                }
+                hex.push('>');
+                (format!("U{}", fi + 1), hex)
+            }
+            None => {
+                if let Some(f) = self.fonts.get_mut(fi) {
+                    *f = true;
+                }
+                (format!("F{}", fi + 1), pdf_string(&text))
+            }
+        };
         let (sn, cs) = if angle.is_finite() { angle.sin_cos() } else { (0.0, 1.0) };
         // Clockwise in y-down = counter-clockwise negated in PDF's y-up space.
         let s = format!(
-            "BT\n{}\n/F{} {} Tf\n{} {} {} {} {} {} Tm\n{} Tj\nET",
+            "BT\n{}\n/{} {} Tf\n{} {} {} {} {} {} Tm\n{} Tj\nET",
             rgb_op(color, false),
-            fi + 1,
+            resource,
             n(size.min(10_000.0)),
             n(cs),
             n(-sn),
@@ -476,7 +516,7 @@ impl Page {
             n(cs),
             n(x),
             n(self.y(y)),
-            pdf_string(text)
+            shown
         );
         self.op(&s);
     }
@@ -516,6 +556,7 @@ pub struct Info {
 pub struct PdfDoc {
     pages: Vec<Page>,
     pub info: Info,
+    faces: Arc<embed::Faces>,
 }
 
 /// PackBits-style run-length encoding (PDF `RunLengthDecode`).
@@ -579,11 +620,28 @@ impl PdfDoc {
         PdfDoc::default()
     }
 
+    /// Supplies the TrueType face (`data`, face `index` of a collection) that stands in for
+    /// `font` in text WinAnsi can't encode, instead of the system's (which is looked up on first
+    /// need). Call it before drawing such text in `font`. False when the face can't be embedded
+    /// (no TrueType outlines, licence forbids embedding, malformed) or `font` already has one.
+    pub fn set_unicode_font(&mut self, font: Font, data: Vec<u8>, index: u32) -> bool {
+        embed::Face::parse(data, index).is_some_and(|f| self.faces.set(font, f))
+    }
+
     /// Adds a page of `width_pt` × `height_pt` points and returns it for drawing.
     pub fn add_page(&mut self, width_pt: f32, height_pt: f32) -> &mut Page {
         let width = if width_pt.is_finite() { width_pt.clamp(3.0, 14_400.0) } else { 612.0 };
         let height = if height_pt.is_finite() { height_pt.clamp(3.0, 14_400.0) } else { 792.0 };
-        self.pages.push(Page { width, height, content: String::new(), fonts: [false; 12], images: Vec::new(), depth: 0 });
+        self.pages.push(Page {
+            width,
+            height,
+            content: String::new(),
+            fonts: [false; 12],
+            unicode: Default::default(),
+            faces: Arc::clone(&self.faces),
+            images: Vec::new(),
+            depth: 0,
+        });
         let i = self.pages.len() - 1;
         &mut self.pages[i]
     }
@@ -627,6 +685,25 @@ impl PdfDoc {
                 let enc = if name.starts_with("Symbol") { "" } else { " /Encoding /WinAnsiEncoding" };
                 objects.push((*id, format!("<< /Type /Font /Subtype /Type1 /BaseFont /{name}{enc} >>").into_bytes()));
             }
+        }
+        // Embedded Unicode faces, one per standard font some page drew such text in, holding
+        // every glyph any page used.
+        let mut usage: [Option<embed::Usage>; 12] = Default::default();
+        for p in &self.pages {
+            for (i, all) in usage.iter_mut().enumerate() {
+                if p.content.contains(&format!("/U{} ", i + 1)) {
+                    let u = all.get_or_insert_with(Default::default);
+                    if let Some(page_usage) = p.unicode.get(i) {
+                        u.extend(page_usage.iter().map(|(g, c)| (*g, *c)));
+                    }
+                }
+            }
+        }
+        for (i, u) in usage.iter().enumerate() {
+            let (Some(u), Some(face)) = (u, Font::ALL.get(i).and_then(|f| self.faces.get(*f))) else { continue };
+            let (objs, id) = embed::write_objects(face, u, &mut next);
+            objects.extend(objs);
+            let _ = write!(font_dict, "/U{} {} 0 R ", i + 1, id);
         }
         for page in &mut self.pages {
             while page.depth > 0 {
