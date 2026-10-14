@@ -39,11 +39,18 @@ pub struct Source {
     /// Numeric with a date number format.
     pub dates: Vec<bool>,
     pub rows: Vec<Vec<Value>>,
+    /// Per record and column: the cell's own number format is a date (Excel caches such a
+    /// number as `<d>` and sorts it after errors).
+    pub date_cells: Vec<Vec<bool>>,
 }
 
 impl Source {
     pub fn col(&self, name: &str) -> Option<usize> {
         self.headers.iter().position(|h| h.eq_ignore_ascii_case(name))
+    }
+    /// The cell of record `row`, column `col` is a number with a date format.
+    pub fn is_date(&self, row: usize, col: usize) -> bool {
+        self.date_cells.get(row).and_then(|r| r.get(col)).copied().unwrap_or(false)
     }
 }
 
@@ -157,6 +164,7 @@ pub fn read_source(wb: &Workbook, text: &str, default_sheet: usize) -> Result<So
     }
     let w = headers.len();
     let mut rows = Vec::new();
+    let mut date_cells = Vec::new();
     let mut numeric = vec![true; w];
     let mut any = vec![false; w];
     if r.end.row > r.start.row {
@@ -177,6 +185,8 @@ pub fn read_source(wb: &Workbook, text: &str, default_sheet: usize) -> Result<So
                     }
                 }
             }
+            let is_date = |c: u32| crate::display::number_format(wb.styles.get(sh.style_id(CellRef::new(row, c))).num_fmt.as_str()).is_date();
+            date_cells.push(rec.iter().zip(r.start.col..=r.end.col).map(|(v, c)| v.is_number() && is_date(c)).collect());
             rows.push(rec);
         }
     }
@@ -184,7 +194,7 @@ pub fn read_source(wb: &Workbook, text: &str, default_sheet: usize) -> Result<So
         *n = *n && *a;
     }
     let dates = numeric.iter().zip(formats.iter()).map(|(n, f)| *n && crate::display::number_format(f).is_date()).collect();
-    Ok(Source { sheet: si, range: r, headers, formats, numeric, dates, rows })
+    Ok(Source { sheet: si, range: r, headers, formats, numeric, dates, rows, date_cells })
 }
 
 // ---------------------------------------------------------------- items
@@ -221,14 +231,15 @@ struct FieldItems {
     index: HashMap<String, u32>,
 }
 
-/// Sort classes: numbers, text, logicals, errors, dates (a number shown with a date format;
-/// Excel sorts these after errors), blanks.
+/// Sort classes: numbers, text, logicals, errors, dates (a number whose own cell has a date
+/// format, which Excel caches as `<d>` and sorts after errors), blanks.
 fn cmp_items(a: &Item, b: &Item) -> Ordering {
     a.class.cmp(&b.class).then(a.num.total_cmp(&b.num)).then_with(|| a.text.cmp(&b.text))
 }
 
-/// (identity key, item) for a source value under a field's date grouping.
-fn make_item(wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str, first: usize) -> (String, Item) {
+/// (identity key, item) for a source value under a field's date grouping; `date` marks a number
+/// whose cell has a date format.
+fn make_item(wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str, date: bool, first: usize) -> (String, Item) {
     let it = |value: Value, label: String, class: u8, num: f64, formatted: bool| Item {
         text: label.to_lowercase(),
         value,
@@ -259,7 +270,7 @@ fn make_item(wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str, first: 
                 return (format!("g{key}"), it(Value::text(label.as_str()), label, 0, key, false));
             }
             let shown = crate::display::format(v, fmt, wb);
-            let class = if crate::display::number_format(fmt).is_date() { 4 } else { 0 };
+            let class = if date { 4 } else { 0 };
             (format!("n{}", n.to_bits()), it(v.clone(), shown.text, class, *n, true))
         }
         Value::Text(t) => (format!("t{}", t.to_lowercase()), it(v.clone(), t.to_string(), 1, 0.0, false)),
@@ -268,13 +279,13 @@ fn make_item(wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str, first: 
             (format!("l{l}"), it(Value::Bool(*b), l.into(), 2, *b as u8 as f64, false))
         }
         Value::Error(e) => (format!("e{}", e.as_str()), it(v.clone(), e.as_str().into(), 3, 0.0, false)),
-        Value::Array(_) => make_item(wb, &v.scalar(), group, fmt, first),
+        Value::Array(_) => make_item(wb, &v.scalar(), group, fmt, date, first),
     }
 }
 
 impl FieldItems {
-    fn intern(&mut self, wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str, first: usize) -> u32 {
-        let (key, item) = make_item(wb, v, group, fmt, first);
+    fn intern(&mut self, wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str, date: bool, first: usize) -> u32 {
+        let (key, item) = make_item(wb, v, group, fmt, date, first);
         if let Some(i) = self.index.get(&key) {
             return *i;
         }
@@ -322,7 +333,7 @@ impl FieldItems {
 
 /// The label of a source value under a date grouping (for filters and field lists).
 pub fn item_label(wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str) -> String {
-    make_item(wb, v, group, fmt, 0).1.label
+    make_item(wb, v, group, fmt, false, 0).1.label
 }
 
 /// Distinct item labels of a source column, sorted like the field list shows them.
@@ -331,7 +342,7 @@ pub fn distinct_labels(wb: &Workbook, src: &Source, col: usize, group: PivotDate
     let fmt = src.formats.get(col).map(String::as_str).unwrap_or("General");
     for (i, r) in src.rows.iter().enumerate() {
         if let Some(v) = r.get(col) {
-            fi.intern(wb, v, group, fmt, i);
+            fi.intern(wb, v, group, fmt, src.is_date(i, col), i);
         }
         if fi.items.len() > 100_000 {
             break;
@@ -994,11 +1005,11 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
         }
         let mut rp = Vec::with_capacity(rows.len());
         for (((c, f), fi), fmt) in rows.iter().zip(row_items.iter_mut()).zip(row_fmts.iter()) {
-            rp.push(fi.intern(wb, rec.get(*c).unwrap_or(&Value::Empty), f.date_group, fmt, ri));
+            rp.push(fi.intern(wb, rec.get(*c).unwrap_or(&Value::Empty), f.date_group, fmt, src.is_date(ri, *c), ri));
         }
         let mut cp = Vec::with_capacity(cols.len());
         for (((c, f), fi), fmt) in cols.iter().zip(col_items.iter_mut()).zip(col_fmts.iter()) {
-            cp.push(fi.intern(wb, rec.get(*c).unwrap_or(&Value::Empty), f.date_group, fmt, ri));
+            cp.push(fi.intern(wb, rec.get(*c).unwrap_or(&Value::Empty), f.date_group, fmt, src.is_date(ri, *c), ri));
         }
         for a in 0..=rp.len() {
             for b in 0..=cp.len() {

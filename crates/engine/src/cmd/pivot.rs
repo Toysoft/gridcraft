@@ -2170,6 +2170,41 @@ mod tests {
     }
 
     #[test]
+    fn only_date_formatted_cells_sort_as_dates() {
+        // The two mixed columns of ClosedXML's VariousDataTypesInTableColumns, in source order.
+        // Excel caches each date-formatted cell as `<d>` and each General one as `<n>`, and its
+        // saved items list numbers first and dates after errors, whatever the first cell is.
+        let mixed = ["", "TRUE", "14.5", "10", "ABC", "=1/0", "8/10/2020", "16:30"];
+        // 1 and 1.52… are 12/31/1899 and 12/31/1899 12:30, which typed input reads as text.
+        let with_num = ["1", "1.5208333333333333", "12/24/2020", "16:30", "0.1", "45000", ""];
+        let order = |inputs: &[&str], dates: Option<&str>| -> Vec<String> {
+            let mut s = Session::new();
+            s.new_workbook();
+            s.execute("cell.set", json!({"cell": "A1", "input": "K"})).unwrap();
+            s.execute("cell.set", json!({"cell": "B1", "input": "V"})).unwrap();
+            for (i, input) in inputs.iter().enumerate() {
+                s.execute("cell.set", json!({"cell": format!("A{}", i + 2), "input": input})).unwrap();
+                s.execute("cell.set", json!({"cell": format!("B{}", i + 2), "input": "1"})).unwrap();
+            }
+            if let Some(range) = dates {
+                s.execute("home.formatCells", json!({"range": range, "style": {"num_fmt": "m/d/yyyy h:mm"}})).unwrap();
+            }
+            s.execute("selection.set", json!({"range": "A1"})).unwrap();
+            s.execute("insert.pivotTable", json!({"rows": ["K"], "values": ["V"]})).unwrap();
+            edit_pt(&mut s, |p| p.rows[0].sort = PivotSort::Asc);
+            let wb = &s.doc().unwrap().wb;
+            let si = wb.active_sheet;
+            let out = crate::pivot::compute(wb, wb.sheet(si).unwrap().pivots.last().unwrap(), si).unwrap();
+            out.grid.iter().skip(1).filter_map(|r| r.first().map(|c| c.value.display())).filter(|l| l != "Grand Total").collect()
+        };
+        // Excel's saved <items> order for each field.
+        let excel_mixed = ["10", "14.5", "ABC", "TRUE", "#DIV/0!", "0.6875", "44053", "(blank)"];
+        let excel_with_num = ["0.1", "45000", "0.6875", "1", "1.52083333333333", "44189", "(blank)"];
+        assert_eq!(order(&mixed, None), excel_mixed);
+        assert_eq!(order(&with_num, Some("A2:A3")), excel_with_num);
+    }
+
+    #[test]
     fn dates_sort_after_logicals_and_errors() {
         // Excel's ascending item order: numbers, text, logicals, errors, dates, blanks.
         let mut s = sales();
