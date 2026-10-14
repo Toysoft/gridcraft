@@ -1,5 +1,6 @@
 # Plugins
 
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (commands see the workbook's sheets and names; previously minor: commands see the selection's formulas) · **Target:** Microsoft Excel (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (commands see the selection's formulas; previously minor: one plugin for several apps: `apps`, `uiFor`, `host.id`) · **Target:** Microsoft Excel (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (plugin functions in autocomplete and Insert Function; previously minor: ribbon buttons that run macros: `macros/run` gets the button; previously minor: protocol 1.1: host requests, macros and the Developer tab; previously minor: Office add-ins load as plugins, officejs.md; previously minor: one plugin for several apps: `apps`, `uiFor`, `host.id`; previously minor: install plugins from a GitHub repository) · **Target:** Microsoft Excel (Microsoft 365)
 
@@ -214,7 +215,10 @@ a `signature` shows as `NAME(…)`. Turning a plugin off takes its functions out
 ```
 
 `context.values` and `context.formulas` (each cell's formula text such as `"=B2*1.1"`, or `null`
-for a cell without a formula) are included for selections up to 100,000 cells. The plugin answers with engine
+for a cell without a formula) are included for selections up to 100,000 cells. Every command also gets
+`context.activeSheet`, `context.sheets` (`[{index, name, visibility, usedRange}]`, every sheet including
+hidden ones) and `context.names` (`[{name, scope, hidden, refersTo}]`, at most 10,000, with
+`namesTruncated: true` when there were more). The plugin answers with engine
 commands to run. They are the same commands the CLI, MCP and control channel use (see
 `gridcraft-cli commands`), except `plugins.*`. GridCraft runs them in order, as **one undoable
 step**: if any fails, the workbook goes back to how it was and the error is shown. `message` is
@@ -357,6 +361,7 @@ are kept.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | `context.sheets` and `context.names`: commands see every sheet and the defined names |
 | 2026-10-14 | minor | `context.formulas`: commands see the selection's formula text, so plugins can tell inputs from calculations |
 | 2026-10-14 | minor | Plugin functions are suggested while typing (signature hint, description) and listed in Insert Function and `formulas.functions` (category Add-ins) |
 | 2026-10-14 | minor | Ribbon buttons that run macros, saved as the workbook's `customUI14.xml`; `macros/run` gets `control`; a workbook with macros saves as `.xlsm` |
