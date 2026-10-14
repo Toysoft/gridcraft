@@ -396,6 +396,32 @@ fn kept_values_of_uncalculable_linked_names_survive_edits_they_do_not_read() {
 }
 
 #[test]
+fn kept_values_of_uncalculable_linked_names_give_way_when_a_structural_edit_changes_what_they_read() {
+    // As read from a file, over a name the link saved as #REF!: H11 `=[1]!Broken+SUM(G10:G12)`
+    // shows 22 and K11 `=[1]!Broken+J11` shows 7, as Excel saved them.
+    let mut s = s();
+    let wb = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb);
+    let names = vec![gridcraft_model::ExternalName { name: "Broken".into(), sheet: None, refers_to: "#REF!".into() }];
+    wb.external_books = vec![gridcraft_model::ExternalBook { names, ..Default::default() }].into();
+    for (at, text, saved) in [("H11", "=[1]!Broken+SUM(G10:G12)", 22.0), ("K11", "=[1]!Broken+J11", 7.0)] {
+        let mut cell = gridcraft_model::Cell::formula(gridcraft_model::Formula::new(text));
+        cell.value = Value::Number(saved);
+        wb.sheet_mut(0).unwrap().cells.set(CellRef::parse(at).unwrap(), cell);
+    }
+    for (at, n) in [("G11", 2.0), ("J11", 1.0)] {
+        wb.sheet_mut(0).unwrap().cells.set(CellRef::parse(at).unwrap(), gridcraft_model::Cell::value(Value::Number(n)));
+    }
+    // Moving the cells it reads changes nothing it reads: the values stay.
+    s.execute("home.insertRows", json!({"rows": "1:1"})).unwrap();
+    assert_eq!((v(&s, "H12"), v(&s, "K12")), (Value::Number(22.0), Value::Number(7.0)));
+    // A deleted row inside its range, or a deleted cell it reads, calculates it again.
+    s.execute("home.deleteRows", json!({"rows": "13:13"})).unwrap();
+    assert_eq!((v(&s, "H12"), v(&s, "K12")), (Value::Error(gridcraft_core::CellError::Ref), Value::Number(7.0)));
+    s.execute("home.deleteColumns", json!({"cols": "J:J"})).unwrap();
+    assert_eq!(v(&s, "J12"), Value::Error(gridcraft_core::CellError::Ref));
+}
+
+#[test]
 fn undo_redo() {
     let mut s = s();
     s.execute("cell.set", json!({"cell": "A1", "input": "1"})).unwrap();

@@ -553,15 +553,20 @@ impl PassHost<'_> {
     }
 
     /// The value a formula showed before this pass, if any: what it was saved with, or last
-    /// calculated to. A spilled array, or a legacy array formula's range, comes back whole.
+    /// calculated to. A spilled array, or a legacy array formula's range, comes back whole. A
+    /// blank formula cell has none (a typed formula, or one a structural edit made read other
+    /// cells): formulas show 0 for blank.
     fn saved_value(&self, (sheet, at): Key) -> Option<Value> {
         let sh = self.wb.sheet(sheet)?;
+        if sh.value(at).is_empty() {
+            return None;
+        }
         let block = sh.spill_ranges.get(&at).copied().or_else(|| sh.cell(at)?.formula.as_ref()?.array);
         if let Some(range) = block.filter(|r| !r.is_single()) {
             let data = range.iter().map(|c| sh.value(c)).collect();
             return Array::new(range.height() as usize, range.width() as usize, data).map(|a| Value::Array(std::sync::Arc::new(a)));
         }
-        Some(sh.value(at)).filter(|v| !v.is_empty())
+        Some(sh.value(at))
     }
 
     /// A formula's previous value for iterative calculation: from the last iteration, else the

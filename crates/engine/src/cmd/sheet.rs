@@ -730,9 +730,13 @@ fn delete_sheet(s: &mut Session, p: &Json) -> Result<Json> {
                 cx.wb.sheets.get(si).map(|s| s.cells.iter().filter_map(|(c, x)| x.formula.clone().map(|f| (c, f))).collect()).unwrap_or_default();
             let Some(sh) = cx.wb.sheet_mut(si) else { continue };
             for (c, f) in keys {
-                if let Some(e) = f.expr() {
-                    let ne = gridcraft_formula::adjust::delete_sheet(e, &name, &order);
+                if let Some(e) = f.expr_arc() {
+                    let ne = gridcraft_formula::adjust::delete_sheet((*e).clone(), &name, &order);
                     if let Some(cell) = sh.cells.get_mut(c) {
+                        // A reference into the deleted sheet reads something else now.
+                        if ne != *e {
+                            super::edit::forget_value(cell);
+                        }
                         cell.formula = Some(Arc::new(f.rewritten(ne)));
                     }
                 }

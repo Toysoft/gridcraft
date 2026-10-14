@@ -1310,6 +1310,29 @@ fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
     Ok(json!({"pasted": s.doc()?.selection.a1()}))
 }
 
+/// Whether a structural edit made a formula read other cells than it did, not the same cells
+/// moved: a reference became `#REF!`, or a range grew or shrank.
+fn reads_differently(old: &gridcraft_formula::Expr, new: &gridcraft_formula::Expr) -> bool {
+    fn reads(e: &gridcraft_formula::Expr) -> Vec<Option<(u32, u32)>> {
+        use gridcraft_formula::Expr;
+        let mut out = Vec::new();
+        e.walk(&mut |x| match x {
+            Expr::Ref(r) => out.push(Some((r.range().height(), r.range().width()))),
+            Expr::Error(gridcraft_core::CellError::Ref) | Expr::LinkedRefError(_) => out.push(None),
+            _ => {}
+        });
+        out
+    }
+    reads(old) != reads(new)
+}
+
+/// A formula whose references a structural edit changed no longer shows its value: clearing it
+/// means a formula over a linked name that can't be calculated is calculated again, rather than
+/// keeping the value it had (see `Calc::recalc_all_after_edit`).
+pub(crate) fn forget_value(cell: &mut Cell) {
+    cell.value = Value::Empty;
+}
+
 /// Applies a reference adjustment to every cell formula and defined name in the workbook.
 pub(crate) fn rewrite_all_formulas(wb: &mut gridcraft_model::Workbook, target: &str, e: &gridcraft_formula::adjust::Edit) {
     use gridcraft_formula::adjust::Edit;
@@ -1326,8 +1349,8 @@ pub(crate) fn rewrite_all_formulas(wb: &mut gridcraft_model::Workbook, target: &
         let on_target = moves_arrays && host.eq_ignore_ascii_case(target);
         let Some(sheet) = wb.sheet_mut(si) else { continue };
         for (c, f) in keys {
-            let Some(expr) = f.expr() else { continue };
-            let new = gridcraft_formula::adjust::adjust(expr, &host, target, e);
+            let Some(old) = f.expr_arc() else { continue };
+            let new = gridcraft_formula::adjust::adjust((*old).clone(), &host, target, e);
             let text = gridcraft_formula::print(&new);
             let array = match f.array {
                 Some(a) if on_target => super::sheet::map_range(a, e),
@@ -1336,6 +1359,9 @@ pub(crate) fn rewrite_all_formulas(wb: &mut gridcraft_model::Workbook, target: &
             if (text != f.text || array != f.array)
                 && let Some(cell) = sheet.cells.get_mut(c)
             {
+                if reads_differently(&old, &new) {
+                    forget_value(cell);
+                }
                 let mut nf = f.rewritten(new);
                 nf.array = array;
                 cell.formula = Some(std::sync::Arc::new(nf));
