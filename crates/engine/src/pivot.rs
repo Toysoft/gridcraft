@@ -507,8 +507,9 @@ pub struct Output {
     pub width: u32,
     /// Grid rows of the innermost (or collapsed) items: a PivotChart's categories.
     pub chart_rows: Vec<u32>,
-    /// Grid columns of item (not total) values with their series names: a PivotChart's series.
-    pub chart_cols: Vec<(u32, String)>,
+    /// Grid columns of item (not total) values with their items (column items, then the value
+    /// field when there are several): a PivotChart's series.
+    pub chart_cols: Vec<(u32, Vec<String>)>,
     /// Grid column holding the innermost row labels (`None` without row fields).
     pub label_col: Option<u32>,
 }
@@ -1202,7 +1203,7 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
         })
         .collect();
     let mut chart_rows: Vec<u32> = Vec::new();
-    let chart_cols: Vec<(u32, String)> = data_cols
+    let chart_cols: Vec<(u32, Vec<String>)> = data_cols
         .iter()
         .enumerate()
         .filter_map(|(j, (si, vi))| {
@@ -1219,7 +1220,7 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
             } else if parts.is_empty() {
                 parts.push("Total".into());
             }
-            Some(((l + j) as u32, parts.join(" - ")))
+            Some(((l + j) as u32, parts))
         })
         .filter(|_| k > 0)
         .collect();
@@ -1474,10 +1475,10 @@ pub fn refresh(wb: &mut Workbook, sheet: usize, idx: usize, replace: bool) -> Re
         let e = widths.entry(c.col).or_insert(0.0);
         *e = e.max(wpt.min(320.0));
     }
-    // The charts' label formats by series name, read while their names still point at the old
+    // The charts' label formats by series items, read while their names still point at the old
     // report.
     let sheet_name = wb.sheet(sheet).ok_or("There's no such sheet.")?.name.clone();
-    let label_formats = chart_label_formats(wb, &sheet_name, &pt.name);
+    let label_formats = chart_label_formats(wb, &sheet_name, &pt.name, sheet, pt.last_range);
     let shm = wb.sheet_mut(sheet).ok_or("There's no such sheet.")?;
     if let Some(old) = pt.last_range {
         shm.take_cells(old);
@@ -1557,12 +1558,18 @@ const MAX_CHART_ROWS: usize = 10_000;
 /// A PivotChart's series for a report written at `origin`: categories are the innermost row
 /// items, one series per item column (column items × value fields); totals are left out.
 pub fn chart_series(sheet: &str, origin: CellRef, out: &Output) -> Vec<Series> {
+    chart_series_items(sheet, origin, out).into_iter().map(|(s, _)| s).collect()
+}
+
+/// [`chart_series`] with each series' pivot items.
+fn chart_series_items<'a>(sheet: &str, origin: CellRef, out: &'a Output) -> Vec<(Series, &'a [String])> {
     let rows: Vec<u32> = out.chart_rows.iter().copied().take(MAX_CHART_ROWS).collect();
     let categories = out.label_col.and_then(|c| rows_ref(sheet, origin, c, &rows));
     out.chart_cols
         .iter()
-        .filter_map(|(c, name)| {
-            Some(Series {
+        .filter_map(|(c, items)| {
+            let name = items.join(" - ");
+            let series = Series {
                 name: Some(format!("\"{}\"", name.replace('"', "\"\""))),
                 categories: categories.clone(),
                 values: rows_ref(sheet, origin, *c, &rows)?,
@@ -1573,7 +1580,8 @@ pub fn chart_series(sheet: &str, origin: CellRef, out: &Output) -> Vec<Series> {
                 smooth: false,
                 trendlines: Vec::new(),
                 label_number_format: None,
-            })
+            };
+            Some((series, items.as_slice()))
         })
         .collect()
 }
@@ -1586,47 +1594,95 @@ fn linked_charts<'a>(wb: &'a Workbook, sheet: &'a str, pivot: &'a str) -> impl I
         .flat_map(move |(i, sh)| sh.charts.iter().filter(move |c| c.pivot.as_deref().is_some_and(|l| links_to(l, sheet, pivot))).map(move |c| (i, c)))
 }
 
-/// The typed data label formats of every PivotChart of a PivotTable by series name: the current
-/// series' (names that are references are evaluated, so call this before the report is
-/// rewritten), then those an earlier refresh dropped with their series. Excel ties a PivotChart
-/// series' formatting to its pivot items, not to its position, so a filter that hides a leading
-/// item doesn't pass its format to the next series.
-fn chart_label_formats(wb: &Workbook, sheet: &str, pivot: &str) -> Vec<Vec<(String, String)>> {
+/// Most header cells read for one series name.
+const MAX_NAME_CELLS: usize = 16;
+
+/// The pivot items a PivotChart series' name stands for. A literal is one item, the joined name
+/// GridCraft writes. A reference (a PivotChart read from a file) reads its header cells top to
+/// bottom; a blank one takes the nearest label to its left within the old report `area` on
+/// `pivot_sheet`, since an outer item's label is written only above its first column.
+fn series_items(wb: &Workbook, chart_sheet: usize, name: &str, pivot_sheet: usize, area: Option<RangeRef>) -> Vec<String> {
+    let literal = || vec![gridcraft_chart::series_name(wb, chart_sheet, name)].into_iter().filter(|s| !s.is_empty()).collect();
+    // Only a sheet reference names header cells; a bare word is a literal name, as charts read it.
+    let t = name.trim();
+    let t = t.strip_prefix('=').unwrap_or(t);
+    if t.starts_with('"') || !t.contains('!') {
+        return literal();
+    }
+    let Ok((si, r)) = resolve_source(wb, t, chart_sheet) else { return literal() };
+    let Some(sh) = wb.sheet(si) else { return Vec::new() };
+    let text = |c: CellRef| {
+        let cell = sh.cells.get(c).filter(|cell| !cell.value.is_empty())?;
+        Some(crate::display::format(&cell.value, wb.styles.get(cell.style).num_fmt.as_str(), wb).text)
+    };
+    let left = area.filter(|a| si == pivot_sheet && a.contains(r.start)).map(|a| a.start.col).unwrap_or(r.start.col);
+    (r.start.row..=r.end.row)
+        .flat_map(|row| (r.start.col..=r.end.col).map(move |col| CellRef::new(row, col)))
+        .take(MAX_NAME_CELLS)
+        .filter_map(|c| (left..=c.col).rev().find_map(|col| text(CellRef::new(c.row, col))))
+        .collect()
+}
+
+/// Whether a remembered series `key` names the same pivot items as `items`: item by item, as
+/// GridCraft's joined name, or (Excel can put the value field above the column items) in any
+/// order.
+fn same_items(key: &[String], items: &[String]) -> bool {
+    if key == items || key.join(" - ") == items.join(" - ") {
+        return true;
+    }
+    let sorted = |v: &[String]| {
+        let mut v = v.to_vec();
+        v.sort();
+        v
+    };
+    key.len() == items.len() && sorted(key) == sorted(items)
+}
+
+/// The typed data label formats of every PivotChart of a PivotTable by series items: the
+/// current series' (names that are references are read from the old report `area`, so call
+/// this before the report is rewritten), then those an earlier refresh dropped with their
+/// series. Excel ties a PivotChart series' formatting to its pivot items, not to its position,
+/// so a filter that hides a leading item doesn't pass its format to the next series.
+fn chart_label_formats(wb: &Workbook, sheet: &str, pivot: &str, pivot_sheet: usize, area: Option<RangeRef>) -> Vec<Vec<(Vec<String>, String)>> {
     linked_charts(wb, sheet, pivot)
         .map(|(si, ch)| {
-            let current: Vec<(String, Option<&String>)> = ch
+            let current: Vec<(Vec<String>, Option<&String>)> = ch
                 .series
                 .iter()
-                .filter_map(|s| Some((gridcraft_chart::series_name(wb, si, s.name.as_deref()?), s.label_number_format.as_ref())))
+                .filter_map(|s| Some((series_items(wb, si, s.name.as_deref()?, pivot_sheet, area), s.label_number_format.as_ref())))
                 .filter(|(k, _)| !k.is_empty())
                 .collect();
-            let dropped = ch.pivot_label_formats.iter().filter(|(k, _)| !current.iter().any(|(c, _)| c == k)).cloned();
+            let dropped = ch.pivot_label_formats.iter().filter(|(k, _)| !current.iter().any(|(c, _)| same_items(c, k))).cloned();
             current.iter().filter_map(|(k, f)| Some((k.clone(), (*f)?.clone()))).chain(dropped).collect()
         })
         .collect()
 }
 
 /// Rebuilds the series of every PivotChart of a PivotTable after its report was written; each
-/// series takes the label format `label_formats` (from [`chart_label_formats`]) has for its name.
-fn rebind_charts(wb: &mut Workbook, sheet: &str, pivot: &str, origin: CellRef, out: &Output, label_formats: Vec<Vec<(String, String)>>) {
+/// series takes the label format `label_formats` (from [`chart_label_formats`]) has for its
+/// items, preferring an item-by-item match.
+fn rebind_charts(wb: &mut Workbook, sheet: &str, pivot: &str, origin: CellRef, out: &Output, label_formats: Vec<Vec<(Vec<String>, String)>>) {
     let linked = |ch: &Chart| ch.pivot.as_deref().is_some_and(|l| links_to(l, sheet, pivot));
     let hits: Vec<usize> = (0..wb.sheets.len()).filter(|i| wb.sheet(*i).is_some_and(|sh| sh.charts.iter().any(linked))).collect();
     if hits.is_empty() {
         return;
     }
-    let series = chart_series(sheet, origin, out);
-    // The new series' names are literals, so the sheet they're evaluated on doesn't matter.
-    let names: Vec<String> = series.iter().map(|s| s.name.as_deref().map(|n| gridcraft_chart::series_name(wb, 0, n)).unwrap_or_default()).collect();
+    let (series, items): (Vec<Series>, Vec<&[String]>) = chart_series_items(sheet, origin, out).into_iter().unzip();
     let mut label_formats = label_formats.into_iter();
     for i in hits {
         let Some(sh) = wb.sheet_mut(i) else { continue };
         for ch in sh.charts.iter_mut().filter(|c| linked(c)) {
             let fmts = label_formats.next().unwrap_or_default();
             ch.series = series.clone();
-            for (new, name) in ch.series.iter_mut().zip(&names) {
-                new.label_number_format = fmts.iter().find(|(k, _)| k == name).map(|(_, f)| f.clone());
+            for (new, items) in ch.series.iter_mut().zip(&items) {
+                let exact = fmts.iter().find(|(k, _)| k.as_slice() == *items);
+                new.label_number_format = exact.or_else(|| fmts.iter().find(|(k, _)| same_items(k, items))).map(|(_, f)| f.clone());
             }
-            ch.pivot_label_formats = fmts;
+            // Remembered under the rebuilt items, so the next refresh matches item by item.
+            let mut kept: Vec<(Vec<String>, String)> =
+                items.iter().zip(&ch.series).filter_map(|(k, s)| Some((k.to_vec(), s.label_number_format.clone()?))).collect();
+            kept.extend(fmts.into_iter().filter(|(k, _)| !items.iter().any(|i| same_items(k, i))));
+            ch.pivot_label_formats = kept;
         }
     }
 }

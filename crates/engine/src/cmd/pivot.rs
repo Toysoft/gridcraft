@@ -2083,6 +2083,42 @@ mod tests {
         }
         s.execute("pivot.filter", json!({"field": "Product", "selected": ["Pears", "Plums"]})).unwrap();
         assert_eq!(labels(&s), typed[1..]);
+        // With two value fields each series has two items, product and value, so a series read
+        // from a file names its header cells in both rows. Excel writes the product only above
+        // the first of its two columns.
+        s.execute("pivot.filter", json!({"field": "Product", "selected": null})).unwrap();
+        s.execute("pivot.addField", json!({"field": "Units", "area": "values"})).unwrap();
+        let typed: Vec<Option<String>> = (0..6).map(|i| Some(format!("0.{}", "0".repeat(i)))).collect();
+        {
+            let d = s.doc_mut().unwrap();
+            let si = d.wb.active_sheet;
+            let sh = std::sync::Arc::make_mut(&mut d.wb).sheet_mut(si).unwrap();
+            let area = sh.pivots[0].last_range.unwrap();
+            let row_of = |item: &str| sh.cells.iter_range(area).find(|(_, c)| c.value.as_text() == Some(item)).map(|(r, _)| r.row).unwrap();
+            let (top, bottom) = (row_of("Apples"), row_of("Sum of Sales"));
+            assert_eq!(bottom, top + 1);
+            let q = crate::pivot::quote_sheet(&sh.name);
+            let chart = sh.charts.last().unwrap().clone();
+            assert_eq!(chart.series.len(), 6);
+            let mut renamed = Vec::new();
+            for x in &chart.series {
+                // The series' column, from its values reference: `Sheet!$C$7:$C$9`.
+                let col: String = x.values.rsplit_once("!$").unwrap().1.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+                let c = gridcraft_core::letters_to_col(&col).unwrap();
+                // Excel leaves the product blank above a product's second column.
+                if sh.cells.get(CellRef::new(top, c)).is_some_and(|cell| cell.value.as_text().is_some()) && renamed.len() % 2 == 1 {
+                    sh.take_cells(gridcraft_core::RangeRef::new(CellRef::new(top, c), CellRef::new(top, c)));
+                }
+                renamed.push(format!("{q}!${col}${}:${col}${}", top + 1, bottom + 1));
+            }
+            let ch = sh.charts.last_mut().unwrap();
+            for ((x, r), f) in ch.series.iter_mut().zip(renamed).zip(&typed) {
+                x.name = Some(r);
+                x.label_number_format.clone_from(f);
+            }
+        }
+        s.execute("pivot.filter", json!({"field": "Product", "selected": ["Pears", "Plums"]})).unwrap();
+        assert_eq!(labels(&s), typed[2..]);
     }
 
     #[test]
