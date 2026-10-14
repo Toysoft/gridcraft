@@ -142,6 +142,11 @@ impl Tokens {
     pub fn get(ctx: &egui::Context) -> Tokens {
         if ctx.global_style().visuals.dark_mode { Tokens::dark() } else { Tokens::light() }
     }
+
+    /// Worksheet insertion and freeze previews retain the spreadsheet editing accent.
+    pub fn editing_accent(&self) -> Color32 {
+        if self.dark { Color32::from_rgb(0x5C, 0xC5, 0x87) } else { self.accent }
+    }
 }
 
 pub const UI: &str = "ui";
@@ -769,6 +774,7 @@ mod palette_tests {
         // Cell-range overlays remain editing colors, independent of the interface-row roles.
         assert_eq!(dark.sel_fill, Color32::from_rgba_unmultiplied(0x10, 0x7C, 0x41, 0x24));
         assert_eq!(dark.sel_border, Color32::from_rgb(0x10, 0x7C, 0x41));
+        assert_eq!(dark.editing_accent(), Color32::from_rgb(0x5C, 0xC5, 0x87));
         assert_eq!(dark.grid_bg, Color32::WHITE);
         assert_eq!(dark.cell_text, Color32::BLACK);
         assert_eq!(dark.danger, Color32::from_rgb(0xF1, 0x70, 0x5F));
@@ -778,6 +784,7 @@ mod palette_tests {
         assert_eq!(light.accent, Color32::from_rgb(0x10, 0x7C, 0x41));
         assert_eq!(light.sel_fill, Color32::from_rgba_unmultiplied(0x10, 0x7C, 0x41, 0x1C));
         assert_eq!(light.sel_border, Color32::from_rgb(0x10, 0x7C, 0x41));
+        assert_eq!(light.editing_accent(), Color32::from_rgb(0x10, 0x7C, 0x41));
         assert_eq!(light.grid_bg, dark.grid_bg);
         assert_eq!(light.cell_text, dark.cell_text);
         assert_eq!(light.gridline, dark.gridline);
