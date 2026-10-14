@@ -280,7 +280,7 @@ fn typed_references_to_workbooks_that_are_not_linked_are_refused_on_entry() {
             cells: vec![(CellRef::parse("A1").unwrap(), Value::Number(5.0))],
             refresh_error: false,
         }],
-        names: vec![],
+        ..Default::default()
     };
     let wb = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb);
     wb.external_books = vec![link.clone()].into();
@@ -333,14 +333,42 @@ fn typed_references_to_workbooks_that_are_not_linked_are_refused_on_entry() {
     assert_eq!(v(&s, "E1"), Value::Number(5.0));
     // In another workbook it's kept only where that workbook holds the same link at that index;
     // otherwise `[1]` there would be a link it doesn't have (or a different workbook): `#REF!`.
-    let other =
-        gridcraft_model::ExternalBook { sheets: vec![gridcraft_model::ExternalSheet { name: "T".into(), ..Default::default() }], names: vec![] };
+    let other = gridcraft_model::ExternalBook {
+        sheets: vec![gridcraft_model::ExternalSheet { name: "T".into(), ..Default::default() }],
+        ..Default::default()
+    };
     for (books, formula) in [(vec![], "=#REF!"), (vec![other], "=#REF!"), (vec![link], "=[1]S!$A$1")] {
         s.new_workbook();
         std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb).external_books = books.into();
         s.execute("edit.paste", json!({"at": "E1"})).unwrap();
         assert_eq!(s.execute("cell.get", json!({"cell": "E1"})).unwrap()["formula"], formula);
     }
+}
+
+#[test]
+fn kept_values_of_uncalculable_linked_names_move_with_their_cells() {
+    // As read from a file: `[1]!Broken` is defined as #REF! in the link, and the cell shows the 20
+    // Excel saved for it.
+    let mut s = s();
+    let names = vec![gridcraft_model::ExternalName { name: "Broken".into(), sheet: None, refers_to: "#REF!".into() }];
+    let wb = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb);
+    wb.external_books = vec![gridcraft_model::ExternalBook { names, ..Default::default() }].into();
+    let mut cell = gridcraft_model::Cell::formula(gridcraft_model::Formula::new("=[1]!Broken"));
+    cell.value = Value::Number(20.0);
+    wb.sheet_mut(0).unwrap().cells.set(CellRef::parse("H11").unwrap(), cell);
+    wb.sheet_mut(0).unwrap().cells.set(CellRef::parse("G11").unwrap(), gridcraft_model::Cell::value(Value::Number(2.0)));
+    wb.sheet_mut(0).unwrap().cells.set(CellRef::parse("G12").unwrap(), gridcraft_model::Cell::value(Value::Number(1.0)));
+    // Moved by cut and paste.
+    s.execute("edit.cut", json!({"range": "H11"})).unwrap();
+    s.execute("edit.paste", json!({"at": "H15"})).unwrap();
+    assert_eq!(v(&s, "H15"), Value::Number(20.0));
+    // Moved by a sort, and by inserting rows above it.
+    s.execute("edit.cut", json!({"range": "H15"})).unwrap();
+    s.execute("edit.paste", json!({"at": "H11"})).unwrap();
+    s.execute("data.sort", json!({"range": "G11:H12", "header": false, "keys": [{"column": "G"}]})).unwrap();
+    assert_eq!(v(&s, "H12"), Value::Number(20.0));
+    s.execute("home.insertRows", json!({"rows": "1:2"})).unwrap();
+    assert_eq!(v(&s, "H14"), Value::Number(20.0));
 }
 
 #[test]

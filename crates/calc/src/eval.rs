@@ -170,12 +170,18 @@ impl<'h> Evaluator<'h> {
     /// A reference into a linked workbook (`'[2]Prices'!B2`, `[2]Prices!A:A`): an area that keeps
     /// the position and size written, read from the values saved with the link, as Excel
     /// calculates while the source is closed (see [`LINKED_SHEETS`]). `None` = not a reference
-    /// into a linked workbook; `#REF!` = the link didn't save that workbook or sheet.
-    fn linked_area(&self, r: &Reference) -> Option<Result<Area, CellError>> {
+    /// into a linked workbook; `#REF!` = the link didn't save that workbook or sheet, noted to the
+    /// host when the link has no saved workbook to look in (see [`Host::note_unknown_link`]).
+    fn linked_area(&mut self, r: &Reference) -> Option<Result<Area, CellError>> {
         let SheetSel::Named(name) = &r.sheet else { return None };
         let (book, sheet) = external_sheet(name)?;
         let wb = self.host.workbook();
-        let found = book.checked_sub(1).and_then(|b| Some((b, wb.external_books.get(b)?.sheet_index(sheet)?)));
+        let linked = book.checked_sub(1).and_then(|b| Some((b, wb.external_books.get(b)?)));
+        if linked.is_some_and(|(_, l)| l.opaque) {
+            self.host.note_unknown_link();
+            return Some(Err(CellError::Ref));
+        }
+        let found = linked.and_then(|(b, l)| Some((b, l.sheet_index(sheet)?)));
         Some(found.and_then(|(b, s)| linked_sheet_number(b, s)).map(|sheet| Area { sheet, range: r.range() }).ok_or(CellError::Ref))
     }
 
@@ -216,10 +222,21 @@ impl<'h> Evaluator<'h> {
     /// A defined name of a linked workbook (`[1]!Rates`, `[1]Prices!Rates`): what it refers to in
     /// that workbook, read from the values saved with the link. A name the link doesn't define is
     /// `#REF!`; one it defines but whose definition can't be read from the saved values is `#REF!`
-    /// noted to the host (see [`Host::note_unknown_link`]).
+    /// noted to the host (see [`Host::note_unknown_link`]). Through a link that isn't to a
+    /// workbook (DDE, OLE) only a DDE item saved with its value is known (`[1]!Price`); anything
+    /// else is noted the same way.
     fn external_name(&mut self, book: usize, sheet: &str, name: &str) -> Ev {
         let wb = self.host.workbook();
         let Some(b) = book.checked_sub(1).and_then(|i| wb.external_books.get(i)) else { return err(CellError::Ref) };
+        if b.opaque {
+            if sheet.is_empty()
+                && let Some(v) = b.item(name)
+            {
+                return Ev::V(v.clone());
+            }
+            self.host.note_unknown_link();
+            return err(CellError::Ref);
+        }
         let Some(def) = b.name(name, (!sheet.is_empty()).then_some(sheet)) else { return err(CellError::Ref) };
         let scope = def.sheet.and_then(|i| b.sheets.get(i)).map(|s| format!("[{book}]{}", s.name));
         let parsed = gridcraft_formula::parse(&def.refers_to).ok().filter(|e| linked_definition_readable(b, def, e));
@@ -942,9 +959,10 @@ impl<'h> Evaluator<'h> {
             }
             // Range parameters of the *IF(S) family take only references, and not references into
             // a linked workbook: Excel answers `#VALUE!` (or the cell's error) while the source
-            // workbook is closed. A written error (`#REF!` left by a deleted range) is that error.
+            // workbook is closed. A written error (`#REF!` left by a deleted range, here or in a
+            // linked workbook: `[1]Data!#REF!`) is that error.
             let linked = matches!(&ev, Ev::R(areas) if areas.iter().any(|x| linked_parts(x.sheet).is_some()));
-            if takes_reference(spec.name, i) && (linked || matches!(a, Expr::Error(_))) {
+            if takes_reference(spec.name, i) && (linked || matches!(a, Expr::Error(_) | Expr::LinkedRefError(_))) {
                 return err(match self.deref(ev) {
                     Value::Error(e) => e,
                     _ => CellError::Value,
@@ -2002,6 +2020,31 @@ pub fn precedents(wb: &Workbook, sheet: usize, e: &Expr) -> (Vec<Area>, bool) {
         _ => {}
     });
     (out, dynamic)
+}
+
+/// Whether a formula reads anything besides linked workbooks: a cell, defined name or table of
+/// this workbook, its position, or something that changes between calculations (INDIRECT,
+/// OFFSET, NOW, RAND…).
+pub(crate) fn reads_this_workbook(wb: &Workbook, e: &Expr) -> bool {
+    let mut local = false;
+    e.walk(&mut |x| {
+        local |= match x {
+            Expr::Ref(r) => !matches!(&r.sheet, SheetSel::Named(s) | SheetSel::Span(s, _) if external_sheet(s).is_some()),
+            Expr::Struct(_) => true,
+            Expr::Name(n) => {
+                external_name(n).is_none() && {
+                    let bare = n.rsplit_once('!').map_or(n.as_str(), |(_, b)| b);
+                    wb.names.iter().any(|d| d.name.eq_ignore_ascii_case(bare)) || wb.table(bare).is_some()
+                }
+            }
+            Expr::Call(n, args) => {
+                matches!(n.as_str(), "INDIRECT" | "OFFSET" | "NOW" | "TODAY" | "RAND" | "RANDBETWEEN" | "RANDARRAY" | "CELL" | "INFO")
+                    || (args.is_empty() && matches!(n.as_str(), "ROW" | "COLUMN" | "SHEET"))
+            }
+            _ => false,
+        };
+    });
+    local
 }
 
 fn is_special(n: &str) -> bool {

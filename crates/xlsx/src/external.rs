@@ -13,20 +13,85 @@ use crate::package::Rel;
 use crate::read::Ctx;
 use crate::xml::{self, El};
 
-/// One book per `<externalReference>`, in order; a link that can't be read (or isn't to a
-/// workbook: DDE, OLE) is an empty book so that the later ones keep their positions.
+/// One book per `<externalReference>`, in order. A link that isn't to a workbook (DDE, OLE), or
+/// whose part is missing or can't be read, is an opaque book, so that the later ones keep their
+/// positions and formulas through it keep their saved values; a DDE link's book holds the values
+/// saved for its items.
 pub(crate) fn read(cx: &mut Ctx<'_>, wb_xml: &El, wb_rels: &[Rel]) -> Result<Vec<ExternalBook>, IoError> {
     let Some(refs) = wb_xml.child("externalReferences") else { return Ok(vec![]) };
     let mut books = vec![];
     for r in refs.kids("externalReference") {
         let target = r.attr("id").and_then(|id| wb_rels.iter().find(|x| x.id == id)).map(|x| x.target.clone());
-        let book = match target {
-            Some(t) => cx.optional_xml(&t)?.as_ref().and_then(|x| x.child("externalBook")).map(book).unwrap_or_default(),
-            None => ExternalBook::default(),
+        let part = match target {
+            Some(t) => cx.optional_xml(&t)?,
+            None => None,
+        };
+        let book = match part.as_ref() {
+            Some(x) => match (x.child("externalBook"), x.child("ddeLink")) {
+                (Some(b), _) => book(b),
+                (None, Some(d)) => ExternalBook { opaque: true, items: dde_items(d), ..Default::default() },
+                (None, None) => ExternalBook { opaque: true, ..Default::default() },
+            },
+            None => ExternalBook { opaque: true, ..Default::default() },
         };
         books.push(book);
     }
     Ok(books)
+}
+
+/// Whether a formula is saved as the legacy formula it was read as, whatever it calculates to: it
+/// was read from a file without dynamic-array metadata (and isn't a Ctrl+Shift+Enter array, which
+/// keeps its range), and reads a linked workbook (`[1]Data!B:B`, `[1]!Rates`). Excel reads such a
+/// cell with implicit intersection; writing it as a dynamic array, because a linked range in it
+/// spills here, would change what Excel shows. Formulas typed over a linked workbook are saved
+/// like any other.
+pub(crate) fn saved_as_read(formula: &gridcraft_model::Formula) -> bool {
+    use gridcraft_formula::{Expr, SheetSel};
+    let Some(expr) = formula.expr_arc().filter(|_| formula.legacy && formula.array.is_none()) else { return false };
+    let mut linked = false;
+    expr.walk(&mut |e| {
+        linked |= match e {
+            Expr::Ref(r) => matches!(&r.sheet, SheetSel::Named(s) | SheetSel::Span(s, _) if s.starts_with('[')),
+            Expr::Name(n) => n.starts_with('['),
+            Expr::LinkedRefError(_) => true,
+            _ => false,
+        }
+    });
+    linked
+}
+
+/// The items of a `<ddeLink>` that were saved with values (`<values rows cols>`, row-major): one
+/// value, or an array.
+fn dde_items(x: &El) -> Vec<(String, Value)> {
+    let items = x.child("ddeItems").into_iter().flat_map(|i| i.kids("ddeItem"));
+    items
+        .filter_map(|item| {
+            let name = item.attr("name").map(xml::decode_xstring)?;
+            let values = item.child("values")?;
+            let data: Vec<Value> = values.kids("value").map(dde_value).collect();
+            let (rows, cols) = (values.attr_u32("rows").unwrap_or(1) as usize, values.attr_u32("cols").unwrap_or(1) as usize);
+            let v = match data.as_slice() {
+                [one] if rows == 1 && cols == 1 => one.clone(),
+                _ => Value::from(gridcraft_core::Array::new(rows, cols, data)?),
+            };
+            Some((name, v))
+        })
+        .collect()
+}
+
+/// One saved DDE value (`<value t="n|str|b|e|nil"><val>…</val></value>`, number by default).
+fn dde_value(v: &El) -> Value {
+    let text = v.child("val").map(|x| x.text.as_str()).unwrap_or_default();
+    match v.attr("t").unwrap_or("n") {
+        "nil" => Value::Empty,
+        "str" => Value::text(xml::decode_xstring(text)),
+        "b" => Value::Bool(matches!(text.trim(), "1" | "true" | "TRUE")),
+        "e" => Value::Error(CellError::parse(text.trim()).unwrap_or(CellError::Value)),
+        _ => match text.trim().parse::<f64>() {
+            Ok(n) if n.is_finite() => Value::Number(if n == 0.0 { 0.0 } else { n }),
+            _ => Value::Error(CellError::Value),
+        },
+    }
 }
 
 fn book(x: &El) -> ExternalBook {
@@ -66,7 +131,7 @@ fn book(x: &El) -> ExternalBook {
             })
         })
         .collect();
-    ExternalBook { sheets, names }
+    ExternalBook { sheets, names, ..Default::default() }
 }
 
 fn value(c: &El) -> Value {
@@ -92,5 +157,37 @@ mod tests {
         let book = super::book(&crate::xml::parse(x).unwrap());
         let names: Vec<_> = book.names.iter().map(|n| (n.name.as_str(), n.refers_to.as_str())).collect();
         assert_eq!(names, [("HelloWorld", ""), ("Broken", "#REF!"), ("Rate", "Personal!$A$1")]);
+    }
+
+    #[test]
+    fn dde_ole_and_missing_links_are_opaque_and_keep_positions() {
+        use gridcraft_core::{Array, Value};
+        const NS: &str = r#"xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main""#;
+        let dde = format!(
+            r#"<externalLink {NS}><ddeLink ddeService="REUTER" ddeTopic="IDN"><ddeItems><ddeItem name="ENE" advise="1"><values><value><val>85.33</val></value></values></ddeItem><ddeItem name="Name"><values><value t="str"><val>Enron</val></value></values></ddeItem><ddeItem name="Grid"><values rows="1" cols="2"><value><val>1</val></value><value t="e"><val>#N/A</val></value></values></ddeItem><ddeItem name="Unsaved"/></ddeItems></ddeLink></externalLink>"#
+        );
+        let ole = format!(r#"<externalLink {NS}><oleLink progId="Word.Document.8"/></externalLink>"#);
+        let book = format!(r#"<externalLink {NS}><externalBook><sheetNames><sheetName val="Data"/></sheetNames></externalBook></externalLink>"#);
+        let rel = |id: u32, n: u32| {
+            format!(
+                r#"<Relationship Id="rId{id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLink" Target="externalLinks/externalLink{n}.xml"/>"#
+            )
+        };
+        let rels = [rel(11, 1), rel(12, 2), rel(13, 3), rel(14, 4)].concat();
+        let refs = r#"<externalReferences><externalReference r:id="rId11"/><externalReference r:id="rId12"/><externalReference r:id="rId13"/><externalReference r:id="rId14"/></externalReferences>"#;
+        // Link 3's part is missing from the package.
+        let parts = [
+            ("xl/externalLinks/externalLink1.xml", dde.as_str()),
+            ("xl/externalLinks/externalLink2.xml", ole.as_str()),
+            ("xl/externalLinks/externalLink4.xml", book.as_str()),
+        ];
+        let (wb, _) = crate::read_xlsx(&crate::tests::minimal("<sheetData/>", &parts, &rels, refs)).unwrap();
+        let books = &wb.external_books;
+        assert_eq!(books.iter().map(|b| b.opaque).collect::<Vec<_>>(), [true, true, true, false]);
+        let grid = Value::from(Array::new(1, 2, vec![Value::Number(1.0), Value::Error(gridcraft_core::CellError::NA)]).unwrap());
+        assert_eq!(books[0].items, [("ENE".to_string(), Value::Number(85.33)), ("Name".into(), Value::text("Enron")), ("Grid".into(), grid)]);
+        assert_eq!(books[0].item("ene"), Some(&Value::Number(85.33)));
+        assert!(books[1].items.is_empty() && books[2].items.is_empty());
+        assert_eq!(books[3].sheet_index("Data"), Some(0));
     }
 }

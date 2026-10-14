@@ -408,9 +408,13 @@ struct PassHost<'a> {
     tainted: HashSet<Key>,
     /// Whether the formula being evaluated has read a previous value.
     taint: bool,
-    /// Whether the formula being evaluated used a linked workbook's name that can't be calculated
-    /// from the link's saved values ([`Host::note_unknown_link`]).
+    /// Whether the formula being evaluated used something in a linked workbook that can't be
+    /// calculated from the link's saved values ([`Host::note_unknown_link`]).
     unknown_link: bool,
+    /// The pass follows an edit. A formula over something uncalculable in a linked workbook keeps
+    /// the value it showed only when it reads nothing else, since what it reads may have changed;
+    /// on other passes (loading, F9) every such formula keeps it.
+    edited: bool,
 }
 
 impl<'a> PassHost<'a> {
@@ -435,6 +439,7 @@ impl<'a> PassHost<'a> {
             tainted: HashSet::default(),
             taint: false,
             unknown_link: false,
+            edited: false,
         }
     }
 }
@@ -492,8 +497,10 @@ impl PassHost<'_> {
             let mut ev = Evaluator::new(self, k.0, k.1);
             ev.value(&expr)
         };
-        // Excel keeps showing what it saved for a formula over a linked name it can't calculate.
-        let v = if std::mem::replace(&mut self.unknown_link, outer_unknown) { self.saved_value(k).unwrap_or(v) } else { v };
+        // Excel keeps showing what it saved for a formula over a linked value it can't calculate,
+        // until the formula has to be calculated again.
+        let unknown = std::mem::replace(&mut self.unknown_link, outer_unknown);
+        let v = if unknown && (!self.edited || !crate::eval::reads_this_workbook(self.wb, &expr)) { self.saved_value(k).unwrap_or(v) } else { v };
         // A legacy array formula fills the range it was entered in.
         let legacy = self.wb.sheet(k.0).and_then(|s| s.cell(k.1)).and_then(|c| c.formula.as_ref()).and_then(|f| f.array);
         let v = match legacy {
@@ -833,6 +840,18 @@ impl Calc {
 
     /// Recalculates every formula (F9 / Ctrl+Alt+F9, and after loading).
     pub fn recalc_all(&mut self, wb: &mut Workbook) {
+        self.recalc_every_formula(wb, false);
+    }
+
+    /// Recalculates every formula after an edit that moves or deletes cells (rows, columns,
+    /// sheets, sorting): as [`Calc::recalc_all`], except that a formula over something
+    /// uncalculable in a linked workbook that also reads this workbook is calculated rather than
+    /// keeping its value (see `PassHost::edited`).
+    pub fn recalc_all_after_edit(&mut self, wb: &mut Workbook) {
+        self.recalc_every_formula(wb, true);
+    }
+
+    fn recalc_every_formula(&mut self, wb: &mut Workbook, edited: bool) {
         self.rebuild(wb);
         // Spills are laid out again from the formulas where they are now (a structural edit moves
         // or deletes the formulas, not the values they spilled).
@@ -845,7 +864,7 @@ impl Calc {
             }
         }
         let all: Vec<Key> = self.graph.nodes.keys().copied().collect();
-        self.run(wb, all, true);
+        self.run(wb, all, edited);
     }
 
     /// Updates the graph for cells whose content changed and recalculates what depends on them.
@@ -882,7 +901,7 @@ impl Calc {
         if wb.calc.mode == CalcMode::Manual {
             // Only the edited formulas themselves are evaluated.
             let own: Vec<Key> = changed.iter().copied().filter(|k| self.graph.nodes.contains_key(k)).collect();
-            self.run(wb, own, false);
+            self.run(wb, own, true);
             return;
         }
         let mut seeds: Vec<Key> = changed.to_vec();
@@ -930,7 +949,7 @@ impl Calc {
         let dirty = self.dirty_closure(wb, &seeds);
         let t1 = prof_now();
         let n = dirty.len();
-        self.run(wb, dirty, false);
+        self.run(wb, dirty, true);
         if std::env::var_os("GRIDCRAFT_PROFILE").is_some() {
             eprintln!("recalc: {} seeds, closure {} cells {:.1} ms, run {:.1} ms", seeds.len(), n, t1 - t0, prof_now() - t1);
         }
@@ -969,8 +988,9 @@ impl Calc {
         seen.into_iter().collect()
     }
 
-    /// Evaluates the dirty set and writes results (and spills) back.
-    fn run(&mut self, wb: &mut Workbook, mut dirty: Vec<Key>, full: bool) {
+    /// Evaluates the dirty set and writes results (and spills) back. `edited`: the pass follows
+    /// an edit (see `PassHost::edited`).
+    fn run(&mut self, wb: &mut Workbook, mut dirty: Vec<Key>, edited: bool) {
         let mut dynamic_again = !self.graph.dynamic.is_empty();
         for _round in 0..8 {
             if dirty.is_empty() {
@@ -990,6 +1010,7 @@ impl Calc {
             let (results, spills, cycles) = {
                 let mut host = PassHost::new(wb, &exprs, &mut rng, now);
                 host.iterate = wb.calc.iterative;
+                host.edited = edited;
                 for k in &dirty {
                     host.compute(*k);
                 }
@@ -1083,9 +1104,6 @@ impl Calc {
                         spill_changes.push((s, c));
                     }
                 }
-            }
-            if full {
-                // Everything was already evaluated once; spill dependents need another pass.
             }
             if std::env::var_os("GRIDCRAFT_PROFILE").is_some() {
                 eprintln!("  write-back {:.1} ms", prof_now() - tw);

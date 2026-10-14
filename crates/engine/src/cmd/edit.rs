@@ -476,7 +476,7 @@ fn range_fill(s: &mut Session, p: &Json) -> Result<Json> {
                     && let Some(e) = f.expr()
                 {
                     let shifted = gridcraft_formula::adjust::shift_relative(e, at.row as i64 - origin.row as i64, at.col as i64 - origin.col as i64);
-                    cell.formula = Some(std::sync::Arc::new(Formula::from_expr(shifted)));
+                    cell.formula = Some(std::sync::Arc::new(f.rewritten(shifted)));
                 }
                 cell.style = cx.wb.sheet(sheet).and_then(|sh| sh.cell(at)).map(|c| c.style).unwrap_or(cell.style);
                 cx.sheet_mut(sheet)?.set_cell(at, cell);
@@ -1125,7 +1125,7 @@ fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
                                 } else {
                                     e
                                 };
-                                let mut moved = Formula::from_expr(e);
+                                let mut moved = f.rewritten(e);
                                 // The array range moves with its formula.
                                 let (dr, dc) = (dest.row as i64 - sc.row as i64, dest.col as i64 - sc.col as i64);
                                 moved.array = f.array.and_then(|a| Some(RangeRef::new(a.start.offset(dr, dc)?, a.end.offset(dr, dc)?)));
@@ -1133,7 +1133,7 @@ fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
                             }
                             let moved =
                                 gridcraft_formula::adjust::shift_relative(e, dest.row as i64 - sc.row as i64, dest.col as i64 - sc.col as i64);
-                            Some(std::sync::Arc::new(Formula::from_expr(moved)))
+                            Some(std::sync::Arc::new(f.rewritten(moved)))
                         };
                         if link {
                             let sheet_prefix = if dest_sheet == clip.sheet && same_doc {
@@ -1150,7 +1150,10 @@ fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
                                 What::All | What::AllExceptBorders => {
                                     new_picture = src_picture.clone();
                                     new.formula = shift(&sc_cell);
-                                    new.value = if new.formula.is_some() { Value::Empty } else { sc_cell.value.clone() };
+                                    // A moved formula keeps the value it showed until it is
+                                    // calculated: one over a linked value that can't be
+                                    // calculated keeps showing it, as it would where it was.
+                                    new.value = if new.formula.is_some() && !cut_move { Value::Empty } else { sc_cell.value.clone() };
                                     let st = map_style(sc_cell.style, &mut cx.wb);
                                     new.style = if what == What::AllExceptBorders {
                                         let borders = cx.wb.styles.get(old.style).borders;
@@ -1162,7 +1165,7 @@ fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
                                 What::Formulas | What::FormulasAndNumberFormats => {
                                     new_picture = src_picture.clone();
                                     new.formula = shift(&sc_cell);
-                                    new.value = if new.formula.is_some() { Value::Empty } else { sc_cell.value.clone() };
+                                    new.value = if new.formula.is_some() && !cut_move { Value::Empty } else { sc_cell.value.clone() };
                                     if what == What::FormulasAndNumberFormats {
                                         let nf = src_wb.styles.get(sc_cell.style).num_fmt.clone();
                                         new.style = cx.wb.styles.derive(old.style, |s| s.num_fmt = nf);
@@ -1333,7 +1336,7 @@ pub(crate) fn rewrite_all_formulas(wb: &mut gridcraft_model::Workbook, target: &
             if (text != f.text || array != f.array)
                 && let Some(cell) = sheet.cells.get_mut(c)
             {
-                let mut nf = Formula::from_expr(new);
+                let mut nf = f.rewritten(new);
                 nf.array = array;
                 cell.formula = Some(std::sync::Arc::new(nf));
             }

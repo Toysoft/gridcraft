@@ -94,6 +94,13 @@ pub struct ExternalBook {
     pub sheets: Vec<ExternalSheet>,
     /// The linked workbook's defined names (`[1]!Rates`, `[1]Sheet1!Rates`).
     pub names: Vec<ExternalName>,
+    /// The link isn't to a workbook (a DDE or OLE link), or its part is missing or unreadable.
+    /// What formulas read through it can't be calculated, apart from `items`: the cells keep the
+    /// values saved for them.
+    pub opaque: bool,
+    /// A DDE link's items with the values saved for them (`[1]!Price` reads item `Price`). An
+    /// item saved without values isn't here.
+    pub items: Vec<(String, Value)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -130,6 +137,10 @@ impl ExternalBook {
         let si = sheet.and_then(|s| self.sheet_index(s));
         let find = |scope: Option<usize>| self.names.iter().find(|n| n.sheet == scope && n.name.eq_ignore_ascii_case(name));
         si.and_then(|i| find(Some(i))).or_else(|| find(None))
+    }
+    /// The value saved for DDE item `name` (`[1]!Price`).
+    pub fn item(&self, name: &str) -> Option<&Value> {
+        self.items.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v)
     }
 }
 
@@ -293,7 +304,7 @@ impl Workbook {
                     let f = cell.formula.as_ref()?;
                     let e = f.expr()?;
                     let ne = spell_calls(e.clone(), &lambdas);
-                    (ne != e).then(|| (c, Formula { array: f.array, ..Formula::from_expr(ne) }))
+                    (ne != e).then(|| (c, Formula { array: f.array, ..f.rewritten(ne) }))
                 })
                 .collect();
             if fixed.is_empty() {
