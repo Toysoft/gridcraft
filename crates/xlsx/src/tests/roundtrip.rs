@@ -958,6 +958,40 @@ fn cross_sheet_rules_are_written_in_the_x14_extension() {
     assert_eq!(got, wb.sheet(0).unwrap().cond_formats);
 }
 
+/// A differential format's protection is written after its alignment and border (the CT_Dxf
+/// order: font, numFmt, fill, alignment, border, protection), both inline in an `x14:dxf` and in `styles.xml`, and reads back.
+#[test]
+fn dxf_protection_is_written_in_schema_order() {
+    let mut wb = Workbook::new();
+    wb.sheets.push(Arc::new(Sheet::new("Other")));
+    let mut st = Style { fill: Fill::solid(Color::Rgb(0xFFC7CE)), ..Style::default() };
+    st.align.h = HAlign::Center;
+    st.protection = gridcraft_model::style::Protection { locked: false, hidden: true };
+    st.borders.left.style = BorderStyle::Thin;
+    let s = wb.sheet_mut(0).unwrap();
+    let rules = [
+        CfRule::Expression { formula: "A1=Other!$A$1".into(), style: Box::new(st.clone()) },
+        CfRule::Expression { formula: "A1>5".into(), style: Box::new(st) },
+    ];
+    for (i, rule) in rules.into_iter().enumerate() {
+        s.cond_formats.push(CondFormat { ranges: vec![rr("A1:A5")], rule, priority: i as u32 + 1, stop_if_true: false });
+    }
+    let bytes = write_xlsx(&wb).unwrap();
+    let (xml, _) = sheet1_xml(&bytes);
+    let mut styles = String::new();
+    zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap().by_name("xl/styles.xml").unwrap().read_to_string(&mut styles).unwrap();
+    let dxfs = &styles[styles.find("<dxfs").unwrap()..];
+    for part in [xml.as_str(), dxfs] {
+        let p = part.find("<protection locked=\"0\" hidden=\"1\"/>").unwrap_or_else(|| panic!("{part}"));
+        assert!(part.find("<alignment").unwrap() < part.find("<border>").unwrap() && part.find("<border>").unwrap() < p, "{part}");
+    }
+    let (back, rep) = read_xlsx(&bytes).unwrap();
+    assert!(rep.warnings.is_empty(), "{:?}", rep.warnings);
+    let mut got = back.sheet(0).unwrap().cond_formats.clone();
+    got.sort_by_key(|cf| cf.priority);
+    assert_eq!(got, wb.sheet(0).unwrap().cond_formats);
+}
+
 /// Files have no `@` operator: Excel writes `@x` as `_xlfn.SINGLE(x)` in a dynamic-array
 /// formula, and reads it back as `@x`.
 #[test]

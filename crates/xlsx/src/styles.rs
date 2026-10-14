@@ -723,6 +723,9 @@ pub fn dxf_xml(tag: &str, d: &Style, nf: &mut NumFmts) -> String {
     if d.borders != def.borders {
         dx.push_str(&border_xml(&d.borders));
     }
+    if let Some(p) = protection_xml(&d.protection) {
+        dx.push_str(&p);
+    }
     let _ = write!(dx, "</{tag}>");
     dx
 }
