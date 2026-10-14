@@ -606,7 +606,21 @@ fn validation_formula(f: &str) -> String {
         return f.to_owned();
     }
     let f = f.strip_prefix('=').unwrap_or(f).trim();
-    gridcraft_engine::formula::parse(f).map(|e| gridcraft_engine::formula::print(&e)).unwrap_or_else(|_| f.to_owned())
+    gridcraft_engine::formula::parse(f)
+        .map(|e| {
+            // The XLSX writer spells trim references as equivalent TRIMRANGE calls.
+            // Normalize inside expressions too, without equating different trim modes.
+            use gridcraft_engine::formula::{Expr, UnOp};
+            let e = e.map(&mut |e| match e {
+                Expr::Unary(UnOp::Trim(mode), range) => {
+                    let code = Expr::Number(f64::from(mode.code()));
+                    Expr::Call("TRIMRANGE".into(), vec![*range, code.clone(), code])
+                }
+                other => other,
+            });
+            gridcraft_engine::formula::print(&e)
+        })
+        .unwrap_or_else(|_| f.to_owned())
 }
 
 fn canonical_validation(v: &Validation) -> Validation {

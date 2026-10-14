@@ -106,7 +106,8 @@ The `validations` category compares every rule's ranges, kind, operator, formula
 input/error messages. Rule and range order are preserved: the first matching rule applies, and
 the first range anchors relative formulas. Each changed, added or removed rule position counts
 as one difference; examples include the sheet, rule position, ranges and before/after values.
-Formula syntax is normalized as on save/reopen (quoted list contents stay exact), blank second
+Formula syntax, including trim references written as equivalent `TRIMRANGE` calls, is normalized
+as on save/reopen (quoted list contents stay exact). Blank second
 formulas compare equal to absent ones, and unused operators on Any/List/Custom rules are ignored.
 Ranges are compared without expanding cells. This compares models after import; it cannot detect
 initial-import loss. Comments, hyperlinks and pivots currently compare counts only.

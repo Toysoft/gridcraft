@@ -219,3 +219,84 @@ fn invalid_formula_fallback_keeps_distinct_text_and_reports_the_range() {
     let description = &category.examples[0];
     assert!(description.contains("D9:D12") && description.contains("SUM(") && description.contains("AVERAGE("), "{description}");
 }
+
+#[test]
+fn trim_reference_modes_survive_actual_xlsx_roundtrip() {
+    for (reference, mode) in [("A1.:A10", 1), ("A1:.A10", 2), ("A1.:.A10", 3)] {
+        let mut validation = rule("B1:B10");
+        validation.kind = ValidationKind::Custom;
+        validation.f1 = format!("SUM({reference})>0");
+        validation.f2 = Some(format!("ROWS({reference})"));
+        let before = book(vec![validation]);
+        let bytes = gridcraft_engine::io::save_bytes(&before, "trim.xlsx").unwrap();
+        let (after, _) = gridcraft_engine::io::open_bytes("trim.xlsx", &bytes).unwrap();
+        let reopened = &after.sheet(0).unwrap().validations[0];
+        assert_eq!(reopened.f1, format!("SUM(TRIMRANGE(A1:A10,{mode},{mode}))>0"));
+        assert_eq!(reopened.f2, Some(format!("ROWS(TRIMRANGE(A1:A10,{mode},{mode}))")));
+        let category = validation_diff(&before, &after, 20);
+        assert_eq!(category.diffs, 0, "{reference}: {category:?}");
+    }
+}
+
+#[test]
+fn imported_trim_reference_calls_pass_the_complete_fidelity_check() {
+    use std::io::{Cursor, Read, Write};
+
+    let modes = [("A1.:A10", "LEADING", 1), ("A1:.A10", "TRAILING", 2), ("A1.:.A10", "ALL", 3)];
+    let rules = modes
+        .iter()
+        .map(|(reference, _, _)| {
+            let mut validation = rule("B1:B10");
+            validation.kind = ValidationKind::Custom;
+            validation.f1 = format!("SUM({reference})>0");
+            validation.f2 = None;
+            validation
+        })
+        .collect();
+    let bytes = gridcraft_engine::io::save_bytes(&book(rules), "trim.xlsx").unwrap();
+    // Construct supported file spellings that import as trim operators. A file produced
+    // directly by save_bytes already contains TRIMRANGE and would miss this regression.
+    let mut source = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..source.len() {
+        let mut part = source.by_index(i).unwrap();
+        let name = part.name().to_string();
+        let mut data = Vec::new();
+        part.read_to_end(&mut data).unwrap();
+        if name == "xl/worksheets/sheet1.xml" {
+            let mut xml = String::from_utf8(data).unwrap();
+            for (_, suffix, mode) in modes {
+                let call = format!("_xlfn.TRIMRANGE(A1:A10,{mode},{mode})");
+                assert!(xml.contains(&call));
+                xml = xml.replace(&call, &format!("_xlfn._TRO_{suffix}(A1:A10)"));
+            }
+            data = xml.into_bytes();
+        }
+        output.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+        output.write_all(&data).unwrap();
+    }
+    let bytes = output.finish().unwrap().into_inner();
+    let (imported, _) = gridcraft_engine::io::open_bytes("trim.xlsx", &bytes).unwrap();
+    let validations = &imported.sheet(0).unwrap().validations;
+    assert_eq!(validations.len(), modes.len());
+    for (validation, (reference, _, _)) in validations.iter().zip(modes) {
+        assert_eq!(validation.f1, format!("SUM({reference})>0"));
+    }
+    let report = check_bytes("trim.xlsx", &bytes, &Options::default());
+    assert!(report.is_clean(), "{report:?}");
+}
+
+#[test]
+fn different_trim_modes_and_ranges_remain_differences() {
+    let mut original = rule("B1:B10");
+    original.kind = ValidationKind::Custom;
+    original.f1 = "SUM(A1:.A10)>0".into();
+    original.f2 = None;
+    let before = book(vec![original.clone()]);
+    for formula in ["SUM(A1.:A10)>0", "SUM(A1.:.A10)>0", "SUM(TRIMRANGE(A1:A10,2,1))>0", "SUM(TRIMRANGE(A1:A20,2,2))>0"] {
+        let mut changed = original.clone();
+        changed.f1 = formula.into();
+        let category = validation_diff(&before, &book(vec![changed]), 20);
+        assert_eq!(category.diffs, 1, "{formula}: {category:?}");
+    }
+}
