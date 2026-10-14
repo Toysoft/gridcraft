@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (horizontal scrollbar in the sheet tab bar, #840; Draw: Segment Eraser cuts at crossings, one undo step per eraser drag, live stroke matches the saved one; AutoFit reserves filter dropdown space, observed against Windows Excel; Draw toolbox, smoothing and inverse-speed width; selected object keyboard deletion) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** minor (Draw: fast strokes keep their turns, sampled past the cells and smoothed only against jitter; horizontal scrollbar in the sheet tab bar, #840; Draw: Segment Eraser cuts at crossings, one undo step per eraser drag, live stroke matches the saved one; AutoFit reserves filter dropdown space, observed against Windows Excel; Draw toolbox, smoothing and inverse-speed width; selected object keyboard deletion) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Interaction, controls and feel, against Excel. Part of [target-app-parity.md](target-app-parity.md).
 **UI/UX fidelity: ~55% ready, 50–80 h** (estimated). Ribbon command coverage is measured
@@ -187,6 +187,7 @@ Excel texture rendering remain unverified or absent; this is not full Draw parit
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Draw: a stroke takes every pointer move and follows the pointer past the cells (headers, out of the window) like Excel; smoothing only settles jitter (≤1.5 px) with a centripetal spline through the samples, so fast zigzags keep sharp, full-height turns instead of rounding into loops. macOS: no mouse-drag coalescing and no force click while a Draw tool is on |
 | 2026-10-12 | minor | The File view's recent list tells when each workbook was last changed, read off the UI thread |
 | 2026-10-13 | minor | Horizontal scrollbar in the sheet tab bar: drag, track click pages, frozen columns excluded from the page (#840) |
 | 2026-10-12 | minor | Ctrl+wheel zoom steps along a ladder of percentages about 20% apart that never skips 100%, gliding to each step with animations on, so a notch out undoes a notch in (it drifted: 100 → 122 → 101); Excel steps 15 points, see decisions.md |
