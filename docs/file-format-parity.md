@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (XLSX chart sheets are kept on save (#727); previously minor: CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (XLSX: grouped pictures, charts and shapes are imported and kept as groups) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -15,8 +15,10 @@ support comes from `crates/engine/src/io.rs` (`FileKind`), `crates/xlsx/src` and
 
 Ink created with Draw is written as standard, unfilled DrawingML polylines, without visible point
 captions or private metadata. Supported numeric polylines reopen as editable ink, retaining points,
-colour, integer width and anchor. Curves, filled paths, transforms and unsupported line styles are
-not interpreted as ink. This does not implement Office InkML or fix inserted icons (#551).
+colour, integer width and anchor. A polyline inside a group reopens as ink at its place in the
+group, keeping a rotation for saving (drawn unrotated, reported). Curves, filled paths, flips, other
+transforms and unsupported line styles are not interpreted as ink. This does not implement Office
+InkML or fix inserted icons (#551).
 Command and package tests cover repeated saves and unrelated cell edits; external Excel rendering
 and repair-free opening remain unverified.
 
@@ -85,6 +87,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | XLSX: grouped pictures, charts and shapes (`grpSp`, nested too) are imported at their group-transformed positions (they were dropped) and kept as groups: saved back as one anchor holding the `grpSp` with its members in order, in its child coordinate space; moving or deleting a member acts on the whole group. Ink strokes in a group open and save as editable ink at their child-space transform, and the eraser rubs out a grouped stroke alone. Unsupported members (SmartArt, OLE) are dropped with their own warning. A flipped group's members are placed mirrored but not drawn mirrored, and a rotated group is laid out without its rotation; both are reported on open, and the group's `rot`/`flipH`/`flipV` are kept on save |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |
 | 2026-10-12 | trivial | CSV and TSV export is capped at 512 MiB and refuses a larger used range with an error (#528) |
 | 2026-10-12 | minor | `.xls` import reads the calculation settings (CalcMode, CalcIter, CalcCount, CalcDelta, CalcPrecision), so circular models calculate instead of showing `#CIRC!` (#724) |
