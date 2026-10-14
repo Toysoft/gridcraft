@@ -171,9 +171,15 @@ fn multi_level_pivot_categories_plot_their_innermost_level() {
         (s.name.as_deref(), s.categories.as_deref(), s.values.as_str(), s.innermost_categories),
         (Some("Graph!$C$3"), Some("Graph!$A$4:$B$7"), "Graph!$C$4:$C$7", true)
     );
-    // A save keeps the references, outer level and all.
+    // A save keeps the references and writes the block as a `multiLvlStrRef` whose cache has
+    // both levels, innermost first, so it reads back the same way.
     let saved = crate::chart::write_chart(&wb, 0, &c);
-    assert!(saved.contains("<c:f>Graph!$A$4:$B$7</c:f>") && saved.contains("<c:f>Graph!$C$3</c:f>"), "{saved}");
+    let cat = format!(
+        r#"<c:cat><c:multiLvlStrRef><c:f>Graph!$A$4:$B$7</c:f><c:multiLvlStrCache><c:ptCount val="4"/><c:lvl>{leaf}</c:lvl><c:lvl>{outer}</c:lvl></c:multiLvlStrCache></c:multiLvlStrRef></c:cat>"#
+    );
+    assert!(saved.contains(&cat) && saved.contains("<c:f>Graph!$C$3</c:f>"), "{saved}");
+    let back = read_in(&wb, &saved).series[0].clone();
+    assert_eq!((back.name, back.categories, back.innermost_categories), (s.name.clone(), s.categories.clone(), true));
 
     // When the innermost column shows another label, the block is stale: the innermost level
     // is plotted from the cache, one label per point.

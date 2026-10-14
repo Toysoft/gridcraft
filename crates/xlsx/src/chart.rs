@@ -607,6 +607,54 @@ fn split_array_items(inner: &str) -> Vec<String> {
     items
 }
 
+/// The point count of a series' values: an array constant's items or a reference's cells.
+fn point_count(f: &str, wb: &Workbook, si: usize) -> Option<usize> {
+    let f = f.trim();
+    if f.starts_with('{') { Some(array_items(f).len()) } else { ref_values(wb, si, f).map(|v| v.len()) }
+}
+
+/// Multi-level categories ([`Series::innermost_categories`]) as a `multiLvlStrRef`, so they read
+/// back as such: one `<c:lvl>` of cell texts per column (a block with a row per point) or row (a
+/// column per point), innermost (last) first. `None` when `f` isn't one area of `points` rows or
+/// columns.
+fn multi_level_data(f: &str, points: usize, wb: &Workbook, si: usize) -> Option<String> {
+    let f = f.trim();
+    let Expr::Ref(r) = gridcraft_formula::parse(f).ok()? else { return None };
+    let sheet = match &r.sheet {
+        SheetSel::Current => wb.sheet(si),
+        SheetSel::Named(n) => wb.sheet_index(n).and_then(|i| wb.sheet(i)),
+        SheetSel::Span(..) => None,
+    }?;
+    let range = r.range();
+    if range.count() > MAX_CACHE {
+        return None;
+    }
+    let (rows, cols) = (range.height() as usize, range.width() as usize);
+    // (level, point) to the cell's offset in the block.
+    let (levels, at): (usize, fn(usize, usize) -> (usize, usize)) = if rows == points && cols > 1 {
+        (cols, |l, p| (p, l))
+    } else if cols == points && rows > 1 {
+        (rows, |l, p| (l, p))
+    } else {
+        return None;
+    };
+    let mut s =
+        format!("<c:cat><c:multiLvlStrRef><c:f>{}</c:f><c:multiLvlStrCache><c:ptCount val=\"{points}\"/>", esc(&crate::fmla::text_to_file(f)));
+    for l in (0..levels).rev() {
+        s.push_str("<c:lvl>");
+        for p in 0..points {
+            let (dr, dc) = at(l, p);
+            let v = range.start.offset(dr as i64, dc as i64).map(|c| sheet.value(c)).unwrap_or_default();
+            if !v.is_empty() {
+                let _ = write!(s, "<c:pt idx=\"{p}\"><c:v>{}</c:v></c:pt>", esc(&v.display()));
+            }
+        }
+        s.push_str("</c:lvl>");
+    }
+    s.push_str("</c:multiLvlStrCache></c:multiLvlStrRef></c:cat>");
+    Some(s)
+}
+
 fn str_data(tag: &str, f: &str, wb: &Workbook, si: usize) -> String {
     let f = f.trim();
     if f.starts_with('{') {
@@ -696,7 +744,8 @@ fn series_xml(s: &Series, idx: usize, g: G, wb: &Workbook, si: usize) -> String 
         }
         _ => {
             if let Some(c) = &s.categories {
-                x.push_str(&str_data("cat", c, wb, si));
+                let multi = s.innermost_categories.then(|| point_count(&s.values, wb, si).and_then(|n| multi_level_data(c, n, wb, si))).flatten();
+                x.push_str(&multi.unwrap_or_else(|| str_data("cat", c, wb, si)));
             }
             x.push_str(&num_data("val", Some(&s.values), s.number_format.as_deref(), wb, si));
             if matches!(g, G::Line { .. }) {

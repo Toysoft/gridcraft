@@ -430,7 +430,8 @@ pub struct Series {
     pub number_format: Option<String>,
     /// The categories are a multi-level block (a PivotChart's `multiLvlStrRef`): a column (or
     /// row) of cells per level, the innermost last. Only the innermost level is drawn, one
-    /// label per point; the reference itself is kept and saved as is.
+    /// label per point. The reference is kept, and XLSX saves it as a `multiLvlStrRef` with a
+    /// cache of every level; a PivotChart reads that back with this flag set again.
     #[serde(default)]
     pub innermost_categories: bool,
 }
