@@ -137,7 +137,15 @@ pub fn specs() -> Vec<CommandSpec> {
             &with(p, "kind", json!("textBox"))
         )),
         cmd!("shape.setText", "Edit Text Box", [], None, "{id: textBox id, text: string}", has_doc, shape_set_text),
-        cmd!("object.delete", "Delete Object", [], None, "{kind: chart|image|shape|group, id}", has_doc, delete_object),
+        cmd!(
+            "object.delete",
+            "Delete Object",
+            [],
+            None,
+            "{kind: chart|image|shape|group, id, member?: bool (a grouped object alone, leaving the rest of its group)}",
+            has_doc,
+            delete_object
+        ),
         cmd!(
             "object.move",
             "Move Object",
@@ -1115,15 +1123,25 @@ fn group_target(sh: &Sheet, kind: &str, id: u32) -> Option<(u32, DrawingRef)> {
     Some((outer, r))
 }
 
+/// Deletes an object. A grouped chart, picture or shape deletes its whole group, as in Excel,
+/// unless `member` asks for that object (or nested group) alone, as the eraser does for a
+/// grouped ink stroke: the rest of its group stays grouped.
 fn delete_object(s: &mut Session, p: &Json) -> Result<Json> {
     let id = u32_param(p, "id").ok_or_else(|| bad("object.delete", "missing `id`"))?;
     let kind = str_param(p, "kind").unwrap_or("").to_string();
+    let member = bool_param(p, "member").unwrap_or(false);
     let sheet = s.doc()?.wb.active_sheet;
     edit(s, |cx| {
         let sh = cx.sheet_mut(sheet)?;
-        if let Some((gid, _)) = group_target(sh, &kind, id) {
-            sh.delete_group(gid);
-            return Ok(Json::Null);
+        if let Some((gid, r)) = group_target(sh, &kind, id) {
+            if !member {
+                sh.delete_group(gid);
+                return Ok(Json::Null);
+            }
+            sh.remove_from_group(r);
+            if let DrawingRef::Group(g) = r {
+                sh.delete_group(g);
+            }
         }
         match kind.as_str() {
             "chart" => sh.charts.retain(|c| c.id != id),

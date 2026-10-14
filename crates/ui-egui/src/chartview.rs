@@ -514,7 +514,8 @@ fn selection_frame(p: &Painter, r: Rect) {
 /// The topmost object under `p`: (kind, id, rect). A grouped object is hit as its outermost
 /// group (`"group"`, the group's id and box), as clicking one selects the group in Excel.
 pub fn hit(app: &SheetApp, geo: &Geo, sh: &Sheet, p: Pos2) -> Option<(&'static str, u32, Rect)> {
-    let (kind, id, r) = hit_object(app, geo, sh, p)?;
+    let _ = app;
+    let (kind, id, r) = hit_object(geo, sh, p)?;
     let member = match kind {
         "chart" => DrawingRef::Chart(id),
         "image" => DrawingRef::Image(id),
@@ -527,8 +528,8 @@ pub fn hit(app: &SheetApp, geo: &Geo, sh: &Sheet, p: Pos2) -> Option<(&'static s
     }
 }
 
-fn hit_object(app: &SheetApp, geo: &Geo, sh: &Sheet, p: Pos2) -> Option<(&'static str, u32, Rect)> {
-    let _ = app;
+/// The topmost object under `p`, a grouped one as itself: (kind, id, rect).
+pub fn hit_object(geo: &Geo, sh: &Sheet, p: Pos2) -> Option<(&'static str, u32, Rect)> {
     for sl in sh.slicers.iter().rev() {
         let r = anchor_rect(geo, sh, &sl.anchor);
         if r.contains(p) && geo.cells.contains(p) {

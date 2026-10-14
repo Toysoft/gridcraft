@@ -1882,11 +1882,12 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
             return;
         }
         if app.session.draw_tool == "eraser" && (primary_clicked || resp.dragged()) {
+            // The eraser rubs out the stroke itself, grouped or not; the rest of a group stays.
             if let Some(p) = pos
-                && let Some(("shape", id, _)) = crate::chartview::hit(app, geo, sh, p)
+                && let Some(("shape", id, _)) = crate::chartview::hit_object(geo, sh, p)
                 && sh.shapes.iter().any(|s| s.id == id && s.kind == gridcraft_engine::model::ShapeKind::Ink)
             {
-                let _ = app.run("object.delete", json!({"kind": "shape", "id": id}));
+                let _ = app.run("object.delete", json!({"kind": "shape", "id": id, "member": true}));
             }
             return;
         }

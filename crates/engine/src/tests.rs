@@ -2706,6 +2706,76 @@ fn object_commands_on_a_grouped_member_act_on_the_group() {
     assert_eq!(after, (down_right(before.0), down_right(before.1), down_right(before.2), down_right(before.3)));
 }
 
+/// Groups `members` on sheet 0 as one group with the anchor of the first image; returns its id.
+fn group_objects(s: &mut Session, members: Vec<gridcraft_model::DrawingRef>) -> u32 {
+    let d = s.doc_mut().unwrap();
+    let wb = std::sync::Arc::make_mut(&mut d.wb);
+    let id = wb.next_object_id();
+    let sh = wb.sheet_mut(0).unwrap();
+    let anchor = sh.images[0].anchor;
+    sh.groups.push(gridcraft_model::DrawingGroup {
+        id,
+        name: format!("Group {id}"),
+        anchor,
+        child_offset: (0, 0),
+        child_extent: (100, 100),
+        flip: (false, false),
+        rotation: 0,
+        member_rotations: Vec::new(),
+        members,
+    });
+    id
+}
+
+/// Moving a grouped member past column A or row 1 stops the whole group at the sheet's edge:
+/// the other members keep their places relative to it, rather than piling up on the edge.
+#[test]
+fn moving_a_grouped_member_past_the_sheet_edge_keeps_the_group_together() {
+    use gridcraft_model::{AnchorMode, DrawingRef};
+    let mut s = s();
+    let a = add_image(&mut s, "B3", AnchorMode::MoveAndSize);
+    let b = add_image(&mut s, "D3", AnchorMode::MoveAndSize);
+    group_objects(&mut s, vec![DrawingRef::Image(a), DrawingRef::Image(b)]);
+    let pos = |s: &Session, id: u32| {
+        let r = s.doc().unwrap().wb.active().unwrap().drawing_rect(DrawingRef::Image(id)).unwrap();
+        (r.x, r.y)
+    };
+    let (a0, b0) = (pos(&s, a), pos(&s, b));
+    // B goes 192 px left and 100 px up: A would land left of column A and both above row 1.
+    s.execute("object.move", json!({"kind": "image", "id": b, "at": "A3", "dx": 0, "dy": -100})).unwrap();
+    let (a1, b1) = (pos(&s, a), pos(&s, b));
+    assert_eq!((a1.0, a1.1, b1.1), (0.0, 0.0, 0.0), "{a1:?} {b1:?}");
+    assert_eq!(b1.0 - a1.0, b0.0 - a0.0);
+    // Moved back, both are where they started.
+    s.execute("object.move", json!({"kind": "image", "id": b, "at": "D3", "dx": 0, "dy": 0})).unwrap();
+    assert_eq!((pos(&s, a), pos(&s, b)), (a0, b0));
+}
+
+/// `object.delete` with `member: true` (the eraser on a grouped ink stroke) deletes only that
+/// object: the rest of its group stays grouped, and a group left empty goes with it.
+#[test]
+fn deleting_one_member_of_a_group_leaves_the_rest_grouped() {
+    use gridcraft_model::{AnchorMode, DrawingRef};
+    let mut s = s();
+    let a = add_image(&mut s, "B3", AnchorMode::MoveAndSize);
+    let stroke = s.execute("draw.stroke", json!({"points": [[300, 100], [340, 130]]})).unwrap()["shape"].as_u64().unwrap() as u32;
+    let other = s.execute("draw.stroke", json!({"points": [[400, 100], [440, 130]]})).unwrap()["shape"].as_u64().unwrap() as u32;
+    let inner = group_objects(&mut s, vec![DrawingRef::Shape(stroke)]);
+    let outer = group_objects(&mut s, vec![DrawingRef::Image(a), DrawingRef::Group(inner), DrawingRef::Shape(other)]);
+    s.execute("object.delete", json!({"kind": "shape", "id": stroke, "member": true})).unwrap();
+    {
+        let sh = s.doc().unwrap().wb.active().unwrap();
+        assert_eq!(sh.shapes.iter().map(|x| x.id).collect::<Vec<_>>(), vec![other]);
+        assert_eq!(sh.images.len(), 1);
+        assert_eq!(sh.groups.iter().map(|g| g.id).collect::<Vec<_>>(), vec![outer]);
+        assert_eq!(sh.groups[0].members, vec![DrawingRef::Image(a), DrawingRef::Shape(other)]);
+    }
+    s.execute("edit.undo", json!({})).unwrap();
+    let sh = s.doc().unwrap().wb.active().unwrap();
+    assert_eq!((sh.shapes.len(), sh.groups.len()), (2, 2));
+    assert_eq!(sh.outer_group(DrawingRef::Shape(stroke)), Some(outer));
+}
+
 /// A sort moves only objects anchored inside the sorted block on both axes: a picture beside
 /// the block (same rows, other columns) stays where it is.
 #[test]

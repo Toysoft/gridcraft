@@ -175,20 +175,33 @@ impl Sheet {
         out
     }
 
-    /// Moves and sizes group `id` with everything in it by the map taking `from` onto `to`.
-    pub fn transform_group(&mut self, id: u32, from: ObjectRect, to: ObjectRect) {
+    /// Moves and sizes group `id` with everything in it by the map taking `from` onto `to`. A
+    /// map that would put any of it left of column A or above row 1 is shifted so the group
+    /// stops at the sheet's edge, as each object's anchor can't start off the sheet: moved there
+    /// one by one, they would pile up on the edge.
+    pub fn transform_group(&mut self, id: u32, from: ObjectRect, mut to: ObjectRect) {
         let mut groups = vec![id];
+        let mut leaves = Vec::new();
         for r in self.group_contents(id) {
             match r {
                 DrawingRef::Group(g) if !groups.contains(&g) => groups.push(g),
                 DrawingRef::Group(_) => {}
                 leaf => {
-                    let Some(a) = self.object_anchor(leaf) else { continue };
-                    let na = self.rect_anchor(map_rect(from, to, self.anchor_rect(&a)), a.mode);
-                    if let Some(slot) = self.object_anchor_mut(leaf) {
-                        *slot = na;
+                    if let Some(a) = self.object_anchor(leaf) {
+                        leaves.push((leaf, a));
                     }
                 }
+            }
+        }
+        let boxes = groups.iter().filter_map(|&g| self.drawing_group(g).map(|g| g.anchor)).chain(leaves.iter().map(|&(_, a)| a));
+        if let Some(all) = boxes.map(|a| map_rect(from, to, self.anchor_rect(&a))).reduce(ObjectRect::union) {
+            to.x -= all.x.min(0.0);
+            to.y -= all.y.min(0.0);
+        }
+        for (leaf, a) in leaves {
+            let na = self.rect_anchor(map_rect(from, to, self.anchor_rect(&a)), a.mode);
+            if let Some(slot) = self.object_anchor_mut(leaf) {
+                *slot = na;
             }
         }
         for gid in groups {
@@ -223,6 +236,29 @@ impl Sheet {
         self.groups.retain(|g| g.id != id && !has(DrawingRef::Group(g.id)));
         for g in &mut self.groups {
             g.members.retain(|m| *m != DrawingRef::Group(id));
+        }
+    }
+
+    /// Takes `r` out of the groups holding it, leaving the rest of each group grouped (Excel
+    /// deleting one member of a group). A group left empty is taken out of its own group and
+    /// dropped in turn.
+    pub fn remove_from_group(&mut self, r: DrawingRef) {
+        let mut pending = vec![r];
+        while let Some(cur) = pending.pop() {
+            for g in &mut self.groups {
+                if g.members.contains(&cur) {
+                    g.members.retain(|m| *m != cur);
+                    g.member_rotations.retain(|(m, _)| *m != cur);
+                    if g.members.is_empty() {
+                        pending.push(DrawingRef::Group(g.id));
+                    }
+                }
+            }
+            if let DrawingRef::Group(id) = cur
+                && cur != r
+            {
+                self.groups.retain(|g| g.id != id);
+            }
         }
     }
 
