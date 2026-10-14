@@ -421,6 +421,96 @@ fn kept_values_of_uncalculable_linked_names_give_way_when_a_structural_edit_chan
     assert_eq!(v(&s, "J12"), Value::Error(gridcraft_core::CellError::Ref));
 }
 
+/// A session as read from a file whose link saved the name `Broken` as #REF!: `cells` are
+/// (cell, input, saved value of a formula), `names` (name, refers to).
+fn kept_value_session(cells: &[(&str, &str, f64)], names: &[(&str, &str)]) -> Session {
+    let mut s = s();
+    let wb = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb);
+    let linked = vec![gridcraft_model::ExternalName { name: "Broken".into(), sheet: None, refers_to: "#REF!".into() }];
+    wb.external_books = vec![gridcraft_model::ExternalBook { names: linked, ..Default::default() }].into();
+    for (name, refers_to) in names {
+        let formula = refers_to.to_string();
+        wb.names.push(gridcraft_model::DefinedName { name: name.to_string(), scope: None, formula, comment: String::new(), hidden: false });
+    }
+    for (at, input, saved) in cells {
+        let cell = if let Some(f) = input.strip_prefix('=') {
+            let mut cell = gridcraft_model::Cell::formula(gridcraft_model::Formula::new(f));
+            cell.value = Value::Number(*saved);
+            cell
+        } else {
+            gridcraft_model::Cell::value(Value::Number(input.parse().unwrap()))
+        };
+        wb.sheet_mut(0).unwrap().cells.set(CellRef::parse(at).unwrap(), cell);
+    }
+    // Calculated as on loading: the formulas over `Broken` keep their saved values.
+    let d = s.doc_mut().unwrap();
+    let mut wb = (*d.wb).clone();
+    d.calc.recalc_all(&mut wb);
+    d.wb = std::sync::Arc::new(wb);
+    s
+}
+
+#[test]
+fn kept_values_give_way_when_a_name_indirect_or_a_chain_through_a_name_reads_the_changed_cell() {
+    let mut s = kept_value_session(
+        &[
+            ("A20", "5", 0.0),
+            ("D22", "=[1]!Broken+X", 25.0),
+            ("D23", "=[1]!Broken+INDIRECT(\"A20\")", 25.0),
+            ("B26", "=X", 5.0),
+            ("D26", "=[1]!Broken+B26", 25.0),
+            ("D27", "=[1]!Broken+Y", 9.0),
+        ],
+        &[("X", "Sheet1!$A$20"), ("Y", "Sheet1!$A$40")],
+    );
+    s.execute("cell.set", json!({"cell": "A20", "input": "-1"})).unwrap();
+    let r = Value::Error(gridcraft_core::CellError::Ref);
+    assert_eq!([v(&s, "D22"), v(&s, "D23"), v(&s, "B26"), v(&s, "D26")], [r.clone(), r.clone(), Value::Number(-1.0), r]);
+    // Y reads A40, which didn't change.
+    assert_eq!(v(&s, "D27"), Value::Number(9.0));
+}
+
+#[test]
+fn kept_values_over_indirect_give_way_on_a_structural_edit_as_on_any_edit() {
+    // What INDIRECT reads isn't known before it runs: any edit calculates it, an inserted row too.
+    let mut s = kept_value_session(&[("A20", "5", 0.0), ("D23", "=[1]!Broken+INDIRECT(\"A20\")", 25.0), ("D24", "=[1]!Broken+A20", 25.0)], &[]);
+    s.execute("home.insertRows", json!({"rows": "1:1"})).unwrap();
+    assert_eq!((v(&s, "D24"), v(&s, "D25")), (Value::Error(gridcraft_core::CellError::Ref), Value::Number(25.0)));
+}
+
+#[test]
+fn kept_values_give_way_when_a_name_they_use_is_redefined() {
+    let mut s =
+        kept_value_session(&[("A20", "5", 0.0), ("D22", "=[1]!Broken+X", 25.0), ("D23", "=[1]!Broken+Y", 9.0)], &[("X", "Sheet1!$A$20"), ("Y", "7")]);
+    s.execute("formulas.defineName", json!({"name": "X", "refersTo": "=7", "oldName": "X"})).unwrap();
+    assert_eq!((v(&s, "D22"), v(&s, "D23")), (Value::Error(gridcraft_core::CellError::Ref), Value::Number(9.0)));
+}
+
+#[test]
+fn kept_values_give_way_when_a_deleted_row_changes_a_formula_or_a_name_they_read() {
+    let r = Value::Error(gridcraft_core::CellError::Ref);
+    // A deleted row turns B25 `=A20` into `=#REF!`: D24 reads it. Then one turns `Z` into #REF!.
+    let mut s = kept_value_session(
+        &[
+            ("A20", "5", 0.0),
+            ("B25", "=A20", 5.0),
+            ("D25", "=[1]!Broken+B25", 25.0),
+            ("A50", "1", 0.0),
+            ("D30", "=[1]!Broken+Z", 9.0),
+            ("D31", "=[1]!Broken+B32", 4.0),
+        ],
+        &[("Z", "Sheet1!$A$50")],
+    );
+    s.execute("home.deleteRows", json!({"rows": "20:20"})).unwrap();
+    assert_eq!(v(&s, "D24"), r.clone());
+    // D30 (now D29) `=[1]!Broken+Z` reads A49 now: moved, not changed.
+    assert_eq!(v(&s, "D29"), Value::Number(9.0));
+    s.execute("home.deleteRows", json!({"rows": "49:49"})).unwrap();
+    assert_eq!(v(&s, "D29"), r);
+    // D30 `=[1]!Broken+B31` read nothing that changed.
+    assert_eq!(v(&s, "D30"), Value::Number(4.0));
+}
+
 #[test]
 fn undo_redo() {
     let mut s = s();

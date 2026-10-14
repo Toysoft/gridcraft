@@ -2022,6 +2022,85 @@ pub fn precedents(wb: &Workbook, sheet: usize, e: &Expr) -> (Vec<Area>, bool) {
     (out, dynamic)
 }
 
+/// What a formula can read in this workbook besides its static references ([`precedents`]):
+/// the targets of the local names it uses, through other names too, and the tables it refers
+/// to. `names` lists those names. `None` when that isn't known without evaluating it:
+/// INDIRECT, OFFSET, CELL, INFO, a SUMIF whose criteria range isn't a reference, or a name
+/// with relative references.
+pub struct DynamicReads {
+    pub areas: Vec<Area>,
+    pub names: Vec<String>,
+}
+
+pub fn dynamic_reads(wb: &Workbook, sheet: usize, e: &Expr) -> Option<DynamicReads> {
+    let mut out = DynamicReads { areas: Vec::new(), names: Vec::new() };
+    collect_dynamic_reads(wb, sheet, e, &mut out, 0).then_some(out)
+}
+
+fn collect_dynamic_reads(wb: &Workbook, sheet: usize, e: &Expr, out: &mut DynamicReads, depth: usize) -> bool {
+    if depth > 32 {
+        return false;
+    }
+    let mut known = true;
+    let tables = |out: &mut DynamicReads, si: usize, ti: usize| {
+        if let Some(t) = wb.sheet(si).and_then(|s| s.tables.get(ti)) {
+            out.areas.push(Area { sheet: si, range: t.range });
+        }
+    };
+    let name = |out: &mut DynamicReads, n: &str| -> bool {
+        let (scope_sheet, bare) = match n.split_once('!') {
+            Some((s, b)) => match wb.sheet_index(s.trim_matches('\'')) {
+                Some(i) => (i, b),
+                None => return true,
+            },
+            None => (sheet, n),
+        };
+        if out.names.iter().any(|x| x.eq_ignore_ascii_case(bare)) {
+            return true;
+        }
+        out.names.push(bare.to_string());
+        if let Some(def) = wb.name(bare, scope_sheet) {
+            let scope = def.scope.unwrap_or(sheet);
+            return match gridcraft_formula::parse(&def.formula) {
+                Ok(expr) if !gridcraft_formula::adjust::has_relative_refs(&expr) => {
+                    out.areas.extend(precedents(wb, scope, &expr).0);
+                    collect_dynamic_reads(wb, scope, &expr, out, depth + 1)
+                }
+                Ok(_) => false,
+                Err(_) => true,
+            };
+        }
+        if let Some((si, ti)) = wb.table(bare) {
+            tables(out, si, ti);
+        }
+        // Otherwise a LET or LAMBDA variable, or a name nothing defines.
+        true
+    };
+    e.walk(&mut |x| match x {
+        Expr::Name(n) if external_name(n).is_none() => known &= name(out, n),
+        Expr::Struct(s) if s.table.is_empty() => {
+            for ti in 0..wb.sheet(sheet).map_or(0, |s| s.tables.len()) {
+                tables(out, sheet, ti);
+            }
+        }
+        Expr::Struct(s) => {
+            if let Some((si, ti)) = wb.table(&s.table) {
+                tables(out, si, ti);
+            }
+        }
+        Expr::Call(n, _) if matches!(n.as_str(), "INDIRECT" | "OFFSET" | "CELL" | "INFO") => known = false,
+        Expr::Call(n, args) if resizes_sum_range(n, args.len()) => {
+            if !matches!(args.first(), Some(Expr::Ref(_))) && matches!(args.get(2), Some(Expr::Ref(_))) {
+                known = false;
+            }
+        }
+        // A function defined by a name (a LAMBDA).
+        Expr::Call(n, _) if gridcraft_functions::lookup(n).is_none() && !is_special(n) => known &= name(out, n),
+        _ => {}
+    });
+    known
+}
+
 fn is_special(n: &str) -> bool {
     matches!(
         n,

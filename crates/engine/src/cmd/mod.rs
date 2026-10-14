@@ -314,6 +314,9 @@ pub struct Ctx<'a> {
     /// The command applied sheet protection itself (row/column inserts and deletes the
     /// protection allows), so cells it shifts aren't refused as edits of locked cells.
     pub protection_checked: bool,
+    /// Names (lowercase) whose references a structural edit only moved, so they read what they
+    /// did (see `edit::rewrite_all_formulas`).
+    pub moved_names: Vec<String>,
 }
 
 pub(crate) fn edit<R>(s: &mut Session, f: impl FnOnce(&mut Ctx) -> Result<R>) -> Result<R> {
@@ -325,15 +328,49 @@ pub(crate) fn edit<R>(s: &mut Session, f: impl FnOnce(&mut Ctx) -> Result<R>) ->
     })
 }
 
+/// The defined names (lowercase) an edit added, removed or redefined, other than those whose
+/// references it only `moved`. Only needed, and only computed, for a workbook with links: a
+/// formula over a linked name that can't be calculated keeps its saved value unless what it
+/// reads changes.
+fn changed_names(old: &Workbook, new: &Workbook, moved: &[String]) -> Vec<String> {
+    if new.external_books.is_empty() || old.names == new.names {
+        return Vec::new();
+    }
+    // By name, whatever the scope: deleting a sheet renumbers the scopes after it.
+    fn group(wb: &Workbook) -> std::collections::HashMap<String, Vec<&str>> {
+        let mut m: std::collections::HashMap<String, Vec<&str>> = std::collections::HashMap::new();
+        for n in &wb.names {
+            m.entry(n.name.to_lowercase()).or_default().push(n.formula.as_str());
+        }
+        m.values_mut().for_each(|v| v.sort_unstable());
+        m
+    }
+    let (before, after) = (group(old), group(new));
+    let moved: std::collections::HashSet<&str> = moved.iter().map(String::as_str).collect();
+    let mut out: Vec<String> =
+        before.keys().chain(after.keys()).filter(|k| before.get(*k) != after.get(*k) && !moved.contains(k.as_str())).cloned().collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>) -> Result<R> {
     // `GRIDCRAFT_PROFILE` timing. Read the clock only when profiling, and never on wasm: there
     // `Instant::now` traps (`RuntimeError: unreachable`), which broke every edit in the web app.
     #[allow(clippy::disallowed_methods)]
     let t0 = if cfg!(target_arch = "wasm32") { None } else { std::env::var_os("GRIDCRAFT_PROFILE").map(|_| std::time::Instant::now()) };
     let mut sel = d.selection.clone();
-    let mut ctx = Ctx { wb: (*d.wb).clone(), changed: Vec::new(), structural: false, sel: &mut sel, fit_rows: Vec::new(), protection_checked: false };
+    let mut ctx = Ctx {
+        wb: (*d.wb).clone(),
+        changed: Vec::new(),
+        structural: false,
+        sel: &mut sel,
+        fit_rows: Vec::new(),
+        protection_checked: false,
+        moved_names: Vec::new(),
+    };
     let r = f(&mut ctx)?;
-    let Ctx { mut wb, changed, structural, mut fit_rows, protection_checked, .. } = ctx;
+    let Ctx { mut wb, changed, structural, mut fit_rows, protection_checked, moved_names, .. } = ctx;
     if !protection_checked {
         check_protection(&d.wb, &wb, &d.unlocked_ranges)?;
     }
@@ -347,7 +384,8 @@ pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>)
         eprintln!("commit: edit {:?}, {} changed", t0.elapsed(), changed.len());
     }
     if structural {
-        d.calc.recalc_all_after_edit(&mut wb, &changed);
+        let names = changed_names(&d.wb, &wb, &moved_names);
+        d.calc.recalc_all_after_edit(&mut wb, &changed, &names);
     } else if !changed.is_empty() {
         d.calc.cells_changed(&mut wb, &changed);
     }

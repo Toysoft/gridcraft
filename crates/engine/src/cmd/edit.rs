@@ -1297,7 +1297,9 @@ fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
             } else {
                 gridcraft_formula::adjust::Edit::MoveToSheet { from: src, to_sheet: dest_name, to_row: at.row, to_col: at.col }
             };
-            rewrite_all_formulas(&mut cx.wb, &src_sheet_name, &e);
+            let (forgotten, moved) = rewrite_all_formulas(&mut cx.wb, &src_sheet_name, &e);
+            cx.changed.extend(forgotten);
+            cx.moved_names.extend(moved);
             cx.structural = true;
         }
         let end = at.offset_clamped((tiles_r * h) as i64 - 1, (tiles_c * w) as i64 - 1);
@@ -1328,14 +1330,22 @@ fn reads_differently(old: &gridcraft_formula::Expr, new: &gridcraft_formula::Exp
 
 /// A formula whose references a structural edit changed no longer shows its value: clearing it
 /// means a formula over a linked name that can't be calculated is calculated again, rather than
-/// keeping the value it had (see `Calc::recalc_all_after_edit`).
+/// keeping the value it had, and the edit counts it as changed for the formulas that read it
+/// (see `Calc::recalc_all_after_edit`).
 pub(crate) fn forget_value(cell: &mut Cell) {
     cell.value = Value::Empty;
 }
 
 /// Applies a reference adjustment to every cell formula and defined name in the workbook.
-pub(crate) fn rewrite_all_formulas(wb: &mut gridcraft_model::Workbook, target: &str, e: &gridcraft_formula::adjust::Edit) {
+/// Returns the formulas that now read other cells (their values are cleared, see
+/// [`forget_value`]), and the names whose references only moved (lowercase).
+pub(crate) fn rewrite_all_formulas(
+    wb: &mut gridcraft_model::Workbook,
+    target: &str,
+    e: &gridcraft_formula::adjust::Edit,
+) -> (Vec<(usize, CellRef)>, Vec<String>) {
     use gridcraft_formula::adjust::Edit;
+    let mut forgotten = Vec::new();
     // Rows and columns inserted or deleted on the target sheet move its legacy array ranges too
     // (a cut moves its arrays itself).
     let moves_arrays = matches!(e, Edit::Insert { .. } | Edit::Delete { .. } | Edit::InsertCells { .. } | Edit::DeleteCells { .. });
@@ -1361,6 +1371,7 @@ pub(crate) fn rewrite_all_formulas(wb: &mut gridcraft_model::Workbook, target: &
             {
                 if reads_differently(&old, &new) {
                     forget_value(cell);
+                    forgotten.push((si, c));
                 }
                 let mut nf = f.rewritten(new);
                 nf.array = array;
@@ -1368,13 +1379,19 @@ pub(crate) fn rewrite_all_formulas(wb: &mut gridcraft_model::Workbook, target: &
             }
         }
     }
+    let mut moved = Vec::new();
     for n in wb.names.iter_mut() {
         if let Ok(expr) = gridcraft_formula::parse(&n.formula) {
             // Names are workbook-level: unqualified refs don't occur; qualified ones adjust.
-            let new = gridcraft_formula::adjust::adjust(expr, "\u{0}", target, e);
-            n.formula = gridcraft_formula::print(&new);
+            let new = gridcraft_formula::adjust::adjust(expr.clone(), "\u{0}", target, e);
+            let text = gridcraft_formula::print(&new);
+            if text != n.formula && !reads_differently(&expr, &new) {
+                moved.push(n.name.to_lowercase());
+            }
+            n.formula = text;
         }
     }
+    (forgotten, moved)
 }
 
 // ---------------------------------------------------------------- clear

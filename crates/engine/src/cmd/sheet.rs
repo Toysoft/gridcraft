@@ -214,8 +214,13 @@ fn shift_sheet_features(sh: &mut Sheet, axis: Axis, at: u32, count: u32, insert:
 }
 
 /// Rewrites every formula reference (and chart series) for a structural edit on `target`.
-fn rewrite(wb: &mut gridcraft_model::Workbook, target: &str, e: &Edit) {
-    super::edit::rewrite_all_formulas(wb, target, e);
+/// Formulas that now read other cells count as changed, and names whose references only moved
+/// don't (see `edit::rewrite_all_formulas`).
+fn rewrite(cx: &mut Ctx, target: &str, e: &Edit) {
+    let (forgotten, moved) = super::edit::rewrite_all_formulas(&mut cx.wb, target, e);
+    cx.changed.extend(forgotten);
+    cx.moved_names.extend(moved);
+    let wb = &mut cx.wb;
     for si in 0..wb.sheets.len() {
         let host = wb.sheets.get(si).map(|s| s.name.clone()).unwrap_or_default();
         let Some(sh) = wb.sheet_mut(si) else { continue };
@@ -284,7 +289,7 @@ fn insert_lines(s: &mut Session, p: &Json, axis: Axis) -> Result<Json> {
                 }
             }
         }
-        rewrite(&mut cx.wb, &name, &Edit::Insert { axis, at, count });
+        rewrite(cx, &name, &Edit::Insert { axis, at, count });
         cx.structural = true;
         Ok(Json::Null)
     })?;
@@ -349,7 +354,7 @@ fn delete_lines(s: &mut Session, p: &Json, axis: Axis) -> Result<Json> {
                 }
                 shift_sheet_features(sh, axis, at, count, false);
             }
-            rewrite(&mut cx.wb, &name, &Edit::Delete { axis, at, count });
+            rewrite(cx, &name, &Edit::Delete { axis, at, count });
         }
         cx.structural = true;
         Ok(Json::Null)
@@ -399,7 +404,7 @@ fn move_columns(s: &mut Session, p: &Json) -> Result<Json> {
             sh.cells.shift_cols(before, count as i64);
             shift_sheet_features(sh, Axis::Cols, before, count, true);
         }
-        rewrite(&mut cx.wb, &name, &Edit::Insert { axis: Axis::Cols, at: before, count });
+        rewrite(cx, &name, &Edit::Insert { axis: Axis::Cols, at: before, count });
 
         let mut touched = Vec::new();
         {
@@ -437,14 +442,14 @@ fn move_columns(s: &mut Session, p: &Json) -> Result<Json> {
         for cell in touched {
             cx.touch(sheet, cell);
         }
-        rewrite(&mut cx.wb, &name, &Edit::Move { from: source, to_row: 0, to_col: destination });
+        rewrite(cx, &name, &Edit::Move { from: source, to_row: 0, to_col: destination });
 
         {
             let sh = cx.sheet_mut(sheet)?;
             sh.cells.shift_cols(delete_at + count, -(count as i64));
             shift_sheet_features(sh, Axis::Cols, delete_at, count, false);
         }
-        rewrite(&mut cx.wb, &name, &Edit::Delete { axis: Axis::Cols, at: delete_at, count });
+        rewrite(cx, &name, &Edit::Delete { axis: Axis::Cols, at: delete_at, count });
         *cx.sel = crate::Selection {
             active: CellRef::new(active_row, final_start),
             anchor: CellRef::new(active_row, final_start),
@@ -480,7 +485,7 @@ fn insert_cells(s: &mut Session, p: &Json) -> Result<Json> {
         }
         shift_cell_features(sh, &e);
         let name = cx.wb.sheet(sheet).map(|s| s.name.clone()).unwrap_or_default();
-        rewrite(&mut cx.wb, &name, &e);
+        rewrite(cx, &name, &e);
         cx.structural = true;
         Ok(Json::Null)
     })?;
@@ -515,7 +520,7 @@ fn delete_cells(s: &mut Session, p: &Json) -> Result<Json> {
             shift_cell_features(sh, &e);
         }
         // References into the deleted cells become #REF!; the rest move.
-        rewrite(&mut cx.wb, &name, &e);
+        rewrite(cx, &name, &e);
         cx.structural = true;
         Ok(Json::Null)
     })?;
@@ -736,6 +741,7 @@ fn delete_sheet(s: &mut Session, p: &Json) -> Result<Json> {
                         // A reference into the deleted sheet reads something else now.
                         if ne != *e {
                             super::edit::forget_value(cell);
+                            cx.changed.push((si, c));
                         }
                         cell.formula = Some(Arc::new(f.rewritten(ne)));
                     }
@@ -813,6 +819,8 @@ fn rename_sheet(s: &mut Session, p: &Json) -> Result<Json> {
         }
         for n in cx.wb.names.iter_mut() {
             if let Ok(e) = gridcraft_formula::parse(&n.formula) {
+                // The same cells, under the sheet's new name.
+                cx.moved_names.push(n.name.to_lowercase());
                 n.formula = gridcraft_formula::print(&gridcraft_formula::adjust::rename_sheet(e, &old, &name));
             }
         }

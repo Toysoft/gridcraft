@@ -852,16 +852,17 @@ impl Calc {
     /// Recalculates every formula after a structural edit (rows, columns, sheets, sorting, names,
     /// row heights…): as [`Calc::recalc_all`], except that a formula over something uncalculable
     /// in a linked workbook is calculated, rather than keeping its value, when it reads one of the
-    /// `changed` cells (where they are after the edit), directly or through other formulas (see
-    /// `PassHost::reached`). Edits that change nothing it reads keep its value.
-    pub fn recalc_all_after_edit(&mut self, wb: &mut Workbook, changed: &[Key]) {
-        self.recalc_every_formula(wb, Some(changed));
+    /// `changed` cells (where they are after the edit) or uses one of the `changed_names`,
+    /// directly or through other formulas, names and tables, or uses INDIRECT or OFFSET (see
+    /// [`Calc::kept_value_readers`]). Edits that change nothing it reads keep its value.
+    pub fn recalc_all_after_edit(&mut self, wb: &mut Workbook, changed: &[Key], changed_names: &[String]) {
+        self.recalc_every_formula(wb, Some((changed, changed_names)));
     }
 
-    /// `changed`: the cells a structural edit changed, `None` for F9 and loading.
-    fn recalc_every_formula(&mut self, wb: &mut Workbook, changed: Option<&[Key]>) {
+    /// `changed`: the cells and names a structural edit changed, `None` for F9 and loading.
+    fn recalc_every_formula(&mut self, wb: &mut Workbook, changed: Option<(&[Key], &[String])>) {
         self.rebuild(wb);
-        let reached = changed.map(|c| self.readers(c));
+        let reached = changed.map(|(c, names)| self.kept_value_readers(wb, c, names));
         // Spills are laid out again from the formulas where they are now (a structural edit moves
         // or deletes the formulas, not the values they spilled).
         for i in 0..wb.sheets.len() {
@@ -955,7 +956,7 @@ impl Calc {
             seeds.extend(r.iter().map(|c| (*si, c)));
         }
         let t0 = prof_now();
-        let reached = self.readers(&seeds);
+        let reached = self.kept_value_readers(wb, &seeds, &[]);
         let dirty = self.dirty_closure_from(&reached, &seeds);
         let t1 = prof_now();
         let n = dirty.len();
@@ -994,6 +995,63 @@ impl Calc {
             }
         }
         seen
+    }
+
+    /// The formulas whose saved value gives way to a calculation after an edit that changed
+    /// `seeds` and the names `names` (see `PassHost::reached`): the [`Calc::readers`] of the
+    /// seeds, and formulas that read one of them, or a changed name, through a local name or a
+    /// table (see [`crate::eval::dynamic_reads`]), with their own readers. A formula over
+    /// INDIRECT, OFFSET, CELL or INFO is calculated after any edit, a structural one that changed
+    /// no cell (an inserted row) too, as Excel recalculates those functions each time.
+    fn kept_value_readers(&self, wb: &Workbook, seeds: &[Key], names: &[String]) -> HashSet<Key> {
+        let mut seen = self.readers(seeds);
+        // Only formulas over a linked workbook keep a saved value.
+        if wb.external_books.is_empty() {
+            return seen;
+        }
+        let mut pending: Vec<(Key, Option<crate::eval::DynamicReads>)> = self
+            .graph
+            .dynamic
+            .iter()
+            .filter(|k| !seen.contains(*k))
+            .filter_map(|&k| {
+                let expr = wb.sheet(k.0)?.cell(k.1)?.formula.as_ref()?.expr_arc()?;
+                Some((k, crate::eval::dynamic_reads(wb, k.0, &expr)))
+            })
+            .collect();
+        // Changed cells, and formulas that will be calculated, by (sheet, column, row).
+        let mut marks: BTreeSet<(usize, u32, u32)> = seeds.iter().chain(seen.iter()).map(|(s, c)| (*s, c.col, c.row)).collect();
+        let hit = |marks: &BTreeSet<(usize, u32, u32)>, a: &Area| {
+            let (r, s) = (a.range, a.sheet);
+            if (r.width() as usize) <= 64 {
+                (r.start.col..=r.end.col).any(|col| marks.range((s, col, r.start.row)..=(s, col, r.end.row)).next().is_some())
+            } else {
+                marks.range((s, r.start.col, 0)..=(s, r.end.col, u32::MAX)).any(|(_, col, row)| r.contains(CellRef::new(*row, *col)))
+            }
+        };
+        loop {
+            let mut found = Vec::new();
+            pending.retain(|(k, reads)| {
+                let reads_changed = match reads {
+                    None => true,
+                    Some(r) => r.names.iter().any(|n| names.iter().any(|c| c.eq_ignore_ascii_case(n))) || r.areas.iter().any(|a| hit(&marks, a)),
+                };
+                if reads_changed {
+                    found.push(*k);
+                }
+                !reads_changed
+            });
+            if found.is_empty() {
+                return seen;
+            }
+            let more = self.readers(&found);
+            for k in found.into_iter().chain(more) {
+                if seen.insert(k) {
+                    marks.insert((k.0, k.1.col, k.1.row));
+                }
+            }
+            pending.retain(|(k, _)| !seen.contains(k));
+        }
     }
 
     /// What a change to `seeds` recalculates: the seeds' own formulas, their `readers`, and every
