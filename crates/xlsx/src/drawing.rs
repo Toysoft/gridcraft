@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use gridcraft_core::{CellRef, MAX_COLS, MAX_ROWS};
 use gridcraft_model::{
     Anchor, AnchorMode, Color, DrawingGroup, DrawingRef, Image, MAX_GROUP_DEPTH, ObjectRect, Shape, ShapeFormat, ShapeKind, ShapeTextAlign,
-    ShapeTextAnchor, Sheet, Theme,
+    ShapeTextAnchor, Sheet, Theme, rotates,
 };
 
 use crate::IoError;
@@ -161,11 +161,6 @@ fn xfrm_flip(xf: Option<&El>) -> (bool, bool) {
 /// The rotation (`rot`, 60000ths of a degree) of an `a:xfrm`.
 fn xfrm_rot(xf: Option<&El>) -> i64 {
     xf.and_then(|x| x.attr_i64("rot")).unwrap_or(0)
-}
-
-/// Whether a rotation turns an object at all.
-fn rotated(rot: i64) -> bool {
-    rot % 21_600_000 != 0
 }
 
 /// Whether a rotation turns an object about a quarter (45° up to 135°, or 225° up to 315°):
@@ -350,10 +345,10 @@ fn read_object(cx: &mut Ctx<'_>, rels: &[Rel], sheet: &mut Sheet, obj: &El, plac
             let (child_offset, child_extent) = map.child_box();
             let flip = xfrm_flip(xf);
             let rotation = xfrm_rot(xf);
-            if rotated(rotation) {
+            if rotates(rotation) {
                 cx.warn("a rotated group was laid out without its rotation");
             }
-            if member_rotations.iter().any(|&(_, r)| rotated(r)) {
+            if member_rotations.iter().any(|&(_, r)| rotates(r)) {
                 cx.warn("a rotated picture or shape in a group is drawn without its rotation");
             }
             if flip.0 || flip.1 {
@@ -587,7 +582,7 @@ impl DrawingOut<'_> {
             self.sheet.drawing_rect_with(r, &|o| self.index.get(&o).and_then(|&i| self.objs.get(i)).map(|o| self.sheet.anchor_rect(o.anchor())));
         match r {
             DrawingRef::Group(id) => match self.sheet.drawing_group(id) {
-                Some(g) if rotated(g.rotation) => members.map(|_| self.sheet.anchor_rect(&g.anchor)),
+                Some(g) if g.rotated() => members.map(|_| self.sheet.anchor_rect(&g.anchor)),
                 _ => members,
             },
             _ => members,

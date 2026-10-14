@@ -54,6 +54,18 @@ pub struct DrawingGroup {
     pub members: Vec<DrawingRef>,
 }
 
+impl DrawingGroup {
+    /// Whether the group's rotation turns it at all.
+    pub fn rotated(&self) -> bool {
+        rotates(self.rotation)
+    }
+}
+
+/// Whether a rotation (`a:xfrm rot`, 60000ths of a degree) turns an object at all.
+pub fn rotates(rot: i64) -> bool {
+    rot % 21_600_000 != 0
+}
+
 fn is_default<T: Default + PartialEq>(v: &T) -> bool {
     *v == T::default()
 }
@@ -178,7 +190,10 @@ impl Sheet {
     /// Moves and sizes group `id` with everything in it by the map taking `from` onto `to`. A
     /// map that would put any of it left of column A or above row 1 is shifted so the group
     /// stops at the sheet's edge, as each object's anchor can't start off the sheet: moved there
-    /// one by one, they would pile up on the edge.
+    /// one by one, they would pile up on the edge. "Any of it" is its charts, pictures and
+    /// shapes and the own boxes of rotated groups, which are saved; an unrotated group's own box
+    /// only fixes its child space, and is wider than its members once one was erased or dropped
+    /// on open.
     pub fn transform_group(&mut self, id: u32, from: ObjectRect, mut to: ObjectRect) {
         let mut groups = vec![id];
         let mut leaves = Vec::new();
@@ -193,7 +208,8 @@ impl Sheet {
                 }
             }
         }
-        let boxes = groups.iter().filter_map(|&g| self.drawing_group(g).map(|g| g.anchor)).chain(leaves.iter().map(|&(_, a)| a));
+        let saved_boxes = groups.iter().filter_map(|&g| self.drawing_group(g).filter(|g| g.rotated()).map(|g| g.anchor));
+        let boxes = saved_boxes.chain(leaves.iter().map(|&(_, a)| a));
         if let Some(all) = boxes.map(|a| map_rect(from, to, self.anchor_rect(&a))).reduce(ObjectRect::union) {
             to.x -= all.x.min(0.0);
             to.y -= all.y.min(0.0);
@@ -363,5 +379,27 @@ mod tests {
         let r = sh.drawing_rect_with(DrawingRef::Group(4), &leaf).unwrap_or_default();
         assert_eq!((r.x, r.y, r.w, r.h), (100.0, 50.0, 70.0, 30.0));
         assert_eq!(sh.group_anchor(5).map(|a| sh.anchor_rect(&a).w), Some(20.0));
+    }
+
+    #[test]
+    fn only_a_rotated_groups_own_box_stops_it_at_the_sheet_edge() {
+        // The inner group's stored box reaches 80 px left of its members (one was erased, or
+        // a SmartArt member dropped on open): moved left by 120, the members still reach x 0.
+        let mut sh = sheet_with_nested_group();
+        let stale = sh.rect_anchor(ObjectRect { x: 70.0, y: 70.0, w: 150.0, h: 30.0 }, AnchorMode::MoveOnly);
+        if let Some(g) = sh.groups.iter_mut().find(|g| g.id == 5) {
+            g.anchor = stale;
+        }
+        let r = sh.drawing_rect(DrawingRef::Group(4)).unwrap_or_default();
+        sh.transform_group(4, r, ObjectRect { x: r.x - 120.0, ..r });
+        assert_eq!(sh.drawing_rect(DrawingRef::Group(4)).map(|r| r.x), Some(0.0));
+        // A rotated group is saved with its own box, so that box stops it at the edge.
+        let mut sh = sheet_with_nested_group();
+        if let Some(g) = sh.groups.iter_mut().find(|g| g.id == 5) {
+            (g.anchor, g.rotation) = (stale, 5_400_000);
+        }
+        sh.transform_group(4, r, ObjectRect { x: r.x - 120.0, ..r });
+        assert_eq!(sh.drawing_rect(DrawingRef::Group(4)).map(|r| r.x), Some(30.0));
+        assert_eq!(sh.drawing_group(5).map(|g| sh.anchor_rect(&g.anchor).x), Some(0.0));
     }
 }

@@ -2751,6 +2751,31 @@ fn moving_a_grouped_member_past_the_sheet_edge_keeps_the_group_together() {
     assert_eq!((pos(&s, a), pos(&s, b)), (a0, b0));
 }
 
+/// After the eraser takes a member out of a group, the group's stored box (from when it was
+/// laid out) is wider than its members; that box mustn't stop the rest of the group short of
+/// column A.
+#[test]
+fn a_group_with_an_erased_member_still_reaches_the_sheet_edge() {
+    use gridcraft_model::{AnchorMode, DrawingRef};
+    let mut s = s();
+    let a = add_image(&mut s, "B3", AnchorMode::MoveAndSize);
+    let b = add_image(&mut s, "D3", AnchorMode::MoveAndSize);
+    group_objects(&mut s, vec![DrawingRef::Image(a), DrawingRef::Image(b)]);
+    s.execute("object.delete", json!({"kind": "image", "id": a, "member": true})).unwrap();
+    s.execute("object.move", json!({"kind": "image", "id": b, "at": "A1", "dx": 0, "dy": 0})).unwrap();
+    let r = s.doc().unwrap().wb.active().unwrap().drawing_rect(DrawingRef::Image(b)).unwrap();
+    assert_eq!((r.x, r.y), (0.0, 0.0));
+    // Saved and reopened, it's still there, in its group.
+    let bytes = crate::io::save_bytes(&s.doc().unwrap().wb, "g.xlsx").unwrap();
+    let (back, _) = crate::io::open_bytes("g.xlsx", &bytes).unwrap();
+    let sh = back.sheet(0).unwrap();
+    let r = sh.drawing_rect(DrawingRef::Image(sh.images[0].id)).unwrap();
+    assert_eq!((r.x, r.y, sh.groups.len()), (0.0, 0.0, 1));
+    s.execute("edit.undo", json!({})).unwrap();
+    let r = s.doc().unwrap().wb.active().unwrap().drawing_rect(DrawingRef::Image(b)).unwrap();
+    assert!(r.x > 0.0 && r.y > 0.0, "{r:?}");
+}
+
 /// `object.delete` with `member: true` (the eraser on a grouped ink stroke) deletes only that
 /// object: the rest of its group stays grouped, and a group left empty goes with it.
 #[test]
