@@ -921,16 +921,21 @@ fn written_formula(bytes: &[u8], a: &str) -> (Option<String>, Option<String>) {
     (c.child("f").map(|f| f.text.clone()), c.attr("cm").map(str::to_string))
 }
 
-/// A long operator chain is analysed in full (its ranges are intersected), and so are an
-/// Excel-legal 64-deep function nesting and a long name used several times. A legacy formula the
-/// analysis cannot finish is kept as written. Saving writes none of them as `_xlfn.SINGLE`, which
-/// pre-dynamic-array Excel shows as #NAME?, nor with `cm`, which would make them spill.
+/// A long operator chain is analysed in full (its ranges are intersected), and so are 64 nested
+/// functions with parenthesised arguments (128 levels), 200 nested functions and a long name used
+/// several times. A legacy formula the analysis cannot finish (names too large to analyse) reads
+/// with one whole-formula `@`, so it shows one value as in legacy Excel, and saves as read.
+/// Saving writes none of them as `_xlfn.SINGLE`, which pre-dynamic-array Excel shows as #NAME?,
+/// nor with `cm`. (`legacy_array_functions.rs` in the engine checks the same on a calculated
+/// workbook.)
 #[test]
 fn long_and_deeply_nested_legacy_formulas_never_gain_single() {
     let chain = (1..=70).map(|r| format!("B{r}")).collect::<Vec<_>>().join("+");
     let nested = |depth: usize, inner: &str| format!("{}{inner}{}", "ABS(".repeat(depth), ")".repeat(depth));
+    let parens = |depth: usize, inner: &str| format!("{}{inner}{}", "ABS((".repeat(depth), "))".repeat(depth));
     let big = vec!["Data!$B$1"; 399].join("+");
     let uses = format!("{}A1:A3", "Big+".repeat(6));
+    let parts = (1..=30).map(|i| format!("Part_{i}")).collect::<Vec<_>>().join("+");
     let body = format!(
         r#"<sheetData>
       <row r="1"><c r="A1"><v>1</v></c></row>
@@ -939,24 +944,33 @@ fn long_and_deeply_nested_legacy_formulas_never_gain_single() {
       <row r="4"><c r="D4"><f>{}</f></c></row>
       <row r="5"><c r="D5"><f>{uses}</f></c></row>
       <row r="6"><c r="D6"><f>{}</f></c></row>
+      <row r="7"><c r="D7"><f>{}</f></c></row>
+      <row r="8"><c r="D8"><f>{parts}</f></c></row>
     </sheetData>"#,
         nested(64, "A1:A3"),
         nested(200, "A1:A3"),
+        parens(64, "A1:A3"),
     );
-    let names = format!(r#"<definedNames><definedName name="Big">{big}</definedName></definedNames>"#);
+    let part = format!("Data!$A$1:$A$3+{}", vec!["Data!$B$1"; 599].join("+"));
+    let defs: String = (1..=30).map(|i| format!(r#"<definedName name="Part_{i}">{part}</definedName>"#)).collect();
+    let names = format!(r#"<definedNames><definedName name="Big">{big}</definedName>{defs}</definedNames>"#);
     let (wb, _) = read_xlsx(&super::minimal(&body, &[], "", &names)).unwrap();
     let text = |wb: &Workbook, a: &str| wb.sheet(0).unwrap().cell(at(a)).and_then(|c| c.formula.as_ref()).map(|f| f.text.clone()).unwrap();
     assert_eq!(text(&wb, "D2"), chain);
     assert_eq!(text(&wb, "D3"), format!("@A1:A3+{chain}"));
     assert_eq!(text(&wb, "D4"), nested(64, "@A1:A3"));
     assert_eq!(text(&wb, "D5"), format!("{}@A1:A3", "Big+".repeat(6)));
-    assert_eq!(text(&wb, "D6"), nested(200, "A1:A3"));
+    assert_eq!(text(&wb, "D6"), nested(200, "@A1:A3"));
+    assert_eq!(text(&wb, "D7"), parens(64, "@A1:A3"));
+    assert_eq!(text(&wb, "D8"), format!("@({parts})"));
     let bytes = write_xlsx(&wb).unwrap();
     assert_eq!(written_formula(&bytes, "D2"), (Some(chain.clone()), None));
     assert_eq!(written_formula(&bytes, "D3"), (Some(format!("A1:A3+{chain}")), None));
     assert_eq!(written_formula(&bytes, "D4"), (Some(nested(64, "A1:A3")), None));
     assert_eq!(written_formula(&bytes, "D5"), (Some(uses), None));
     assert_eq!(written_formula(&bytes, "D6"), (Some(nested(200, "A1:A3")), None));
+    assert_eq!(written_formula(&bytes, "D7"), (Some(parens(64, "A1:A3")), None));
+    assert_eq!(written_formula(&bytes, "D8"), (Some(parts), None));
     let (xml, _) = sheet1_xml(&bytes);
     assert!(!xml.contains("SINGLE") && !xml.contains("t=\"array\""), "{xml}");
 }
@@ -1025,8 +1039,9 @@ fn legacy_unions_in_parentheses_and_names_with_if_save_as_read() {
 }
 
 /// An implied `@` whose operand an edit has made a single cell (deleting rows under
-/// `SQRT(@A1:A3)`, redefining a name to one cell) is redundant, not a dynamic-array `@`: the
-/// formula still saves as a legacy one, without `_xlfn.SINGLE` or `cm`.
+/// `SQRT(@A1:A3)` leaves `A1:A1`, and a name's `$A$1:$A$3` becomes `$A$1:$A$1`) is the one legacy
+/// Excel implies for that range: the formula still saves as a legacy one, without
+/// `_xlfn.SINGLE` or `cm`.
 #[test]
 fn implied_intersection_made_redundant_by_an_edit_saves_legacy() {
     let body = r#"<sheetData>
@@ -1037,14 +1052,72 @@ fn implied_intersection_made_redundant_by_an_edit_saves_legacy() {
     let text = |wb: &Workbook, a: &str| wb.sheet(0).unwrap().cell(at(a)).and_then(|c| c.formula.as_ref()).map(|f| f.text.clone()).unwrap();
     assert_eq!(text(&wb, "B5"), "SQRT(@A1:A3)");
     assert_eq!(text(&wb, "C5"), "SQRT(@Rng)");
-    // What deleting rows 2:3 leaves, and the name now one cell.
+    // What deleting rows 2:3 leaves.
     wb.sheet_mut(0).unwrap().cells.set(at("B5"), Cell::formula(Formula::new("SQRT(@A1:A1)")));
-    wb.names.iter_mut().find(|n| n.name == "Rng").unwrap().formula = "Data!$A$1".into();
+    wb.names.iter_mut().find(|n| n.name == "Rng").unwrap().formula = "Data!$A$1:$A$1".into();
     let bytes = write_xlsx(&wb).unwrap();
     assert_eq!(written_formula(&bytes, "B5"), (Some("SQRT(A1:A1)".into()), None));
     assert_eq!(written_formula(&bytes, "C5"), (Some("SQRT(Rng)".into()), None));
     let (xml, _) = sheet1_xml(&bytes);
     assert!(!xml.contains("SINGLE") && !xml.contains("t=\"array\""), "{xml}");
+}
+
+/// Excel keeps an `@` that legacy evaluation does not imply as `_xlfn.SINGLE` inside a legacy
+/// formula (Excel Online's UnionSpillIntersectionOperatorTest.xlsx, EPPlus's
+/// DefinedNameRelative.xlsx): such formulas save back with it, without `cm`. The reader shows a
+/// union's implied intersection as Excel does, without `@`, and a spill reference's `@` without
+/// parentheses. A typed `@` of a single value saves the same way.
+#[test]
+fn single_in_a_legacy_formula_saves_as_read() {
+    let body = r#"<sheetData>
+      <row r="5"><c r="F5"><v>1</v></c><c r="O6"><f>_xlfn.SINGLE(SUM(_xlfn.ANCHORARRAY(F5)))</f></c><c r="J6"><f>_xlfn.ANCHORARRAY(F5)%</f></c><c r="K6"><f>_xlfn.ANCHORARRAY($F$5)</f></c></row>
+      <row r="25"><c r="F25"><v>1</v></c><c r="G25"><f>(F25,F26)%</f></c><c r="H25"><f>SUM((F25,F26)%)</f></c></row>
+      <row r="83"><c r="F83"><f>_xlfn.SINGLE(5)</f></c><c r="G83"><f>_xlfn.SINGLE(RelativeRow)</f></c><c r="H83"><f>_xlfn.SINGLE(H12)</f></c></row>
+      <row r="85"><c r="F85"><f>_xlfn.SINGLE(SUM(F25:F26))</f></c></row>
+      <row r="102"><c r="F102"><f>(F25, _xlfn.SINGLE(F26))</f></c></row>
+    </sheetData>"#;
+    let names = r#"<definedNames><definedName name="RelativeRow">Data!$H1</definedName></definedNames>"#;
+    let (mut wb, _) = read_xlsx(&super::minimal(body, &[], "", names)).unwrap();
+    let text = |wb: &Workbook, a: &str| wb.sheet(0).unwrap().cell(at(a)).and_then(|c| c.formula.as_ref()).map(|f| f.text.clone()).unwrap();
+    let shown = [
+        ("O6", "@SUM(F5#)"),
+        ("J6", "@F5#%"),
+        ("K6", "@$F$5#"),
+        ("G25", "(F25,F26)%"),
+        ("H25", "SUM((F25,F26)%)"),
+        ("F83", "@5"),
+        ("G83", "@RelativeRow"),
+        ("H83", "@H12"),
+        ("F85", "@SUM(F25:F26)"),
+        ("F102", "(F25,@F26)"),
+    ];
+    let wrong: Vec<_> = shown.iter().map(|(a, f)| (*a, *f, text(&wb, a))).filter(|(_, f, t)| t != f).collect();
+    assert!(wrong.is_empty(), "{wrong:?}");
+    let s = wb.sheet_mut(0).unwrap();
+    s.cells.set(at("B1"), Cell::formula(Formula::new("@SQRT(A1)")));
+    s.cells.set(at("B2"), Cell::formula(Formula::new("@MUNIT(3)")));
+    let bytes = write_xlsx(&wb).unwrap();
+    let saved = [
+        ("O6", "_xlfn.SINGLE(SUM(_xlfn.ANCHORARRAY(F5)))"),
+        ("J6", "_xlfn.ANCHORARRAY(F5)%"),
+        ("K6", "_xlfn.ANCHORARRAY($F$5)"),
+        ("G25", "(F25,F26)%"),
+        ("H25", "SUM((F25,F26)%)"),
+        ("F83", "_xlfn.SINGLE(5)"),
+        ("G83", "_xlfn.SINGLE(RelativeRow)"),
+        ("H83", "_xlfn.SINGLE(H12)"),
+        ("F85", "_xlfn.SINGLE(SUM(F25:F26))"),
+        ("F102", "(F25,_xlfn.SINGLE(F26))"),
+        ("B1", "_xlfn.SINGLE(SQRT(A1))"),
+        ("B2", "_xlfn.MUNIT(3)"),
+    ];
+    let wrong: Vec<_> =
+        saved.iter().map(|(a, f)| (*a, *f, written_formula(&bytes, a))).filter(|(_, f, w)| *w != (Some(f.to_string()), None)).collect();
+    assert!(wrong.is_empty(), "{wrong:?}");
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    for (a, _) in saved {
+        assert_eq!(text(&back, a), text(&wb, a), "{a}");
+    }
 }
 
 #[test]
