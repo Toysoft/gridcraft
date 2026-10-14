@@ -57,26 +57,29 @@ impl Source {
         };
         let c = self.range.start.col + off;
         let mut memo: HashMap<StyleId, bool> = HashMap::new();
-        let mut general: HashSet<u64> = HashSet::new();
         let mut dates: Vec<bool> = self
             .rows
             .iter()
             .zip(&self.record_rows)
             .map(|(rec, &row)| {
-                let Some(Value::Number(n)) = rec.get(col) else { return false };
-                let date = *memo
-                    .entry(sh.style_id(CellRef::new(row, c)))
-                    .or_insert_with_key(|id| crate::display::number_format(wb.styles.get(*id).num_fmt.as_str()).is_date());
-                if !date {
-                    general.insert(n.to_bits());
-                }
-                date
+                rec.get(col).is_some_and(Value::is_number)
+                    && *memo
+                        .entry(sh.style_id(CellRef::new(row, c)))
+                        .or_insert_with_key(|id| crate::display::number_format(wb.styles.get(*id).num_fmt.as_str()).is_date())
             })
             .collect();
+        if !dates.contains(&true) {
+            return dates;
+        }
+        let number = |rec: &Vec<Value>| match rec.get(col) {
+            Some(Value::Number(n)) => Some(n.to_bits()),
+            _ => None,
+        };
+        let general: HashSet<u64> = dates.iter().zip(&self.rows).filter(|(d, _)| !**d).filter_map(|(_, rec)| number(rec)).collect();
         if !general.is_empty() {
             for (d, rec) in dates.iter_mut().zip(&self.rows) {
-                if *d && let Some(Value::Number(n)) = rec.get(col) {
-                    *d = !general.contains(&n.to_bits());
+                if *d && number(rec).is_some_and(|n| general.contains(&n)) {
+                    *d = false;
                 }
             }
         }
