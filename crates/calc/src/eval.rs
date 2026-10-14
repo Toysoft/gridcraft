@@ -9,7 +9,7 @@ use std::sync::Arc;
 use gridcraft_core::{Array, CellError, CellRef, MAX_COLS, MAX_ROWS, RangeRef, Value, compare};
 use gridcraft_formula::{BinOp, Expr, RefKind, Reference, SheetSel, StructItem, StructRef, UnOp};
 use gridcraft_functions::{Arg, Ctx};
-use gridcraft_model::{ExternalSheet, Workbook};
+use gridcraft_model::{ExternalBook, ExternalName, ExternalSheet, Workbook};
 
 /// Largest array a reference may expand to.
 pub const MAX_CELLS: u64 = 16_000_000;
@@ -66,6 +66,11 @@ pub trait Host {
     fn random(&mut self) -> f64;
     /// Called when a volatile or dynamic-reference function is used.
     fn note_volatile(&mut self) {}
+    /// Called when a formula uses a linked workbook's name whose definition can't be calculated
+    /// from the values saved with the link (no definition, `#REF!`, or sheets, names or tables
+    /// the link didn't save). Excel keeps showing the value it saved for such a formula, since
+    /// linked values only change when the link is updated; hosts that hold that value use it.
+    fn note_unknown_link(&mut self) {}
     /// The spill range of the dynamic array anchored at `anchor` (`None`: it doesn't spill).
     fn spill_range(&mut self, sheet: usize, anchor: CellRef) -> Option<RangeRef> {
         self.workbook().sheet(sheet)?.spill_ranges.get(&anchor).copied()
@@ -209,16 +214,20 @@ impl<'h> Evaluator<'h> {
     }
 
     /// A defined name of a linked workbook (`[1]!Rates`, `[1]Prices!Rates`): what it refers to in
-    /// that workbook, read from the values saved with the link.
+    /// that workbook, read from the values saved with the link. A name the link doesn't define is
+    /// `#REF!`; one it defines but whose definition can't be read from the saved values is `#REF!`
+    /// noted to the host (see [`Host::note_unknown_link`]).
     fn external_name(&mut self, book: usize, sheet: &str, name: &str) -> Ev {
         let wb = self.host.workbook();
         let Some(b) = book.checked_sub(1).and_then(|i| wb.external_books.get(i)) else { return err(CellError::Ref) };
         let Some(def) = b.name(name, (!sheet.is_empty()).then_some(sheet)) else { return err(CellError::Ref) };
         let scope = def.sheet.and_then(|i| b.sheets.get(i)).map(|s| format!("[{book}]{}", s.name));
-        let Ok(expr) = gridcraft_formula::parse(&def.refers_to) else { return err(CellError::Ref) };
-        // Everything it names is in the linked workbook: its sheets and names. A sheet range, a
-        // sheetless reference in a workbook-level name and a table can't be read from the
-        // values saved with the link.
+        let parsed = gridcraft_formula::parse(&def.refers_to).ok().filter(|e| linked_definition_readable(b, def, e));
+        let Some(expr) = parsed else {
+            self.host.note_unknown_link();
+            return err(CellError::Ref);
+        };
+        // Everything it names is in the linked workbook: its sheets and names (checked above).
         let expr = expr.map(&mut |e| match e {
             Expr::Ref(mut r) => {
                 r.sheet = match r.sheet {
@@ -1901,6 +1910,30 @@ pub(crate) fn used_range_of(wb: &Workbook, sheet: usize) -> Option<RangeRef> {
         Some((book, s)) => wb.external_books.get(book)?.sheets.get(s)?.extent(),
         None => wb.sheet(sheet)?.used_range(),
     }
+}
+
+/// Whether a linked workbook's name `def` (parsed as `expr`) can be calculated from the values
+/// saved with the link: no `#REF!` in it, and only the link's saved sheets and names. A sheet
+/// range, a sheetless reference in a workbook-level name and a table can't be read either.
+fn linked_definition_readable(b: &ExternalBook, def: &ExternalName, expr: &Expr) -> bool {
+    let scope = def.sheet.and_then(|i| b.sheets.get(i)).map(|s| s.name.as_str());
+    let mut readable = true;
+    expr.walk(&mut |e| {
+        readable &= match e {
+            Expr::Error(CellError::Ref) | Expr::Struct(_) | Expr::LinkedRefError(_) => false,
+            Expr::Ref(r) => match &r.sheet {
+                SheetSel::Named(s) => b.sheet_index(s).is_some(),
+                SheetSel::Current => scope.is_some(),
+                SheetSel::Span(..) => false,
+            },
+            Expr::Name(n) => match n.split_once('!') {
+                Some((s, bare)) => b.name(bare, Some(s.trim_matches('\''))).is_some(),
+                None => b.name(n, scope).is_some(),
+            },
+            _ => true,
+        };
+    });
+    readable
 }
 
 /// A value read from a linked sheet's saved cells. When the last update of the link failed for

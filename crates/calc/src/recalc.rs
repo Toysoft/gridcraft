@@ -408,6 +408,9 @@ struct PassHost<'a> {
     tainted: HashSet<Key>,
     /// Whether the formula being evaluated has read a previous value.
     taint: bool,
+    /// Whether the formula being evaluated used a linked workbook's name that can't be calculated
+    /// from the link's saved values ([`Host::note_unknown_link`]).
+    unknown_link: bool,
 }
 
 impl<'a> PassHost<'a> {
@@ -431,6 +434,7 @@ impl<'a> PassHost<'a> {
             members: HashSet::default(),
             tainted: HashSet::default(),
             taint: false,
+            unknown_link: false,
         }
     }
 }
@@ -483,10 +487,13 @@ impl PassHost<'_> {
             self.stack.push(k);
         }
         let expr = std::sync::Arc::clone(expr);
+        let outer_unknown = std::mem::replace(&mut self.unknown_link, false);
         let v = {
             let mut ev = Evaluator::new(self, k.0, k.1);
             ev.value(&expr)
         };
+        // Excel keeps showing what it saved for a formula over a linked name it can't calculate.
+        let v = if std::mem::replace(&mut self.unknown_link, outer_unknown) { self.saved_value(k).unwrap_or(v) } else { v };
         // A legacy array formula fills the range it was entered in.
         let legacy = self.wb.sheet(k.0).and_then(|s| s.cell(k.1)).and_then(|c| c.formula.as_ref()).and_then(|f| f.array);
         let v = match legacy {
@@ -535,6 +542,18 @@ impl PassHost<'_> {
         };
         self.results.insert(k, v.clone());
         v
+    }
+
+    /// The value a formula showed before this pass, if any: what it was saved with, or last
+    /// calculated to. A spilled array, or a legacy array formula's range, comes back whole.
+    fn saved_value(&self, (sheet, at): Key) -> Option<Value> {
+        let sh = self.wb.sheet(sheet)?;
+        let block = sh.spill_ranges.get(&at).copied().or_else(|| sh.cell(at)?.formula.as_ref()?.array);
+        if let Some(range) = block.filter(|r| !r.is_single()) {
+            let data = range.iter().map(|c| sh.value(c)).collect();
+            return Array::new(range.height() as usize, range.width() as usize, data).map(|a| Value::Array(std::sync::Arc::new(a)));
+        }
+        Some(sh.value(at)).filter(|v| !v.is_empty())
     }
 
     /// A formula's previous value for iterative calculation: from the last iteration, else the
@@ -627,6 +646,9 @@ fn fit_to_range(v: Value, range: RangeRef) -> Value {
 impl Host for PassHost<'_> {
     fn workbook(&self) -> &Workbook {
         self.wb
+    }
+    fn note_unknown_link(&mut self) {
+        self.unknown_link = true;
     }
     fn spill_range(&mut self, sheet: usize, anchor: CellRef) -> Option<RangeRef> {
         let k = (sheet, anchor);

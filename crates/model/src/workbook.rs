@@ -111,7 +111,8 @@ pub struct ExternalName {
     pub name: String,
     /// Index into the book's `sheets` of the sheet the name is scoped to; `None` = workbook scope.
     pub sheet: Option<usize>,
-    /// What the name refers to (without `=`); its sheets are the linked workbook's.
+    /// What the name refers to (without `=`); its sheets are the linked workbook's. Empty when
+    /// the file saved the name without a definition.
     pub refers_to: String,
 }
 

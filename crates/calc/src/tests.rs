@@ -178,6 +178,64 @@ fn references_into_linked_workbooks_read_the_saved_values() {
 }
 
 #[test]
+fn linked_names_that_cannot_be_calculated_keep_their_saved_value() {
+    use gridcraft_model::{ExternalBook, ExternalName, ExternalSheet};
+    let mut t = T::new();
+    let data = ExternalSheet { name: "Data".into(), cells: vec![(c("A1"), Value::Number(7.0))], refresh_error: false };
+    let failed = ExternalSheet { name: "Failed".into(), cells: vec![], refresh_error: true };
+    let name = |name: &str, refers_to: &str| ExternalName { name: name.into(), sheet: None, refers_to: refers_to.into() };
+    let names = vec![
+        name("Broken", "#REF!"),
+        // Saved without a definition.
+        name("Blank", ""),
+        name("Span", "Data:Failed!$A$1"),
+        name("Loose", "$E$9"),
+        name("Elsewhere", "Gone!$A$1"),
+        name("Inner", "Undefined*2"),
+        name("Good", "Data!$A$1"),
+    ];
+    t.wb.external_books = vec![ExternalBook { sheets: vec![data, failed], names }].into();
+    // Cells as read from a file: the formula and the value Excel saved for it.
+    let saved = [
+        ("B1", "=[1]!Broken", Value::Number(20.0)),
+        ("B2", "=[1]!Blank", Value::text("KW")),
+        ("B3", "=[1]!Span", Value::Number(3.0)),
+        ("B4", "=[1]!Loose", Value::Number(4.0)),
+        ("B5", "=[1]!Elsewhere", Value::Number(5.0)),
+        ("B6", "=[1]!Inner+1", Value::Number(6.0)),
+        ("B7", "=[1]!Good*2", Value::Number(99.0)),
+        ("B8", "=[1]!Undefined", Value::Number(8.0)),
+        ("B9", "=[1]Failed!B1", Value::Number(9.0)),
+        ("B10", "=B1+1", Value::Number(0.0)),
+        ("B11", "=[1]!Broken", Value::Empty),
+    ];
+    for (at, formula, value) in saved {
+        let mut cell = Cell::formula(Formula::new(formula));
+        cell.value = value;
+        t.wb.sheet_mut(0).unwrap().cells.set(c(at), cell);
+    }
+    t.calc.recalc_all(&mut t.wb);
+    let expect = |t: &T| {
+        // Linked values only change when the link is updated, so Excel keeps showing these.
+        assert_eq!(t.num("B1"), 20.0);
+        assert_eq!(t.get("B2"), Value::text("KW"));
+        assert_eq!([t.num("B3"), t.num("B4"), t.num("B5"), t.num("B6")], [3.0, 4.0, 5.0, 6.0]);
+        // What the saved values can answer is calculated, and users of a kept value see it.
+        assert_eq!((t.num("B7"), t.num("B10")), (14.0, 21.0));
+        // A name the link doesn't define, a refresh-error sheet's unsaved cell, and a formula
+        // with no saved value are still #REF!.
+        for at in ["B8", "B9", "B11"] {
+            assert_eq!(t.get(at), Value::Error(CellError::Ref), "{at}");
+        }
+    };
+    expect(&t);
+    // Recalculating again keeps them.
+    t.set("E9", "100");
+    t.calc.recalc_all(&mut t.wb);
+    expect(&t);
+}
+
+#[test]
 fn references_into_linked_workbooks_keep_their_position_and_size() {
     use gridcraft_model::{ExternalBook, ExternalSheet};
     let mut t = T::new();

@@ -56,7 +56,9 @@ fn book(x: &El) -> ExternalBook {
         .into_iter()
         .flat_map(|d| d.kids("definedName"))
         .filter_map(|d| {
-            let refers_to = d.attr("refersTo")?;
+            // A name saved without `refersTo` is still defined: the cells that use it keep the
+            // values Excel saved for them.
+            let refers_to = d.attr("refersTo").unwrap_or_default();
             Some(ExternalName {
                 name: d.attr("name")?.to_string(),
                 sheet: d.attr_u32("sheetId").map(|i| i as usize),
@@ -77,5 +79,18 @@ fn value(c: &El) -> Value {
             Ok(n) if n.is_finite() => Value::Number(if n == 0.0 { 0.0 } else { n }),
             _ => Value::Empty,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn names_saved_without_a_definition_are_kept() {
+        // Excel writes `<definedName name="X"/>` for a linked name it couldn't read: still a name
+        // of the link, which formulas use with the values Excel saved for them.
+        let x = br##"<externalBook><sheetNames><sheetName val="Personal"/></sheetNames><definedNames><definedName name="HelloWorld"/><definedName name="Broken" refersTo="#REF!"/><definedName name="Rate" refersTo="=Personal!$A$1"/></definedNames></externalBook>"##;
+        let book = super::book(&crate::xml::parse(x).unwrap());
+        let names: Vec<_> = book.names.iter().map(|n| (n.name.as_str(), n.refers_to.as_str())).collect();
+        assert_eq!(names, [("HelloWorld", ""), ("Broken", "#REF!"), ("Rate", "Personal!$A$1")]);
     }
 }
