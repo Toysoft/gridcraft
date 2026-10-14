@@ -162,23 +162,32 @@ fn multi_level_pivot_categories_plot_their_innermost_level() {
         cells.push((["C4", "C5", "C6", "C7"][i], Value::Number(i as f64 + 1.0)));
     }
     let wb = book("Graph", &cells);
-    // The two-level block would draw both levels' cells (8 labels for 4 points): the innermost
-    // level is plotted from the cache, one label per point. The values' cells hold their cache.
+    // The innermost column of the two-level block holds the cache: the series stays live, its
+    // references (categories and name) kept as saved, and only the innermost level is drawn.
     let two_levels = xml("Graph!$A$4:$B$7", &format!("<c:lvl>{leaf}</c:lvl><c:lvl>{outer}</c:lvl>"));
     let c = read_in(&wb, &two_levels);
     let s = &c.series[0];
+    assert_eq!(
+        (s.name.as_deref(), s.categories.as_deref(), s.values.as_str(), s.innermost_categories),
+        (Some("Graph!$C$3"), Some("Graph!$A$4:$B$7"), "Graph!$C$4:$C$7", true)
+    );
+    // A save keeps the references, outer level and all.
+    let saved = crate::chart::write_chart(&wb, 0, &c);
+    assert!(saved.contains("<c:f>Graph!$A$4:$B$7</c:f>") && saved.contains("<c:f>Graph!$C$3</c:f>"), "{saved}");
+
+    // When the innermost column shows another label, the block is stale: the innermost level
+    // is plotted from the cache, one label per point.
     let labels = r#"{"Ottawa","Toronto","Boston","NYC"}"#;
-    assert_eq!((s.categories.as_deref(), s.values.as_str()), (Some(labels), "Graph!$C$4:$C$7"));
-    // A save keeps one label per point.
-    let back = read_in(&wb, &crate::chart::write_chart(&wb, 0, &c));
-    assert_eq!(back.series[0].categories.as_deref(), Some(labels));
+    let mut moved = cells.clone();
+    moved.push(("B5", Value::text("Montreal")));
+    let s = read_in(&book("Graph", &moved), &two_levels).series[0].clone();
+    assert_eq!((s.categories.as_deref(), s.innermost_categories), (Some(labels), false));
 
     // A one-level reference whose cells hold the cache stays live; when a cell shows another
     // label, the cache is plotted.
     let one_level = xml("Graph!$B$4:$B$7", &format!("<c:lvl>{leaf}</c:lvl>"));
     assert_eq!(read_in(&wb, &one_level).series[0].categories.as_deref(), Some("Graph!$B$4:$B$7"));
-    cells.push(("B5", Value::text("Montreal")));
-    assert_eq!(read_in(&book("Graph", &cells), &one_level).series[0].categories.as_deref(), Some(labels));
+    assert_eq!(read_in(&book("Graph", &moved), &one_level).series[0].categories.as_deref(), Some(labels));
 }
 
 /// A series name as the chart shows it: a quoted literal without its quotes, `""` read as `"`.

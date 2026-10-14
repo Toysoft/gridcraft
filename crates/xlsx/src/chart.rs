@@ -3,7 +3,7 @@
 
 use std::fmt::Write as _;
 
-use gridcraft_core::Value;
+use gridcraft_core::{CellRef, RangeRef, Value};
 use gridcraft_formula::{BinOp, Expr, Reference, SheetSel};
 use gridcraft_model::{Chart, ChartKind, Color, LegendPos, LineDash, Series, Trendline, TrendlineKind, Workbook};
 
@@ -122,6 +122,9 @@ fn literal<S: AsRef<str>>(points: &[Option<S>], numeric: bool) -> String {
 struct CachedPoints {
     points: Vec<Option<String>>,
     numeric: bool,
+    /// A `multiLvlStrRef` of more than one level: one column (or row) of cells per level, the
+    /// innermost last. The cache holds the innermost level.
+    multi_level: bool,
 }
 
 /// What a PivotChart series saved with its references, plotted when the referenced cells don't
@@ -136,18 +139,17 @@ pub(crate) struct PivotSeriesCache {
 }
 
 /// `numCache`, `strCache`, or the innermost level of a `multiLvlStrCache`, under `cat` or `val`.
-/// A `multiLvlStrRef` block of more than one level has a cell per level for each point, so its
-/// cell count isn't the point count and the innermost level is plotted from the cache.
 fn cached_points(e: Option<&El>) -> Option<CachedPoints> {
     let e = e?;
     let owned = |p: Vec<Option<&str>>| p.into_iter().map(|v| v.map(str::to_string)).collect();
     if let Some(c) = e.path(&["numRef", "numCache"]) {
-        Some(CachedPoints { points: owned(read_points(c, c)?), numeric: true })
+        Some(CachedPoints { points: owned(read_points(c, c)?), numeric: true, multi_level: false })
     } else if let Some(c) = e.path(&["strRef", "strCache"]) {
-        Some(CachedPoints { points: owned(read_points(c, c)?), numeric: false })
+        Some(CachedPoints { points: owned(read_points(c, c)?), numeric: false, multi_level: false })
     } else {
         let c = e.path(&["multiLvlStrRef", "multiLvlStrCache"])?;
-        Some(CachedPoints { points: owned(read_points(c, c.child("lvl")?)?), numeric: false })
+        let multi_level = c.kids("lvl").nth(1).is_some();
+        Some(CachedPoints { points: owned(read_points(c, c.child("lvl")?)?), numeric: false, multi_level })
     }
 }
 
@@ -194,7 +196,7 @@ fn point_matches(v: &Value, p: Option<&str>, numeric: bool) -> bool {
 }
 
 /// Whether the cells a series formula refers to (on sheet `home` when unqualified) hold the
-/// cached points, one cell per point.
+/// cached points, one cell per point. Of a multi-level block, the innermost level is compared.
 fn live_matches(wb: &Workbook, home: usize, f: &str, p: &CachedPoints) -> bool {
     let Ok(e) = gridcraft_formula::parse(f) else { return false };
     let mut refs = Vec::new();
@@ -212,6 +214,19 @@ fn live_matches(wb: &Workbook, home: usize, f: &str, p: &CachedPoints) -> bool {
         areas.push((sheet, r.range()));
     }
     let n = p.points.len();
+    if p.multi_level {
+        // The last column of a block with a row per point, or the last row of one with a
+        // column per point.
+        let [(sheet, r)] = areas[..] else { return false };
+        let leaf = if r.height() as usize == n {
+            RangeRef::new(CellRef::new(r.start.row, r.end.col), r.end)
+        } else if r.width() as usize == n {
+            RangeRef::new(CellRef::new(r.end.row, r.start.col), r.end)
+        } else {
+            return false;
+        };
+        areas = vec![(sheet, leaf)];
+    }
     if areas.iter().try_fold(0u64, |t, (_, r)| t.checked_add(r.count())) != Some(n as u64) {
         return false;
     }
@@ -222,12 +237,16 @@ fn live_matches(wb: &Workbook, home: usize, f: &str, p: &CachedPoints) -> bool {
 /// cell, or a block that takes in the grand total row. Excel draws the chart from the PivotTable,
 /// and the cached points are what it shows. When the cells a series' categories or values refer
 /// to (on sheet `si`) don't hold their cached points, the series plots the cached points (and its
-/// cached name) instead; refreshing the PivotTable rebinds the chart to live cells.
+/// cached name) instead; refreshing the PivotTable rebinds the chart to live cells. A live
+/// multi-level category block keeps its reference and draws only its innermost level.
 pub(crate) fn plot_cached(wb: &Workbook, si: usize, ch: &mut Chart, caches: &[PivotSeriesCache]) {
     for (ser, c) in ch.series.iter_mut().zip(caches) {
         let stale = |f: Option<&str>, p: &&CachedPoints| !f.is_some_and(|f| live_matches(wb, si, f, p));
         let categories = c.categories.as_ref().filter(|p| stale(ser.categories.as_deref(), p)).map(|p| literal(&p.points, p.numeric));
         let values = c.values.as_ref().filter(|p| stale(Some(&ser.values), p)).map(|p| literal(&p.points, p.numeric));
+        if categories.is_none() && c.categories.as_ref().is_some_and(|p| p.multi_level) {
+            ser.innermost_categories = true;
+        }
         if categories.is_none() && values.is_none() {
             continue;
         }
@@ -291,6 +310,7 @@ fn read_series(s: &El) -> Series {
             .map(|c| c.text.trim())
             .filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("General"))
             .map(str::to_string),
+        innermost_categories: false,
     }
 }
 

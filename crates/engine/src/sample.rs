@@ -111,6 +111,7 @@ fn sales(s: &mut Session) -> bool {
                 smooth: false,
                 trendlines: Vec::new(),
                 number_format: None,
+                innermost_categories: false,
             }];
         }
     }

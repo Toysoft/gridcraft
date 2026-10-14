@@ -428,6 +428,11 @@ pub struct Series {
     /// points). Values that reference cells use the cells' format instead.
     #[serde(default)]
     pub number_format: Option<String>,
+    /// The categories are a multi-level block (a PivotChart's `multiLvlStrRef`): a column (or
+    /// row) of cells per level, the innermost last. Only the innermost level is drawn, one
+    /// label per point; the reference itself is kept and saved as is.
+    #[serde(default)]
+    pub innermost_categories: bool,
 }
 
 /// Regression a trendline fits (`c:trendlineType`).
