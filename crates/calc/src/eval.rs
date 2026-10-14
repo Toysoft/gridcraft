@@ -2022,31 +2022,6 @@ pub fn precedents(wb: &Workbook, sheet: usize, e: &Expr) -> (Vec<Area>, bool) {
     (out, dynamic)
 }
 
-/// Whether a formula reads anything besides linked workbooks: a cell, defined name or table of
-/// this workbook, its position, or something that changes between calculations (INDIRECT,
-/// OFFSET, NOW, RAND…).
-pub(crate) fn reads_this_workbook(wb: &Workbook, e: &Expr) -> bool {
-    let mut local = false;
-    e.walk(&mut |x| {
-        local |= match x {
-            Expr::Ref(r) => !matches!(&r.sheet, SheetSel::Named(s) | SheetSel::Span(s, _) if external_sheet(s).is_some()),
-            Expr::Struct(_) => true,
-            Expr::Name(n) => {
-                external_name(n).is_none() && {
-                    let bare = n.rsplit_once('!').map_or(n.as_str(), |(_, b)| b);
-                    wb.names.iter().any(|d| d.name.eq_ignore_ascii_case(bare)) || wb.table(bare).is_some()
-                }
-            }
-            Expr::Call(n, args) => {
-                matches!(n.as_str(), "INDIRECT" | "OFFSET" | "NOW" | "TODAY" | "RAND" | "RANDBETWEEN" | "RANDARRAY" | "CELL" | "INFO")
-                    || (args.is_empty() && matches!(n.as_str(), "ROW" | "COLUMN" | "SHEET"))
-            }
-            _ => false,
-        };
-    });
-    local
-}
-
 fn is_special(n: &str) -> bool {
     matches!(
         n,

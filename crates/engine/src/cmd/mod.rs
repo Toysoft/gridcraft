@@ -347,7 +347,7 @@ pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>)
         eprintln!("commit: edit {:?}, {} changed", t0.elapsed(), changed.len());
     }
     if structural {
-        d.calc.recalc_all_after_edit(&mut wb);
+        d.calc.recalc_all_after_edit(&mut wb, &changed);
     } else if !changed.is_empty() {
         d.calc.cells_changed(&mut wb, &changed);
     }

@@ -411,10 +411,11 @@ struct PassHost<'a> {
     /// Whether the formula being evaluated used something in a linked workbook that can't be
     /// calculated from the link's saved values ([`Host::note_unknown_link`]).
     unknown_link: bool,
-    /// The pass follows an edit. A formula over something uncalculable in a linked workbook keeps
-    /// the value it showed only when it reads nothing else, since what it reads may have changed;
-    /// on other passes (loading, F9) every such formula keeps it.
-    edited: bool,
+    /// After an edit, the formulas that read a changed cell, directly or through other formulas
+    /// (see [`Calc::readers`]). A formula over something uncalculable in a linked workbook keeps
+    /// the value it showed unless it is one of them; then it is calculated, the uncalculable part
+    /// being `#REF!`. `None` (loading, F9): every such formula keeps its value.
+    reached: Option<&'a HashSet<Key>>,
 }
 
 impl<'a> PassHost<'a> {
@@ -439,7 +440,7 @@ impl<'a> PassHost<'a> {
             tainted: HashSet::default(),
             taint: false,
             unknown_link: false,
-            edited: false,
+            reached: None,
         }
     }
 }
@@ -500,7 +501,7 @@ impl PassHost<'_> {
         // Excel keeps showing what it saved for a formula over a linked value it can't calculate,
         // until the formula has to be calculated again.
         let unknown = std::mem::replace(&mut self.unknown_link, outer_unknown);
-        let v = if unknown && (!self.edited || !crate::eval::reads_this_workbook(self.wb, &expr)) { self.saved_value(k).unwrap_or(v) } else { v };
+        let v = if unknown && !self.reached.is_some_and(|r| r.contains(&k)) { self.saved_value(k).unwrap_or(v) } else { v };
         // A legacy array formula fills the range it was entered in.
         let legacy = self.wb.sheet(k.0).and_then(|s| s.cell(k.1)).and_then(|c| c.formula.as_ref()).and_then(|f| f.array);
         let v = match legacy {
@@ -840,19 +841,22 @@ impl Calc {
 
     /// Recalculates every formula (F9 / Ctrl+Alt+F9, and after loading).
     pub fn recalc_all(&mut self, wb: &mut Workbook) {
-        self.recalc_every_formula(wb, false);
+        self.recalc_every_formula(wb, None);
     }
 
-    /// Recalculates every formula after an edit that moves or deletes cells (rows, columns,
-    /// sheets, sorting): as [`Calc::recalc_all`], except that a formula over something
-    /// uncalculable in a linked workbook that also reads this workbook is calculated rather than
-    /// keeping its value (see `PassHost::edited`).
-    pub fn recalc_all_after_edit(&mut self, wb: &mut Workbook) {
-        self.recalc_every_formula(wb, true);
+    /// Recalculates every formula after a structural edit (rows, columns, sheets, sorting, names,
+    /// row heights…): as [`Calc::recalc_all`], except that a formula over something uncalculable
+    /// in a linked workbook is calculated, rather than keeping its value, when it reads one of the
+    /// `changed` cells (where they are after the edit), directly or through other formulas (see
+    /// `PassHost::reached`). Edits that change nothing it reads keep its value.
+    pub fn recalc_all_after_edit(&mut self, wb: &mut Workbook, changed: &[Key]) {
+        self.recalc_every_formula(wb, Some(changed));
     }
 
-    fn recalc_every_formula(&mut self, wb: &mut Workbook, edited: bool) {
+    /// `changed`: the cells a structural edit changed, `None` for F9 and loading.
+    fn recalc_every_formula(&mut self, wb: &mut Workbook, changed: Option<&[Key]>) {
         self.rebuild(wb);
+        let reached = changed.map(|c| self.readers(c));
         // Spills are laid out again from the formulas where they are now (a structural edit moves
         // or deletes the formulas, not the values they spilled).
         for i in 0..wb.sheets.len() {
@@ -864,7 +868,7 @@ impl Calc {
             }
         }
         let all: Vec<Key> = self.graph.nodes.keys().copied().collect();
-        self.run(wb, all, edited);
+        self.run(wb, all, reached.as_ref());
     }
 
     /// Updates the graph for cells whose content changed and recalculates what depends on them.
@@ -901,7 +905,7 @@ impl Calc {
         if wb.calc.mode == CalcMode::Manual {
             // Only the edited formulas themselves are evaluated.
             let own: Vec<Key> = changed.iter().copied().filter(|k| self.graph.nodes.contains_key(k)).collect();
-            self.run(wb, own, true);
+            self.run(wb, own, None);
             return;
         }
         let mut seeds: Vec<Key> = changed.to_vec();
@@ -946,28 +950,55 @@ impl Calc {
             seeds.extend(r.iter().map(|c| (*si, c)));
         }
         let t0 = prof_now();
-        let dirty = self.dirty_closure(wb, &seeds);
+        let reached = self.readers(&seeds);
+        let dirty = self.dirty_closure_from(&reached, &seeds);
         let t1 = prof_now();
         let n = dirty.len();
-        self.run(wb, dirty, true);
+        self.run(wb, dirty, Some(&reached));
         if std::env::var_os("GRIDCRAFT_PROFILE").is_some() {
             eprintln!("recalc: {} seeds, closure {} cells {:.1} ms, run {:.1} ms", seeds.len(), n, t1 - t0, prof_now() - t1);
         }
     }
 
     fn dirty_closure(&self, _wb: &Workbook, seeds: &[Key]) -> Vec<Key> {
+        self.dirty_closure_from(&self.readers(seeds), seeds)
+    }
+
+    /// The formulas that read one of `seeds`, directly or through other formulas (a seed itself
+    /// only when it reads another).
+    fn readers(&self, seeds: &[Key]) -> HashSet<Key> {
         let mut seen: HashSet<Key> = HashSet::default();
+        let mut queue: VecDeque<Key> = VecDeque::new();
+        let mut deps = Vec::new();
+        for k in seeds {
+            deps.clear();
+            self.graph.dependents(k.0, k.1, &mut deps);
+            for d in deps.drain(..) {
+                if seen.insert(d) {
+                    queue.push_back(d);
+                }
+            }
+        }
+        while let Some(k) = queue.pop_front() {
+            deps.clear();
+            self.graph.dependents(k.0, k.1, &mut deps);
+            for d in deps.drain(..) {
+                if seen.insert(d) {
+                    queue.push_back(d);
+                }
+            }
+        }
+        seen
+    }
+
+    /// What a change to `seeds` recalculates: the seeds' own formulas, their `readers`, and every
+    /// dynamic formula with what reads it.
+    fn dirty_closure_from(&self, readers: &HashSet<Key>, seeds: &[Key]) -> Vec<Key> {
+        let mut seen = readers.clone();
         let mut queue: VecDeque<Key> = VecDeque::new();
         for k in seeds {
             if self.graph.nodes.contains_key(k) && seen.insert(*k) {
                 queue.push_back(*k);
-            }
-            let mut deps = Vec::new();
-            self.graph.dependents(k.0, k.1, &mut deps);
-            for d in deps {
-                if seen.insert(d) {
-                    queue.push_back(d);
-                }
             }
         }
         for k in &self.graph.dynamic {
@@ -988,9 +1019,9 @@ impl Calc {
         seen.into_iter().collect()
     }
 
-    /// Evaluates the dirty set and writes results (and spills) back. `edited`: the pass follows
-    /// an edit (see `PassHost::edited`).
-    fn run(&mut self, wb: &mut Workbook, mut dirty: Vec<Key>, edited: bool) {
+    /// Evaluates the dirty set and writes results (and spills) back. `reached`: after an edit, the
+    /// formulas that read a changed cell (see `PassHost::reached`).
+    fn run(&mut self, wb: &mut Workbook, mut dirty: Vec<Key>, reached: Option<&HashSet<Key>>) {
         let mut dynamic_again = !self.graph.dynamic.is_empty();
         for _round in 0..8 {
             if dirty.is_empty() {
@@ -1010,7 +1041,7 @@ impl Calc {
             let (results, spills, cycles) = {
                 let mut host = PassHost::new(wb, &exprs, &mut rng, now);
                 host.iterate = wb.calc.iterative;
-                host.edited = edited;
+                host.reached = reached;
                 for k in &dirty {
                     host.compute(*k);
                 }

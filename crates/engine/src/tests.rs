@@ -372,6 +372,30 @@ fn kept_values_of_uncalculable_linked_names_move_with_their_cells() {
 }
 
 #[test]
+fn kept_values_of_uncalculable_linked_names_survive_edits_they_do_not_read() {
+    // As read from a file: H11 `=[1]!Broken+G11`, where the link saved `Broken` as #REF!, shows
+    // the 22 Excel saved for it.
+    let mut s = s();
+    let wb = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb);
+    let names = vec![gridcraft_model::ExternalName { name: "Broken".into(), sheet: None, refers_to: "#REF!".into() }];
+    wb.external_books = vec![gridcraft_model::ExternalBook { names, ..Default::default() }].into();
+    let mut cell = gridcraft_model::Cell::formula(gridcraft_model::Formula::new("=[1]!Broken+G11"));
+    cell.value = Value::Number(22.0);
+    wb.sheet_mut(0).unwrap().cells.set(CellRef::parse("H11").unwrap(), cell);
+    wb.sheet_mut(0).unwrap().cells.set(CellRef::parse("G11").unwrap(), gridcraft_model::Cell::value(Value::Number(2.0)));
+    // Edits that change nothing the formula reads keep its value.
+    s.execute("cell.set", json!({"cell": "K5", "input": "1"})).unwrap();
+    assert_eq!(v(&s, "H11"), Value::Number(22.0));
+    s.execute("home.rowHeight", json!({"rows": "30:30", "height": 30})).unwrap();
+    assert_eq!(v(&s, "H11"), Value::Number(22.0));
+    s.execute("formulas.defineName", json!({"name": "Other", "refersTo": "=1"})).unwrap();
+    assert_eq!(v(&s, "H11"), Value::Number(22.0));
+    // Changing what it reads calculates it, with the uncalculable name as #REF!.
+    s.execute("cell.set", json!({"cell": "G11", "input": "3"})).unwrap();
+    assert_eq!(v(&s, "H11"), Value::Error(gridcraft_core::CellError::Ref));
+}
+
+#[test]
 fn undo_redo() {
     let mut s = s();
     s.execute("cell.set", json!({"cell": "A1", "input": "1"})).unwrap();
