@@ -236,8 +236,9 @@ struct Legacy<'a> {
     remaining: usize,
     locals: Vec<(String, Kind)>,
     /// Kinds of the names analysed so far, by upper-case name, scope and whether one-cell ranges
-    /// counted as collapsed ones; `None` while a name's definition is being analysed (a cycle).
-    names: HashMap<(String, usize, bool), Option<Kind>>,
+    /// counted as collapsed ones, with whether the definition reached a one-cell range written as
+    /// a range; `None` while a name's definition is being analysed (a cycle).
+    names: HashMap<(String, usize, bool), Option<(Kind, bool)>>,
     /// How many `@` were inserted.
     inserted: usize,
     /// The analysis covered only established legacy semantics.
@@ -249,6 +250,8 @@ struct Legacy<'a> {
     /// A one-cell reference written as a range (`A1:A1`, what an edit leaves of `A1:A3`) counts
     /// as one that may cover several cells, so an `@` the range had before the edit is implied.
     collapsed: bool,
+    /// The analysis reached a one-cell reference written as a range, which `collapsed` changes.
+    one_cell_range: bool,
     /// An explicit `@` is neither implied by legacy evaluation nor of a single value.
     foreign: bool,
     /// Analysing an expression whose rewrite is discarded (see [`Legacy::kind_of`]).
@@ -273,6 +276,7 @@ impl<'a> Legacy<'a> {
             complete: true,
             explicit: false,
             collapsed: false,
+            one_cell_range: false,
             foreign: false,
             discarded: false,
             union_arg: false,
@@ -319,11 +323,15 @@ impl<'a> Legacy<'a> {
         // A one-cell range the `@` applies to, directly or through what a name returns, may be
         // what an edit left of a larger one: when the `@` is otherwise of a single value, it is
         // implied if it is with such ranges counted as several cells. The retry's analysis is
-        // kept only when it implies the `@`.
+        // kept only when it implies the `@`, and runs only when the first pass reached such a
+        // range (otherwise it cannot differ).
         let retry = (!nested && !self.collapsed && matches!(operand, Expr::Ref(_) | Expr::Name(_))).then(|| operand.clone());
+        let seen = std::mem::replace(&mut self.one_cell_range, false);
         let (mut y, mut kind) = self.expr(operand, sheet, ctx, depth + 1);
         let mut implied = !nested && self.inserted > before;
-        if let Some(operand) = retry.filter(|_| !implied && kind == Kind::Scalar) {
+        let shrinkable = self.one_cell_range;
+        self.one_cell_range |= seen;
+        if let Some(operand) = retry.filter(|_| !implied && kind == Kind::Scalar && shrinkable) {
             let state = (self.remaining, self.certain, self.complete, self.foreign);
             self.collapsed = true;
             let (y2, kind2) = self.expr(operand, sheet, ctx, depth + 1);
@@ -385,8 +393,9 @@ impl<'a> Legacy<'a> {
         let inner = |wanted: Ctx| if ctx == Ctx::Array { Ctx::Array } else { wanted };
         match e {
             Expr::Ref(r) => {
-                let single =
-                    r.range().is_single() && !matches!(r.sheet, SheetSel::Span(_, _)) && !(self.collapsed && matches!(r.kind, RefKind::Range(..)));
+                let one_cell_range = r.range().is_single() && !matches!(r.sheet, SheetSel::Span(_, _)) && matches!(r.kind, RefKind::Range(..));
+                self.one_cell_range |= one_cell_range;
+                let single = r.range().is_single() && !matches!(r.sheet, SheetSel::Span(_, _)) && !(self.collapsed && one_cell_range);
                 (Expr::Ref(r), if single { Kind::Scalar } else { Kind::Ref })
             }
             Expr::Array(rows) => {
@@ -450,7 +459,10 @@ impl<'a> Legacy<'a> {
         if let Some(def) = self.wb.name(bare, scope) {
             let key = (bare.to_ascii_uppercase(), scope, self.collapsed);
             match self.names.get(&key) {
-                Some(Some(kind)) => return *kind,
+                Some(Some((kind, one_cell_range))) => {
+                    self.one_cell_range |= *one_cell_range;
+                    return *kind;
+                }
                 Some(None) => {
                     // A name defined in terms of itself has no legacy value to keep.
                     self.certain = false;
@@ -462,9 +474,12 @@ impl<'a> Legacy<'a> {
             self.names.insert(key.clone(), None);
             // A name's own formula does not see the formula's LET variables.
             let locals = std::mem::take(&mut self.locals);
+            let seen = std::mem::replace(&mut self.one_cell_range, false);
             let kind = self.kind_of(expr, def.scope.unwrap_or(scope), depth + 1);
+            let one_cell_range = std::mem::replace(&mut self.one_cell_range, seen);
+            self.one_cell_range |= one_cell_range;
             self.locals = locals;
-            self.names.insert(key, Some(kind));
+            self.names.insert(key, Some((kind, one_cell_range)));
             return kind;
         }
         if self.wb.table(bare).is_some() { Kind::Ref } else { Kind::Scalar }
