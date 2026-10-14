@@ -256,11 +256,19 @@ impl NumberFormat {
     }
 
     /// Formats a number. The flag is true when the value cannot be shown (date out of range).
-    /// With `full`, General is not narrowed to the cell width: it reads as `&` turns the number
-    /// into text (15 significant digits).
+    /// With `full`, General is not narrowed to the cell width: an integer f64 holds exactly
+    /// (|n| < 2^53) is written with all its digits, so 16-digit card and order numbers survive a
+    /// CSV round trip; any other number reads as `&` turns it into text (15 significant digits).
     fn format_number(&self, n: f64, sys: DateSystem, full: bool) -> (Formatted, bool) {
+        const EXACT_INT: f64 = 9_007_199_254_740_992.0; // 2^53
         let general_text = |n: f64, width: usize| {
-            if full { Some(gridcraft_core::number_to_text(n)) } else { format_general_fit(n, width) }
+            if !full {
+                format_general_fit(n, width)
+            } else if n != 0.0 && n.fract() == 0.0 && n.abs() < EXACT_INT {
+                Some(format!("{}", n as i64))
+            } else {
+                Some(gridcraft_core::number_to_text(n))
+            }
         };
         let general =
             |n: f64| Formatted { text: general_text(n, GENERAL_WIDTH).unwrap_or_else(|| OVERFLOW.into()), color: None, fill: None, numeric: true };

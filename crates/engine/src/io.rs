@@ -695,15 +695,27 @@ mod tests {
         sheet.set_cell(CellRef::new(0, 0), Cell { value: Value::Number(124412140710.0), ..Default::default() });
         sheet.set_cell(CellRef::new(0, 1), Cell { value: Value::Number(1.23456789012345), ..Default::default() });
         sheet.set_cell(CellRef::new(0, 2), Cell { value: Value::Number(124412140710.0), style: scientific, ..Default::default() });
+        // Integers f64 holds exactly (below 2^53) keep every digit; larger integers and
+        // non-integers get the 15 significant digits `&` gives.
+        for (col, n) in [(3, 1234567890123456.0), (4, -9007199254740991.0), (5, 12345678901234567.0), (6, 1e15 - 0.5)] {
+            sheet.set_cell(CellRef::new(0, col), Cell { value: Value::Number(n), ..Default::default() });
+        }
         for (path, separator) in [("data.csv", ","), ("data.tsv", "\t")] {
             let output = String::from_utf8(save_bytes(&workbook, path).unwrap()).unwrap();
-            assert_eq!(output, format!("124412140710{separator}1.23456789012345{separator}1.24E+11\r\n"));
+            assert_eq!(
+                output,
+                format!(
+                    "124412140710{s}1.23456789012345{s}1.24E+11{s}1234567890123456{s}-9007199254740991{s}1.23456789012346E+16{s}1E+15\r\n",
+                    s = separator
+                )
+            );
         }
     }
 
     /// A number shown as General is written as `&` converts it (15 significant digits), whatever
     /// colour, sections or literals the format adds, and in a Text cell. Excel writes the cell
-    /// display (`1.24412E+11`, `0.333333333`); GridCraft keeps the digits so part codes survive.
+    /// display (`1.24412E+11`, `0.333333333`); GridCraft keeps the digits so part codes survive
+    /// (integers below 2^53 keep all their digits; see the test above).
     #[test]
     fn delimited_exports_write_general_numbers_as_text_converts_them() {
         use gridcraft_core::Value;
