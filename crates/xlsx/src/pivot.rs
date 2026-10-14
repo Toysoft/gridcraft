@@ -1248,6 +1248,35 @@ impl CachesIn {
         };
         Some((f.labels(), group))
     }
+
+    /// What `field` names in the cache a slicer cache names by `pivotCacheId`, when it is not a
+    /// source column. `None` when it is one, or the cache isn't known.
+    pub fn slicer_non_source(&self, cache_id: u32, field: &str) -> Option<NonSourceField<'_>> {
+        let cache = self.parsed.values().flatten().find(|c| c.slicer_id == Some(cache_id))?;
+        if cache.fields.iter().any(|f| f.database && same(&f.name, field)) {
+            return None;
+        }
+        let base = cache
+            .fields
+            .iter()
+            .find(|f| same(&f.name, field))
+            .and_then(|f| f.group.as_ref())
+            .and_then(|(base, by, _)| by.and((*base).and_then(|b| cache.fields.get(b))))
+            .filter(|b| b.database);
+        Some(match base {
+            Some(b) => NonSourceField::DateLevel { base: &b.name },
+            None => NonSourceField::Other,
+        })
+    }
+}
+
+/// A slicer cache's source field that is not a source column of its pivot cache.
+pub enum NonSourceField<'a> {
+    /// A coarser date level, which Excel keeps in a field of its own when a date is grouped at
+    /// several levels ("Years" over "Date" grouped by years and months), grouping column `base`.
+    DateLevel { base: &'a str },
+    /// Another field (calculated, grouped in a way GridCraft can't compute) or none of that name.
+    Other,
 }
 
 fn item_label_el(e: &El, sys: DateSystem) -> String {

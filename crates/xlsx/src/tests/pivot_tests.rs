@@ -801,6 +801,65 @@ fn pivot_slicer_on_grouped_dates_writes_the_groups() {
     assert_eq!(pb.filters, vec![PivotFilter { source_col: "Date".into(), selected: Some(vec!["Qtr2".into()]), ..PivotFilter::default() }]);
 }
 
+/// With a date grouped at several levels, Excel keeps each coarser level in its own cache field
+/// ("Years" over "Date"), and a slicer on that level names it as its source. Such a slicer is
+/// skipped with one warning that says so, and the PivotTable is kept.
+#[test]
+fn pivot_slicer_on_a_coarser_date_level_is_skipped_with_a_warning() {
+    let mut wb = workbook();
+    let report = wb.sheet_mut(1).unwrap();
+    report.pivots.push(PivotTable {
+        id: 4,
+        name: "By Year".into(),
+        source: "Data!$A$1:$F$9".into(),
+        anchor: at("AF1"),
+        rows: vec![
+            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Years, ..PivotField::default() },
+            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Months, ..PivotField::default() },
+        ],
+        values: vec![PivotValue { source_col: "Sales".into(), func: PivotFunc::Sum, name: "Sum of Sales".into(), ..PivotValue::default() }],
+        ..PivotTable::default()
+    });
+    report.slicers.push(Slicer {
+        id: 1,
+        source: SlicerSource::Pivot {
+            pivots: vec![SlicerPivot { sheet: "Report".into(), name: "By Year".into() }],
+            field: "Date".into(),
+            sort: PivotSort::Asc,
+            cross_filter: SlicerCrossFilter::ShowItemsWithDataAtTop,
+            show_missing: true,
+        },
+        caption: "Years".into(),
+        anchor: Anchor { cell: at("AJ1"), dx: 0.0, dy: 0.0, width: 180.0, height: 240.0, mode: AnchorMode::default() },
+        columns: 1,
+        name: "Years".into(),
+        style: String::new(),
+        row_height: None,
+    });
+    let mut parts = unzip(&write_xlsx(&wb).unwrap());
+    let defs: Vec<String> = parts
+        .iter()
+        .filter(|(k, _)| k.starts_with("xl/pivotCache/pivotCacheDefinition"))
+        .map(|(_, v)| String::from_utf8(v.clone()).unwrap())
+        .collect();
+    assert!(defs.iter().any(|d| d.contains("<cacheField name=\"Years\"") && d.contains("databaseField=\"0\"")), "{defs:?}");
+    let key = "xl/slicerCaches/slicerCache1.xml".to_string();
+    let cache = String::from_utf8(parts.remove(&key).unwrap()).unwrap();
+    let edited = cache.replace("sourceName=\"Date\"", "sourceName=\"Years\"");
+    assert_ne!(cache, edited);
+    parts.insert(key, edited.into_bytes());
+    let refs: Vec<(&str, &[u8])> = parts.iter().map(|(n, d)| (n.as_str(), d.as_slice())).collect();
+    let (back, report) = read_xlsx(&super::make_zip(&refs)).unwrap();
+    let b = back.sheet(1).unwrap();
+    assert!(b.slicers.is_empty(), "{:?}", b.slicers);
+    let about: Vec<&String> = report.warnings.iter().filter(|w| w.contains("slicer")).collect();
+    assert_eq!(about.len(), 1, "{:?}", report.warnings);
+    assert!(about[0].contains("Years"), "{about:?}");
+    let pb = b.pivots.iter().find(|p| p.name == "By Year").unwrap();
+    assert_eq!(pb.rows.iter().map(|f| f.date_group).collect::<Vec<_>>(), [PivotDateGroup::Years, PivotDateGroup::Months]);
+    let _ = write_xlsx(&back).unwrap();
+}
+
 #[test]
 fn hostile_slicer_parts_warn_not_panic() {
     let bytes = write_xlsx(&slicer_workbook()).unwrap();
@@ -826,7 +885,9 @@ fn hostile_slicer_parts_warn_not_panic() {
         let (wb, report) = read_xlsx(&super::make_zip(&refs)).unwrap();
         let sh = wb.sheet(1).unwrap();
         if sh.slicers.is_empty() {
-            assert!(!report.warnings.is_empty(), "no warning after editing {part}");
+            // One warning names the dropped slicer, not a second one for its frame.
+            let about = report.warnings.iter().filter(|w| w.contains("\"Product\"")).count();
+            assert_eq!(about, 1, "after editing {part}: {:?}", report.warnings);
         }
         // Whatever was read saves again.
         let _ = write_xlsx(&wb).unwrap();

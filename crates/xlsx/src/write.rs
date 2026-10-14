@@ -232,6 +232,8 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
     let mut pivots = crate::pivot::PivotWriter::default();
     let mut sheets_xml = String::new();
     let mut sheet_id = 1usize;
+    // The `sheetId` of each model sheet: chart sheets kept between worksheets take ids too.
+    let mut sheet_ids: Vec<usize> = Vec::with_capacity(wb.sheets.len());
     for (i, sheet) in wb.sheets.iter().enumerate() {
         let (before, next) = kept.sheet_entries(i, false, sheet_id);
         sheets_xml.push_str(&before);
@@ -252,6 +254,7 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
         };
         let name: String = sheet.name.chars().take(31).collect();
         let _ = write!(sheets_xml, "<sheet name=\"{}\" sheetId=\"{sheet_id}\"{state} r:id=\"{rid}\"/>", esc_attr(&name));
+        sheet_ids.push(sheet_id);
         sheet_id += 1;
     }
     sheets_xml.push_str(&kept.sheet_entries(wb.sheets.len(), true, sheet_id).0);
@@ -357,7 +360,7 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
     w.push_str("/>");
     w.push_str(&pivots.workbook_xml(&mut wb_rels));
     let slicers = std::mem::take(&mut out.slicers);
-    let slicer_ext = slicers.finish(wb, &pivots, &mut out, &mut wb_rels);
+    let slicer_ext = slicers.finish(wb, &sheet_ids, &pivots, &mut out, &mut wb_rels);
     let exts = crate::passthrough::workbook_elements(wb, "ext");
     if !slicer_ext.is_empty() || !exts.is_empty() {
         let _ = write!(w, "<extLst>{slicer_ext}{exts}</extLst>");

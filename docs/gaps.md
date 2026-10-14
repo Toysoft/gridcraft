@@ -84,7 +84,9 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
   PivotTable slicers from files are shown, filter their PivotTables when clicked and are saved;
   inserting one on a PivotTable, and slicer settings, are not done yet. A slicer connected to
   PivotTables that can't share one pivot cache (different sources or calculated fields, or a
-  date field grouped differently) is saved connected to the first of them only.
+  date field grouped differently) is saved connected to the first of them only. A slicer on a
+  coarser level of a date grouped at several levels (a Years slicer on a Date grouped by years
+  and months, which Excel keeps in its own cache field) is skipped with a warning on open.
 - **Impact:** pivots are the analyst's main tool.
 - **Estimate:** 20–30 h for beta (25–40 h full).
 

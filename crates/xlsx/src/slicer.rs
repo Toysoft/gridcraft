@@ -7,8 +7,8 @@
 //! Reading: frames and slicer parts are collected while sheets are read, then [`resolve`] joins
 //! them with the slicer caches once the PivotTables exist. The selection lives in the model as the
 //! PivotTables' filters on the field (read from their hidden items); a cache's `s` flags only fill
-//! in a PivotTable that has no filter on the field. Table and OLAP slicers are skipped with a
-//! warning.
+//! in a PivotTable that has no filter on the field. Table and OLAP slicers, and slicers on a
+//! coarser date level that has its own cache field, are skipped with a warning.
 //!
 //! Writing: [`SlicerWriter`] plans the slicers before the sheets are written, so the PivotTable
 //! writer can give their fields shared items and their caches an id; the sheets write the frames
@@ -181,6 +181,12 @@ pub fn resolve(
     let mut used = vec![false; found.frames.len()];
     for (sheet_name, part) in found.parts {
         let Some(si) = wb.sheet_index(&sheet_name) else { continue };
+        // The part's frame is accounted for even when the slicer is skipped below with its own
+        // warning.
+        let fi = found.frames.iter().position(|(s, n, _)| s.eq_ignore_ascii_case(&sheet_name) && n.eq_ignore_ascii_case(&part.name));
+        if let Some(u) = fi.and_then(|i| used.get_mut(i)) {
+            *u = true;
+        }
         let Some(def) = defs.iter().find(|d| d.name.eq_ignore_ascii_case(&part.cache)) else {
             cx.warn(format!("slicer \"{}\" has no slicer cache and was skipped", part.name));
             continue;
@@ -189,6 +195,23 @@ pub fn resolve(
             cx.warn(format!("slicer \"{}\" filters a table or an external data source, which is not supported; skipped", part.name));
             continue;
         };
+        // The model's slicer filters a source column; a cache field that isn't one (a coarser date
+        // level Excel keeps in its own field, such as "Years" over "Date") can't be filtered or
+        // saved.
+        if let Some(other) = tab.cache_id.and_then(|id| caches.slicer_non_source(id, &def.source)) {
+            cx.warn(match other {
+                crate::pivot::NonSourceField::DateLevel { base } => {
+                    format!(
+                        "slicer \"{}\" filters \"{}\", a coarser date level of \"{base}\", which is not supported; skipped",
+                        part.name, def.source
+                    )
+                }
+                crate::pivot::NonSourceField::Other => {
+                    format!("slicer \"{}\" filters \"{}\", which is not a column of its PivotTable's source; skipped", part.name, def.source)
+                }
+            });
+            continue;
+        }
         // The connected PivotTables that were read: (sheet, index).
         let targets: Vec<(usize, usize)> = def
             .pivots
@@ -203,12 +226,10 @@ pub fn resolve(
             cx.warn(format!("slicer \"{}\": its PivotTable is missing or could not be read; skipped", part.name));
             continue;
         }
-        let Some(fi) = found.frames.iter().position(|(s, n, _)| s.eq_ignore_ascii_case(&sheet_name) && n.eq_ignore_ascii_case(&part.name)) else {
+        let Some(&(_, _, anchor)) = fi.and_then(|i| found.frames.get(i)) else {
             cx.warn(format!("slicer \"{}\" has no drawing frame and was skipped", part.name));
             continue;
         };
-        used[fi] = true;
-        let anchor = found.frames[fi].2;
         // The cache field's items and date grouping. A PivotTable without a filter on the field
         // takes the cache's selection; with everything selected it still keeps the field's
         // grouping (the cache field's, ECMA-376 §18.10.1.33) when no Rows/Columns field has it.
@@ -412,8 +433,9 @@ impl SlicerWriter {
     }
 
     /// Writes the slicer caches; returns the workbook `extLst`'s `ext` listing them (empty when
-    /// there are none).
-    pub fn finish(self, wb: &Workbook, pivots: &crate::pivot::PivotWriter, out: &mut Out, wb_rels: &mut Rels) -> String {
+    /// there are none). `sheet_ids` is the `sheetId` written for each model sheet, which a cache's
+    /// `tabId` names.
+    pub fn finish(self, wb: &Workbook, sheet_ids: &[usize], pivots: &crate::pivot::PivotWriter, out: &mut Out, wb_rels: &mut Rels) -> String {
         let mut list = String::new();
         for (k, p) in self.planned.iter().enumerate() {
             // The connected PivotTables that were written, with their (shared) cache's data.
@@ -453,8 +475,9 @@ impl SlicerWriter {
                 if i.cache_id != info.cache_id {
                     continue;
                 }
+                let Some(tab) = sheet_ids.get(psi) else { continue };
                 let pname = if t.name.trim().is_empty() { format!("PivotTable{}", pi + 1) } else { t.name.clone() };
-                let _ = write!(x, "<pivotTable tabId=\"{}\" name=\"{}\"/>", psi + 1, esc_attr(&pname));
+                let _ = write!(x, "<pivotTable tabId=\"{tab}\" name=\"{}\"/>", esc_attr(&pname));
             }
             let _ = write!(x, "</pivotTables><data><tabular pivotCacheId=\"{}\"", info.cache_id);
             if *sort == PivotSort::Desc {
