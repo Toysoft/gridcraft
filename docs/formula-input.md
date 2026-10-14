@@ -19,7 +19,7 @@ preference follows the system language.
 | | English | Spanish | German | Portuguese (Brazil) | Russian | French |
 | --- | --- | --- | --- | --- | --- | --- |
 | Example | `SUM`, `IF`, `VLOOKUP` | `SUMA`, `SI`, `BUSCARV` | `SUMME`, `WENN`, `SVERWEIS` | `SOMA`, `SE`, `PROCV` | `СУММ`, `ЕСЛИ`, `ВПР` | `SOMME`, `SI`, `RECHERCHEV` |
-| Function names translated | — | 424 | 403 | 412 | 459 | 398 |
+| Function names translated | — | 424 | 403 | 412 | 459 | 405 |
 | Booleans | `TRUE`, `FALSE` | `VERDADERO`, `FALSO` | `WAHR`, `FALSCH` | `VERDADEIRO`, `FALSO` | `ИСТИНА`, `ЛОЖЬ` | `VRAI`, `FAUX` |
 | Errors (e.g.) | `#VALUE!`, `#N/A` | `#¡VALOR!`, `#N/D` | `#WERT!`, `#NV` | `#VALOR!`, `#N/D` | `#ЗНАЧ!`, `#Н/Д` | `#VALEUR!`, `#N/A` |
 | Arguments and unions | `,` | `;` | `;` | `;` | `;` | `;` |
@@ -63,7 +63,8 @@ come from Microsoft Support's localized Excel function pages, which are machine-
 sometimes wrong, so an entry needs two agreeing signals on its page (title, description, syntax
 paragraph aligned with the English page, examples); entries marked `reviewed` were decided by
 hand against independent function-name references. Booleans, errors and table specifiers cite
-their sources per item. French separators, `SOMME`, `TEXTE`, `AUJOURDHUI`, `LIGNES`, `#VALEUR!`
-and four table specifiers were checked in French Excel 2013 by a French user (#191); the other
+their sources per item. A French user checked the French separators, `SOMME`, `TEXTE`,
+`AUJOURDHUI`, `LIGNES`, `#VALEUR!` and four table specifiers in French Excel 2013, and 16 more
+function names in French Excel 2024, three of which were wrong and are fixed (#191); the other
 tables have not yet been checked against a running localized Excel or by native speakers;
 corrections are one-line edits with a source.

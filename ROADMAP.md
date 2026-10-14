@@ -135,7 +135,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
-| 2026-10-13 | Formulas in French: 398 local function names, `VRAI`/`FAUX`, French errors and table specifiers, `;` arguments and `.` array columns; separators checked in French Excel 2013 (#191) |
+| 2026-10-13 | Formulas in French: 405 local function names, `VRAI`/`FAUX`, French errors and table specifiers, `;` arguments and `.` array columns; separators and some names checked in French Excel 2013 and 2024 (#191) |
 | 2026-10-12 | Rows auto-fit oversized fonts: opening a file and whole-row/column formatting grow non-custom rows to their tallest font (#833) |
 | 2026-10-12 | Number formats: parsing a format code is linear in its length (long runs of `[`, `,` or `/` no longer take quadratic time), and an unclosed `[` is a literal when splitting sections as well as when tokenizing (#810) |
 | 2026-10-12 | Number formats: a fraction denominator with 65,536 zeros no longer crashes; format codes are capped at 255 characters like Excel (longer codes display as General, `TEXT` gives `#VALUE!`) (#807) |

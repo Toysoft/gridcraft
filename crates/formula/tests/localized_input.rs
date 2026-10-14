@@ -35,6 +35,8 @@ fn each_language_spells_formulas_like_its_excel() {
         (Fr, "LIGNES(Tableau1[#Tout])-LIGNES(Tableau1[[#En-têtes];[Nom]])", "ROWS(Tableau1[#All])-ROWS(Tableau1[[#Headers],[Nom]])"),
         (Fr, "SI(VRAI;RECHERCHEV(A2;D:E;2;FAUX);#N/A)", "IF(TRUE,VLOOKUP(A2,D:E,2,FALSE),#N/A)"),
         (Fr, "SOMME({1.2;3,5.4})+SIERREUR(1/0;#VALEUR!)", "SUM({1,2;3.5,4})+IFERROR(1/0,#VALUE!)"),
+        // French Excel 2024 (#191): STXTB exists, NBCARB/CHERCHEB/TROUVEB are #NOM?.
+        (Fr, "STXTB(A1;2;1)&CHERCHERB(\"b\";A1)&TROUVERB(\"b\";A1)&LENB(A1)", "MIDB(A1,2,1)&SEARCHB(\"b\",A1)&FINDB(\"b\",A1)&LENB(A1)"),
     ] {
         assert_eq!(canonical(local, locale), english, "{locale:?} entry");
         assert_eq!(shown(english, locale), local, "{locale:?} display");

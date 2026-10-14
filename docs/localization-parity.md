@@ -22,7 +22,7 @@ right-to-left sheets and full complex-script support. Part of
   strings plus ~500 function descriptions), so each shipped language covers **~12%** (measured
   count / estimated total).
 - **Formulas follow the interface language in Spanish, German, Brazilian Portuguese, Russian
-  and French** (#45): function names (398–459 per language), booleans, errors, table specifiers
+  and French** (#45): function names (403–459 per language), booleans, errors, table specifiers
   and separators, at the editor boundary only; files and APIs keep canonical English
   ([formula-input.md](formula-input.md)). The names come from machine-translated Microsoft pages
   (two agreeing signals per entry, sources in `crates/formula/src/input/`); only the French
@@ -82,7 +82,7 @@ language (none so far) and of localized function names.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-13 | minor | French formula table: 398 local function names, `VRAI`/`FAUX`, French errors and table specifiers, `.` between array columns; separators and a few words checked in French Excel 2013 (#191) |
+| 2026-10-13 | minor | French formula table: 405 local function names, `VRAI`/`FAUX`, French errors and table specifiers, `.` between array columns; separators and some names checked in French Excel 2013 and 2024 (#191) |
 | 2026-10-12 | minor | Format Cells looks up its tabs, labels, options and note through `Language::tr` (Fill tab keyed `Format Cells\|Fill`); dialog titles and OK/Cancel too. Labels already in a table (Number, Currency, Fill…) show translated; the rest fall back to English until the tables add them |
 | 2026-10-12 | minor | Brazilian Portuguese catalog (`i18n/pt.rs`) grows from 377 to 923 entries: every key the other catalogs translate, including the dialog strings #669 starts looking up (~42%) |
 | 2026-10-11 | minor | Formulas follow the interface language in es, de, pt-BR and ru (names, booleans, errors, table specifiers, separators); infrastructure item 2 partly done |

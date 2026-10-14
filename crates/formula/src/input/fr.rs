@@ -12,6 +12,11 @@
 //! decimal separator (`=SOMME({1,2;3,4})` is 4,6), `\` between array columns is a syntax error, and
 //! the specifiers `#Tout`, `#Données`, `#En-têtes`, `#Totaux`.
 //!
+//! Checked in French Excel 2024 (https://github.com/storytold/gridcraft/pull/191#issuecomment-6158296916):
+//! `TROUVE`, `STXT`, `STXTB`, `NBCAR`, `ESTNUM`, `EST.IMPAIR`, `ESTREF`, `ESTTEXTE`,
+//! `FRACTIONNER.TEXTE`, `VAR.P.N`, `VAR.P`, `PHONETIQUE` and `SI.CONDITIONS` exist; `NBCARB`,
+//! `CHERCHEB` and `TROUVEB` give `#NOM?` (the names below are `LENB`, `CHERCHERB`, `TROUVERB`).
+//!
 //! Sources for the other words:
 //! - bool: https://support.microsoft.com/fr-fr/excel/functions/true-function | https://support.microsoft.com/fr-fr/excel/functions/false-function
 //! - table_items: https://support.microsoft.com/fr-fr/excel/using-structured-references-with-excel-tables (item table + examples [[#Tout];...], [#En-têtes], [#Données], [#Totaux], [#Cette ligne])
@@ -172,8 +177,8 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("FILTERXML", "FILTRE.XML"),
         // reviewed: FIND page retired; ledojo + tutosurexcel list TROUVE; Microsoft fr SEARCH/FIND pages use TROUVE | sources: https://ledojo.club/apprendre-excel/formules/francais-anglais | https://tutosurexcel.com/fonctions-excel-francais-anglais/
         ("FIND", "TROUVE"),
-        // reviewed: pattern: every B variant on the fr pages is base name + B (GAUCHEB, DROITEB, STXTB, REMPLACERB); no page names TROUVEB literally | sources: https://support.microsoft.com/fr-fr/excel/functions/left-function
-        ("FINDB", "TROUVEB"),
+        // reviewed: TROUVEB is #NOM? in French Excel 2024 (#191) | sources: https://support.microsoft.com/fr-fr/excel/text-functions-reference ("TROUVE, TROUVERB") | https://www.perfectxl.com/academy/functions/translations/english-french/ | https://www.auditexcel.co.za/blog/excel-functions-french/
+        ("FINDB", "TROUVERB"),
         ("FINV", "INVERSE.LOI.F"),
         ("FISHERINV", "FISHER.INVERSE"),
         ("FIXED", "CTXT"),
@@ -181,6 +186,11 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("FLOOR.MATH", "PLANCHER.MATH"),
         ("FLOOR.PRECISE", "PLANCHER.PRECIS"),
         ("FORECAST", "PREVISION"),
+        ("FORECAST.ETS", "PREVISION.ETS"),
+        ("FORECAST.ETS.CONFINT", "PREVISION.ETS.CONFINT"),
+        // reviewed: the fr reference page lists the four PREVISION.ETS* functions; ledojo pairs this one with FORECAST.ETS.SEASONALITY | sources: https://support.microsoft.com/fr-fr/excel/forecasting-functions-reference | https://ledojo.club/apprendre-excel/formules/francais-anglais
+        ("FORECAST.ETS.SEASONALITY", "PREVISION.ETS.CARACTERESAISONNIER"),
+        ("FORECAST.ETS.STAT", "PREVISION.ETS.STAT"),
         // reviewed: MS page syntax PREVISION.LINEAIRE (title has accents, Excel stores unaccented); ledojo + tutosurexcel | sources: https://ledojo.club/apprendre-excel/formules/francais-anglais | https://tutosurexcel.com/fonctions-excel-francais-anglais/
         ("FORECAST.LINEAR", "PREVISION.LINEAIRE"),
         ("FORMULATEXT", "FORMULETEXTE"),
@@ -275,8 +285,6 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("LEFT", "GAUCHE"),
         ("LEFTB", "GAUCHEB"),
         ("LEN", "NBCAR"),
-        // reviewed: pattern NBCAR+B (LEN page text mentions LENB; GAUCHEB/DROITEB/STXTB/REMPLACERB confirmed on pages) | sources: https://support.microsoft.com/fr-fr/excel/functions/len-function
-        ("LENB", "NBCARB"),
         ("LINEST", "DROITEREG"),
         ("LOGEST", "LOGREG"),
         ("LOGINV", "LOI.LOGNORMALE.INVERSE"),
@@ -327,6 +335,10 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("OCT2DEC", "OCTDEC"),
         ("OCT2HEX", "OCTHEX"),
         ("ODD", "IMPAIR"),
+        ("ODDFPRICE", "PRIX.PCOUPON.IRREG"),
+        ("ODDFYIELD", "REND.PCOUPON.IRREG"),
+        ("ODDLPRICE", "PRIX.DCOUPON.IRREG"),
+        ("ODDLYIELD", "REND.DCOUPON.IRREG"),
         ("OFFSET", "DECALER"),
         ("OR", "OU"),
         ("PDURATION", "PDUREE"),
@@ -382,8 +394,8 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("RRI", "TAUX.INT.EQUIV"),
         ("RSQ", "COEFFICIENT.DETERMINATION"),
         ("SEARCH", "CHERCHE"),
-        // reviewed: pattern CHERCHE+B; the fr SEARCH page text says CHERCHERB which looks like a machine-translation slip | sources: https://support.microsoft.com/fr-fr/excel/functions/search-function
-        ("SEARCHB", "CHERCHEB"),
+        // reviewed: CHERCHEB is #NOM? in French Excel 2024 (#191); the SEARCH page's "La fonction CHERCHERB est obsolète" was right | sources: https://support.microsoft.com/fr-fr/excel/text-functions-reference ("CHERCHE, CHERCHERB") | https://www.perfectxl.com/academy/functions/translations/english-french/ | https://www.auditexcel.co.za/blog/excel-functions-french/
+        ("SEARCHB", "CHERCHERB"),
         ("SECOND", "SECONDE"),
         ("SERIESSUM", "SOMME.SERIES"),
         ("SHEET", "FEUILLE"),
