@@ -1952,6 +1952,62 @@ fn kept_values_give_way_when_a_middle_3d_sheet_is_deleted_or_moved() {
     moved.execute("sheet.activate", json!({"sheet": "Results"})).unwrap();
     assert_eq!(v(&moved, "D40"), Value::Error(gridcraft_core::CellError::Ref));
 }
+#[test]
+fn kept_values_give_way_when_a_named_middle_3d_sheet_is_deleted_or_moved() {
+    let setup = || {
+        let mut s = s();
+        for name in ["Sheet2", "Sheet3", "Results"] {
+            s.execute("home.insertSheet", json!({"name": name})).unwrap();
+        }
+        for (sheet, n) in [("Sheet1", 3), ("Sheet2", 5), ("Sheet3", 1)] {
+            s.execute("sheet.activate", json!({"sheet": sheet})).unwrap();
+            s.execute("cell.set", json!({"cell": "B1", "input": n.to_string()})).unwrap();
+        }
+        s.execute("formulas.defineName", json!({"name": "W", "refersTo": "=Sheet1:Sheet3!$B$1"})).unwrap();
+        s.execute("formulas.defineName", json!({"name": "WW", "refersTo": "=W"})).unwrap();
+        let wb = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb);
+        wb.external_books = vec![gridcraft_model::ExternalBook {
+            names: vec![gridcraft_model::ExternalName { name: "Broken".into(), sheet: None, refers_to: "#REF!".into() }],
+            ..Default::default()
+        }]
+        .into();
+        let mut direct = gridcraft_model::Cell::formula(gridcraft_model::Formula::new("=[1]!Broken+SUM(W)"));
+        direct.value = Value::Number(25.0);
+        wb.sheet_mut(3).unwrap().cells.set(CellRef::parse("D42").unwrap(), direct);
+        let mut chained = gridcraft_model::Cell::formula(gridcraft_model::Formula::new("=[1]!Broken+SUM(WW)"));
+        chained.value = Value::Number(25.0);
+        wb.sheet_mut(3).unwrap().cells.set(CellRef::parse("E42").unwrap(), chained);
+        let d = s.doc_mut().unwrap();
+        let mut wb = (*d.wb).clone();
+        d.calc.recalc_all(&mut wb);
+        d.wb = std::sync::Arc::new(wb);
+        s.execute("sheet.activate", json!({"sheet": "Results"})).unwrap();
+        s
+    };
+
+    let mut deleted = setup();
+    deleted.execute("home.deleteSheet", json!({"sheet": "Sheet2"})).unwrap();
+    assert_eq!(
+        (v(&deleted, "D42"), v(&deleted, "E42")),
+        (Value::Error(gridcraft_core::CellError::Ref), Value::Error(gridcraft_core::CellError::Ref))
+    );
+    deleted.execute("edit.undo", json!({})).unwrap();
+    assert_eq!((v(&deleted, "D42"), v(&deleted, "E42")), (Value::Number(25.0), Value::Number(25.0)));
+    deleted.execute("edit.redo", json!({})).unwrap();
+    assert_eq!(
+        (v(&deleted, "D42"), v(&deleted, "E42")),
+        (Value::Error(gridcraft_core::CellError::Ref), Value::Error(gridcraft_core::CellError::Ref))
+    );
+
+    let mut moved = setup();
+    moved.execute("sheet.move", json!({"sheet": "Sheet2", "to": 3})).unwrap();
+    moved.execute("sheet.activate", json!({"sheet": "Results"})).unwrap();
+    assert_eq!((v(&moved, "D42"), v(&moved, "E42")), (Value::Error(gridcraft_core::CellError::Ref), Value::Error(gridcraft_core::CellError::Ref)));
+    moved.execute("edit.undo", json!({})).unwrap();
+    assert_eq!((v(&moved, "D42"), v(&moved, "E42")), (Value::Number(25.0), Value::Number(25.0)));
+    moved.execute("edit.redo", json!({})).unwrap();
+    assert_eq!((v(&moved, "D42"), v(&moved, "E42")), (Value::Error(gridcraft_core::CellError::Ref), Value::Error(gridcraft_core::CellError::Ref)));
+}
 
 #[test]
 fn kept_values_follow_multi_area_structural_rewrites() {

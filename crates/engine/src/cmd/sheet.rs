@@ -231,6 +231,17 @@ fn spans_changed(e: &gridcraft_formula::Expr, before: &[String], after: &[String
     });
     changed
 }
+/// Names containing a 3-D reference can keep the same text while their member sheets change.
+/// Mark them as changed so formulas that read the name give up a linked workbook's saved value.
+fn mark_changed_name_spans(cx: &mut Ctx, before: &[String], after: &[String]) {
+    let names: Vec<String> = cx
+        .wb
+        .names
+        .iter()
+        .filter_map(|n| gridcraft_formula::parse(&n.formula).ok().filter(|e| spans_changed(e, before, after)).map(|_| n.name.to_lowercase()))
+        .collect();
+    cx.changed_names.extend(names);
+}
 
 /// Rewrites every formula reference (and chart series) for a structural edit on `target`.
 /// Formulas that now read other cells count as changed, and names whose references only moved
@@ -795,6 +806,7 @@ fn delete_sheet(s: &mut Session, p: &Json) -> Result<Json> {
                 }
             }
         }
+        mark_changed_name_spans(cx, &order, &new_order);
         if cx.wb.active_sheet >= cx.wb.sheets.len() || cx.wb.active_sheet > i {
             cx.wb.active_sheet = cx.wb.active_sheet.saturating_sub(1).min(cx.wb.sheets.len().saturating_sub(1));
         }
@@ -940,6 +952,7 @@ fn move_sheet(s: &mut Session, p: &Json) -> Result<Json> {
                 }
             }
         }
+        mark_changed_name_spans(cx, &old_order, &new_order);
         cx.structural = true;
         Ok(Json::Null)
     })
