@@ -39,10 +39,14 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "A Date Occurring" => "تاريخ يقع",
         "A Date Occurring…" => "تاريخ يقع…",
         "A clean-room, open-source, Rust-native spreadsheet. Part of ArtCraft." => "جدول بيانات مفتوح المصدر مكتوب بلغة Rust أصيلة. جزء من ArtCraft.",
+        "A local model is not a frontier cloud model: it can be wrong, and a long answer takes its time on CPU. Check anything critical, and mind a model's size against this machine before downloading it." => {
+            "النموذج المحلي ليس نموذجًا سحابيًا ضخمًا: قد يخطئ، والإجابة الطويلة تأخذ وقتها على المعالج. تحقّق من كل أمر حرج، وانتبه لحجم النموذج مقابل هذا الجهاز قبل تنزيله."
+        }
         "A scenario named '{name}' already exists on this sheet." => "يوجد بالفعل سيناريو بالاسم '{name}' في هذه الورقة.",
         "A table can't overlap another table." => "لا يمكن أن يتداخل جدول مع جدول آخر.",
         "A to Z" => "من الألف إلى الياء",
         "A workbook must contain at least one visible worksheet." => "يجب أن يحتوي المصنف على ورقة عمل واحدة مرئية على الأقل.",
+        "About" => "حول",
         "About GridCraft" => "حول GridCraft",
         "About\nGridCraft" => "حول\nGridCraft",
         "Above Average" => "أعلى من المتوسط",
@@ -79,13 +83,19 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Angle Clockwise" => "تدوير مع عقارب الساعة",
         "Angle Counterclockwise" => "تدوير عكس عقارب الساعة",
         "Animations" => "حركات",
-        "Anova needs at least two groups, each with at least one number." => "يحتاج تحليل التباين إلى مجموعتين على الأقل، كل منهما تحتوي على رقم واحد على الأقل.",
+        "Anova needs at least two groups, each with at least one number." => {
+            "يحتاج تحليل التباين إلى مجموعتين على الأقل، كل منهما تحتوي على رقم واحد على الأقل."
+        }
         "Anova: Single Factor" => "تحليل التباين أحادي العامل",
         "Anova: Two-Factor" => "تحليل التباين ثنائي العامل",
         "Answer Report 1" => "تقرير الإجابة 1",
         "Any value" => "أي قيمة",
         "Apply names to formulas" => "تطبيق الأسماء على الصيغ",
         "Ascending" => "تصاعدي",
+        "Ask" => "اسأل",
+        "Ask anything" => "اسأل أي شيء",
+        "Ask in any language" => "اسأل بأي لغة",
+        "Assistant" => "المساعد",
         "At each change in (column letter):" => "عند كل تغيير في (حرف العمود):",
         "Author" => "المؤلف",
         "Auto" => "تلقائي",
@@ -106,6 +116,11 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Before sheet (position, 0 = first):" => "قبل الورقة (الموضع، 0 = الأولى):",
         "Before sheet:" => "قبل الورقة:",
         "Below Average" => "أدنى من المتوسط",
+        "Best for: a step up in quality, still light" => "الأفضل لـ: درجة أعلى في الجودة مع بقائه خفيفًا",
+        "Best for: balanced everyday and technical work" => "الأفضل لـ: التوازن بين العمل اليومي والعمل التقني",
+        "Best for: everyday help on the lightest machines" => "الأفضل لـ: العون اليومي على أخفّ الأجهزة",
+        "Best for: near-flagship answers at MoE speed" => "الأفضل لـ: إجابات قريبة من الرائدة بسرعة خليط الخبراء (MoE)",
+        "Best for: the deepest reasoning this family has" => "الأفضل لـ: أعمق استدلال تملكه هذه العائلة",
         "Between…" => "بين…",
         "Bin Range (blank for automatic bins):" => "نطاق الحاويات (اتركه فارغًا لحاويات تلقائية):",
         "Binary assets added" => "أصول ثنائية مضافة",
@@ -127,6 +142,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Box & Whisker" => "مربع ولحية",
         "Breaks" => "فواصل",
         "Browse…" => "استعراض…",
+        "Build a formula" => "إنشاء صيغة",
         "By Changing Variable Cells:" => "بتغيير خلايا المتغيرات:",
         "By changing cell:" => "بتغيير الخلية:",
         "CSV (Comma delimited)" => "CSV (محدد بفواصل)",
@@ -161,6 +177,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Change\nChart Type" => "تغيير نوع\nالمخطط",
         "Chart Design" => "تصميم المخطط",
         "Chart Type" => "نوع المخطط",
+        "Chart and pivot advice" => "نصائح المخططات والجداول المحورية",
         "Chart data range:" => "نطاق بيانات المخطط:",
         "Chart\nTitle" => "عنوان\nالمخطط",
         "Check\nAccessibility" => "تدقيق\nإمكانية الوصول",
@@ -169,6 +186,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Choose fields to add to report:" => "اختر الحقول لإضافتها إلى التقرير:",
         "Circle Invalid Data" => "تأطير البيانات غير الصالحة",
         "Circular References: {name}!{}" => "مراجع دائرية: {name}!{}",
+        "Clean or transform data" => "تنظيف البيانات أو تحويلها",
         "Clear" => "مسح",
         "Clear All" => "مسح الكل",
         "Clear Comments and Notes" => "مسح التعليقات والملاحظات",
@@ -241,6 +259,14 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Count" => "العدد",
         "Count Numbers" => "عدد الأرقام",
         "Count: {}" => "العدد: {}",
+        "Craft AI" => "Craft AI",
+        "Craft AI runs a local Gemma model on this machine. Nothing you write here leaves it: no account, no cloud service, no telemetry — the panel talks to a model runtime on 127.0.0.1." => {
+            "يشغّل Craft AI نموذج Gemma محليًا على هذا الجهاز. لا يخرج ما تكتبه هنا منه: لا حساب، ولا خدمة سحابية، ولا قياس عن بُعد — اللوحة تتحدث إلى مشغّل نماذج على 127.0.0.1."
+        }
+        "Craft AI runs in the native app — it needs a local model runtime." => "يعمل Craft AI في التطبيق المكتبي — يحتاج مشغّل نماذج محلي.",
+        "Craft AI talks to a model runtime on this machine — Ollama, LM Studio or llama.cpp's server — and never to a cloud service. Start one, then Refresh." => {
+            "يتحدث Craft AI إلى مشغّل نماذج على هذا الجهاز — Ollama أو LM Studio أو خادم llama.cpp — ولا يتحدث إلى خدمة سحابية أبدًا. شغّل أحدها ثم حدّث."
+        }
         "Create Forecast Worksheet" => "إنشاء ورقة تنبؤ",
         "Create PDF" => "إنشاء PDF",
         "Create Sparklines" => "إنشاء مخططات مصغّرة",
@@ -302,6 +328,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Delete chart" => "حذف المخطط",
         "Delete columns" => "حذف أعمدة",
         "Delete comment" => "حذف التعليق",
+        "Delete file" => "احذف الملف",
         "Delete rows" => "حذف صفوف",
         "Delete\nChart" => "حذف\nالمخطط",
         "Delete…" => "حذف…",
@@ -309,6 +336,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Delimiters" => "المحددات",
         "Dependents" => "التوابع",
         "Descending" => "تنازلي",
+        "Describe the data and the shape you want" => "صف البيانات والشكل الذي تريده",
         "Description" => "الوصف",
         "Description (optional):" => "الوصف (اختياري):",
         "Descriptive Statistics" => "إحصاءات وصفية",
@@ -318,6 +346,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Different First Page" => "صفحة أولى مختلفة",
         "Different Odd & Even Pages" => "صفحات فردية وزوجية مختلفة",
         "Direct only" => "المباشرة فقط",
+        "Disk {size}" => "القرص {size}",
         "Dismiss" => "تجاهل",
         "Display name" => "الاسم المعروض",
         "Display theme" => "نسق العرض",
@@ -329,6 +358,8 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Double Accounting" => "تسطير محاسبي مزدوج",
         "Double Underline" => "تسطير مزدوج",
         "Download" => "تنزيل",
+        "Download with Ollama" => "نزّل عبر Ollama",
+        "Downloading… {pct}% — {note}" => "ينزّل… {pct}% — {note}",
         "Drag to fill cells. Drag from inside a cell to select a range." => "اسحب لتعبئة الخلايا. اسحب من داخل خلية لتحديد نطاق.",
         "Drag to freeze columns" => "اسحب لتجميد الأعمدة",
         "Drag to freeze rows" => "اسحب لتجميد الصفوف",
@@ -356,9 +387,12 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Error style" => "نمط الخطأ",
         "Evaluate Formula" => "تقييم الصيغة",
         "Every command run in this session (replayable)" => "كل أمر نُفِّذ في هذه الجلسة (قابل لإعادة التشغيل)",
-        "Excel 97-2003 (.xls) is supported for import only. Save as .xlsx or another supported export format." => "تنسيق Excel 97-2003 (.xls) مدعوم للاستيراد فقط. احفظ بصيغة .xlsx أو تنسيق تصدير مدعوم آخر.",
+        "Excel 97-2003 (.xls) is supported for import only. Save as .xlsx or another supported export format." => {
+            "تنسيق Excel 97-2003 (.xls) مدعوم للاستيراد فقط. احفظ بصيغة .xlsx أو تنسيق تصدير مدعوم آخر."
+        }
         "Excel Workbook (*.xlsx)" => "مصنف Excel (*.xlsx)",
         "Expand formula bar" => "توسيع شريط الصيغة",
+        "Explain a formula" => "شرح صيغة",
         "Explanatory" => "توضيحي",
         "Exponential Smoothing" => "تمهيد أُسّي",
         "Export" => "تصدير",
@@ -391,6 +425,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Fit Sheet on One Page" => "احتواء الورقة في صفحة واحدة",
         "Fit selection" => "احتواء التحديد",
         "Fits inside the selected cell and moves with its content." => "تتلاءم داخل الخلية المحددة وتتحرك مع محتواها.",
+        "Fits this machine" => "يناسب هذا الجهاز",
         "Fixed width" => "عرض ثابت",
         "Flash Fill" => "التعبئة السريعة",
         "Flash Fill (⌘E)" => "تعبئة سريعة (⌘E)",
@@ -437,11 +472,16 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Freeze Top Row" => "تجميد الصف العلوي",
         "Freeze\nPanes" => "تجميد\nالأجزاء",
         "Function arguments" => "وسائط الدالة",
+        "Function finder" => "باحث الدوال",
         "GRG Nonlinear" => "GRG غير الخطي",
-        "GRG Nonlinear: a local optimum of a smooth model, from the current values." => "GRG غير الخطي: أمثلية محلية لنموذج سلس، انطلاقًا من القيم الحالية.",
+        "GRG Nonlinear: a local optimum of a smooth model, from the current values." => {
+            "GRG غير الخطي: أمثلية محلية لنموذج سلس، انطلاقًا من القيم الحالية."
+        }
         "General" => "عام",
         "Get Data\n(Text/CSV)" => "الحصول على بيانات\n(نص/CSV)",
-        "Glide the selection outline to the cell you move to instead of jumping there" => "ينزلق مخطط التحديد إلى الخلية التي تنتقل إليها بدلًا من القفز إليها",
+        "Glide the selection outline to the cell you move to instead of jumping there" => {
+            "ينزلق مخطط التحديد إلى الخلية التي تنتقل إليها بدلًا من القفز إليها"
+        }
         "Go To" => "انتقال إلى",
         "Go To Special" => "انتقال إلى خاص",
         "Go To Special…" => "انتقال إلى خاص…",
@@ -461,7 +501,9 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Green Fill with Dark Green Text" => "تعبئة خضراء مع نص أخضر داكن",
         "GridCraft" => "GridCraft",
         "GridCraft User" => "مستخدم GridCraft",
-        "GridCraft is fully drivable by agents. Every menu item, button and gesture is a command:" => "يمكن للوكلاء تشغيل GridCraft بالكامل. كل عنصر قائمة وزر وإيماءة هو أمر:",
+        "GridCraft is fully drivable by agents. Every menu item, button and gesture is a command:" => {
+            "يمكن للوكلاء تشغيل GridCraft بالكامل. كل عنصر قائمة وزر وإيماءة هو أمر:"
+        }
         "Gridlines" => "خطوط الشبكة",
         "Gridlines: None" => "خطوط الشبكة: بلا",
         "Gridlines: Show" => "خطوط الشبكة: إظهار",
@@ -529,7 +571,9 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Insert Copied Cells" => "إدراج الخلايا المنسوخة",
         "Insert Copied Cells…" => "إدراج الخلايا المنسوخة…",
         "Insert Cut Cells" => "إدراج الخلايا المقصوصة",
-        "Insert Cut Cells works on whole rows or columns; cut whole rows or columns, or use Paste." => "يعمل إدراج الخلايا المقصوصة على صفوف أو أعمدة كاملة؛ قصّ صفوفًا أو أعمدة كاملة، أو استخدم لصق.",
+        "Insert Cut Cells works on whole rows or columns; cut whole rows or columns, or use Paste." => {
+            "يعمل إدراج الخلايا المقصوصة على صفوف أو أعمدة كاملة؛ قصّ صفوفًا أو أعمدة كاملة، أو استخدم لصق."
+        }
         "Insert Function" => "إدراج دالة",
         "Insert Function (⇧F3)" => "إدراج دالة (⇧F3)",
         "Insert Hyperlink" => "إدراج ارتباط تشعبي",
@@ -585,6 +629,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Light Blue" => "أزرق فاتح",
         "Light Red Fill" => "تعبئة حمراء فاتحة",
         "Light Red Fill with Dark Red Text" => "تعبئة حمراء فاتحة مع نص أحمر داكن",
+        "Limits" => "الحدود",
         "Limits Report 1" => "تقرير الحدود 1",
         "Line" => "خط",
         "Line chart" => "مخطط خطي",
@@ -599,15 +644,19 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Link…" => "ارتباط…",
         "List" => "قائمة",
         "Load/Save" => "تحميل/حفظ",
+        "Local and private" => "محلي وخاص",
         "Locale (location):" => "الإعدادات المحلية (الموقع):",
         "Location" => "الموقع",
         "Location Range:" => "نطاق الموقع:",
         "Lock Cell" => "تأمين الخلية",
-        "Lock the sheet structure so sheets can't be added, moved, renamed or deleted." => "يؤمّن بنية الأوراق فلا يمكن إضافة الأوراق أو نقلها أو إعادة تسميتها أو حذفها.",
+        "Lock the sheet structure so sheets can't be added, moved, renamed or deleted." => {
+            "يؤمّن بنية الأوراق فلا يمكن إضافة الأوراق أو نقلها أو إعادة تسميتها أو حذفها."
+        }
         "Locked" => "مؤمّنة",
         "Locking cells or hiding formulas has no effect until you protect the worksheet (Review › Protect Sheet)." => "لا يكون لقفل الخلايا أو إخفاء الصيغ أي تأثير حتى تحمي ورقة العمل (مراجعة ‹ حماية الورقة).",
         "Logical" => "منطقية",
         "Long Date" => "تاريخ طويل",
+        "Looking for a local model runtime…" => "البحث عن مشغّل نماذج محلي…",
         "Lookup &\nReference" => "بحث\nومرجع",
         "Macros" => "الماكرو",
         "Macros and scripts in this workbook (Alt+F8)" => "الماكرو والبرامج النصية في هذا المصنف (Alt+F8)",
@@ -630,7 +679,9 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Min" => "الأدنى",
         "Minimum / Source / Formula:" => "الحد الأدنى / المصدر / الصيغة:",
         "Minimum:" => "الحد الأدنى:",
+        "Model" => "النموذج",
         "Model credits" => "بيانات النماذج",
+        "Models" => "النماذج",
         "Modified" => "معدَّل",
         "More Accounting Formats…" => "مزيد من التنسيقات المحاسبية…",
         "More Borders…" => "مزيد من الحدود…",
@@ -659,6 +710,8 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Name:" => "الاسم:",
         "Name\nManager" => "إدارة\nالأسماء",
         "Narrow" => "ضيّق",
+        "Needs {disk} GB of disk" => "يحتاج مساحة {disk} غيغابايت",
+        "Needs {ram} GB of RAM" => "يحتاج ذاكرة {ram} غيغابايت",
         "Negative numbers:" => "الأرقام السالبة:",
         "New" => "جديد",
         "New Formatting Rule" => "قاعدة تنسيق جديدة",
@@ -684,8 +737,12 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "No cells were found." => "لم يتم العثور على أي خلايا.",
         "No comments on this sheet yet. Select a cell and choose New Comment." => "لا توجد تعليقات في هذه الورقة بعد. حدد خلية واختر تعليق جديد.",
         "No contributor data was built into this copy." => "لم تُبنَ بيانات المساهمين في هذه النسخة.",
-        "No dictionary is available on this system (GridCraft uses the system word list)." => "لا يتوفر قاموس على هذا النظام (يستخدم GridCraft قائمة كلمات النظام).",
+        "No dictionary is available on this system (GridCraft uses the system word list)." => {
+            "لا يتوفر قاموس على هذا النظام (يستخدم GridCraft قائمة كلمات النظام)."
+        }
+        "No local model runtime found." => "لا يوجد مشغّل نماذج محلي.",
         "No model credits were built into this copy." => "لم تُبنَ بيانات نماذج الذكاء الاصطناعي في هذه النسخة.",
+        "No model installed yet — see the Models tab." => "لا يوجد نموذج مثبّت بعد — انظر تبويب النماذج.",
         "No names defined" => "لم تُعرَّف أسماء",
         "No picture selected" => "لم يتم تحديد صورة",
         "No ranges yet." => "لا توجد نطاقات بعد.",
@@ -709,8 +766,13 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Number Filters" => "تصفيات الأرقام",
         "Number of Pages" => "عدد الصفحات",
         "Number\nof Pages" => "عدد\nالصفحات",
-        "ODS is supported for data import only. Save as .xlsx or another supported export format." => "تنسيق ODS مدعوم لاستيراد البيانات فقط. احفظ بصيغة .xlsx أو تنسيق تصدير مدعوم آخر.",
+        "ODS is supported for data import only. Save as .xlsx or another supported export format." => {
+            "تنسيق ODS مدعوم لاستيراد البيانات فقط. احفظ بصيغة .xlsx أو تنسيق تصدير مدعوم آخر."
+        }
         "Objects (pictures, shapes, charts)" => "الكائنات (صور وأشكال ومخططات)",
+        "One download serves every ArtCraft app: the model lands in a shared folder all of them read." => {
+            "تنزيل واحد يكفي كل تطبيقات ArtCraft: يوضع النموذج في مجلد مشترك تقرؤه كلها."
+        }
         "Open" => "فتح",
         "Open…" => "فتح…",
         "Operation" => "العملية",
@@ -751,6 +813,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Paste Special" => "لصق خاص",
         "Paste Special…" => "لصق خاص…",
         "Paste Values" => "لصق القيم",
+        "Paste the formula, or a cell like =B2*1.1" => "الصق الصيغة، أو خلية مثل =B2*1.1",
         "Percent :red :signed" => "نسبة مئوية :أحمر :موقّعة",
         "Percent :signed" => "نسبة مئوية :موقّعة",
         "Percent Style" => "نمط النسبة المئوية",
@@ -790,10 +853,13 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Protect Structure and Windows" => "حماية البنية والإطارات",
         "Protect Workbook" => "حماية المصنف",
         "Protect Workbook structure" => "حماية بنية المصنف",
-        "Protect workbook for: Structure (sheets can't be added, moved, renamed, hidden or deleted)." => "حماية المصنف من أجل: البنية (لا يمكن إضافة الأوراق أو نقلها أو إعادة تسميتها أو إخفاؤها أو حذفها).",
+        "Protect workbook for: Structure (sheets can't be added, moved, renamed, hidden or deleted)." => {
+            "حماية المصنف من أجل: البنية (لا يمكن إضافة الأوراق أو نقلها أو إعادة تسميتها أو إخفاؤها أو حذفها)."
+        }
         "Protect\nWorkbook" => "حماية\nالمصنف",
         "Protection" => "الحماية",
         "Quick Analysis" => "تحليل سريع",
+        "RAM {gb} GB" => "الذاكرة {gb} غيغابايت",
         "Random Number Generation" => "توليد أرقام عشوائية",
         "Range password:" => "كلمة مرور النطاق:",
         "Ranges that stay editable when the sheet is protected:\n{summary}" => "النطاقات التي تبقى قابلة للتحرير عند حماية الورقة:\n{summary}",
@@ -814,6 +880,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Refers To" => "يشير إلى",
         "Refers to cells:" => "يشير إلى الخلايا:",
         "Refers to:" => "يشير إلى:",
+        "Refresh" => "تحديث",
         "Regression" => "الانحدار",
         "Remove Arrows" => "إزالة الأسهم",
         "Remove Page Break" => "إزالة فاصل الصفحات",
@@ -832,7 +899,9 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Reset All Page Breaks" => "إعادة تعيين كل فواصل الصفحات",
         "Resolve thread" => "حل المحادثة",
         "Restore Original Values" => "استعادة القيم الأصلية",
-        "Return to the original worksheet to insert this picture, or cancel and choose another cell." => "عُد إلى ورقة العمل الأصلية لإدراج هذه الصورة، أو ألغِ واختر خلية أخرى.",
+        "Return to the original worksheet to insert this picture, or cancel and choose another cell." => {
+            "عُد إلى ورقة العمل الأصلية لإدراج هذه الصورة، أو ألغِ واختر خلية أخرى."
+        }
         "Reverse the order" => "عكس الترتيب",
         "Review" => "مراجعة",
         "Right" => "يمين",
@@ -852,6 +921,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Rows" => "صفوف",
         "Ruler" => "المسطرة",
         "Running Total" => "إجمالي جارٍ",
+        "Runtime" => "المشغّل",
         "Sample" => "نموذج",
         "Sampling" => "أخذ العينات",
         "Save" => "حفظ",
@@ -863,12 +933,15 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Save a Copy as Excel Workbook (.xlsx)…" => "حفظ نسخة كمصنف Excel (.xlsx)…",
         "Save a copy as .{fmt}" => "حفظ نسخة كـ .{fmt}",
         "Save as type" => "حفظ بنوع الملف",
+        "Save model file" => "احفظ ملف النموذج",
         "Save the active sheet as comma-separated text." => "يحفظ الورقة النشطة كنص مفصول بفواصل.",
         "Save the sheet as a PDF document that keeps its page layout." => "يحفظ الورقة كمستند PDF يحتفظ بتخطيط صفحاته.",
         "Save the workbook as a web page." => "يحفظ المصنف كصفحة ويب.",
         "Save the workbook under another name or in another folder." => "يحفظ المصنف باسم آخر أو في مجلد آخر.",
         "Saved" => "تم الحفظ",
+        "Saved in the shared folder" => "محفوظ في المجلد المشترك",
         "Saved {}" => "تم حفظ {}",
+        "Saving… {pct}%" => "يحفظ… {pct}%",
         "Scatter or Bubble" => "مبعثر أو فقاعي",
         "Scenario Manager…" => "إدارة السيناريوهات…",
         "Scientific" => "علمي",
@@ -910,7 +983,9 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Sheet Name" => "اسم الورقة",
         "Sheet Options|View" => "عرض",
         "Sheet Right-to-Left" => "الورقة من اليمين إلى اليسار",
-        "Sheet structure is locked: sheets can't be added, moved, renamed or deleted." => "بنية الورقات مؤمّنة: لا يمكن إضافة الأوراق أو نقلها أو إعادة تسميتها أو حذفها.",
+        "Sheet structure is locked: sheets can't be added, moved, renamed or deleted." => {
+            "بنية الورقات مؤمّنة: لا يمكن إضافة الأوراق أو نقلها أو إعادة تسميتها أو حذفها."
+        }
         "Sheet\nName" => "اسم\nالورقة",
         "Sheet\nRight-to-Left" => "الورقة من اليمين\nإلى اليسار",
         "Sheets" => "أوراق",
@@ -991,6 +1066,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Table Design" => "تصميم الجدول",
         "Table Name:" => "اسم الجدول:",
         "Table\nStyles" => "أنماط\nالجدول",
+        "Task" => "المهمة",
         "Text" => "نصية",
         "Text Filters" => "تصفيات النص",
         "Text alignment" => "محاذاة النص",
@@ -1002,7 +1078,9 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Text to display:" => "النص المطلوب عرضه:",
         "Text to\nColumns" => "نص إلى\nأعمدة",
         "Text\nBox" => "مربع\nنص",
-        "The Evolutionary method isn't available; use GRG Nonlinear or Simplex LP." => "طريقة Evolutionary غير متوفرة؛ استخدم GRG غير الخطي أو Simplex الخطي.",
+        "The Evolutionary method isn't available; use GRG Nonlinear or Simplex LP." => {
+            "طريقة Evolutionary غير متوفرة؛ استخدم GRG غير الخطي أو Simplex الخطي."
+        }
         "The X variables are collinear; the regression can't be computed." => "متغيرات X خطية الارتباط؛ لا يمكن حساب الانحدار.",
         "The bin range holds no numbers." => "لا يحتوي نطاق الحاويات على أرقام.",
         "The cell has no formula." => "لا تحتوي الخلية على صيغة.",
@@ -1010,17 +1088,22 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "The cell you're trying to change is on a protected sheet." => "الخلية التي تحاول تغييرها موجودة في ورقة محمية.",
         "The chart no longer exists." => "لم يعد المخطط موجودًا.",
         "The consolidated data doesn't fit below and right of the destination." => "البيانات الموحدة لا تتسع أسفل وجهة الإدراج وإلى يمينها.",
-        "The constraint's two sides must be the same size (or the right side one cell)." => "يجب أن يكون جانبا القيد بالحجم نفسه (أو الجانب الأيمن خلية واحدة).",
+        "The constraint's two sides must be the same size (or the right side one cell)." => {
+            "يجب أن يكون جانبا القيد بالحجم نفسه (أو الجانب الأيمن خلية واحدة)."
+        }
         "The copied cells don't fit on the sheet at this position." => "لا تتسع الخلايا المنسوخة في الورقة عند هذا الموضع.",
         "The copied sheet no longer exists." => "لم تعد الورقة المنسوخة موجودة.",
         "The copy area is the whole sheet; there is no room to insert it." => "منطقة النسخ هي الورقة بأكملها؛ لا توجد مساحة لإدراجها.",
         "The criteria label `{head}` doesn't match a column of the list." => "تسمية المعيار `{head}` لا تطابق عمودًا في القائمة.",
         "The cut rows or columns can't be inserted inside themselves." => "لا يمكن إدراج الصفوف أو الأعمدة المقصوصة داخل نفسها.",
         "The damping factor must be between 0 and 1." => "يجب أن يكون معامل التخميد بين 0 و1.",
+        "The data and the story it should tell" => "البيانات والقصة التي ينبغي أن ترويها",
         "The extract range can't overlap the list range." => "لا يمكن أن يتداخل نطاق الاستخراج مع نطاق القائمة.",
         "The file is empty." => "الملف فارغ.",
         "The forecast end must be after the last point of the timeline." => "يجب أن تكون نهاية التنبؤ بعد آخر نقطة في الخط الزمني.",
-        "The headers must remain in the same row, and the resulting table range must overlap the original table range." => "يجب أن تبقى الترويسات في الصف نفسه، وأن يتداخل نطاق الجدول الناتج مع نطاق الجدول الأصلي.",
+        "The headers must remain in the same row, and the resulting table range must overlap the original table range." => {
+            "يجب أن تبقى الترويسات في الصف نفسه، وأن يتداخل نطاق الجدول الناتج مع نطاق الجدول الأصلي."
+        }
         "The input range holds no numbers." => "لا يحتوي نطاق الإدخال على أرقام.",
         "The interval must be a whole number from 1 to the number of data points." => "يجب أن يكون الفاصل عددًا صحيحًا من 1 إلى عدد نقاط البيانات.",
         "The name entered already exists. Enter a unique name." => "الاسم المُدخل موجود بالفعل. أدخل اسمًا فريدًا.",
@@ -1031,7 +1114,10 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "The output range already holds data. Replace it with the report?" => "يحتوي نطاق الإخراج على بيانات بالفعل. هل تريد استبدالها بالتقرير؟",
         "The password you supplied is not correct." => "كلمة المرور التي أدخلتها غير صحيحة.",
         "The report doesn't fit on the sheet below and right of the output cell." => "التقرير لا يتسع في الورقة أسفل خلية الإخراج وإلى يمينها.",
-        "The sheet is protected with a password. Unprotect it first (Review › Unprotect Sheet)." => "الورقة محمية بكلمة مرور. ألغِ حمايتها أولًا (مراجعة ‹ إلغاء حماية الورقة).",
+        "The shared folder:" => "المجلد المشترك:",
+        "The sheet is protected with a password. Unprotect it first (Review › Unprotect Sheet)." => {
+            "الورقة محمية بكلمة مرور. ألغِ حمايتها أولًا (مراجعة ‹ إلغاء حماية الورقة)."
+        }
         "The spelling check is complete for the entire sheet." => "اكتمل التدقيق الإملائي للورقة بأكملها.",
         "The text box's worksheet is no longer active." => "لم تعد ورقة عمل مربع النص نشطة.",
         "The timeline must hold numbers or dates ({} isn't one)." => "يجب أن يحتوي الخط الزمني على أرقام أو تواريخ ({} ليس كذلك).",
@@ -1053,13 +1139,19 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "There's no room below the selection for the totals." => "لا توجد مساحة أسفل التحديد للإجماليات.",
         "Thick Bottom Border" => "الحد السفلي السميك",
         "Thick Outside Borders" => "حدود خارجية سميكة",
+        "Thinking… {s}s" => "يفكر… {s}ث",
         "This action won't work on multiple selections." => "لن يعمل هذا الإجراء على تحديدات متعددة.",
+        "This machine: {ram} GB RAM, {disk} GB free" => "هذا الجهاز: ذاكرة {ram} غيغابايت، ومساحة متاحة {disk} غيغابايت",
         "This month" => "هذا الشهر",
-        "This operation isn't allowed: it would shift cells in a table on your worksheet." => "هذه العملية غير مسموح بها: فهي تزيح خلايا في جدول على ورقة عملك.",
+        "This operation isn't allowed: it would shift cells in a table on your worksheet." => {
+            "هذه العملية غير مسموح بها: فهي تزيح خلايا في جدول على ورقة عملك."
+        }
         "This sheet has no saved Solver model." => "لا تحتوي هذه الورقة على نموذج Solver محفوظ.",
         "This week" => "هذا الأسبوع",
         "This workbook" => "هذا المصنف",
-        "This workbook contains VBA macros. GridCraft keeps them intact when you save, but does not run them." => "يحتوي هذا المصنف على ماكرو VBA. يحتفظ بها GridCraft سليمة عند الحفظ، لكنه لا يشغّلها.",
+        "This workbook contains VBA macros. GridCraft keeps them intact when you save, but does not run them." => {
+            "يحتوي هذا المصنف على ماكرو VBA. يحتفظ بها GridCraft سليمة عند الحفظ، لكنه لا يشغّلها."
+        }
         "This workbook has no scripts or macros." => "لا يحتوي هذا المصنف على برامج نصية أو ماكرو.",
         "Threaded Comments" => "تعليقات محادثة",
         "Time" => "وقت",
@@ -1071,9 +1163,15 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Titles and Headings" => "عناوين وترويسات",
         "To book:" => "إلى المصنف:",
         "To do this, all the merged cells need to be the same size." => "للقيام بذلك، يجب أن تكون كل الخلايا المدمجة بالحجم نفسه.",
-        "To prevent possible loss of data, Excel cannot shift nonblank cells off of the worksheet." => "لمنع الفقدان المحتمل للبيانات، لا يستطيع Excel إزاحة الخلايا غير الفارغة خارج ورقة العمل.",
-        "To prevent possible loss of data, cells can't be pushed off the end of the worksheet." => "لمنع الفقدان المحتمل للبيانات، لا يمكن دفع الخلايا خارج نهاية ورقة العمل.",
-        "To prevent possible loss of data, columns cannot be shifted off of the worksheet." => "لمنع الفقدان المحتمل للبيانات، لا يمكن إزاحة الأعمدة خارج ورقة العمل.",
+        "To prevent possible loss of data, Excel cannot shift nonblank cells off of the worksheet." => {
+            "لمنع الفقدان المحتمل للبيانات، لا يستطيع Excel إزاحة الخلايا غير الفارغة خارج ورقة العمل."
+        }
+        "To prevent possible loss of data, cells can't be pushed off the end of the worksheet." => {
+            "لمنع الفقدان المحتمل للبيانات، لا يمكن دفع الخلايا خارج نهاية ورقة العمل."
+        }
+        "To prevent possible loss of data, columns cannot be shifted off of the worksheet." => {
+            "لمنع الفقدان المحتمل للبيانات، لا يمكن إزاحة الأعمدة خارج ورقة العمل."
+        }
         "To value:" => "إلى القيمة:",
         "To:" => "إلى:",
         "Today" => "اليوم",
@@ -1140,10 +1238,14 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Warning Text" => "نص تحذير",
         "Watch Window" => "نافذة المراقبة",
         "We couldn't find what you were looking for: {what}" => "لم نتمكن من العثور على ما تبحث عنه: {what}",
-        "We looked at all the data next to your selection and didn't see a pattern for filling in values for you." => "فحصنا كل البيانات المجاورة لتحديدك ولم نلحظ نمطًا يسمح بتعبئة القيم نيابة عنك.",
+        "We looked at all the data next to your selection and didn't see a pattern for filling in values for you." => {
+            "فحصنا كل البيانات المجاورة لتحديدك ولم نلحظ نمطًا يسمح بتعبئة القيم نيابة عنك."
+        }
         "Web Page (*.html)" => "صفحة ويب (*.html)",
         "Web Page (.html)" => "صفحة ويب (.html)",
         "What this means" => "ماذا يعني هذا",
+        "What to compute, and where the numbers are" => "ماذا تريد حسابه، وأين توجد الأرقام",
+        "What you need, in plain words" => "ما تحتاجه بكلمات بسيطة",
         "What-If\nAnalysis" => "تحليل\n«ماذا إذا»",
         "White - Green" => "أبيض - أخضر",
         "White - Red" => "أبيض - أحمر",
@@ -1158,7 +1260,9 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Workbook calculation" => "حساب المصنف",
         "Wrap Text" => "التفاف النص",
         "Wrap text" => "التفاف النص",
-        "XLSB is supported for data import only. Save as .xlsx or another supported export format." => "تنسيق XLSB مدعوم لاستيراد البيانات فقط. احفظ بصيغة .xlsx أو تنسيق تصدير مدعوم آخر.",
+        "XLSB is supported for data import only. Save as .xlsx or another supported export format." => {
+            "تنسيق XLSB مدعوم لاستيراد البيانات فقط. احفظ بصيغة .xlsx أو تنسيق تصدير مدعوم آخر."
+        }
         "Yellow Fill with Dark Yellow Text" => "تعبئة صفراء مع نص أصفر داكن",
         "Yesterday" => "أمس",
         "You can't change part of an array." => "لا يمكنك تغيير جزء من مصفوفة.",
@@ -1268,7 +1372,9 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "this workbook" => "هذا المصنف",
         "too many rows" => "صفوف كثيرة جدًا",
         "too many sort levels (64 max)" => "مستويات فرز كثيرة جدًا (64 كحد أقصى)",
-        "trendlines need a 2-D column, bar, line, area, scatter or bubble series" => "تحتاج خطوط الاتجاه إلى سلسلة أعمدة أو أشرطة أو خطوط أو مساحية أو مبعثرة أو فقاعية ثنائية الأبعاد",
+        "trendlines need a 2-D column, bar, line, area, scatter or bubble series" => {
+            "تحتاج خطوط الاتجاه إلى سلسلة أعمدة أو أشرطة أو خطوط أو مساحية أو مبعثرة أو فقاعية ثنائية الأبعاد"
+        }
         "unknown command `{0}`" => "أمر غير معروف `{0}`",
         "value is not in the column" => "القيمة ليست في العمود",
         "z-Test: Two Sample for Means" => "اختبار z: عينتان للمتوسطات",
@@ -1279,7 +1385,9 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "{n} weeks ago" => "قبل {n} أسبوع",
         "{n} years ago" => "قبل {n} سنة",
         "{} cell(s) found" => "تم العثور على {} خلية",
-        "{} engine commands are available. See docs/mcp.md and docs/control-protocol.md." => "يتوفر {} أمر محرك. راجع docs/mcp.md وdocs/control-protocol.md.",
+        "{} engine commands are available. See docs/mcp.md and docs/control-protocol.md." => {
+            "يتوفر {} أمر محرك. راجع docs/mcp.md وdocs/control-protocol.md."
+        }
         "{} items in this file were handled differently. First: {}" => "تم التعامل مع {} عناصر في هذا الملف بشكل مختلف. أولًا: {}",
         "{}: {}" => "{}: {}",
         "{}R x {}C" => "{} ص × {} ع",

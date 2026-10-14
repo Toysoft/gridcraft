@@ -36,6 +36,9 @@ gridcraft-xlsx = { workspace = true, features = ["test-support"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # The desktop's preferred language for the first-run interface language.
 sys-locale = { workspace = true }
+# Craft AI talks to a local model runtime over loopback HTTP (native only; its TLS stack does
+# not build for the web target, where the pane shows a note instead).
+ureq = { version = "2", features = ["json"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # Read the browser's preferred language for the first-run web interface language.

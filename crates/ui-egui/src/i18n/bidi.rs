@@ -57,8 +57,15 @@ fn mirror(c: char) -> char {
 /// right-to-left in it comes back as it was.
 pub fn visual_cached(text: &'static str) -> &'static str {
     static CACHE: OnceLock<Mutex<HashMap<&'static str, &'static str>>> = OnceLock::new();
-    let mut cache = CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
-    *cache.entry(text).or_insert_with(|| Box::leak(visual_rtl(text).into_boxed_str()))
+    // A poisoned lock (a reordering that panicked) still hands back its cache: the labels it
+    // already reordered stay right, and the one that panicked falls back to logical order.
+    let mut cache = CACHE.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(&reordered) = cache.get(text) {
+        return reordered;
+    }
+    let reordered: &'static str = Box::leak(visual_rtl(text).into_boxed_str());
+    cache.insert(text, reordered);
+    reordered
 }
 
 /// `label` in logical order, rearranged for egui's run-by-run, left-to-right layout: the runs in

@@ -11,6 +11,7 @@ mod border_preview;
 mod cell_pictures;
 pub mod chartview;
 pub mod control;
+mod craft_ai;
 pub mod credits;
 pub mod dialogs;
 pub mod editor;
@@ -588,7 +589,9 @@ impl SheetApp {
                         self.ui.language = l;
                         Ok(json!({"language": l}))
                     }
-                    None => Err(format!("unknown language {code:?} (use \"en\", \"es\", \"zh\", \"ja\", \"ko\", \"ru\", \"pt\", \"cs\", \"fr\" or \"ar\")")),
+                    None => Err(format!(
+                        "unknown language {code:?} (use \"en\", \"es\", \"zh\", \"ja\", \"ko\", \"ru\", \"pt\", \"cs\", \"fr\" or \"ar\")"
+                    )),
                 }
             }
             "app.language.english" => {

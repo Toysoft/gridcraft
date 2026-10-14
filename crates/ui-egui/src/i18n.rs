@@ -14,7 +14,6 @@
 use serde::{Deserialize, Serialize};
 
 mod ar;
-mod bidi;
 mod cs;
 mod de;
 mod es;
@@ -24,6 +23,9 @@ mod pt;
 mod ru;
 mod sr;
 mod zh;
+// The visual-order pass, shared with the panes that draw a runtime's own Arabic (a model's
+// answer): crate-internal, like the dictionaries.
+pub(crate) mod bidi;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -45,8 +47,8 @@ pub enum Language {
 }
 
 impl Language {
-    pub const ALL: [Self; 12] = [Self::En, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::PtBr, Self::De, Self::Cs, Self::Fr, Self::Sr, Self::Ar];
-
+    pub const ALL: [Self; 12] =
+        [Self::En, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::PtBr, Self::De, Self::Cs, Self::Fr, Self::Sr, Self::Ar];
 
     /// The language's own name, shown in the switcher.
     pub fn name(self) -> &'static str {
@@ -63,7 +65,6 @@ impl Language {
             Self::Fr => "Français",
             Self::Sr => "Srpski",
             Self::Ar => "العربية",
-
         }
     }
 
@@ -82,7 +83,6 @@ impl Language {
             Self::Fr => "fr",
             Self::Sr => "sr",
             Self::Ar => "ar",
-
         }
     }
 
@@ -144,7 +144,6 @@ impl Language {
             Self::Fr => fr::translate(text),
             Self::Sr => sr::translate(text),
             Self::Ar => ar::translate(text).map(bidi::visual_cached),
-
         };
         translated.unwrap_or_else(|| text.rsplit_once('|').map_or(text, |(_, label)| label))
     }
@@ -587,6 +586,72 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Workbook calculation", "ブックの計算"),
     ("Enable iterative calculation", "反復計算を行う"),
     ("Calculation settings are saved with the workbook.", "計算の設定はブックと共に保存されます。"),
+    (
+        "Craft AI runs in the native app — it needs a local model runtime.",
+        "Craft AI はネイティブアプリで動作します — ローカルのモデルランタイムが必要です。",
+    ),
+    ("Assistant", "アシスタント"),
+    ("Looking for a local model runtime…", "ローカルのモデルランタイムを探しています…"),
+    ("No local model runtime found.", "ローカルのモデルランタイムが見つかりません。"),
+    (
+        "Craft AI talks to a model runtime on this machine — Ollama, LM Studio or llama.cpp's server — and never to a cloud service. Start one, then Refresh.",
+        "Craft AI はこのマシン上のモデルランタイム（Ollama、LM Studio、llama.cpp のサーバー）とだけ通信し、クラウドサービスとは決して通信しません。どれかを起動してから「更新」してください。",
+    ),
+    ("Runtime", "ランタイム"),
+    ("Task", "タスク"),
+    ("No model installed yet — see the Models tab.", "モデルがまだインストールされていません — 「モデル」タブを参照してください。"),
+    ("Ask", "質問"),
+    ("Thinking… {s}s", "考えています… {s}秒"),
+    ("This machine: {ram} GB RAM, {disk} GB free", "このマシン: RAM {ram} GB、空き {disk} GB"),
+    (
+        "One download serves every ArtCraft app: the model lands in a shared folder all of them read.",
+        "1 回のダウンロードで ArtCraft アプリすべてに対応します。モデルは共有フォルダーに置かれ、どのアプリからも読めます。",
+    ),
+    ("Disk {size}", "ディスク {size}"),
+    ("RAM {gb} GB", "RAM {gb} GB"),
+    ("Fits this machine", "このマシンで動作します"),
+    ("Needs {ram} GB of RAM", "RAM が {ram} GB 必要です"),
+    ("Needs {disk} GB of disk", "ディスクが {disk} GB 必要です"),
+    ("Download with Ollama", "Ollama でダウンロード"),
+    ("Save model file", "モデルファイルを保存"),
+    ("Delete file", "ファイルを削除"),
+    ("Downloading… {pct}% — {note}", "ダウンロード中… {pct}% — {note}"),
+    ("Saving… {pct}%", "保存中… {pct}%"),
+    ("Saved in the shared folder", "共有フォルダーに保存済み"),
+    ("Local and private", "ローカルでプライベート"),
+    (
+        "Craft AI runs a local Gemma model on this machine. Nothing you write here leaves it: no account, no cloud service, no telemetry — the panel talks to a model runtime on 127.0.0.1.",
+        "Craft AI はこのマシン上でローカルの Gemma モデルを実行します。ここに書いた内容が外に出ることはありません。アカウントもクラウドサービスもテレメトリーもなく、パネルは 127.0.0.1 のモデルランタイムとだけ通信します。",
+    ),
+    ("Limits", "制限"),
+    (
+        "A local model is not a frontier cloud model: it can be wrong, and a long answer takes its time on CPU. Check anything critical, and mind a model's size against this machine before downloading it.",
+        "ローカルモデルは最先端のクラウドモデルではありません。間違うことがあり、長い回答には CPU で時間がかかります。重要な事柄は必ず確認し、ダウンロード前にモデルのサイズをこのマシンと比べてください。",
+    ),
+    ("The shared folder:", "共有フォルダー:"),
+    ("Best for: everyday help on the lightest machines", "最適な用途: 最も軽いマシンでの日常的な助け"),
+    ("Best for: a step up in quality, still light", "最適な用途: 品質を一段上げたいが、軽さはそのまま"),
+    ("Best for: balanced everyday and technical work", "最適な用途: 日常と技術的な作業のバランス"),
+    ("Best for: near-flagship answers at MoE speed", "最適な用途: MoE の速さで旗艦に迫る回答"),
+    ("Best for: the deepest reasoning this family has", "最適な用途: このファミリーで最も深い推論"),
+    ("Craft AI", "Craft AI"),
+    ("Models", "モデル"),
+    ("About", "情報"),
+    ("Model", "モデル"),
+    ("Refresh", "更新"),
+    ("Copy", "コピー"),
+    ("Ask anything", "何でも質問"),
+    ("Ask in any language", "どの言語でも質問できます"),
+    ("Explain a formula", "数式の説明"),
+    ("Paste the formula, or a cell like =B2*1.1", "数式、または =B2*1.1 のようなセルを貼り付け"),
+    ("Build a formula", "数式の作成"),
+    ("What to compute, and where the numbers are", "何を計算するか、数値がどこにあるか"),
+    ("Clean or transform data", "データのクリーンアップと変換"),
+    ("Describe the data and the shape you want", "データと望む形を説明"),
+    ("Chart and pivot advice", "グラフとピボットテーブルのアドバイス"),
+    ("The data and the story it should tell", "データと、それが語るべき物語"),
+    ("Function finder", "関数ファインダー"),
+    ("What you need, in plain words", "必要なことを、平易な言葉で"),
 ];
 
 #[cfg(test)]
@@ -693,7 +758,6 @@ mod tests {
         assert_eq!(Language::from_tag("ar-SA"), Some(Language::Ar));
         assert_eq!(Language::from_tag("ar_EG"), Some(Language::Ar));
         assert_eq!(Language::parse("ar"), Some(Language::Ar));
-
     }
 
     #[test]
@@ -768,10 +832,7 @@ mod tests {
             };
             let (a, b) = (x_of(first, second), x_of(second, first));
             assert!(!a.is_empty() && !b.is_empty(), "{label}: no glyphs for `{first}`/`{second}`");
-            assert!(
-                a.iter().all(|&x| b.iter().all(|&y| x > y)),
-                "`{label}`: `{first}` must sit right of `{second}` after the pass"
-            );
+            assert!(a.iter().all(|&x| b.iter().all(|&y| x > y)), "`{label}`: `{first}` must sit right of `{second}` after the pass");
         }
         ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
     }
