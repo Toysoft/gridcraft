@@ -39,18 +39,32 @@ pub struct Source {
     /// Numeric with a date number format.
     pub dates: Vec<bool>,
     pub rows: Vec<Vec<Value>>,
-    /// Per record and column: the cell's own number format is a date (Excel caches such a
-    /// number as `<d>` and sorts it after errors).
-    pub date_cells: Vec<Vec<bool>>,
+    /// The sheet row of each record (blank rows are skipped).
+    pub record_rows: Vec<u32>,
 }
 
 impl Source {
     pub fn col(&self, name: &str) -> Option<usize> {
         self.headers.iter().position(|h| h.eq_ignore_ascii_case(name))
     }
-    /// The cell of record `row`, column `col` is a number with a date format.
-    pub fn is_date(&self, row: usize, col: usize) -> bool {
-        self.date_cells.get(row).and_then(|r| r.get(col)).copied().unwrap_or(false)
+    /// Per record: the column's cell is a number whose own format is a date (Excel caches such
+    /// a number as `<d>` and sorts it after errors). Looks up each distinct style once.
+    pub fn date_cells(&self, wb: &Workbook, col: usize) -> Vec<bool> {
+        let (Some(sh), Ok(off)) = (wb.sheet(self.sheet), u32::try_from(col)) else {
+            return vec![false; self.rows.len()];
+        };
+        let c = self.range.start.col + off;
+        let mut memo: HashMap<StyleId, bool> = HashMap::new();
+        self.rows
+            .iter()
+            .zip(&self.record_rows)
+            .map(|(rec, &row)| {
+                rec.get(col).is_some_and(Value::is_number)
+                    && *memo
+                        .entry(sh.style_id(CellRef::new(row, c)))
+                        .or_insert_with_key(|id| crate::display::number_format(wb.styles.get(*id).num_fmt.as_str()).is_date())
+            })
+            .collect()
     }
 }
 
@@ -164,7 +178,7 @@ pub fn read_source(wb: &Workbook, text: &str, default_sheet: usize) -> Result<So
     }
     let w = headers.len();
     let mut rows = Vec::new();
-    let mut date_cells = Vec::new();
+    let mut record_rows = Vec::new();
     let mut numeric = vec![true; w];
     let mut any = vec![false; w];
     if r.end.row > r.start.row {
@@ -185,8 +199,7 @@ pub fn read_source(wb: &Workbook, text: &str, default_sheet: usize) -> Result<So
                     }
                 }
             }
-            let is_date = |c: u32| crate::display::number_format(wb.styles.get(sh.style_id(CellRef::new(row, c))).num_fmt.as_str()).is_date();
-            date_cells.push(rec.iter().zip(r.start.col..=r.end.col).map(|(v, c)| v.is_number() && is_date(c)).collect());
+            record_rows.push(row);
             rows.push(rec);
         }
     }
@@ -194,7 +207,7 @@ pub fn read_source(wb: &Workbook, text: &str, default_sheet: usize) -> Result<So
         *n = *n && *a;
     }
     let dates = numeric.iter().zip(formats.iter()).map(|(n, f)| *n && crate::display::number_format(f).is_date()).collect();
-    Ok(Source { sheet: si, range: r, headers, formats, numeric, dates, rows, date_cells })
+    Ok(Source { sheet: si, range: r, headers, formats, numeric, dates, rows, record_rows })
 }
 
 // ---------------------------------------------------------------- items
@@ -286,8 +299,15 @@ fn make_item(wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str, date: b
 impl FieldItems {
     fn intern(&mut self, wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str, date: bool, first: usize) -> u32 {
         let (key, item) = make_item(wb, v, group, fmt, date, first);
-        if let Some(i) = self.index.get(&key) {
-            return *i;
+        if let Some(&i) = self.index.get(&key) {
+            // A number in any General cell sorts as a number, whichever of its cells comes first.
+            if !date
+                && let Some(it) = self.items.get_mut(i as usize)
+                && it.class == 4
+            {
+                it.class = 0;
+            }
+            return i;
         }
         let i = self.items.len() as u32;
         self.items.push(item);
@@ -340,9 +360,10 @@ pub fn item_label(wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str) ->
 pub fn distinct_labels(wb: &Workbook, src: &Source, col: usize, group: PivotDateGroup, limit: usize) -> Vec<String> {
     let mut fi = FieldItems::default();
     let fmt = src.formats.get(col).map(String::as_str).unwrap_or("General");
+    let dates = date_flags(wb, src, col, group);
     for (i, r) in src.rows.iter().enumerate() {
         if let Some(v) = r.get(col) {
-            fi.intern(wb, v, group, fmt, src.is_date(i, col), i);
+            fi.intern(wb, v, group, fmt, dates.get(i).copied().unwrap_or(false), i);
         }
         if fi.items.len() > 100_000 {
             break;
@@ -351,6 +372,11 @@ pub fn distinct_labels(wb: &Workbook, src: &Source, col: usize, group: PivotDate
     let mut items = fi.items;
     items.sort_by(cmp_items);
     items.into_iter().take(limit).map(|i| i.label).collect()
+}
+
+/// [`Source::date_cells`] for an ungrouped field; a date-grouped field doesn't use them.
+fn date_flags(wb: &Workbook, src: &Source, col: usize, group: PivotDateGroup) -> Vec<bool> {
+    if group == PivotDateGroup::None { src.date_cells(wb, col) } else { Vec::new() }
 }
 
 // ---------------------------------------------------------------- aggregation
@@ -991,6 +1017,9 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
     let field_fmt = |c: usize, f: &PivotField| f.number_format.clone().unwrap_or_else(|| fmt_of(c));
     let row_fmts: Vec<String> = rows.iter().map(|(c, f)| field_fmt(*c, f)).collect();
     let col_fmts: Vec<String> = cols.iter().map(|(c, f)| field_fmt(*c, f)).collect();
+    let row_dates: Vec<Vec<bool>> = rows.iter().map(|(c, f)| date_flags(wb, &src, *c, f.date_group)).collect();
+    let col_dates: Vec<Vec<bool>> = cols.iter().map(|(c, f)| date_flags(wb, &src, *c, f.date_group)).collect();
+    let is_date = |dates: &[bool], ri: usize| dates.get(ri).copied().unwrap_or(false);
     'rec: for (ri, rec) in src.rows.iter().enumerate() {
         for ((c, f, g, _), fmt) in filters.iter().zip(filter_fmts.iter()) {
             if let Some(sel) = &f.selected {
@@ -1004,12 +1033,12 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
             continue;
         }
         let mut rp = Vec::with_capacity(rows.len());
-        for (((c, f), fi), fmt) in rows.iter().zip(row_items.iter_mut()).zip(row_fmts.iter()) {
-            rp.push(fi.intern(wb, rec.get(*c).unwrap_or(&Value::Empty), f.date_group, fmt, src.is_date(ri, *c), ri));
+        for ((((c, f), fi), fmt), dates) in rows.iter().zip(row_items.iter_mut()).zip(row_fmts.iter()).zip(row_dates.iter()) {
+            rp.push(fi.intern(wb, rec.get(*c).unwrap_or(&Value::Empty), f.date_group, fmt, is_date(dates, ri), ri));
         }
         let mut cp = Vec::with_capacity(cols.len());
-        for (((c, f), fi), fmt) in cols.iter().zip(col_items.iter_mut()).zip(col_fmts.iter()) {
-            cp.push(fi.intern(wb, rec.get(*c).unwrap_or(&Value::Empty), f.date_group, fmt, src.is_date(ri, *c), ri));
+        for ((((c, f), fi), fmt), dates) in cols.iter().zip(col_items.iter_mut()).zip(col_fmts.iter()).zip(col_dates.iter()) {
+            cp.push(fi.intern(wb, rec.get(*c).unwrap_or(&Value::Empty), f.date_group, fmt, is_date(dates, ri), ri));
         }
         for a in 0..=rp.len() {
             for b in 0..=cp.len() {

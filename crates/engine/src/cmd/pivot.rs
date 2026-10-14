@@ -2202,6 +2202,11 @@ mod tests {
         let excel_with_num = ["0.1", "45000", "0.6875", "1", "1.52083333333333", "44189", "(blank)"];
         assert_eq!(order(&mixed, None), excel_mixed);
         assert_eq!(order(&with_num, Some("A2:A3")), excel_with_num);
+        // One number in a date cell and in a General cell is one item, which sorts as a number
+        // whichever cell comes first.
+        let number = ["5", "44053", "ABC"];
+        assert_eq!(order(&["5", "8/10/2020", "44053", "ABC"], None), number);
+        assert_eq!(order(&["5", "44053", "8/10/2020", "ABC"], None), number);
     }
 
     #[test]
