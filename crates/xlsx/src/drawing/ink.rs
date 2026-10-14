@@ -26,7 +26,12 @@ fn one<'a>(e: &'a El, name: &str) -> Option<&'a El> {
 
 /// Do not partially import a path: losing a curve, subpath, transform or line effect changes
 /// the drawing. Accept only the explicit subset emitted below, including its line styling.
-pub(super) fn read(obj: &El, anchor: Anchor) -> Option<Shape> {
+///
+/// A stroke on its own is written at offset 0 with its anchor's size. A stroke in a group
+/// (`grouped`) sits at its offset and size in the group's child space, which the group maps
+/// onto `anchor`, and may carry a `rot`, which the group keeps for saving; the path fills that
+/// box whatever its size, so only a positive extent is required there.
+pub(super) fn read(obj: &El, anchor: Anchor, grouped: bool) -> Option<Shape> {
     if obj.name != "sp"
         || !only_children(obj, &["nvSpPr", "spPr"])
         || !only_attrs(obj, &["macro", "textlink"])
@@ -44,11 +49,15 @@ pub(super) fn read(obj: &El, anchor: Anchor) -> Option<Shape> {
         return None;
     }
     let xf = one(sp, "xfrm")?;
-    if !xf.attrs.is_empty() || !only_children(xf, &["off", "ext"]) {
+    if !only_attrs(xf, if grouped { &["rot"] } else { &[] }) || !only_children(xf, &["off", "ext"]) {
         return None;
     }
     let off = one(xf, "off")?;
-    if off.attr_i64("x")? != 0 || off.attr_i64("y")? != 0 {
+    let (ox, oy) = (off.attr_i64("x")?, off.attr_i64("y")?);
+    if !grouped && (ox != 0 || oy != 0) {
+        return None;
+    }
+    if grouped && xf.attr("rot").is_some() && xf.attr_i64("rot").is_none() {
         return None;
     }
     let ext = one(xf, "ext")?;
@@ -59,7 +68,7 @@ pub(super) fn read(obj: &El, anchor: Anchor) -> Option<Shape> {
     }
     let same_extent =
         |emu: i64, extent: f32| (emu as f64 / EMU_PER_PX - extent as f64).abs() <= 0.001_f64.max(extent as f64 * f32::EPSILON as f64 * 2.0);
-    if !same_extent(ew, anchor.width) || !same_extent(eh, anchor.height) {
+    if !grouped && (!same_extent(ew, anchor.width) || !same_extent(eh, anchor.height)) {
         return None;
     }
     let geom = one(sp, "custGeom")?;

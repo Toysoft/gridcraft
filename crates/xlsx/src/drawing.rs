@@ -316,7 +316,7 @@ fn read_object(cx: &mut Ctx<'_>, rels: &[Rel], sheet: &mut Sheet, obj: &El, plac
             Ok(None)
         }
         "sp" | "cxnSp" => {
-            let Some(s) = read_shape(obj, anchor) else { return Ok(None) };
+            let Some(s) = read_shape(obj, anchor, depth > 0) else { return Ok(None) };
             let id = cx.next_object_id();
             sheet.shapes.push(Shape { id, ..s });
             Ok(Some(DrawingRef::Shape(id)))
@@ -366,9 +366,10 @@ fn read_object(cx: &mut Ctx<'_>, rels: &[Rel], sheet: &mut Sheet, obj: &El, plac
     }
 }
 
-fn read_shape(obj: &El, anchor: Anchor) -> Option<Shape> {
+/// A shape at `anchor`; `grouped` when it sits in a group, at its group's child-space transform.
+fn read_shape(obj: &El, anchor: Anchor, grouped: bool) -> Option<Shape> {
     let sp = obj.child("spPr")?;
-    if let Some(shape) = ink::read(obj, anchor) {
+    if let Some(shape) = ink::read(obj, anchor, grouped) {
         return Some(shape);
     }
     let prst = sp.child("prstGeom").and_then(|g| g.attr("prst")).unwrap_or("rect");
