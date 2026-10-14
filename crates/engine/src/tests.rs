@@ -2131,6 +2131,84 @@ fn file_options_reports_settings_and_asks_for_the_options_page() {
     assert_eq!(s.active().unwrap().wb, before, "Options never changes the workbook");
 }
 
+#[test]
+fn the_user_name_is_set_in_options_and_signs_new_notes() {
+    let mut s = Session::new();
+    // No workbook needed; without `name` the command reports the current one.
+    assert_eq!(s.execute("options.userName", json!({})).unwrap(), json!({"name": crate::DEFAULT_USER_NAME}));
+    assert_eq!(s.execute("options.userName", json!({"name": "  Ann\tLee \n"})).unwrap(), json!({"name": "Ann Lee"}));
+    for refused in [json!({"name": "   "}), json!({"name": "\n\t"}), json!({"name": 7}), json!({"name": ["Bob"]})] {
+        assert!(s.execute("options.userName", refused.clone()).is_err(), "{refused}");
+    }
+    assert_eq!(s.prefs.user_name, "Ann Lee", "a refused name changes nothing");
+    let long = s.execute("options.userName", json!({"name": "é".repeat(500)})).unwrap();
+    assert_eq!(long["name"].as_str().unwrap().chars().count(), 200);
+    s.execute("options.userName", json!({"name": "Ann Lee"})).unwrap();
+    s.new_workbook();
+    s.execute("review.newNote", json!({"cell": "A1", "text": "note"})).unwrap();
+    s.execute("review.newComment", json!({"cell": "B2", "text": "comment"})).unwrap();
+    let sheet = s.doc().unwrap().wb.active().unwrap().clone();
+    for cell in ["A1", "B2"] {
+        assert_eq!(sheet.comments[&CellRef::parse(cell).unwrap()].author, "Ann Lee", "{cell}");
+    }
+}
+
+/// Excel records who saved a workbook and when (File › Info › Related People and Dates); the
+/// author and creation date come from its first save.
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn a_save_records_who_saved_the_workbook_and_when() {
+    #[allow(clippy::disallowed_methods)] // native-only test: a unique temp dir name
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let dir = std::env::temp_dir().join(format!("gridcraft-user-name-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&dir).unwrap();
+    let path = dir.join("Book.xlsx");
+    let props = |s: &Session| s.doc().unwrap().wb.props.clone();
+    let mut s = s();
+    s.execute("options.userName", json!({"name": "Ann"})).unwrap();
+    s.execute("cell.set", json!({"cell": "A1", "input": "1"})).unwrap();
+    assert_eq!(props(&s), gridcraft_model::DocProps::default(), "nothing is recorded before the first save");
+    s.execute("file.save", json!({"path": path})).unwrap();
+    let first = props(&s);
+    assert_eq!((first.author.as_str(), first.last_modified_by.as_str()), ("Ann", "Ann"));
+    assert!(gridcraft_xlsx::is_w3cdtf(&first.created) && first.created.ends_with('Z'), "{}", first.created);
+    assert_eq!(first.modified, first.created);
+    assert!(!s.doc().unwrap().is_dirty(), "recording the save is not a change");
+
+    // Someone else saves it later: author and creation date stay, Last Modified By follows.
+    s.execute("options.userName", json!({"name": "Bob"})).unwrap();
+    s.execute("cell.set", json!({"cell": "A2", "input": "2"})).unwrap();
+    s.execute("file.save", json!({})).unwrap();
+    let second = props(&s);
+    assert_eq!((second.author.as_str(), second.created.as_str(), second.last_modified_by.as_str()), ("Ann", first.created.as_str(), "Bob"));
+    assert!(second.modified >= first.modified);
+    let (on_disk, _) = gridcraft_xlsx::read_xlsx(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(on_disk.props, second, "the file says the same");
+
+    // A workbook that names its author keeps it on its first save here.
+    s.execute("file.properties", json!({"author": "Cy"})).unwrap();
+    let mut wb = (*s.doc().unwrap().wb).clone();
+    wb.props.created.clear();
+    s.doc_mut().unwrap().wb = std::sync::Arc::new(wb);
+    s.execute("file.save", json!({})).unwrap();
+    assert_eq!((props(&s).author.as_str(), props(&s).last_modified_by.as_str()), ("Cy", "Bob"));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_download_says_who_saved_it_and_leaves_the_document_alone() {
+    let mut s = s();
+    s.execute("options.userName", json!({"name": "Ann"})).unwrap();
+    s.execute("cell.set", json!({"cell": "A1", "input": "1"})).unwrap();
+    let before = s.doc().unwrap().wb.clone();
+    let r = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap();
+    let bytes = crate::io::base64_decode(r["base64"].as_str().unwrap()).unwrap();
+    let (copy, _) = gridcraft_xlsx::read_xlsx(&bytes).unwrap();
+    assert_eq!((copy.props.author.as_str(), copy.props.last_modified_by.as_str()), ("Ann", "Ann"));
+    assert!(gridcraft_xlsx::is_w3cdtf(&copy.props.modified), "{}", copy.props.modified);
+    assert!(std::sync::Arc::ptr_eq(&s.doc().unwrap().wb, &before), "the document is not changed by a download");
+}
+
 fn reopen(s: &mut Session) {
     let r = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap();
     let b64 = r["base64"].as_str().unwrap().to_string();

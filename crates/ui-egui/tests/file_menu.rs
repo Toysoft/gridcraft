@@ -217,3 +217,60 @@ fn a_cancelled_export_pdf_picker_writes_nothing() {
     assert!(h.state().message.is_none());
     assert!(h.state_mut().session.take_ui_requests().is_empty());
 }
+
+/// Clicks the text field on the same row as `label`, clears it, types `text` one keystroke per
+/// frame and presses Enter.
+fn retype_beside(h: &mut egui_kittest::Harness<'static, SheetApp>, label: &str, text: &str) {
+    use egui::{Event, Key, Modifiers, accesskit::Role};
+    let row = h.get_by_label(label).rect();
+    let field = h
+        .get_all_by_role(Role::TextInput)
+        .map(|n| n.rect())
+        .find(|r| r.left() > row.right() && r.top() < row.bottom() && r.bottom() > row.top())
+        .unwrap();
+    h.input_mut().events.push(Event::PointerMoved(field.center()));
+    h.run_steps(1);
+    h.get_all_by_role(Role::TextInput).find(|n| n.rect() == field).unwrap().click();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::A);
+    h.run_steps(1);
+    h.key_press(Key::Backspace);
+    h.run_steps(1);
+    for c in text.chars() {
+        h.input_mut().events.push(Event::Text(c.to_string()));
+        h.run_steps(2);
+    }
+    h.key_press(Key::Enter);
+    h.run_steps(3);
+}
+
+#[test]
+fn the_user_name_is_typed_in_options_and_who_saved_shows_on_info() {
+    let mut h = harness(Services::default());
+    h.state_mut().run("file.options", serde_json::json!({})).unwrap();
+    h.run_steps(3);
+    retype_beside(&mut h, "User name", "Ann Lee");
+    assert_eq!(h.state().session.prefs.user_name, "Ann Lee");
+    // An emptied field keeps the saved name and shows it again.
+    retype_beside(&mut h, "User name", "");
+    assert_eq!(h.state().session.prefs.user_name, "Ann Lee");
+    assert!(h.state().message.is_none());
+    let shown = h.get_all_by_role(egui::accesskit::Role::TextInput).any(|n| n.value().as_deref() == Some("Ann Lee"));
+    assert!(shown, "the field shows the saved name again");
+
+    // Info lists who saved the workbook last and when, once a save has recorded it.
+    click(&mut h, "Info");
+    assert!(h.query_by_label("Last Modified By").is_none(), "nothing to show before a save");
+    {
+        let doc = h.state_mut().session.doc_mut().unwrap();
+        let mut wb = (*doc.wb).clone();
+        wb.props.last_modified_by = "Bob".into();
+        wb.props.created = "2025-03-04T05:06:07Z".into();
+        wb.props.modified = "2026-10-14T13:45:00Z".into();
+        doc.wb = Arc::new(wb);
+    }
+    h.run_steps(3);
+    for text in ["Last Modified By", "Bob", "Created", "2025-03-04 05:06 UTC", "Last Modified", "2026-10-14 13:45 UTC"] {
+        assert!(h.query_by_label(text).is_some(), "{text}");
+    }
+}

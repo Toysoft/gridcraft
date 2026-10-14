@@ -30,6 +30,9 @@ fn sample() -> Workbook {
         company: "Co".into(),
         keywords: "k".into(),
         description: "d".into(),
+        last_modified_by: "You & <y>".into(),
+        created: "2025-03-04T05:06:07Z".into(),
+        modified: "2026-10-14T13:45:00Z".into(),
     };
     wb.theme.colors[4] = 0x112233;
     wb.theme.minor_font = "Aptos".into();
@@ -1160,7 +1163,33 @@ fn doc_props_keep_boundary_whitespace() {
         company: " Co ".into(),
         keywords: " a, b ".into(),
         description: "\n  d\n".into(),
+        last_modified_by: " You ".into(),
+        ..Default::default()
     };
     let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
     assert_eq!(back.props, wb.props);
+}
+
+#[test]
+fn last_modified_by_and_dates_round_trip_as_excel_writes_them() {
+    let mut wb = Workbook::new();
+    wb.props.last_modified_by = "Ann".into();
+    wb.props.created = "2025-03-04T05:06:07Z".into();
+    wb.props.modified = "2026-10-14T13:45:00Z".into();
+    let bytes = write_xlsx(&wb).unwrap();
+    let core = String::from_utf8(Package::open(&bytes).unwrap().read("docProps/core.xml").unwrap().unwrap()).unwrap();
+    assert!(core.contains("<cp:lastModifiedBy>Ann</cp:lastModifiedBy>"), "{core}");
+    assert!(core.contains("<dcterms:created xsi:type=\"dcterms:W3CDTF\">2025-03-04T05:06:07Z</dcterms:created>"), "{core}");
+    assert!(core.contains("<dcterms:modified xsi:type=\"dcterms:W3CDTF\">2026-10-14T13:45:00Z</dcterms:modified>"), "{core}");
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    assert_eq!(back.props, wb.props);
+
+    // A date that isn't one is left out rather than written where Excel expects a date.
+    wb.props.created = "last Tuesday".into();
+    wb.props.modified = "2026-1-4".into();
+    let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
+    assert_eq!((back.props.created.as_str(), back.props.modified.as_str()), ("", ""));
+    for (v, ok) in [("2026-10-14", true), ("2026-10-14T13:45:00.12+02:00", true), ("2026-10-14 13:45", false), ("20261014", false), ("", false)] {
+        assert_eq!(crate::write::is_w3cdtf(v), ok, "{v}");
+    }
 }

@@ -289,6 +289,13 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Company" => "Organización",
         "Keywords" => "Palabras clave",
         "Description" => "Descripción",
+        "User name" => "Nombre de usuario",
+        "Used for new notes and comments, and recorded when you save a workbook." => {
+            "Se usa en las notas y los comentarios nuevos, y se registra al guardar un libro."
+        }
+        "Last Modified By" => "Última modificación por",
+        "Created" => "Creado",
+        "Last Modified" => "Última modificación",
         "No workbook is open." => "No hay ningún libro abierto.",
         "Save as type" => "Tipo",
         "Excel Workbook (*.xlsx)" => "Libro de Excel (*.xlsx)",

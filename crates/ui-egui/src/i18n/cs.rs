@@ -290,6 +290,13 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Company" => "Společnost",
         "Keywords" => "Klíčová slova",
         "Description" => "Popis",
+        "User name" => "Uživatelské jméno",
+        "Used for new notes and comments, and recorded when you save a workbook." => {
+            "Použije se u nových poznámek a komentářů a zaznamená se při uložení sešitu."
+        }
+        "Last Modified By" => "Naposledy upravil",
+        "Created" => "Vytvořeno",
+        "Last Modified" => "Naposledy upraveno",
         "No workbook is open." => "Není otevřený žádný sešit.",
         "Save as type" => "Typ souboru",
         "Excel Workbook (*.xlsx)" => "Sešit Excelu (*.xlsx)",

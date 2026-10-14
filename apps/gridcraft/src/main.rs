@@ -119,6 +119,23 @@ fn load_prefs(app: &mut SheetApp) {
     {
         app.session.prefs = p;
     }
+    if let Some(name) = starting_user_name(&app.session.prefs.user_name, account_name()) {
+        app.session.prefs.user_name = name;
+    }
+}
+
+/// The name of the account GridCraft runs under (`USERNAME` on Windows, `USER` or `LOGNAME`
+/// elsewhere).
+fn account_name() -> Option<String> {
+    ["USERNAME", "USER", "LOGNAME"].iter().filter_map(|k| std::env::var(k).ok()).map(|n| n.trim().to_string()).find(|n| !n.is_empty())
+}
+
+/// Excel starts with the signed-in user's name; GridCraft starts with the account's, until a
+/// name is chosen in File › Options. A saved placeholder counts as none: a prefs.json written
+/// before the option existed holds it without anyone having chosen it.
+fn starting_user_name(saved: &str, account: Option<String>) -> Option<String> {
+    let unset = saved.trim().is_empty() || saved == gridcraft_engine::DEFAULT_USER_NAME;
+    account.filter(|_| unset)
 }
 
 fn save_prefs(app: &SheetApp) {
@@ -382,6 +399,20 @@ fn main() -> eframe::Result<()> {
         return run(options);
     }
     result
+}
+
+#[cfg(test)]
+mod user_name_tests {
+    use super::starting_user_name;
+
+    #[test]
+    fn the_account_name_stands_in_until_a_name_is_chosen() {
+        let account = || Some("ann".to_string());
+        assert_eq!(starting_user_name(gridcraft_engine::DEFAULT_USER_NAME, account()), account());
+        assert_eq!(starting_user_name("  ", account()), account());
+        assert_eq!(starting_user_name("Ann Lee", account()), None, "a chosen name stays");
+        assert_eq!(starting_user_name(gridcraft_engine::DEFAULT_USER_NAME, None), None);
+    }
 }
 
 #[cfg(test)]

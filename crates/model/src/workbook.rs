@@ -83,6 +83,15 @@ pub struct DocProps {
     pub company: String,
     pub keywords: String,
     pub description: String,
+    /// Who saved the workbook last (`cp:lastModifiedBy`), set on every save.
+    #[serde(default)]
+    pub last_modified_by: String,
+    /// When the workbook was first and last saved (`dcterms:created`, `dcterms:modified`), as
+    /// `YYYY-MM-DDTHH:MM:SSZ` in UTC; empty when unknown.
+    #[serde(default)]
+    pub created: String,
+    #[serde(default)]
+    pub modified: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

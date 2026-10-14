@@ -161,6 +161,14 @@ pub fn abs_range(r: &RangeRef) -> String {
     format!("${}${}:${}${}", c(r.start.col), r.start.row + 1, c(r.end.col), r.end.row + 1)
 }
 
+/// Starts like a W3CDTF date (`YYYY-MM-DD`, optionally followed by `T` and a time), the type of
+/// `dcterms:created` and `dcterms:modified`.
+pub fn is_w3cdtf(v: &str) -> bool {
+    let b = v.as_bytes();
+    let digits = |r: std::ops::Range<usize>| b.get(r).is_some_and(|s| s.iter().all(u8::is_ascii_digit));
+    digits(0..4) && b.get(4) == Some(&b'-') && digits(5..7) && b.get(7) == Some(&b'-') && digits(8..10) && matches!(b.get(10), None | Some(b'T'))
+}
+
 /// Refuses sheet names XLSX cannot hold. The reader repairs such names (cuts, strips, renames
 /// duplicates) but formulas keep the old spelling, so the saved file would turn into `#REF!`.
 fn check_sheet_names(wb: &Workbook) -> Result<(), IoError> {
@@ -419,9 +427,17 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
         ("dc:creator", &p.author),
         ("cp:keywords", &p.keywords),
         ("dc:description", &p.description),
+        ("cp:lastModifiedBy", &p.last_modified_by),
     ] {
         if !v.is_empty() {
             let _ = write!(core, "<{tag}>{}</{tag}>", esc(v));
+        }
+    }
+    // Dates are typed W3CDTF; a value that doesn't start like one (a hand-edited file) is left out
+    // rather than written where Excel expects a date.
+    for (tag, v) in [("dcterms:created", &p.created), ("dcterms:modified", &p.modified)] {
+        if is_w3cdtf(v) {
+            let _ = write!(core, "<{tag} xsi:type=\"dcterms:W3CDTF\">{}</{tag}>", esc(v));
         }
     }
     core.push_str("</cp:coreProperties>");

@@ -376,6 +376,13 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Company" => "Организация",
         "Keywords" => "Ключевые слова",
         "Description" => "Описание",
+        "User name" => "Имя пользователя",
+        "Used for new notes and comments, and recorded when you save a workbook." => {
+            "Используется в новых заметках и комментариях и записывается при сохранении книги."
+        }
+        "Last Modified By" => "Автор последнего изменения",
+        "Created" => "Создан",
+        "Last Modified" => "Последнее изменение",
         "No workbook is open." => "Нет открытых книг.",
         "Save as type" => "Тип файла",
         "Excel Workbook (*.xlsx)" => "Книга Excel (*.xlsx)",

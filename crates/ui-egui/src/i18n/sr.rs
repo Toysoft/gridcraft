@@ -368,6 +368,13 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Company" => "Kompanija",
         "Keywords" => "Ključne reči",
         "Description" => "Opis",
+        "User name" => "Korisničko ime",
+        "Used for new notes and comments, and recorded when you save a workbook." => {
+            "Koristi se za nove beleške i komentare i beleži se pri čuvanju radne sveske."
+        }
+        "Last Modified By" => "Poslednji izmenio",
+        "Created" => "Kreirano",
+        "Last Modified" => "Poslednja izmena",
         "No workbook is open." => "Nijedna radna sveska nije otvorena.",
         "Save as type" => "Sačuvaj kao tip",
         "Excel Workbook (*.xlsx)" => "Excel radna sveska (*.xlsx)",

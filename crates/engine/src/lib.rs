@@ -183,6 +183,10 @@ impl DocState {
     }
 }
 
+/// The user name until one is chosen. The desktop app replaces it with the account's name, as
+/// Excel starts with the signed-in user.
+pub const DEFAULT_USER_NAME: &str = "GridCraft User";
+
 /// Engine-side preferences.
 #[derive(Clone, Debug, Serialize, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -190,6 +194,8 @@ pub struct Prefs {
     /// After pressing Enter, move the selection: "down", "right", "up", "left", "none".
     pub enter_direction: String,
     pub autocomplete: bool,
+    /// File › Options › General › User name (`options.userName`): the author of new notes and
+    /// comments, of a workbook's first save, and its Last Modified By on every save.
     pub user_name: String,
     pub default_font: String,
     pub default_font_size: f32,
@@ -206,7 +212,7 @@ impl Default for Prefs {
         Prefs {
             enter_direction: "down".into(),
             autocomplete: true,
-            user_name: "GridCraft User".into(),
+            user_name: DEFAULT_USER_NAME.into(),
             default_font: gridcraft_model::DEFAULT_FONT.into(),
             default_font_size: gridcraft_model::DEFAULT_FONT_SIZE,
             sheets_in_new_workbook: 1,

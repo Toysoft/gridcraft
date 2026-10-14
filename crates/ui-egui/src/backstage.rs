@@ -104,6 +104,8 @@ pub struct Backstage {
     pub page: Page,
     /// Info: property drafts while a field is being edited (committed when it loses focus).
     props: [String; 6],
+    /// Options: the user name while it is being typed (committed when the field loses focus).
+    user_name: String,
     /// Print: the whole workbook rather than the active sheet.
     pub print_all: bool,
     /// Print: fit each sheet on one page.
@@ -128,6 +130,7 @@ impl Backstage {
         Backstage {
             page,
             props: Default::default(),
+            user_name: String::new(),
             print_all: false,
             fit_to_page: false,
             preview_page: 0,
@@ -210,7 +213,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                     Page::SaveAs => save_as(app, ui, &mut bs, &mut out),
                     Page::Print => print(app, ui, &mut bs, &mut out),
                     Page::Export => export(app, ui, &mut out),
-                    Page::Options => options(app, ui),
+                    Page::Options => options(app, ui, &mut bs),
                 }
             });
         });
@@ -596,6 +599,11 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
         let pr = &d.wb.props;
         vec![pr.title.clone(), pr.subject.clone(), pr.author.clone(), pr.company.clone(), pr.keywords.clone(), pr.description.clone()]
     };
+    // Set by saving, not by typing: who saved the workbook last, and when it was created and saved.
+    let saved_by = {
+        let pr = &d.wb.props;
+        [("Last Modified By", pr.last_modified_by.clone()), ("Created", saved_at(&pr.created)), ("Last Modified", saved_at(&pr.modified))]
+    };
     ui.horizontal(|ui| {
         icons::paint(ui.painter(), Rect::from_min_size(ui.cursor().min, vec2(28.0, 28.0)), Icon::Book, t.text);
         ui.add_space(38.0);
@@ -649,7 +657,23 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
             }
             ui.end_row();
         }
+        for (label, value) in &saved_by {
+            if !value.is_empty() {
+                ui.label(RichText::new(lang.tr(label)).color(t.text_dim));
+                ui.label(value);
+                ui.end_row();
+            }
+        }
     });
+}
+
+/// A saved date (`dcterms:created` / `modified`) to read: `2026-10-14 13:45 UTC`. Anything else
+/// a file holds is shown as it is.
+fn saved_at(w3cdtf: &str) -> String {
+    match (w3cdtf.get(..10), w3cdtf.get(11..16)) {
+        (Some(day), Some(time)) if w3cdtf.as_bytes().get(10) == Some(&b'T') && w3cdtf.ends_with('Z') => format!("{day} {time} UTC"),
+        _ => w3cdtf.to_string(),
+    }
 }
 
 fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) {
@@ -927,10 +951,26 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
     }
 }
 
-fn options(app: &mut SheetApp, ui: &mut Ui) {
+fn options(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
     let lang = app.ui.language;
     section(ui, lang, "Options|General");
     egui::Grid::new("backstage_options_general").num_columns(2).spacing(vec2(18.0, 10.0)).show(ui, |ui| {
+        ui.label(lang.tr("User name"));
+        let id = ui.make_persistent_id("backstage_user_name");
+        // Show the saved name unless the field is being edited.
+        if !ui.ctx().memory(|m| m.has_focus(id)) {
+            bs.user_name.clone_from(&app.session.prefs.user_name);
+        }
+        let resp = ui.add(egui::TextEdit::singleline(&mut bs.user_name).id(id).desired_width(240.0));
+        // An emptied field keeps the saved name, which it shows again once it loses focus. (The
+        // command refuses a blank name, but a message raised by Enter would be closed by it.)
+        if resp.lost_focus() && !bs.user_name.trim().is_empty() && bs.user_name != app.session.prefs.user_name {
+            app.run_or_alert("options.userName", json!({"name": bs.user_name.clone()}));
+        }
+        ui.end_row();
+        ui.label("");
+        dim(ui, lang.tr("Used for new notes and comments, and recorded when you save a workbook."));
+        ui.end_row();
         ui.label(lang.tr("Display theme"));
         let mode = app.ui.theme_mode();
         let current = match mode {

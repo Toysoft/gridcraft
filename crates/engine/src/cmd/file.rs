@@ -21,9 +21,18 @@ pub fn specs() -> Vec<CommandSpec> {
             "Options",
             ["File"],
             None,
-            "{} → {calculation: {mode, iterative, maxIterations, maxChange}} for the active workbook (the interface opens File › Options; change settings with their own commands, e.g. formulas.calculationOptions, view.theme, app.language.set)",
+            "{} → {calculation: {mode, iterative, maxIterations, maxChange}} for the active workbook (the interface opens File › Options; change settings with their own commands, e.g. formulas.calculationOptions, options.userName, view.theme, app.language.set)",
             always,
             options
+        ),
+        cmd!(
+            query "options.userName",
+            "User Name",
+            ["File", "Options"],
+            None,
+            "{name?: string} → {name}: who new notes and comments are by and who saves workbooks (Author on a first save, Last Modified By on every save); without `name` it reports the current one",
+            always,
+            user_name
         ),
         cmd!(noundo "window.activate", "Switch Window", ["Window"], None, "{index}", has_doc, activate_window),
     ]
@@ -109,23 +118,62 @@ fn save(s: &mut Session, p: &Json) -> Result<Json> {
     if std::path::Path::new(&path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("pdf")) {
         return super::print::export_pdf(s, &json!({"path": path}));
     }
+    let user = s.prefs.user_name.clone();
     let d = s.doc_mut()?;
     // The document's own file keeps the format its content had when opened; any other path
     // goes by its extension. Relative paths to linked workbooks are rewritten for the new folder.
     let kind = crate::io::FileKind::from_path(&path).or(d.content_kind.filter(|_| d.path.as_deref() == Some(path.as_str())));
     let rebased = crate::io::source_dir(&path).and_then(|f| gridcraft_xlsx::rebase_links(&d.wb, &f));
-    let wb = rebased.as_ref().unwrap_or(&d.wb);
+    let mut wb = rebased.unwrap_or_else(|| (*d.wb).clone());
+    stamp_save(&mut wb.props, &user, save_time().as_deref());
     let bytes = match kind {
-        Some(kind) => crate::io::save_bytes_as(wb, &path, kind)?,
-        None => crate::io::save_bytes(wb, &path)?,
+        Some(kind) => crate::io::save_bytes_as(&wb, &path, kind)?,
+        None => crate::io::save_bytes(&wb, &path)?,
     };
     crate::io::write_file(&path, &bytes)?;
-    // Only a full-fidelity format clears the dirty flag and becomes the document's file.
+    // Only a full-fidelity format clears the dirty flag and becomes the document's file, and the
+    // workbook keeps the properties that file now holds.
     if matches!(kind, Some(crate::io::FileKind::Xlsx | crate::io::FileKind::Json)) {
+        std::sync::Arc::make_mut(&mut d.wb).props = wb.props;
         d.saved = d.wb.clone();
         d.path = Some(path.clone());
     }
     Ok(json!({"path": path, "bytes": bytes.len()}))
+}
+
+/// What a save records in the document properties, as Excel does: who saved the workbook and
+/// when, and on its first save (no creation date yet) when it was created and, if it names none,
+/// its author. `now` is `None` only where no clock can be read; the dates then stay as they are.
+fn stamp_save(props: &mut gridcraft_model::DocProps, user: &str, now: Option<&str>) {
+    if props.created.is_empty() {
+        if props.author.is_empty() {
+            props.author = user.to_string();
+        }
+        if let Some(now) = now {
+            props.created = now.to_string();
+        }
+    }
+    props.last_modified_by = user.to_string();
+    if let Some(now) = now {
+        props.modified = now.to_string();
+    }
+}
+
+/// The current time as W3CDTF in UTC (`2026-10-14T13:45:00Z`), from the system clock (the
+/// browser's on wasm).
+fn save_time() -> Option<String> {
+    let ms = gridcraft_core::date::unix_now_ms()?;
+    if !ms.is_finite() {
+        return None;
+    }
+    Some(w3cdtf(ms))
+}
+
+fn w3cdtf(unix_ms: f64) -> String {
+    let secs = (unix_ms / 1000.0).floor() as i64;
+    let (y, m, d) = gridcraft_core::date::civil_from_days(secs.div_euclid(86_400));
+    let t = secs.rem_euclid(86_400);
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", t / 3600, t % 3600 / 60, t % 60)
 }
 
 fn save_as(s: &mut Session, p: &Json) -> Result<Json> {
@@ -138,8 +186,13 @@ fn save_as(s: &mut Session, p: &Json) -> Result<Json> {
 
 fn save_bytes(s: &mut Session, p: &Json) -> Result<Json> {
     let fmt = str_param(p, "format").unwrap_or("xlsx");
+    let user = s.prefs.user_name.clone();
     let d = s.doc()?;
-    let bytes = crate::io::save_bytes(&d.wb, &format!("x.{fmt}"))?;
+    // The encoded copy says who saved it and when; the document itself is left as it is (this
+    // is a download, not the document's file).
+    let mut wb = (*d.wb).clone();
+    stamp_save(&mut wb.props, &user, save_time().as_deref());
+    let bytes = crate::io::save_bytes(&wb, &format!("x.{fmt}"))?;
     let name = format!("{}.{fmt}", std::path::Path::new(&d.display_title()).file_stem().and_then(|x| x.to_str()).unwrap_or("Book"));
     Ok(json!({"name": name, "base64": crate::io::base64_encode(&bytes), "bytes": bytes.len()}))
 }
@@ -204,6 +257,28 @@ fn options(s: &mut Session, _: &Json) -> Result<Json> {
     Ok(json!({"calculation": calculation}))
 }
 
+/// The longest user name kept, in characters (the web host caps `?author=` the same way).
+const MAX_USER_NAME_CHARS: usize = 200;
+
+/// File › Options › General › User name. Control characters become spaces and leading and
+/// trailing spaces are dropped; a blank name is refused, since notes, comments and saves always
+/// name someone.
+fn user_name(s: &mut Session, p: &Json) -> Result<Json> {
+    match p.get("name") {
+        None | Some(Json::Null) => {}
+        Some(Json::String(name)) => {
+            let name: String =
+                name.chars().map(|c| if c.is_control() { ' ' } else { c }).collect::<String>().trim().chars().take(MAX_USER_NAME_CHARS).collect();
+            if name.is_empty() {
+                return Err(bad("options.userName", "the user name can't be blank"));
+            }
+            s.prefs.user_name = name;
+        }
+        Some(_) => return Err(bad("options.userName", "`name` must be text")),
+    }
+    Ok(json!({"name": s.prefs.user_name}))
+}
+
 fn activate_window(s: &mut Session, p: &Json) -> Result<Json> {
     let i = u32_param(p, "index").ok_or_else(|| bad("window.activate", "missing `index`"))? as usize;
     if i >= s.documents().len() {
@@ -211,4 +286,35 @@ fn activate_window(s: &mut Session, p: &Json) -> Result<Json> {
     }
     s.set_active(i);
     ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_times_are_w3cdtf_in_utc() {
+        assert_eq!(w3cdtf(0.0), "1970-01-01T00:00:00Z");
+        assert_eq!(w3cdtf(1_760_449_500_999.0), "2025-10-14T13:45:00Z");
+        assert_eq!(w3cdtf(951_825_600_000.0), "2000-02-29T12:00:00Z");
+        assert_eq!(w3cdtf(-1_000.0), "1969-12-31T23:59:59Z");
+        assert!(save_time().is_some_and(|t| gridcraft_xlsx::is_w3cdtf(&t)));
+    }
+
+    #[test]
+    fn a_first_save_names_the_author_and_a_later_one_only_who_saved() {
+        let mut p = gridcraft_model::DocProps::default();
+        stamp_save(&mut p, "Ann", Some("2026-01-02T03:04:05Z"));
+        assert_eq!((p.author.as_str(), p.last_modified_by.as_str()), ("Ann", "Ann"));
+        assert_eq!((p.created.as_str(), p.modified.as_str()), ("2026-01-02T03:04:05Z", "2026-01-02T03:04:05Z"));
+        stamp_save(&mut p, "Bob", Some("2026-02-03T04:05:06Z"));
+        assert_eq!((p.author.as_str(), p.created.as_str()), ("Ann", "2026-01-02T03:04:05Z"));
+        assert_eq!((p.last_modified_by.as_str(), p.modified.as_str()), ("Bob", "2026-02-03T04:05:06Z"));
+        // Without a clock the dates stay as they are; who saved is still recorded.
+        stamp_save(&mut p, "Cy", None);
+        assert_eq!((p.last_modified_by.as_str(), p.modified.as_str()), ("Cy", "2026-02-03T04:05:06Z"));
+        let mut q = gridcraft_model::DocProps { author: "Dee".into(), ..Default::default() };
+        stamp_save(&mut q, "Ann", None);
+        assert_eq!((q.author.as_str(), q.created.as_str()), ("Dee", ""));
+    }
 }
