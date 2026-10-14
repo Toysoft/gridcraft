@@ -90,8 +90,8 @@ would be the finer tool; this is the switch for files that must come back as the
 
 Paste also reads the clipboard's HTML, where a spreadsheet records the number behind a cell
 (`x:num`, `sdval`; #257). That number doesn't override the options: a field they keep as text
-(`0042`, `990000000000000019`) stays text even when the source recorded it as a number, which for
-a long code may already have lost digits. The HTML still supplies the number for text the options
+(`0042`, `990000000000000019`, `2.6.70`) stays text even when the source recorded it as a number
+(a date as its serial number), which for a long code may already have lost digits. The HTML still supplies the number for text the options
 don't cover, like pasted currency (`Rp10,000.00`). JSON numbers in `range.setValues` are different:
 they're numbers the caller typed, not text, so the options don't apply to them.
 

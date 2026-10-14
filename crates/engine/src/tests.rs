@@ -3310,14 +3310,15 @@ fn data_conversion_applies_to_typing_pasting_and_set_values() {
 fn data_conversion_also_holds_for_pasted_clipboard_html() {
     let mut s = s();
     s.execute("app.dataConversion", json!({"all": false, "longNumberDigits": 15})).unwrap();
-    let text = "990000000000000019\t0042\t1244121406E6\tRp10,000.00\n";
+    let text = "990000000000000019\t0042\t1244121406E6\tRp10,000.00\t2.6.70\n";
     let html = r#"<table><tr><td x:num="990000000000000000">990000000000000019</td><td x:num="42">0042</td>
-        <td sdval="1244121406000000">1244121406E6</td><td x:num="10000">Rp10,000.00</td></tr></table>"#;
+        <td sdval="1244121406000000">1244121406E6</td><td x:num="10000">Rp10,000.00</td><td x:num="25605">2.6.70</td></tr></table>"#;
     s.execute("edit.paste", json!({"at": "A1", "text": text, "html": html})).unwrap();
     assert_eq!(v(&s, "A1"), Value::text("990000000000000019"));
     assert_eq!(v(&s, "B1"), Value::text("0042"));
     assert_eq!(v(&s, "C1"), Value::text("1244121406E6"));
     assert_eq!(v(&s, "D1"), Value::number(10000.0));
+    assert_eq!(v(&s, "E1"), Value::text("2.6.70"), "a date the source recorded as its serial number");
     // With every conversion on, the same paste gives numbers, as before the options existed.
     s.execute("app.dataConversion", json!({"all": true})).unwrap();
     s.execute("edit.paste", json!({"at": "A2", "text": text, "html": html})).unwrap();
@@ -3325,6 +3326,7 @@ fn data_conversion_also_holds_for_pasted_clipboard_html() {
     assert_eq!(v(&s, "B2"), Value::number(42.0));
     assert_eq!(v(&s, "C2"), Value::number(1.244121406e15));
     assert_eq!(v(&s, "D2"), Value::number(10000.0));
+    assert_eq!(v(&s, "E2"), Value::number(25605.0));
 }
 
 /// The acceptance case: a CAD/CAM cut list (`;`, 12-character part codes in columns 11 and 12 that
