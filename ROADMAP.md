@@ -132,7 +132,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
-| 2026-10-14 | Table reference extensions: keyed `Table1[Price,"Bolt"]`, filters `Table1[Price,Stock>400,Product<>"Nut"]`, neighbouring rows `[Total,[#Prev Row]]`, anchored columns `Table1[$Qty]`, each stored as the Excel formula it stands for; filling sideways moves table columns as in Excel; Shift+F4 writes A1 references by table name; table and column renames update defined names ([table-reference-extensions.md](docs/table-reference-extensions.md)) |
+| 2026-10-14 | Table reference extensions `Table[rows][columns]`: rows by key `Products["Bolt"][Price]`, by conditions `Products[Stock>400][Price]` (every match), `#Prev Row` / `#Next Row`; columns as lists and spans, `[]` for all, `$` anchors; each stored as the Excel formula it stands for; filling sideways moves table columns as in Excel; Shift+F4 writes A1 references by table name; table and column renames update defined names ([table-reference-extensions.md](docs/table-reference-extensions.md)) |
 | 2026-10-12 | Rows auto-fit oversized fonts: opening a file and whole-row/column formatting grow non-custom rows to their tallest font (#833) |
 | 2026-10-12 | Number formats: parsing a format code is linear in its length (long runs of `[`, `,` or `/` no longer take quadratic time), and an unclosed `[` is a literal when splitting sections as well as when tokenizing (#810) |
 | 2026-10-12 | Number formats: a fraction denominator with 65,536 zeros no longer crashes; format codes are capped at 255 characters like Excel (longer codes display as General, `TEXT` gives `#VALUE!`) (#807) |

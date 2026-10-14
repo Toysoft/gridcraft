@@ -152,7 +152,7 @@ pub fn compile(formula: &str, field: &dyn Fn(&str) -> Option<String>) -> Result<
         match e {
             Expr::Name(n) if n.starts_with(PREFIX) => {}
             Expr::Name(n) => problem = Some(format!("There's no field named '{n}'.")),
-            Expr::Ref(_) | Expr::Struct(_) | Expr::Keyed(_) => {
+            Expr::Ref(_) | Expr::Struct(_) | Expr::Table(_) => {
                 problem = Some("A calculated field can't refer to cells or tables; use field names.".into())
             }
             _ => {}

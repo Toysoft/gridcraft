@@ -1101,6 +1101,19 @@ pub fn evaluate_expr(wb: &Workbook, sheet: usize, at: CellRef, expr: &Expr) -> V
     ev.value(expr)
 }
 
+/// The cells a reference expression covers in the context of a cell (`Table1[Qty]`,
+/// `Table1["Bolt"][Price]`, `A1:B3`); empty when it isn't a reference.
+pub fn reference_areas(wb: &Workbook, sheet: usize, at: CellRef, expr: &Expr) -> Vec<crate::eval::Area> {
+    let exprs = HashMap::default();
+    let mut rng = 0x1234_5678_9ABC_DEF0u64;
+    let mut host = PassHost::new(wb, &exprs, &mut rng, now_serial());
+    let mut ev = Evaluator::new(&mut host, sheet, at);
+    match ev.eval(expr) {
+        crate::eval::Ev::R(areas) => areas,
+        _ => vec![],
+    }
+}
+
 #[allow(clippy::disallowed_methods)] // the clock is read only off wasm
 fn prof_now() -> f64 {
     #[cfg(not(target_arch = "wasm32"))]

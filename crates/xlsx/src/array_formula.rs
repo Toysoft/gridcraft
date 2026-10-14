@@ -82,13 +82,14 @@ impl Scan<'_> {
                 Shape { array: !(one_row && one_col), affected: false }
             }
             Expr::Paren(x) => self.expr(x, sheet, array_context, depth + 1),
-            // A keyed table reference is written as a lookup of one cell per key, or as a FILTER.
-            Expr::Keyed(k) => match k.key() {
+            // A lookup by key of one column is written as a lookup of one cell per key; any
+            // other GridCraft table reference as the formula it stands for.
+            Expr::Table(t) => match t.single_key() {
                 Some(key) => {
                     let key = self.expr(key, sheet, array_context, depth + 1);
                     Shape { array: key.array, affected: key.affected || (key.array && !array_context) }
                 }
-                None => self.expr(&k.lower(), sheet, array_context, depth + 1),
+                None => self.expr(&t.lower(), sheet, array_context, depth + 1),
             },
             Expr::Unary(op, x) => {
                 let child = self.expr(x, sheet, array_context, depth + 1);

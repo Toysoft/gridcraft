@@ -72,7 +72,7 @@ pub fn print_input(expr: &Expr, locale: FormulaLocale, known_name: impl Fn(&str)
         }
         match node {
             Expr::Unary(_, child) | Expr::Paren(child) => pending.push((child, depth + 1)),
-            Expr::Keyed(keyed) => pending.extend(keyed.conditions.iter().map(|c| (&c.value, depth + 1))),
+            Expr::Table(table) => pending.extend(table.rows.values().into_iter().map(|e| (e, depth + 1))),
             Expr::Binary(_, left, right) => {
                 pending.push((left, depth + 1));
                 pending.push((right, depth + 1));

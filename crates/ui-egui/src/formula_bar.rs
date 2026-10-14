@@ -263,7 +263,10 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
         }
     }
     // The text widget.
-    let refs = formula_refs(&ed.text);
+    let refs: Vec<(usize, usize, usize)> = match app.session.active() {
+        Some(d) => crate::editor::colored_refs(&ed.text, &d.wb, ed.sheet, ed.cell).into_iter().map(|r| (r.start, r.end, r.color)).collect(),
+        None => formula_refs(&ed.text).into_iter().map(|r| (r.0, r.1, r.4)).collect(),
+    };
     let text_color = Tokens::get(ui.ctx()).text;
     let cell_text_color = if id == egui::Id::new("gridcraft.cell_editor") { Color32::BLACK } else { text_color };
     let font2 = font.clone();
@@ -271,7 +274,7 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
         let s = buf.as_str();
         let mut job = egui::text::LayoutJob::default();
         let mut pos = 0usize;
-        let mut spans: Vec<(usize, usize, usize)> = refs.iter().filter(|r| r.1 <= s.len()).map(|r| (r.0, r.1, r.4)).collect();
+        let mut spans: Vec<(usize, usize, usize)> = refs.iter().filter(|r| r.1 <= s.len()).copied().collect();
         spans.sort();
         for (a, b, idx) in spans {
             if a < pos || !s.is_char_boundary(a) || !s.is_char_boundary(b) {

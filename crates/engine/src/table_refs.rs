@@ -1,8 +1,8 @@
 //! Cell references into tables rewritten as table names: `C2:C9` → `Table1[Qty]`, `C5` →
-//! `Table1[@Qty]` on its own row and the keyed `Table1[Qty,"Widget"]` on any other.
+//! `Table1[@Qty]` on its own row and `Table1["Widget"][Qty]` by its key on any other.
 
 use gridcraft_core::{CellRef, RangeRef, Value};
-use gridcraft_formula::{BinOp, Condition, Expr, KeyedRef, RefKind, SheetSel, StructItem, StructRef};
+use gridcraft_formula::{ColumnSpan, Expr, RefKind, RowSel, SheetSel, StructItem, StructRef, TableRef};
 use gridcraft_model::{Sheet, Table, Workbook};
 
 /// Rewrites every A1 reference of `e` (a formula in cell `at` of `sheet`) that names a part of
@@ -72,7 +72,7 @@ fn named(wb: &Workbook, sh: &Sheet, range: RangeRef, at: Option<CellRef>, formul
             let inside = at.is_some_and(|c| t.range.contains(c));
             return Some(reference(if inside { String::new() } else { t.name.clone() }, vec![StructItem::ThisRow]));
         }
-        // The row above or below the formula's: `Table1[Qty,[#Prev Row]]`, which fills down.
+        // The row above or below the formula's: `Table1[#Prev Row][Qty]`, which fills down.
         _ if in_data
             && rows.0 == rows.1
             && col_end.is_none()
@@ -93,7 +93,7 @@ fn named(wb: &Workbook, sh: &Sheet, range: RangeRef, at: Option<CellRef>, formul
     Some(reference(t.name.clone(), specifiers))
 }
 
-/// `Table1[Qty,"Widget"]` for a data cell, when the first column's entry on its row is a key
+/// `Table1["Widget"][Qty]` for a data cell, when the first column's entry on its row is a key
 /// that finds this row: a text, number or boolean no earlier row repeats.
 fn keyed(sh: &Sheet, t: &Table, cell: CellRef, column: String) -> Option<Expr> {
     let data = t.data_range()?;
@@ -115,8 +115,7 @@ fn keyed(sh: &Sheet, t: &Table, cell: CellRef, column: String) -> Option<Expr> {
     if (data.start.row..cell.row).any(|row| same(&sh.value(CellRef::new(row, key_col)))) {
         return None;
     }
-    let key = Condition { column: None, column_abs: false, op: BinOp::Eq, value: literal };
-    Some(Expr::Keyed(KeyedRef { table: t.name.clone(), column, column_abs: false, conditions: vec![key] }))
+    Some(Expr::Table(TableRef { table: t.name.clone(), rows: RowSel::Key(Box::new(literal)), columns: vec![ColumnSpan::one(&column)] }))
 }
 
 #[cfg(test)]
@@ -151,13 +150,13 @@ mod tests {
     #[test]
     fn keyed_references_look_a_cell_up_by_its_row_key() {
         let mut s = stock();
-        set(&mut s, "E1", "=Stock[Qty,\"Washer\"]");
-        set(&mut s, "E2", "=Stock[Product,Qty=7]");
-        set(&mut s, "E3", "=Stock[[Unit Price],\"BOLT\"]*Stock[Qty,E2]");
-        set(&mut s, "E4", "=Stock[Qty,\"Screw\"]");
-        set(&mut s, "E5", "=Stock[Colour,\"Nut\"]");
-        set(&mut s, "E6", "=Stock[Qty,[Unit Price]=0.05]");
-        assert_eq!(formula(&mut s, "E3"), "=Stock[[Unit Price],\"BOLT\"]*Stock[Qty,E2]");
+        set(&mut s, "E1", "=Stock[\"Washer\"][Qty]");
+        set(&mut s, "E2", "=Stock[Qty=7][Product]");
+        set(&mut s, "E3", "=Stock[\"BOLT\"][Unit Price]*Stock[E2][Qty]");
+        set(&mut s, "E4", "=Stock[\"Screw\"][Qty]");
+        set(&mut s, "E5", "=Stock[\"Nut\"][Colour]");
+        set(&mut s, "E6", "=Stock[[Unit Price]=0.05][Qty]");
+        assert_eq!(formula(&mut s, "E3"), "=Stock[\"BOLT\"][Unit Price]*Stock[E2][Qty]");
         assert_eq!(value(&s, "E1"), Value::Number(9.0));
         assert_eq!(value(&s, "E2"), Value::from("Bolt"));
         assert_eq!(value(&s, "E3"), Value::Number(1.75));
@@ -169,26 +168,26 @@ mod tests {
         set(&mut s, "B4", "40");
         assert_eq!(value(&s, "E1"), Value::Number(40.0));
         set(&mut s, "B1", "Count");
-        s.execute("formulas.defineName", json!({"name": "WasherQty", "refersTo": "=Stock[Count,\"Washer\"]+SUM(Stock[Count])*0"})).unwrap();
+        s.execute("formulas.defineName", json!({"name": "WasherQty", "refersTo": "=Stock[\"Washer\"][Count]+SUM(Stock[Count])*0"})).unwrap();
         set(&mut s, "E7", "=WasherQty");
         s.execute("table.rename", json!({"table": "Stock", "name": "Parts"})).unwrap();
         // Defined names follow too.
-        assert_eq!(s.doc().unwrap().wb.names[0].formula, "Parts[Count,\"Washer\"]+SUM(Parts[Count])*0");
+        assert_eq!(s.doc().unwrap().wb.names[0].formula, "Parts[\"Washer\"][Count]+SUM(Parts[Count])*0");
         assert_eq!(value(&s, "E7"), Value::Number(40.0));
         set(&mut s, "B1", "Units");
-        assert_eq!(s.doc().unwrap().wb.names[0].formula, "Parts[Units,\"Washer\"]+SUM(Parts[Units])*0");
+        assert_eq!(s.doc().unwrap().wb.names[0].formula, "Parts[\"Washer\"][Units]+SUM(Parts[Units])*0");
         assert_eq!(value(&s, "E7"), Value::Number(40.0));
         set(&mut s, "B1", "Count");
-        assert_eq!(formula(&mut s, "E1"), "=Parts[Count,\"Washer\"]");
-        assert_eq!(formula(&mut s, "E2"), "=Parts[Product,Count=7]");
+        assert_eq!(formula(&mut s, "E1"), "=Parts[\"Washer\"][Count]");
+        assert_eq!(formula(&mut s, "E2"), "=Parts[Count=7][Product]");
         assert_eq!(value(&s, "E1"), Value::Number(40.0));
     }
 
     #[test]
     fn keyed_references_are_lookups_in_files() {
         let mut s = stock();
-        set(&mut s, "E1", "=Stock[Qty,\"Washer\"]");
-        set(&mut s, "E2", "=Stock[Product,Qty=7]");
+        set(&mut s, "E1", "=Stock[\"Washer\"][Qty]");
+        set(&mut s, "E2", "=Stock[Qty=7][Product]");
         let bytes = gridcraft_xlsx::write_xlsx(&s.doc().unwrap().wb).unwrap();
         let mut sheet = String::new();
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
@@ -198,8 +197,8 @@ mod tests {
         assert!(sheet.contains("<f t=\"array\" ref=\"E2\">_xlfn._xlws.FILTER(Stock[Product],Stock[Qty]=7,NA())</f>"), "{sheet}");
         let r = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap();
         s.execute("file.open", json!({"name": "x.xlsx", "base64": r["base64"]})).unwrap();
-        assert_eq!(formula(&mut s, "E1"), "=Stock[Qty,\"Washer\"]");
-        assert_eq!(formula(&mut s, "E2"), "=Stock[Product,Qty=7]");
+        assert_eq!(formula(&mut s, "E1"), "=Stock[\"Washer\"][Qty]");
+        assert_eq!(formula(&mut s, "E2"), "=Stock[Qty=7][Product]");
         assert_eq!((value(&s, "E1"), value(&s, "E2")), (Value::Number(9.0), Value::from("Bolt")));
     }
 
@@ -213,7 +212,7 @@ mod tests {
             (
                 "E5",
                 "=SUM(B2:C5)+B2+C4+A3",
-                "=SUM(Stock[[Qty]:[Unit Price]])+Stock[Qty,\"Nut\"]+Stock[[Unit Price],[#Prev Row]]+Stock[Product,\"Bolt\"]",
+                "=SUM(Stock[[Qty]:[Unit Price]])+Stock[\"Nut\"][Qty]+Stock[#Prev Row][Unit Price]+Stock[\"Bolt\"][Product]",
             ),
             // Not a part of the table a name stands for: a block of rows, the second "bolt"
             // (the lookup would find the first), cells outside.
@@ -233,7 +232,7 @@ mod tests {
         s.execute("insert.table", json!({"range": "H1:I3", "header": true, "name": "Codes"})).unwrap();
         set(&mut s, "I2", "=H2*2+H3");
         s.execute("formulas.useTableNames", json!({"range": "I2"})).unwrap();
-        assert_eq!(formula(&mut s, "I2"), "=[@Code]*2+[Code,[#Next Row]]");
+        assert_eq!(formula(&mut s, "I2"), "=[@Code]*2+[#Next Row][Code]");
         assert_eq!(value(&s, "I2"), Value::Number(14.0));
         s.execute("edit.undo", json!({})).unwrap();
         assert_eq!(formula(&mut s, "I2"), "=H2*2+H3");
@@ -242,11 +241,11 @@ mod tests {
     #[test]
     fn anchored_columns_stay_when_filled_sideways() {
         let mut s = stock();
-        set(&mut s, "E2", "=Stock[@Qty]&SUM(Stock[$Qty])&Stock[$Qty,\"Nut\"]&Stock[Qty,$Product=\"Nut\"]");
+        set(&mut s, "E2", "=Stock[@Qty]&SUM(Stock[$Qty])&Stock[\"Nut\"][$Qty]&Stock[$Product=\"Nut\"][Qty]");
         s.execute("edit.autoFill", json!({"source": "E2", "target": "E2:G2"})).unwrap();
-        assert_eq!(formula(&mut s, "F2"), "=Stock[@[Unit Price]]&SUM(Stock[$Qty])&Stock[$Qty,\"Nut\"]&Stock[[Unit Price],$Product=\"Nut\"]");
+        assert_eq!(formula(&mut s, "F2"), "=Stock[@[Unit Price]]&SUM(Stock[$Qty])&Stock[\"Nut\"][$Qty]&Stock[$Product=\"Nut\"][Unit Price]");
         // Past the last column the table starts again.
-        assert_eq!(formula(&mut s, "G2"), "=Stock[@Product]&SUM(Stock[$Qty])&Stock[$Qty,\"Nut\"]&Stock[Product,$Product=\"Nut\"]");
+        assert_eq!(formula(&mut s, "G2"), "=Stock[@Product]&SUM(Stock[$Qty])&Stock[\"Nut\"][$Qty]&Stock[$Product=\"Nut\"][Product]");
         assert_eq!(value(&s, "F2"), Value::from("0.12250.1"));
         // Down a column nothing moves, nor when the formula is copied.
         s.execute("edit.autoFill", json!({"source": "E2", "target": "E2:E3"})).unwrap();
@@ -274,26 +273,26 @@ mod tests {
     fn conditions_filter_every_matching_row() {
         let mut s = stock();
         // Several rows match: the values spill down.
-        set(&mut s, "E1", "=Stock[Product,Qty>=5,[Unit Price]<1]");
+        set(&mut s, "E1", "=Stock[Qty>=5,[Unit Price]<1][Product]");
         assert_eq!(
             [value(&s, "E1"), value(&s, "E2"), value(&s, "E3"), value(&s, "E4")],
             [Value::from("Nut"), Value::from("Bolt"), Value::from("Washer"), Value::Empty]
         );
         // One row: one value. None: #N/A, as for a key.
-        set(&mut s, "G1", "=Stock[Qty,Product=\"bolt\",[Unit Price]>1]");
-        set(&mut s, "G2", "=Stock[Qty,Qty>100]");
-        set(&mut s, "G3", "=SUM(Stock[Qty,Product<>\"Nut\"])");
+        set(&mut s, "G1", "=Stock[Product=\"bolt\",[Unit Price]>1][Qty]");
+        set(&mut s, "G2", "=Stock[Qty>100][Qty]");
+        set(&mut s, "G3", "=SUM(Stock[Product<>\"Nut\"][Qty])");
         assert_eq!((value(&s, "G1"), value(&s, "G2"), value(&s, "G3")), (Value::Number(1.0), Value::Error(CellError::NA), Value::Number(17.0)));
         // Conditions follow column renames, and the data.
         set(&mut s, "B5", "8");
         assert_eq!(value(&s, "G1"), Value::Number(8.0));
         set(&mut s, "C1", "Cost");
-        assert_eq!(formula(&mut s, "E1"), "=Stock[Product,Qty>=5,Cost<1]");
+        assert_eq!(formula(&mut s, "E1"), "=Stock[Qty>=5,Cost<1][Product]");
         // They survive a file.
         let r = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap();
         s.execute("file.open", json!({"name": "x.xlsx", "base64": r["base64"]})).unwrap();
-        assert_eq!(formula(&mut s, "E1"), "=Stock[Product,Qty>=5,Cost<1]");
-        assert_eq!(formula(&mut s, "G1"), "=Stock[Qty,Product=\"bolt\",Cost>1]");
+        assert_eq!(formula(&mut s, "E1"), "=Stock[Qty>=5,Cost<1][Product]");
+        assert_eq!(formula(&mut s, "G1"), "=Stock[Product=\"bolt\",Cost>1][Qty]");
         assert_eq!((value(&s, "E3"), value(&s, "G3")), (Value::from("Washer"), Value::Number(24.0)));
     }
 
@@ -303,9 +302,9 @@ mod tests {
         s.execute("range.setValues", json!({"range": "D1", "values": [["Vs Bolt"]]})).unwrap();
         s.execute("table.resize", json!({"table": "Stock", "range": "A1:D5"})).unwrap();
         // The table name may be left out inside the table, as for `[@Qty]`.
-        set(&mut s, "D2", "=[@Qty]-[Qty,\"Bolt\"]");
-        set(&mut s, "D3", "=COUNT([Qty,Qty>[@Qty]])");
-        assert_eq!(formula(&mut s, "D2"), "=[@Qty]-[Qty,\"Bolt\"]");
+        set(&mut s, "D2", "=[@Qty]-[\"Bolt\"][Qty]");
+        set(&mut s, "D3", "=COUNT([Qty>[@Qty]][Qty])");
+        assert_eq!(formula(&mut s, "D2"), "=[@Qty]-[\"Bolt\"][Qty]");
         assert_eq!((value(&s, "D2"), value(&s, "D3")), (Value::Number(-2.0), Value::Number(1.0)));
         // Excel reads these without the table name too (observed in Excel 16.113.4).
         let bytes = gridcraft_xlsx::write_xlsx(&s.doc().unwrap().wb).unwrap();
@@ -315,7 +314,7 @@ mod tests {
         assert!(sheet.contains("[[#This Row],[Qty]]-INDEX([Qty],MATCH(\"Bolt\",INDEX([],0,1),0))"), "{sheet}");
         let r = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap();
         s.execute("file.open", json!({"name": "x.xlsx", "base64": r["base64"]})).unwrap();
-        assert_eq!(formula(&mut s, "D3"), "=COUNT([Qty,Qty>[@Qty]])");
+        assert_eq!(formula(&mut s, "D3"), "=COUNT([Qty>[@Qty]][Qty])");
         assert_eq!(value(&s, "D3"), Value::Number(1.0));
     }
 
@@ -331,16 +330,16 @@ mod tests {
         s.execute("insert.table", json!({"range": "A1:D4", "header": true, "name": "Log"})).unwrap();
         // A running total and a change to the next day, filled down.
         set(&mut s, "C2", "=[@Qty]");
-        set(&mut s, "C3", "=[@Qty]+[Total,[#Prev Row]]");
-        set(&mut s, "D2", "=[Qty,[#Next Row]]-[@Qty]");
+        set(&mut s, "C3", "=[@Qty]+[#Prev Row][Total]");
+        set(&mut s, "D2", "=[#Next Row][Qty]-[@Qty]");
         s.execute("edit.autoFill", json!({"source": "C3", "target": "C3:C4"})).unwrap();
         s.execute("edit.autoFill", json!({"source": "D2", "target": "D2:D4"})).unwrap();
-        assert_eq!(formula(&mut s, "C4"), "=[@Qty]+[Total,[#Prev Row]]");
+        assert_eq!(formula(&mut s, "C4"), "=[@Qty]+[#Prev Row][Total]");
         assert_eq!([value(&s, "C2"), value(&s, "C3"), value(&s, "C4")], [Value::Number(5.0), Value::Number(12.0), Value::Number(21.0)]);
         // Below the last row is the cell under the table, as OFFSET finds it in Excel.
         assert_eq!([value(&s, "D2"), value(&s, "D3"), value(&s, "D4")], [Value::Number(2.0), Value::Number(2.0), Value::Number(-9.0)]);
         // From outside the table, on a row of it.
-        set(&mut s, "F3", "=Log[Qty,[#Prev Row]]");
+        set(&mut s, "F3", "=Log[#Prev Row][Qty]");
         assert_eq!(value(&s, "F3"), Value::Number(5.0));
         // Files hold OFFSET, which reads back.
         let bytes = gridcraft_xlsx::write_xlsx(&s.doc().unwrap().wb).unwrap();
@@ -351,14 +350,37 @@ mod tests {
         assert!(sheet.contains("<f>OFFSET(Log[[#This Row],[Qty]],-1,0)</f>"), "{sheet}");
         let r = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap();
         s.execute("file.open", json!({"name": "x.xlsx", "base64": r["base64"]})).unwrap();
-        assert_eq!(formula(&mut s, "C3"), "=[@Qty]+[Total,[#Prev Row]]");
-        assert_eq!(formula(&mut s, "F3"), "=Log[Qty,[#Prev Row]]");
+        assert_eq!(formula(&mut s, "C3"), "=[@Qty]+[#Prev Row][Total]");
+        assert_eq!(formula(&mut s, "F3"), "=Log[#Prev Row][Qty]");
         assert_eq!(value(&s, "C4"), Value::Number(21.0));
         // Shift+F4 writes the cell above or below the formula's as a neighbouring row.
         set(&mut s, "C3", "=B3+C2");
         set(&mut s, "D3", "=B4-B3");
         s.execute("formulas.useTableNames", json!({"range": "C3:D3"})).unwrap();
-        assert_eq!(formula(&mut s, "C3"), "=[@Qty]+[Total,[#Prev Row]]");
-        assert_eq!(formula(&mut s, "D3"), "=[Qty,[#Next Row]]-[@Qty]");
+        assert_eq!(formula(&mut s, "C3"), "=[@Qty]+[#Prev Row][Total]");
+        assert_eq!(formula(&mut s, "D3"), "=[#Next Row][Qty]-[@Qty]");
+    }
+
+    #[test]
+    fn several_columns_and_whole_rows() {
+        let mut s = stock();
+        let cells =
+            |s: &Session, range: &str| -> Vec<Value> { gridcraft_core::RangeRef::parse(range).unwrap().iter().map(|c| value(s, &c.a1())).collect() };
+        // Columns in the order named, spilling right; `[]` is every column.
+        set(&mut s, "E1", "=Stock[\"Bolt\"][Qty, Product]");
+        set(&mut s, "E2", "=Stock[\"Washer\"][]");
+        set(&mut s, "E4", "=Stock[Qty>5][Product:Qty]");
+        set(&mut s, "E7", "=SUM(Stock[Qty, \"Unit Price\"])");
+        assert_eq!(cells(&s, "E1:F1"), [Value::Number(7.0), Value::from("Bolt")]);
+        assert_eq!(cells(&s, "E2:G2"), [Value::from("Washer"), Value::Number(9.0), Value::Number(0.05)]);
+        assert_eq!(cells(&s, "E4:F5"), [Value::from("Bolt"), Value::Number(7.0), Value::from("Washer"), Value::Number(9.0)]);
+        assert!(matches!(value(&s, "E7"), Value::Number(n) if (n - 31.4).abs() < 1e-9));
+        assert_eq!(formula(&mut s, "E7"), "=SUM(Stock[][Qty,Unit Price])");
+        let before: Vec<String> = ["E1", "E2", "E4", "E7"].iter().map(|c| formula(&mut s, c)).collect();
+        let r = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap();
+        s.execute("file.open", json!({"name": "x.xlsx", "base64": r["base64"]})).unwrap();
+        let after: Vec<String> = ["E1", "E2", "E4", "E7"].iter().map(|c| formula(&mut s, c)).collect();
+        assert_eq!(after, before);
+        assert_eq!(cells(&s, "E4:F5"), [Value::from("Bolt"), Value::Number(7.0), Value::from("Washer"), Value::Number(9.0)]);
     }
 }

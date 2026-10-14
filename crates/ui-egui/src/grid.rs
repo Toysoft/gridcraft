@@ -1619,10 +1619,9 @@ pub(crate) fn paint_selection(
     if let Some(ed) = &app.editor
         && ed.is_formula()
     {
-        for (_, _, r, sheet, idx) in crate::editor::formula_refs(&ed.text) {
-            if sheet.as_deref().is_some_and(|s| !s.eq_ignore_ascii_case(&sh.name)) {
-                continue;
-            }
+        let refs = app.session.active().map(|d| (crate::editor::colored_refs(&ed.text, &d.wb, ed.sheet, ed.cell), d.wb.active_sheet));
+        let (refs, shown) = refs.unwrap_or_default();
+        for (r, idx) in refs.iter().flat_map(|c| c.areas.iter().filter(|a| a.0 == shown).map(move |a| (a.1, c.color))) {
             if !range_in_pane(r, rows, cols) {
                 continue;
             }

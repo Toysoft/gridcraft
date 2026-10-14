@@ -241,8 +241,8 @@ impl<'h> Evaluator<'h> {
             },
             Expr::Name(n) => self.name(n),
             Expr::Struct(s) => self.structured(s),
-            // A keyed table reference is the lookup files hold for it.
-            Expr::Keyed(k) => self.eval(&k.lower()),
+            // A GridCraft table reference is the Excel formula files hold for it.
+            Expr::Table(t) => self.eval(&t.lower()),
             Expr::Unary(op, x) => self.unary(*op, x),
             Expr::Binary(op, a, b) => self.binary(*op, a, b),
             Expr::Call(name, args) => self.call(name, args),
@@ -1774,7 +1774,7 @@ pub fn precedents(wb: &Workbook, sheet: usize, e: &Expr) -> (Vec<Area>, bool) {
         {
             dynamic = true
         }
-        Expr::Name(_) | Expr::Struct(_) | Expr::Keyed(_) => dynamic = true,
+        Expr::Name(_) | Expr::Struct(_) | Expr::Table(_) => dynamic = true,
         Expr::Call(n, _) if gridcraft_functions::lookup(n).is_none() && !is_special(n) => dynamic = true,
         // A range ending in a function's result (`A1:INDEX(B1:B9,n)`) covers the cells between
         // the references inside it, not only those references.

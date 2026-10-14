@@ -60,18 +60,22 @@ pub fn shift_table_columns(e: Expr, dc: i64, columns: &dyn Fn(&str) -> Option<Ve
             }
             Expr::Struct(s)
         }
-        Expr::Keyed(mut k) => {
-            if !k.column_abs
-                && let Some(name) = moved(&k.table, &k.column)
-            {
-                k.column = name;
-            }
-            for c in k.conditions.iter_mut().filter(|c| !c.column_abs) {
-                if let Some(name) = c.column.as_deref().and_then(|n| moved(&k.table, n)) {
-                    c.column = Some(name);
+        Expr::Table(mut t) => {
+            for span in t.columns.iter_mut().filter(|s| !s.abs) {
+                for end in std::iter::once(&mut span.first).chain(span.last.as_mut()) {
+                    if let Some(name) = moved(&t.table, end) {
+                        *end = name;
+                    }
                 }
             }
-            Expr::Keyed(k)
+            if let crate::RowSel::Filter(conditions) = &mut t.rows {
+                for c in conditions.iter_mut().filter(|c| !c.column_abs) {
+                    if let Some(name) = moved(&t.table, &c.column) {
+                        c.column = name;
+                    }
+                }
+            }
+            Expr::Table(t)
         }
         other => other,
     })

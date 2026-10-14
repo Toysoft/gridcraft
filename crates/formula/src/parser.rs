@@ -7,6 +7,7 @@ use gridcraft_core::{CellError, MAX_ROWS};
 
 use crate::ast::*;
 use crate::lexer::{Tok, Token, tokenize_locale};
+use crate::table_ref::{ColumnSpan, Condition, RowSel};
 
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 #[error("{msg}")]
@@ -291,11 +292,16 @@ impl Parser {
                 {
                     let pos = self.pos();
                     let Tok::Struct(body) = self.next() else { return Err(self.err("internal")) };
-                    return self.structured(&w, &body, pos);
+                    let columns = self.chained();
+                    return self.structured(&w, &body, columns.as_deref(), pos);
                 }
                 self.reference_from_word(SheetSel::Current, &w)
             }
-            Tok::Struct(body) => self.structured("", &body, self.pos()),
+            Tok::Struct(body) => {
+                let pos = self.toks.get(self.i.saturating_sub(1)).map_or(0, |t| t.start);
+                let columns = self.chained();
+                self.structured("", &body, columns.as_deref(), pos)
+            }
             t => Err(self.err(format!("unexpected {}", describe(&t)))),
         }
     }
@@ -421,54 +427,91 @@ fn combine(op: BinOp, lhs: Expr, rhs: Expr) -> Expr {
 }
 
 impl Parser {
-    /// The inside of `Table[...]`: a structured reference, or a keyed one: `Table[Col,key]`, or
-    /// `Table[Col,Stock>400,Name<>"Nut"]` with any number of conditions. Keys and values are
-    /// expressions in file syntax in every locale, like the rest of the brackets.
-    fn structured(&self, table: &str, body: &str, pos: usize) -> Result<Expr, ParseError> {
-        let Some((column, column_abs, rest)) = split_keyed(body) else {
-            return parse_struct(table, body).map(Expr::Struct).map_err(|msg| ParseError { msg, pos });
-        };
-        let err = |msg: &str| ParseError { msg: msg.into(), pos };
-        // `Table[Qty,[#Prev Row]]`: a row near the formula's, not a key.
-        let row = match bracketed(rest.trim()).map(|i| i.trim().to_ascii_lowercase()).as_deref() {
-            Some("#this row") => Some(StructItem::ThisRow),
-            Some("#prev row") => Some(StructItem::PrevRow),
-            Some("#next row") => Some(StructItem::NextRow),
+    /// The second brackets of `Table[rows][columns]`: a bracket group right after the first,
+    /// with nothing between them.
+    fn chained(&mut self) -> Option<String> {
+        let end = self.toks.get(self.i.checked_sub(1)?)?.end;
+        let next = self.toks.get(self.i)?;
+        match &next.tok {
+            Tok::Struct(body) if next.start == end => {
+                let body = body.clone();
+                self.i += 1;
+                Some(body)
+            }
             _ => None,
-        };
-        if let Some(item) = row {
-            return Ok(Expr::Struct(StructRef {
-                table: table.to_string(),
-                specifiers: vec![item],
-                col_start: Some(column),
-                col_end: None,
-                col_abs: column_abs,
-            }));
         }
-        let parts = split_top_level(rest);
+    }
+
+    /// A table reference: `Table[columns]` (Excel's, and lists of columns), or
+    /// `Table[rows][columns]` / `Table[[rows],[columns]]`.
+    fn structured(&self, table: &str, body: &str, columns: Option<&str>, pos: usize) -> Result<Expr, ParseError> {
+        let err = |msg: String| ParseError { msg, pos };
+        if let Some(columns) = columns {
+            let rows = self.rows(body, pos)?;
+            return Ok(TableRef::build(table, rows, parse_columns(columns).map_err(err)?));
+        }
+        let trimmed = body.trim();
+        if trimmed.starts_with('[') {
+            // `[[rows],[column]]` when the first group is not one of Excel's items and a
+            // second follows after a comma; Excel's own forms otherwise.
+            if let Some((rows, column)) = rows_and_column(trimmed) {
+                let rows = self.rows(rows, pos)?;
+                return Ok(TableRef::build(table, rows, parse_columns(column).map_err(err)?));
+            }
+            return parse_struct(table, body).map(Expr::Struct).map_err(err);
+        }
+        // A list or span of columns: `Table[Price, Stock]`, `Table[Price:Stock]`, `Table["Unit Price"]`.
+        if is_column_list(trimmed) {
+            let (rows, list) = match trimmed.strip_prefix('@') {
+                Some(rest) => (RowSel::Items(vec![StructItem::ThisRow]), rest),
+                None => (RowSel::Items(vec![]), trimmed),
+            };
+            return Ok(TableRef::build(table, rows, parse_columns(list).map_err(err)?));
+        }
+        parse_struct(table, body).map(Expr::Struct).map_err(err)
+    }
+
+    /// The row brackets: Excel's items, a key, or conditions.
+    fn rows(&self, body: &str, pos: usize) -> Result<RowSel, ParseError> {
+        let err = |msg: &str| ParseError { msg: msg.into(), pos };
+        let trimmed = body.trim();
+        if trimmed.is_empty() {
+            return Ok(RowSel::Items(vec![]));
+        }
+        if trimmed == "@" {
+            return Ok(RowSel::Items(vec![StructItem::ThisRow]));
+        }
+        let parts = split_top_level(trimmed);
+        let items: Option<Vec<StructItem>> = parts.iter().map(|p| row_item(bracketed(p.trim()).unwrap_or(p.trim()))).collect();
+        if let Some(items) = items {
+            let alone = items.iter().any(|i| matches!(i, StructItem::ThisRow | StructItem::PrevRow | StructItem::NextRow));
+            if alone && items.len() > 1 {
+                return Err(err("`#This Row`, `#Prev Row` and `#Next Row` go alone in the row brackets"));
+            }
+            return Ok(RowSel::Items(items));
+        }
         let mut conditions = Vec::with_capacity(parts.len());
         for part in &parts {
             if part.trim().is_empty() {
-                return Err(err("a keyed table reference needs a key or a condition after each `,`"));
+                return Err(err("a key or a condition is missing between the commas"));
             }
-            let condition = match split_condition(part) {
-                Some((name, column_abs, op, value)) => {
+            match split_condition(part) {
+                Some((column, column_abs, op, value)) => {
                     if value.trim().is_empty() {
                         return Err(err("a condition needs a value after its comparison"));
                     }
-                    Condition { column: Some(name), column_abs, op, value: self.nested(value, pos)? }
+                    conditions.push(Condition { column, column_abs, op, value: self.nested(value, pos)? });
                 }
                 None if parts.len() > 1 => return Err(err("with several conditions, each names its column: `Stock>400`")),
-                None => Condition { column: None, column_abs: false, op: BinOp::Eq, value: self.nested(part, pos)? },
-            };
-            conditions.push(condition);
+                None => return Ok(RowSel::Key(Box::new(self.nested(part, pos)?))),
+            }
         }
-        Ok(Expr::Keyed(KeyedRef { table: table.to_string(), column, column_abs, conditions }))
+        Ok(RowSel::Filter(conditions))
     }
 
     /// A key or value inside the brackets.
     fn nested(&self, src: &str, pos: usize) -> Result<Expr, ParseError> {
-        // A key can hold another keyed reference: nesting counts against the same limit, and
+        // A key can hold another table reference: nesting counts against the same limit, and
         // more steeply, as each level parses with a parser of its own.
         let depth = self.depth.saturating_add(KEYED_DEPTH);
         if depth > MAX_DEPTH {
@@ -478,10 +521,142 @@ impl Parser {
         let mut p = Parser { toks: significant_spaces(toks), i: 0, depth, input: false };
         let e = p.expr(0, false).map_err(|e| ParseError { msg: e.msg, pos })?;
         if *p.peek() != Tok::Eof {
-            return Err(ParseError { msg: format!("unexpected {} in the key of a table reference", describe(p.peek())), pos });
+            return Err(ParseError { msg: format!("unexpected {} in the brackets of a table reference", describe(p.peek())), pos });
         }
         Ok(e)
     }
+}
+
+/// `#Headers`, `#This Row`, `#Prev Row`, …
+fn row_item(s: &str) -> Option<StructItem> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "#all" => Some(StructItem::All),
+        "#data" => Some(StructItem::Data),
+        "#headers" => Some(StructItem::Headers),
+        "#totals" => Some(StructItem::Totals),
+        "#this row" => Some(StructItem::ThisRow),
+        "#prev row" => Some(StructItem::PrevRow),
+        "#next row" => Some(StructItem::NextRow),
+        _ => None,
+    }
+}
+
+/// `[rows],[column]` (inside the outer brackets) → the two groups' insides; `None` for Excel's forms: a single group, a
+/// first group that is an item (`[[#Headers],[Qty]]`), or a span (`[[A]:[C]]`).
+fn rows_and_column(body: &str) -> Option<(&str, &str)> {
+    let mut groups: Vec<(usize, usize)> = Vec::new();
+    let (mut depth, mut start, mut esc) = (0usize, 0usize, false);
+    let mut between = String::new();
+    for (i, c) in body.char_indices() {
+        match c {
+            _ if esc => esc = false,
+            '\'' if depth > 0 => esc = true,
+            '[' => {
+                depth += 1;
+                if depth == 1 {
+                    start = i + 1;
+                }
+            }
+            ']' => {
+                if depth == 1 {
+                    groups.push((start, i));
+                }
+                depth = depth.saturating_sub(1);
+            }
+            c if depth == 0 => between.push(c),
+            _ => {}
+        }
+    }
+    let [(a0, a1), (b0, b1)] = groups.as_slice() else { return None };
+    let first = body.get(*a0..*a1)?;
+    if row_item(first).is_some() || first.trim_start().starts_with('@') || between.trim() != "," {
+        return None;
+    }
+    Some((first, body.get(*b0..*b1)?))
+}
+
+/// Whether one pair of brackets holds GridCraft's column list rather than one of Excel's
+/// forms: a `,` or `:` outside brackets and quotes, or a quoted name.
+fn is_column_list(body: &str) -> bool {
+    let first = body.trim_start_matches(['@', '$', ' ']);
+    let mut found = first.starts_with('"');
+    scan_top_level(body, |_, c, top| {
+        found |= top && matches!(c, ',' | ':');
+        found
+    });
+    found
+}
+
+/// The column brackets: `Price`, `[Unit Price]`, `"Unit Price"`, `$Price`, `Price:Stock`,
+/// separated by `,`; nothing for every column.
+pub(crate) fn parse_columns(body: &str) -> Result<Vec<ColumnSpan>, String> {
+    let body = body.trim();
+    if body.is_empty() {
+        return Ok(vec![]);
+    }
+    // Split at `,` and `:` outside brackets and quotes.
+    let mut items: Vec<Vec<String>> = vec![vec![String::new()]];
+    let (mut depth, mut text, mut esc) = (0usize, false, false);
+    for c in body.chars() {
+        let cur = items.last_mut().and_then(|i| i.last_mut());
+        match c {
+            _ if esc => {
+                esc = false;
+                cur.into_iter().for_each(|s| s.push(c));
+                continue;
+            }
+            '\'' if depth > 0 => esc = true,
+            '"' if depth == 0 => text = !text,
+            '[' if !text => depth += 1,
+            ']' if !text => depth = depth.saturating_sub(1),
+            ',' if depth == 0 && !text => {
+                items.push(vec![String::new()]);
+                continue;
+            }
+            ':' if depth == 0 && !text => {
+                if let Some(i) = items.last_mut() {
+                    i.push(String::new());
+                }
+                continue;
+            }
+            _ => {}
+        }
+        if let Some(s) = items.last_mut().and_then(|i| i.last_mut()) {
+            s.push(c);
+        }
+    }
+    let name = |s: &str| -> Result<(String, bool), String> {
+        let (s, abs) = anchored(s.trim());
+        let name = if let Some(inner) = bracketed(s) {
+            unescape_column(inner)
+        } else if let Some(inner) = s.strip_prefix('"').and_then(|t| t.strip_suffix('"')).filter(|_| s.len() >= 2) {
+            inner.replace("\"\"", "\"")
+        } else if s.is_empty() || s.contains(['[', ']', '"']) || s.starts_with(['#', '@']) {
+            return Err(format!("`{s}` is not a column name"));
+        } else {
+            s.to_string()
+        };
+        Ok((name, abs))
+    };
+    let mut spans = Vec::with_capacity(items.len());
+    for item in items {
+        let span = match item.as_slice() {
+            [one] => {
+                let (first, abs) = name(one)?;
+                ColumnSpan { first, last: None, abs }
+            }
+            [a, b] => {
+                let ((first, abs_a), (last, abs_b)) = (name(a)?, name(b)?);
+                if abs_a || abs_b {
+                    return Err("`$` anchors one column, not a span of columns".to_string());
+                }
+                ColumnSpan { first, last: Some(last), abs: false }
+            }
+            _ => return Err("a span of columns has two ends: `Price:Stock`".to_string()),
+        };
+        spans.push(span);
+    }
+    Ok(spans)
 }
 
 const KEYED_DEPTH: usize = 8;
@@ -522,36 +697,7 @@ fn bracketed(s: &str) -> Option<&str> {
     (!esc).then_some(inner)
 }
 
-/// A keyed reference body `Col,key…` → the column and the text after the comma. Excel only
-/// puts a comma after a `#` item (or inside a bracketed column name), so a column followed by
-/// one is never an Excel structured reference.
-fn split_keyed(body: &str) -> Option<(String, bool, &str)> {
-    let mut depth = 0usize;
-    let mut esc = false;
-    let comma = body.char_indices().find_map(|(i, c)| {
-        match c {
-            _ if esc => esc = false,
-            '\'' => esc = true,
-            '[' => depth += 1,
-            ']' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => return Some(i),
-            _ => {}
-        }
-        None
-    })?;
-    let (first, abs) = anchored(body.get(..comma)?.trim());
-    let name = match bracketed(first) {
-        Some(inner) => inner,
-        None if first.contains(['[', ']']) => return None,
-        None => first,
-    };
-    if name.is_empty() || name.starts_with(['#', '@']) {
-        return None;
-    }
-    Some((unescape_column(name), abs, body.get(comma + 1..)?))
-}
-
-/// Steps through text after a keyed reference's column: `on(i, c, top)` sees each character
+/// Steps through the inside of row brackets: `on(i, c, top)` sees each character
 /// and whether it is outside brackets, parentheses and text literals. A quote inside brackets
 /// belongs to a column name (`[5" pipe]`) or to a nested reference.
 fn scan_top_level(s: &str, mut on: impl FnMut(usize, char, bool) -> bool) {

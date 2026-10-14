@@ -114,11 +114,13 @@ fn write_struct_ref(s: &StructRef, at_shorthand: bool) -> String {
     let this_row = at_shorthand && s.specifiers == [StructItem::ThisRow];
     let mut out = s.table.clone();
     let simple_col = |c: &str| !c.chars().any(|ch| matches!(ch, ' ' | '[' | ']' | '#' | '\'' | ',' | ':' | '$'));
-    // A neighbouring row of one column: `Table1[Qty,[#Prev Row]]`, column first.
-    if let (Some(c), None, Some(_)) = (&s.col_start, &s.col_end, s.row_offset()) {
-        let name = if crate::parser::bare_key_column(c) { c.clone() } else { format!("[{}]", esc(c)) };
-        let anchor = if s.col_abs { "$" } else { "" };
-        let _ = write!(out, "[{anchor}{name},[{}]]", s.specifiers.first().map(item).unwrap_or(""));
+    // A neighbouring row: `Table1[#Prev Row][Qty]`, rows then columns.
+    if s.row_offset().is_some() && at_shorthand {
+        let rows = s.specifiers.first().map(item).unwrap_or("");
+        let _ = match &s.col_start {
+            Some(first) => write!(out, "[{rows}][{}]", column_span(first, s.col_end.as_deref(), s.col_abs)),
+            None => write!(out, "[{rows}]"),
+        };
         return out;
     }
     // An anchored column: `$Qty` on screen, and in files Excel's one-column range for it.
@@ -177,32 +179,67 @@ fn write_struct_ref(s: &StructRef, at_shorthand: bool) -> String {
     out
 }
 
-/// `Table1[Price,"Widget"]`, `Table1[[Unit Price],Stock>400,Product<>"Nut"]`.
-fn write_keyed(s: &mut String, k: &KeyedRef, r1c1: Option<CellRef>) {
-    let esc = |c: &str| c.replace('\'', "''").replace('[', "'[").replace(']', "']").replace('#', "'#");
-    let column = |c: &str, abs: bool| {
-        let name = if crate::parser::bare_key_column(c) { c.to_string() } else { format!("[{}]", esc(c)) };
-        if abs { format!("${name}") } else { name }
+/// A column in the column brackets: bare when it can be (`Unit Price`), else bracketed.
+fn column_name(c: &str) -> String {
+    let plain = !c.is_empty() && c.trim() == c && !c.chars().any(|ch| matches!(ch, '[' | ']' | '#' | '\'' | ',' | ':' | '"' | '$' | '@'));
+    if plain { c.to_string() } else { format!("[{}]", c.replace('\'', "''").replace('[', "'[").replace(']', "']").replace('#', "'#")) }
+}
+
+/// `Price`, `$Price` or `Price:Stock`.
+fn column_span(first: &str, last: Option<&str>, abs: bool) -> String {
+    match last {
+        Some(last) => format!("{}:{}", column_name(first), column_name(last)),
+        None if abs => format!("${}", column_name(first)),
+        None => column_name(first),
+    }
+}
+
+/// `Table1["Bolt"][Price]`, `Table1[Stock>400, Product<>"Nut"][Price, Stock]`, `Table1[@][A, B]`.
+fn write_table(s: &mut String, t: &TableRef, r1c1: Option<CellRef>) {
+    let item = |i: &StructItem| match i {
+        StructItem::All => "#All",
+        StructItem::Data => "#Data",
+        StructItem::Headers => "#Headers",
+        StructItem::Totals => "#Totals",
+        StructItem::ThisRow => "#This Row",
+        StructItem::PrevRow => "#Prev Row",
+        StructItem::NextRow => "#Next Row",
     };
-    let _ = write!(s, "{}[{}", k.table, column(&k.column, k.column_abs));
-    for c in &k.conditions {
-        s.push(',');
-        match &c.column {
-            Some(name) => {
-                s.push_str(&column(name, c.column_abs));
+    s.push_str(&t.table);
+    s.push('[');
+    match &t.rows {
+        RowSel::Items(items) if items.as_slice() == [StructItem::ThisRow] => s.push('@'),
+        RowSel::Items(items) => s.push_str(&items.iter().map(item).collect::<Vec<_>>().join(",")),
+        // A bare comparison would read back as a condition.
+        RowSel::Key(k) if matches!(&**k, Expr::Binary(op, ..) if op.precedence() <= BinOp::Eq.precedence()) => {
+            s.push('(');
+            write_expr(s, k, r1c1);
+            s.push(')');
+        }
+        RowSel::Key(k) => write_expr(s, k, r1c1),
+        RowSel::Filter(conditions) => {
+            for (i, c) in conditions.iter().enumerate() {
+                if i > 0 {
+                    s.push(',');
+                }
+                let name = if crate::parser::bare_key_column(&c.column) { c.column.clone() } else { column_name_bracketed(&c.column) };
+                if c.column_abs {
+                    s.push('$');
+                }
+                s.push_str(&name);
                 s.push_str(c.op.symbol());
                 write_expr(s, &c.value, r1c1);
             }
-            // A bare comparison would read back as a condition.
-            None if matches!(&c.value, Expr::Binary(op, ..) if op.precedence() <= BinOp::Eq.precedence()) => {
-                s.push('(');
-                write_expr(s, &c.value, r1c1);
-                s.push(')');
-            }
-            None => write_expr(s, &c.value, r1c1),
         }
     }
+    s.push_str("][");
+    let spans: Vec<String> = t.columns.iter().map(|c| column_span(&c.first, c.last.as_deref(), c.abs)).collect();
+    s.push_str(&spans.join(","));
     s.push(']');
+}
+
+fn column_name_bracketed(c: &str) -> String {
+    format!("[{}]", c.replace('\'', "''").replace('[', "'[").replace(']', "']").replace('#', "'#"))
 }
 
 fn number(n: f64) -> String {
@@ -262,7 +299,7 @@ fn write_expr(s: &mut String, e: &Expr, r1c1: Option<CellRef>) {
             _ => s.push_str(n),
         },
         Expr::Struct(st) => s.push_str(&struct_ref(st)),
-        Expr::Keyed(k) => write_keyed(s, k, r1c1),
+        Expr::Table(t) => write_table(s, t, r1c1),
         Expr::Unary(op, x) => match op {
             UnOp::Neg => {
                 s.push('-');

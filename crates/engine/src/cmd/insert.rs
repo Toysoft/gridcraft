@@ -496,9 +496,9 @@ fn table_rename(s: &mut Session, p: &Json) -> Result<Json> {
                     st.table = name.clone();
                     gridcraft_formula::Expr::Struct(st)
                 }
-                gridcraft_formula::Expr::Keyed(mut k) if k.table.eq_ignore_ascii_case(&old) => {
-                    k.table = name.clone();
-                    gridcraft_formula::Expr::Keyed(k)
+                gridcraft_formula::Expr::Table(mut t) if t.table.eq_ignore_ascii_case(&old) => {
+                    t.table = name.clone();
+                    gridcraft_formula::Expr::Table(t)
                 }
                 gridcraft_formula::Expr::Name(n) if !shadowed && n.eq_ignore_ascii_case(&old) => gridcraft_formula::Expr::Name(name.clone()),
                 o => o,

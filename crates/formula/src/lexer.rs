@@ -171,50 +171,58 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                 i += len;
             }
             '[' => {
-                // Structured reference body: balanced brackets.
-                // A keyed reference (`Table1[Col,"a]b"]`) has an expression after its comma, where
-                // a text literal may hold brackets. Excel's own forms have none: they start with
-                // a `#` item or `@`, and their inner brackets hold a column name.
+                // Structured reference body: balanced brackets. GridCraft's row brackets hold
+                // expressions (`Table1["a]b"][Price]`, `Table1[Code="a]"][Price]`), where a
+                // text literal may hold brackets. Excel's own forms have none: they start with
+                // a `#` item or `@`, and their inner brackets hold a column name, which may
+                // hold a `"` (`[5" pipe]`).
                 struct Level {
                     comma: bool,
                     key: bool,
+                    /// The last character seen directly in this bracket, spaces aside.
+                    prev: Option<char>,
                 }
                 let first = |j: usize| (j..).map(ch).find(|c| *c != Some(' ')).flatten();
+                let word_end = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '\\'));
+                // A quote starts a text where a value can start.
+                let value_start = |c: Option<char>| {
+                    matches!(c, None | Some('(' | ',' | '=' | '<' | '>' | '&' | '+' | '-' | '*' | '/' | '^' | ':' | '$' | '@' | '{' | ';'))
+                };
                 let mut levels: Vec<Level> = Vec::new();
                 let mut j = i;
                 loop {
                     match ch(j) {
                         None => return Err(LexError { msg: "unbalanced [".into(), pos: start }),
-                        Some('\'') => j += 2, // escape char inside struct refs
+                        Some('\'') => {
+                            if let Some(level) = levels.last_mut() {
+                                level.prev = Some('\'');
+                            }
+                            j += 2; // escape char inside struct refs
+                        }
                         Some('[') => {
                             let item = matches!(first(j + 1), Some('#' | '@'));
                             // A bracket before its parent's comma is a column name or an item;
-                            // after it, part of the key.
+                            // after it, or after a table name, part of an expression.
                             let key = match levels.last_mut() {
                                 None => !item,
                                 Some(parent) => {
-                                    parent.key &= parent.comma || !item;
-                                    parent.key && parent.comma && !item
+                                    parent.key &= parent.comma || word_end(parent.prev) || !item;
+                                    parent.key && !item && (parent.comma || word_end(parent.prev))
                                 }
                             };
-                            levels.push(Level { comma: false, key });
+                            levels.push(Level { comma: false, key, prev: None });
                             j += 1;
                         }
                         Some(']') => {
                             levels.pop();
                             j += 1;
-                            if levels.is_empty() {
-                                break;
+                            match levels.last_mut() {
+                                Some(parent) => parent.prev = Some(']'),
+                                None => break,
                             }
-                        }
-                        Some(',') => {
-                            if let Some(level) = levels.last_mut() {
-                                level.comma = true;
-                            }
-                            j += 1;
                         }
                         // A quote without a closing one is an ordinary character of a column name.
-                        Some('"') if levels.last().is_some_and(|l| l.key && l.comma) => {
+                        Some('"') if levels.last().is_some_and(|l| l.key && value_start(l.prev)) => {
                             let mut k = j + 1;
                             j = loop {
                                 match (ch(k), ch(k + 1)) {
@@ -224,8 +232,21 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                                     _ => k += 1,
                                 }
                             };
+                            if let Some(level) = levels.last_mut() {
+                                level.prev = Some('"');
+                            }
                         }
-                        Some(_) => j += 1,
+                        Some(c) => {
+                            if let Some(level) = levels.last_mut() {
+                                if c == ',' {
+                                    level.comma = true;
+                                }
+                                if c != ' ' {
+                                    level.prev = Some(c);
+                                }
+                            }
+                            j += 1;
+                        }
                     }
                 }
                 let inner = src.get(pos_of(i + 1)..pos_of(j.saturating_sub(1))).unwrap_or("").to_string();

@@ -270,10 +270,14 @@ fn rename_columns(
             rename(&table, [&mut st.col_start, &mut st.col_end].into_iter().flatten().collect());
             Expr::Struct(st)
         }
-        Expr::Keyed(mut k) => {
-            let table = k.table.clone();
-            rename(&table, std::iter::once(&mut k.column).chain(k.conditions.iter_mut().filter_map(|c| c.column.as_mut())).collect());
-            Expr::Keyed(k)
+        Expr::Table(mut t) => {
+            let table = t.table.clone();
+            let mut ends: Vec<&mut String> = t.columns.iter_mut().flat_map(|s| std::iter::once(&mut s.first).chain(s.last.as_mut())).collect();
+            if let gridcraft_formula::RowSel::Filter(conditions) = &mut t.rows {
+                ends.extend(conditions.iter_mut().map(|c| &mut c.column));
+            }
+            rename(&table, ends);
+            Expr::Table(t)
         }
         o => o,
     });

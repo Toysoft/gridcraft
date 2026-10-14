@@ -140,13 +140,16 @@ mod tests {
     #[test]
     fn keyed_table_references() {
         for (model, file) in [
-            ("Table1[Price,\"Widget\"]", "INDEX(Table1[Price],MATCH(\"Widget\",INDEX(Table1[],0,1),0))"),
-            ("Table1[Price,Code=Table1[@Code]]", "_xlfn._xlws.FILTER(Table1[Price],Table1[Code]=Table1[[#This Row],[Code]],NA())"),
+            ("Table1[\"Widget\"][Price]", "INDEX(Table1[Price],MATCH(\"Widget\",INDEX(Table1[],0,1),0))"),
+            ("Table1[Code=Table1[@Code]][Price]", "_xlfn._xlws.FILTER(Table1[Price],Table1[Code]=Table1[[#This Row],[Code]],NA())"),
             (
-                "SUM(Table1[Price,Other[Code,Region=A1]])",
+                "SUM(Table1[Other[Region=A1][Code]][Price])",
                 "SUM(INDEX(Table1[Price],MATCH(_xlfn._xlws.FILTER(Other[Code],Other[Region]=A1,NA()),INDEX(Table1[],0,1),0)))",
             ),
-            ("Table1[Price,Stock>=400,Kind<>\"x\"]", "_xlfn._xlws.FILTER(Table1[Price],(Table1[Stock]>=400)*(Table1[Kind]<>\"x\"),NA())"),
+            ("Table1[Stock>=400,Kind<>\"x\"][Price]", "_xlfn._xlws.FILTER(Table1[Price],(Table1[Stock]>=400)*(Table1[Kind]<>\"x\"),NA())"),
+            ("Table1[Stock>=400][Price,Kind]", "_xlfn._xlws.FILTER(_xlfn.HSTACK(Table1[Price],Table1[Kind]),Table1[Stock]>=400,NA())"),
+            ("Table1[\"x\"][]", "INDEX(Table1[],MATCH(\"x\",INDEX(Table1[],0,1),0),0)"),
+            ("Table1[#Prev Row][Qty]", "OFFSET(Table1[[#This Row],[Qty]],-1,0)"),
         ] {
             assert_eq!(to_file(&Formula::new(model)), file);
             assert_eq!(from_file(file), model);

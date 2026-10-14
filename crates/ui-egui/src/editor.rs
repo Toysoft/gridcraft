@@ -143,9 +143,9 @@ impl EditState {
     }
 
     /// Adds what tables offer to the function names of [`EditState::update_autocomplete`]:
-    /// table names for the word before the caret, the columns of a table inside its brackets
-    /// (`Products[Pr`), and the entries of the key column in the key of a keyed reference
-    /// (`Products[Price,"Wa`).
+    /// table names for the word before the caret; inside a table's brackets its columns, row
+    /// items, the entries of its first column as keys, and a column's entries after a
+    /// comparison (`Products[Stock>4`).
     pub fn suggest_table_parts(&mut self, wb: &gridcraft_engine::model::Workbook) {
         if !self.is_formula() {
             return;
@@ -154,46 +154,7 @@ impl EditState {
         let Some(before) = self.text.get(..caret) else { return };
         let mut found: Vec<(String, Completion)> = Vec::new();
         let insert = |typed: &str, text: String| Completion::Insert { start: caret - typed.len(), text };
-        if let Some(cx) = key_context(before) {
-            let table = table_of(wb, self.sheet, self.cell, cx.table);
-            let keys = if cx.key || cx.key_column.is_some() { table.map(|(sh, t)| key_suggestions(sh, t, &cx)) } else { None };
-            for key in keys.unwrap_or_default() {
-                found.push((key.clone(), insert(cx.typed, format!("{key}]"))));
-            }
-            // A plain word can also start a condition: `Stock>400`.
-            if cx.key_column.is_none() && !cx.typed.starts_with('"') {
-                for name in table.map(|(_, t)| columns_starting(t, cx.typed)).unwrap_or_default() {
-                    let written = if plain_word(&name) { name.clone() } else { format!("[{}]", escape_column(&name)) };
-                    found.push((name, insert(cx.typed, written)));
-                }
-            }
-            // No function is being typed inside a text literal.
-            if found.is_empty() && !cx.typed.starts_with('"') {
-                return;
-            }
-        } else if let Some(cx) = column_context(before) {
-            let table = table_of(wb, self.sheet, self.cell, cx.table);
-            let close = if cx.in_name { "]" } else { "" };
-            if cx.typed.starts_with('#') {
-                for item in ["#All", "#Data", "#Headers", "#Totals", "#This Row", "#Prev Row", "#Next Row"] {
-                    if item.to_lowercase().starts_with(&cx.typed.to_lowercase()) {
-                        found.push((item.to_string(), insert(cx.typed, format!("{item}{close}"))));
-                    }
-                }
-            }
-            for name in table.map(|(_, t)| columns_starting(t, cx.typed)).unwrap_or_default() {
-                let written = match (cx.in_name, cx.key_column) {
-                    (true, _) => format!("{}]", escape_column(&name)),
-                    (false, _) if name.contains([',', ':', '=', '"', '@']) || name.trim() != name => format!("[{}]", escape_column(&name)),
-                    (false, _) => escape_column(&name),
-                };
-                // Nothing to offer once the one matching name is typed in full.
-                if !cx.in_name && written == cx.typed {
-                    continue;
-                }
-                found.push((name, insert(cx.typed, written)));
-            }
-        } else {
+        let Some(cx) = table_context(before) else {
             let word_len: usize = before.chars().rev().take_while(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '_').map(char::len_utf8).sum();
             let word = before.get(caret - word_len..).unwrap_or("");
             // Not for a number, nor inside a text literal.
@@ -216,6 +177,86 @@ impl EditState {
             self.autocomplete.truncate(12);
             self.completions.truncate(12);
             return;
+        };
+        let table = table_of(wb, self.sheet, self.cell, cx.table);
+        let columns = |typed: &str| table.map(|(_, t)| columns_starting(t, typed)).unwrap_or_default();
+        let typed = cx.typed;
+        match cx.slot {
+            Slot::Columns => {
+                // `"Unit Price"`, `[Unit Price]` or bare, as it was started.
+                let (open, name_typed) = match (typed.strip_prefix('"'), typed.strip_prefix('[')) {
+                    (Some(rest), _) => ("\"", rest),
+                    (_, Some(rest)) => ("[", rest),
+                    _ => ("", typed),
+                };
+                for name in columns(name_typed) {
+                    let written = match open {
+                        "\"" => format!("\"{}\"", name.replace('"', "\"\"")),
+                        "[" => format!("[{}]", escape_column(&name)),
+                        _ => column_name(&name),
+                    };
+                    if written != typed {
+                        found.push((name, insert(typed, written)));
+                    }
+                }
+            }
+            Slot::Name => {
+                if typed.starts_with('#') {
+                    for item in ROW_ITEMS {
+                        if item.to_lowercase().starts_with(&typed.to_lowercase()) {
+                            found.push((item.to_string(), insert(typed, format!("{item}]"))));
+                        }
+                    }
+                }
+                for name in columns(typed) {
+                    found.push((name.clone(), insert(typed, format!("{}]", escape_column(&name)))));
+                }
+            }
+            Slot::Rows => match &cx.column {
+                // The value of a condition: that column's entries.
+                Some(column) => {
+                    // Nothing to offer once the one matching value is typed in full.
+                    for value in table.map(|(sh, t)| column_values(sh, t, Some(column), typed)).unwrap_or_default().into_iter().filter(|v| v != typed)
+                    {
+                        found.push((value.clone(), insert(typed, value)));
+                    }
+                }
+                None => {
+                    let item = typed.strip_prefix('[').unwrap_or(typed);
+                    if item.starts_with('#') {
+                        let close = if typed.starts_with('[') { "]" } else { "" };
+                        for i in ROW_ITEMS {
+                            if i.to_lowercase().starts_with(&item.to_lowercase()) {
+                                found.push((i.to_string(), insert(item, format!("{i}{close}"))));
+                            }
+                        }
+                    } else if let Some(name) = typed.strip_prefix('@') {
+                        for c in columns(name.trim_start_matches('[')) {
+                            found.push((c.clone(), insert(name, word_name(&c))));
+                        }
+                    } else {
+                        // A key: the entries of the first column.
+                        if cx.first && literal_start(typed) {
+                            for key in table.map(|(sh, t)| column_values(sh, t, None, typed)).unwrap_or_default().into_iter().filter(|k| k != typed) {
+                                found.push((key.clone(), insert(typed, key)));
+                            }
+                        }
+                        // A column: alone, or to start a condition (`Stock>400`).
+                        if !typed.starts_with('"') {
+                            for c in columns(typed) {
+                                let written = word_name(&c);
+                                if written != typed {
+                                    found.push((c, insert(typed, written)));
+                                }
+                            }
+                        }
+                    }
+                    // No function is being typed inside a text literal.
+                    if found.is_empty() && !typed.starts_with('"') {
+                        return;
+                    }
+                }
+            },
         }
         found.truncate(12);
         (self.autocomplete, self.completions) = found.into_iter().unzip();
@@ -253,55 +294,71 @@ impl EditState {
     }
 
     /// F4 on a table reference: anchors its column (`Products[Qty]` ⇄ `Products[$Qty]`), so it
-    /// stays when the formula is filled sideways. A keyed reference with conditions goes
-    /// through both, its column only, the conditions' columns only, like the `$` of a cell address. `false`
-    /// when the caret is not on a reference to one table column.
+    /// stays when the formula is filled sideways. One with conditions goes through both, its
+    /// columns only, the conditions' columns only, like the `$` of a cell address. `false` when
+    /// the caret is not on a table reference with one-column spans.
     pub fn cycle_table_anchor(&mut self) -> bool {
-        use gridcraft_engine::formula::{self, Expr, lexer::Tok};
+        use gridcraft_engine::formula::{self, Expr, RowSel, lexer::Tok};
         let Some(body) = self.text.strip_prefix('=') else { return false };
         let caret = self.byte_caret().saturating_sub(1);
         let Ok(tokens) = formula::lexer::tokenize_locale(body, self.locale) else { return false };
-        for (i, t) in tokens.iter().enumerate() {
+        let mut i = 0;
+        while let Some(t) = tokens.get(i) {
+            i += 1;
             if !matches!(t.tok, Tok::Struct(_)) {
                 continue;
             }
-            // The table name before the brackets is part of the reference.
-            let start = match i.checked_sub(1).and_then(|p| tokens.get(p)) {
+            // The table name before the brackets, and second brackets right after, are part of it.
+            let start = match i.checked_sub(2).and_then(|p| tokens.get(p)) {
                 Some(name) if matches!(name.tok, Tok::Word(_)) && name.end == t.start => name.start,
                 _ => t.start,
             };
-            if caret < start || caret > t.end {
+            let mut end = t.end;
+            if let Some(next) = tokens.get(i).filter(|n| matches!(n.tok, Tok::Struct(_)) && n.start == t.end) {
+                end = next.end;
+                i += 1;
+            }
+            if caret < start || caret > end {
                 continue;
             }
-            let Some(reference) = body.get(start..t.end) else { return false };
+            let Some(reference) = body.get(start..end) else { return false };
             let anchored = match formula::parse(reference) {
                 Ok(Expr::Struct(mut r)) if r.col_start.is_some() && r.col_end.is_none() => {
                     r.col_abs = !r.col_abs;
                     Expr::Struct(r)
                 }
-                Ok(Expr::Keyed(mut k)) => {
-                    let named = k.conditions.iter().any(|c| c.column.is_some());
-                    let conditions = named && k.conditions.iter().filter(|c| c.column.is_some()).all(|c| c.column_abs);
-                    let (column, conditions) = match (named, k.column_abs, conditions) {
-                        (false, column, _) => (!column, false),
+                Ok(Expr::Table(mut t)) => {
+                    let singles = t.columns.iter().filter(|c| c.last.is_none()).count();
+                    let cols = singles > 0 && t.columns.iter().filter(|c| c.last.is_none()).all(|c| c.abs);
+                    let (has_conditions, conds) = match &t.rows {
+                        RowSel::Filter(c) => (true, c.iter().all(|c| c.column_abs)),
+                        _ => (false, false),
+                    };
+                    if singles == 0 && !has_conditions {
+                        return false;
+                    }
+                    let (cols, conds) = match (has_conditions, cols, conds) {
+                        (false, cols, _) => (!cols, false),
                         (true, false, false) => (true, true),
                         (true, true, true) => (true, false),
                         (true, true, false) => (false, true),
                         (true, false, true) => (false, false),
                     };
-                    k.column_abs = column;
-                    for c in k.conditions.iter_mut().filter(|c| c.column.is_some()) {
-                        c.column_abs = conditions;
+                    for c in t.columns.iter_mut().filter(|c| c.last.is_none()) {
+                        c.abs = cols;
                     }
-                    Expr::Keyed(k)
+                    if let RowSel::Filter(c) = &mut t.rows {
+                        c.iter_mut().for_each(|c| c.column_abs = conds);
+                    }
+                    Expr::Table(t)
                 }
                 _ => return false,
             };
             let written = formula::print(&anchored);
-            let (Some(a), Some(b)) = (body.get(..start), body.get(t.end..)) else { return false };
-            let end = 1 + start + written.len();
+            let (Some(a), Some(b)) = (body.get(..start), body.get(end..)) else { return false };
+            let new_end = 1 + start + written.len();
             self.text = format!("={a}{written}{b}");
-            self.caret = self.text.get(..end).map(|s| s.chars().count()).unwrap_or(0);
+            self.caret = self.text.get(..new_end).map(|s| s.chars().count()).unwrap_or(0);
             self.point = None;
             self.caret_to_end = false;
             self.request_focus = true;
@@ -405,6 +462,113 @@ pub fn formula_refs(text: &str) -> Vec<(usize, usize, RangeRef, Option<String>, 
     out
 }
 
+/// A reference in a formula being edited: where its text is, the cells it covers (sheet index,
+/// range) and its colour in [`REF_COLORS`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct ColoredRef {
+    pub start: usize,
+    pub end: usize,
+    pub areas: Vec<(usize, RangeRef)>,
+    pub color: usize,
+}
+
+/// Every reference of formula `text` being edited in `cell` of `sheet`, as Excel colours them:
+/// cell addresses and ranges, and table references (`Products[Qty]`, `[@Qty]`,
+/// `Products["Bolt"][Price]`, a bare table name). The same reference text gets the same colour.
+pub fn colored_refs(text: &str, wb: &gridcraft_engine::model::Workbook, sheet: usize, cell: CellRef) -> Vec<ColoredRef> {
+    use gridcraft_engine::formula::{self, Expr, RowSel, StructRef, lexer::Tok};
+    let mut found: Vec<(usize, usize, Vec<(usize, RangeRef)>, String)> = Vec::new();
+    for (start, end, range, sheet_name, _) in formula_refs(text) {
+        let target = match &sheet_name {
+            Some(name) => wb.sheet_index(name),
+            None => Some(sheet),
+        };
+        let key = text.get(start..end).unwrap_or("").replace('$', "").to_uppercase();
+        found.push((start, end, target.map(|s| vec![(s, range)]).unwrap_or_default(), key));
+    }
+    let body = text.strip_prefix('=').or_else(|| text.strip_prefix('+')).unwrap_or(text);
+    let offset = text.len() - body.len();
+    let areas = |e: &Expr| -> Vec<(usize, RangeRef)> {
+        let resolve =
+            |e: &Expr| gridcraft_engine::calc::reference_areas(wb, sheet, cell, e).into_iter().map(|a| (a.sheet, a.range)).collect::<Vec<_>>();
+        match e {
+            // A filter is computed, not a place: outline the columns it returns. A lookup that
+            // finds no cell does the same.
+            Expr::Table(t) => {
+                let found = if matches!(t.rows, RowSel::Filter(_)) { vec![] } else { resolve(&t.lower()) };
+                if !found.is_empty() {
+                    return found;
+                }
+                let spans: Vec<Option<&formula::ColumnSpan>> = if t.columns.is_empty() { vec![None] } else { t.columns.iter().map(Some).collect() };
+                spans
+                    .into_iter()
+                    .flat_map(|s| {
+                        resolve(&Expr::Struct(StructRef {
+                            table: t.table.clone(),
+                            specifiers: vec![],
+                            col_start: s.map(|s| s.first.clone()),
+                            col_end: s.and_then(|s| s.last.clone()),
+                            col_abs: false,
+                        }))
+                    })
+                    .collect()
+            }
+            e => resolve(e),
+        }
+    };
+    if let Ok(tokens) = formula::lexer::tokenize(body) {
+        let mut i = 0;
+        while let Some(t) = tokens.get(i) {
+            i += 1;
+            let start = t.start;
+            let mut end = t.end;
+            match &t.tok {
+                // `Products[…]`, `Products[…][…]`, `[…]`, `[…][…]`.
+                Tok::Word(w) if CellRef::parse(w).is_none() => {
+                    let next = tokens.get(i);
+                    match next.map(|n| &n.tok) {
+                        Some(Tok::Struct(_)) if next.is_some_and(|n| n.start == end) => {
+                            end = next.map_or(end, |n| n.end);
+                            i += 1;
+                        }
+                        // A bare table name is its data.
+                        Some(Tok::LParen) => continue,
+                        _ if wb.table(w).is_some() => {}
+                        _ => continue,
+                    }
+                }
+                Tok::Struct(_) => {}
+                _ => continue,
+            }
+            if let Some(n) = tokens.get(i).filter(|n| matches!(n.tok, Tok::Struct(_)) && n.start == end) {
+                end = n.end;
+                i += 1;
+            }
+            let Some(reference) = body.get(start..end) else { continue };
+            let Ok(e) = formula::parse(reference) else { continue };
+            if !matches!(e, Expr::Struct(_) | Expr::Table(_) | Expr::Name(_)) {
+                continue;
+            }
+            found.push((start + offset, end + offset, areas(&e), formula::print(&e).to_uppercase()));
+        }
+    }
+    found.sort_by_key(|f| f.0);
+    let mut seen: Vec<String> = Vec::new();
+    found
+        .into_iter()
+        .map(|(start, end, areas, key)| {
+            let color = match seen.iter().position(|k| *k == key) {
+                Some(k) => k,
+                None => {
+                    seen.push(key);
+                    seen.len() - 1
+                }
+            };
+            ColoredRef { start, end, areas, color: color % REF_COLORS.len() }
+        })
+        .collect()
+}
+
 /// Excel-style AutoComplete: the one distinct text entry in the same column (contiguous data
 /// above and below) that starts with `typed` (case-insensitive). `None` when ambiguous.
 pub fn column_completion(sheet: &gridcraft_engine::model::Sheet, at: CellRef, typed: &str) -> Option<String> {
@@ -449,38 +613,37 @@ pub fn column_completion(sheet: &gridcraft_engine::model::Sheet, at: CellRef, ty
     if ambiguous { None } else { found }
 }
 
-/// The key being typed in a keyed table reference.
+/// Row items offered in a table's row brackets.
+const ROW_ITEMS: [&str; 7] = ["#This Row", "#Prev Row", "#Next Row", "#Headers", "#Data", "#Totals", "#All"];
+
+/// Which brackets of a table reference the caret is in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slot {
+    /// The first brackets: rows, or the columns when no second brackets follow.
+    Rows,
+    /// The second brackets of `Table[rows][columns]`.
+    Columns,
+    /// A group inside Excel's outer brackets (`Table[[#Headers],[Pr`): a column or an item,
+    /// which the entry closes.
+    Name,
+}
+
+/// What is being typed inside a table reference.
 #[derive(Debug, PartialEq, Eq)]
-pub struct KeyContext<'a> {
-    /// Empty for `[Price,…` inside the table itself.
+pub struct TableContext<'a> {
+    /// Empty inside the table itself.
     pub table: &'a str,
-    /// `Stock` of `Products[Price,Stock>…`, the column a value is compared with.
-    pub key_column: Option<String>,
-    /// Typing the key of `Products[Price,…` (matched against the table's first column), rather
-    /// than a further condition's column.
-    pub key: bool,
-    /// What is typed of the key so far, up to the caret: `"Wa`, `10`, or nothing.
+    pub slot: Slot,
+    /// The first entry of the row brackets, which may be a key.
+    pub first: bool,
+    /// In the row brackets after a comparison: the column compared (`Stock` of `Stock>4`).
+    pub column: Option<String>,
+    /// What is typed of the entry so far, up to the caret.
     pub typed: &'a str,
 }
 
-/// Reads `before` (the formula up to the caret) as ending inside the key of a keyed table
-/// reference. `None` elsewhere, and once the key is more than a literal being typed.
-pub fn key_context(before: &str) -> Option<KeyContext<'_>> {
-    // Byte ranges of `before` outside text literals, split at brackets.
-    let top_level = |s: &str, stop: char| {
-        let (mut depth, mut text) = (0usize, false);
-        s.char_indices().find_map(|(i, c)| {
-            match c {
-                '"' => text = !text,
-                _ if text => {}
-                '[' | '(' | '{' => depth += 1,
-                ']' | ')' | '}' => depth = depth.saturating_sub(1),
-                c if c == stop && depth == 0 => return Some(i),
-                _ => {}
-            }
-            None
-        })
-    };
+/// Reads `before` (the formula up to the caret) as ending inside a table reference's brackets.
+pub fn table_context(before: &str) -> Option<TableContext<'_>> {
     let mut open: Vec<usize> = Vec::new();
     let mut text = false;
     for (i, c) in before.char_indices() {
@@ -495,136 +658,117 @@ pub fn key_context(before: &str) -> Option<KeyContext<'_>> {
         }
     }
     let bracket = *open.last()?;
-    let head = before.get(..bracket)?;
-    let name_len: usize = head.chars().rev().take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '\\')).map(char::len_utf8).sum();
-    let table = head.get(head.len() - name_len..)?;
-    let body = before.get(bracket + 1..)?;
-    let column = body.get(..top_level(body, ',')?)?.trim();
-    if column.is_empty() || column.starts_with(['#', '@']) || column.starts_with("[#") {
-        return None;
-    }
-    let rest = body.get(column_end(body)? + 1..)?;
-    // The condition being typed: after the last comma outside brackets, parentheses and text.
+    let word = |end: usize| {
+        let head = before.get(..end).unwrap_or("");
+        let len: usize = head.chars().rev().take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '\\')).map(char::len_utf8).sum();
+        head.get(head.len() - len..).unwrap_or("")
+    };
+    // The table a bracket belongs to: the word before it, or before the first brackets of
+    // `Table[rows][` when it is the second.
+    let owner = |at: usize| -> Option<(&str, bool)> {
+        let head = before.get(..at)?;
+        if !head.ends_with(']') {
+            return Some((word(at), false));
+        }
+        let mut depth = 0usize;
+        for (i, c) in head.char_indices().rev() {
+            match c {
+                ']' => depth += 1,
+                '[' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some((word(i), true));
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    };
+    let (table, second) = owner(bracket)?;
+    let (table, slot) = if second {
+        (table, Slot::Columns)
+    } else if !table.is_empty() || open.len() == 1 {
+        (table, Slot::Rows)
+    } else {
+        let outer = open.get(open.len().checked_sub(2)?).copied()?;
+        (owner(outer)?.0, Slot::Name)
+    };
+    let content = before.get(bracket + 1..)?;
+    // The entry being typed: after the last separator outside brackets, parentheses and text.
+    let separators: &[char] = if slot == Slot::Columns { &[',', ':'] } else { &[','] };
     let (mut depth, mut text, mut last) = (0usize, false, None);
-    for (i, c) in rest.char_indices() {
+    for (i, c) in content.char_indices() {
         match c {
             '"' => text = !text,
             _ if text => {}
             '[' | '(' | '{' => depth += 1,
             ']' | ')' | '}' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => last = Some(i),
+            c if depth == 0 && separators.contains(&c) => last = Some(i),
             _ => {}
         }
     }
-    let part = rest.get(last.map_or(0, |i| i + 1)..)?;
-    let comparison = ['<', '>', '='].into_iter().filter_map(|c| top_level(part, c)).min();
-    let (key_column, typed) = match comparison {
-        Some(at) => {
-            let name = part.get(..at)?.trim();
-            let name = name.strip_prefix('$').unwrap_or(name).trim_start();
+    let part = content.get(last.map_or(0, |i| i + 1)..)?.trim_start();
+    let part = if slot == Slot::Columns { part.trim_start_matches('$').trim_start() } else { part };
+    let mut column = None;
+    let mut typed = part;
+    if slot == Slot::Rows {
+        // `Stock>4`: the column before the comparison.
+        let (mut depth, mut text) = (0usize, false);
+        let at = part.char_indices().find_map(|(i, c)| {
+            match c {
+                '"' => text = !text,
+                _ if text => {}
+                '[' | '(' => depth += 1,
+                ']' | ')' => depth = depth.saturating_sub(1),
+                '<' | '>' | '=' if depth == 0 => return Some(i),
+                _ => {}
+            }
+            None
+        });
+        if let Some(at) = at {
+            let name = part.get(..at)?.trim().trim_start_matches('$').trim_start();
             let name = name.strip_prefix('[').and_then(|n| n.strip_suffix(']')).unwrap_or(name);
             if name.is_empty() || name.contains(['[', ']', '"', '(', ')']) {
                 return None;
             }
             let after = part.get(at..)?;
             let len = if after.starts_with("<=") || after.starts_with(">=") || after.starts_with("<>") { 2 } else { 1 };
-            (Some(name.to_string()), part.get(at + len..)?)
+            column = Some(name.to_string());
+            typed = part.get(at + len..)?.trim_start();
+            if !literal_start(typed) {
+                return None;
+            }
         }
-        None => (None, part),
-    };
-    let key = last.is_none() && key_column.is_none();
-    let typed = typed.trim_start();
-    let literal = match typed.strip_prefix('"') {
+    }
+    Some(TableContext { table, slot, first: last.is_none(), column, typed })
+}
+
+/// Whether `typed` is the start of a literal: an unclosed text, or a word or number.
+fn literal_start(typed: &str) -> bool {
+    match typed.strip_prefix('"') {
         Some(open_text) => !open_text.contains('"'),
         None => typed.chars().all(|c| c.is_alphanumeric() || matches!(c, '.' | '-' | '_')),
-    };
-    literal.then_some(KeyContext { table, key_column, key, typed })
+    }
 }
 
-/// Where the column of a keyed reference body ends: its first comma outside brackets.
-fn column_end(body: &str) -> Option<usize> {
-    let mut depth = 0usize;
-    body.char_indices().find_map(|(i, c)| {
-        match c {
-            '[' => depth += 1,
-            ']' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => return Some(i),
-            _ => {}
-        }
-        None
-    })
+/// A column where it may start a condition (`Stock>400`): bare only when it is one word.
+fn word_name(name: &str) -> String {
+    let word = name.starts_with(|c: char| c.is_alphabetic() || c == '_') && name.chars().all(|c| c.is_alphanumeric() || c == '_');
+    if word && CellRef::parse(name).is_none() { name.to_string() } else { format!("[{}]", escape_column(name)) }
 }
 
-/// The column being typed inside the brackets of a table reference.
-#[derive(Debug, PartialEq, Eq)]
-pub struct ColumnContext<'a> {
-    /// Empty for `[@Qty]` inside the table itself.
-    pub table: &'a str,
-    /// What is typed of the name so far, up to the caret.
-    pub typed: &'a str,
-    /// Inside the name's own brackets (`Products[[Unit Pr`), which the name then closes.
-    pub in_name: bool,
-    /// The bracketed key column of a keyed reference (`Products[Price,[In St`), followed by `=`.
-    pub key_column: bool,
-}
-
-/// Reads `before` (the formula up to the caret) as ending in a column name of a table
-/// reference: `Products[Pr`, `Products[@Pr`, `Products[[#Headers],[Pr`, `[@[Unit Pr`.
-pub fn column_context(before: &str) -> Option<ColumnContext<'_>> {
-    let mut open: Vec<usize> = Vec::new();
-    let mut text = false;
-    for (i, c) in before.char_indices() {
-        match c {
-            '"' => text = !text,
-            _ if text => {}
-            '[' => open.push(i),
-            ']' => {
-                open.pop();
-            }
-            _ => {}
-        }
-    }
-    let table_before = |bracket: usize| {
-        let head = before.get(..bracket).unwrap_or("");
-        let len: usize = head.chars().rev().take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '\\')).map(char::len_utf8).sum();
-        head.get(head.len() - len..).unwrap_or("")
-    };
-    let bracket = *open.last()?;
-    let typed = before.get(bracket + 1..)?;
-    if text || typed.contains([',', ':', '=', '(', ')', '"']) {
-        return None;
-    }
-    let table = table_before(bracket);
-    let outer = open.len().checked_sub(2).and_then(|i| open.get(i)).copied();
-    match outer {
-        // `Products[[Unit Pr`, `Products[[#Headers],[Pr`, and the key column `Products[Price,[In St`.
-        Some(outer) if table.is_empty() && !typed.starts_with('@') => {
-            let body = before.get(outer + 1..bracket)?;
-            let keyed = column_end(body).is_some_and(|comma| {
-                !body.trim_start().starts_with(['#', '@']) && !body.get(..comma).is_some_and(|c| c.trim_start().starts_with("[#"))
-            });
-            Some(ColumnContext { table: table_before(outer), typed, in_name: true, key_column: keyed })
-        }
-        // `Products[Pr`, `Products[@Pr`, and `[@Pr` for the table the formula is in.
-        _ => {
-            let typed = typed.strip_prefix('@').unwrap_or(typed).trim_start();
-            Some(ColumnContext { table, typed: typed.strip_prefix('$').unwrap_or(typed), in_name: false, key_column: false })
-        }
-    }
+/// A column as written in the column brackets: bare when it can be, else bracketed.
+fn column_name(name: &str) -> String {
+    let plain = !name.is_empty()
+        && name.trim() == name
+        && !name.chars().any(|c| matches!(c, '[' | ']' | '#' | '\'' | ',' | ':' | '"' | '$' | '@' | '=' | '<' | '>'));
+    if plain { name.to_string() } else { format!("[{}]", escape_column(name)) }
 }
 
 /// `'[` for `[`: a column name as it is written inside brackets.
 fn escape_column(name: &str) -> String {
     name.replace('\'', "''").replace('[', "'[").replace(']', "']").replace('#', "'#")
-}
-
-/// Whether a key column can be written without brackets before `=`.
-fn plain_word(name: &str) -> bool {
-    name.starts_with(|c: char| c.is_alphabetic() || c == '_')
-        && name.chars().all(|c| c.is_alphanumeric() || c == '_')
-        && CellRef::parse(name).is_none()
-        && !name.eq_ignore_ascii_case("TRUE")
-        && !name.eq_ignore_ascii_case("FALSE")
 }
 
 /// The named table, or the one `cell` is in when no name is given.
@@ -647,18 +791,18 @@ fn columns_starting(t: &gridcraft_engine::model::Table, typed: &str) -> Vec<Stri
     t.columns.iter().map(|c| c.name.clone()).filter(|n| n.to_lowercase().starts_with(&typed)).take(12).collect()
 }
 
-/// The entries of the key column that start with what is typed, as the literals to write
-/// (`"Washer"`, `1002`), in table order without repeats.
-pub fn key_suggestions(sh: &gridcraft_engine::model::Sheet, t: &gridcraft_engine::model::Table, cx: &KeyContext) -> Vec<String> {
+/// The entries of a column (the first when `None`) that start with what is typed, as the
+/// literals to write (`"Washer"`, `1002`), in table order without repeats.
+pub fn column_values(sh: &gridcraft_engine::model::Sheet, t: &gridcraft_engine::model::Table, column: Option<&str>, typed: &str) -> Vec<String> {
     use gridcraft_engine::core::Value;
-    let index = match &cx.key_column {
+    let index = match column {
         Some(name) => t.column_index(name),
         None => Some(0),
     };
     let (Some(index), Some(data)) = (index, t.data_range()) else { return vec![] };
     let col = t.range.start.col.saturating_add(index as u32);
-    let quoted = cx.typed.starts_with('"');
-    let typed = cx.typed.trim_start_matches('"').to_lowercase();
+    let quoted = typed.starts_with('"');
+    let typed = typed.trim_start_matches('"').to_lowercase();
     let mut seen: Vec<String> = Vec::new();
     let mut out = Vec::new();
     for row in (data.start.row..=data.end.row).take(5000) {
@@ -695,71 +839,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keys_of_a_keyed_table_reference_are_suggested() {
-        use gridcraft_engine::Session;
-        use serde_json::json;
-        let cx = |s: &'static str| key_context(s).map(|c| (c.table, c.key_column, c.typed));
-        assert_eq!(cx("=Products[Price,Stock>=4"), Some(("Products", Some("Stock".into()), "4")));
-        assert_eq!(cx("=Products[Price,Stock>1,Product<>\"W"), Some(("Products", Some("Product".into()), "\"W")));
-        assert_eq!(cx("=Products[Price,$Stock<4"), Some(("Products", Some("Stock".into()), "4")));
-        assert!(key_context("=Products[Price,\"a\"").is_none());
-        assert!(key_context("=Products[Price,Stock>1,Pro").is_some_and(|c| !c.key && c.key_column.is_none()));
-        assert_eq!(cx("=Products[Price,"), Some(("Products", None, "")));
-        assert_eq!(cx("=SUM(1,Products[[Unit Price], \"Wa"), Some(("Products", None, "\"Wa")));
-        assert_eq!(cx("=Products[Price,Stock=41"), Some(("Products", Some("Stock".into()), "41")));
-        assert_eq!(cx("=Products[Price,[In Stock]=\"y"), Some(("Products", Some("In Stock".into()), "\"y")));
-        assert_eq!(cx("=[Price,\"a,b"), Some(("", None, "\"a,b")));
-        // Not a key: Excel's forms, a column still being typed, a key that is an expression
-        // or already complete.
-        for s in ["=Products[[#Headers],", "=Products[Pri", "=Products[[Unit Pr", "=Products[Price,A1+", "=Products[Price,\"Nut\"", "=SUM(A1,"] {
-            assert_eq!(cx(s), None, "{s}");
-        }
-
-        let mut s = Session::new();
-        s.new_workbook();
-        let rows = json!([["Product", "Stock"], ["Nut", 500], ["Washer", 900], ["nut", 410], ["Wing \"A\"", 410], ["W*", 1]]);
-        s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
-        s.execute("insert.table", json!({"range": "A1:B6", "header": true, "name": "Products"})).unwrap();
-        let wb = &s.doc().unwrap().wb;
-        let mut e = EditState::new(0, CellRef::new(0, 4), "=Products[Stock,".into(), true, false);
-        e.suggest_table_parts(wb);
-        assert_eq!(e.autocomplete, ["\"Nut\"", "\"Washer\"", "\"Wing \"\"A\"\"\"", "Product", "Stock"]);
-        e.text.push_str("\"w");
-        e.caret += 2;
-        e.suggest_table_parts(wb);
-        assert_eq!(e.autocomplete, ["\"Washer\"", "\"Wing \"\"A\"\"\""]);
-        assert!(e.accept_autocomplete());
-        assert_eq!(e.text, "=Products[Stock,\"Washer\"]");
-        assert_eq!(e.caret, e.text.chars().count());
-        assert!(e.autocomplete.is_empty());
-        // A named key column, a number, and an existing closing bracket.
-        let mut e = EditState::new(0, CellRef::new(0, 4), "=Products[Product,Stock=4]*2".into(), true, false);
-        e.caret = "=Products[Product,Stock=4".chars().count();
-        e.suggest_table_parts(wb);
-        assert_eq!(e.autocomplete, ["410"]);
-        assert!(e.accept_autocomplete());
-        assert_eq!(e.text, "=Products[Product,Stock=410]*2");
-        // Inside the table, its name may be left out.
-        let mut e = EditState::new(0, CellRef::new(1, 1), "=[Stock,\"wa".into(), true, false);
-        e.suggest_table_parts(wb);
-        assert_eq!(e.autocomplete, ["\"Washer\""]);
-        // Function names are still offered where no key matches.
-        let mut e = EditState::new(0, CellRef::new(0, 4), "=Products[Stock,SU".into(), true, false);
-        e.update_autocomplete(&["SUM".to_string()]);
-        e.suggest_table_parts(wb);
-        assert_eq!(e.autocomplete, ["SUM"]);
-        assert!(e.accept_autocomplete());
-        assert_eq!(e.text, "=Products[Stock,SUM(");
+    fn table_context_reads_the_brackets() {
+        let cx = |s: &'static str| table_context(s).map(|c| (c.table, c.slot, c.first, c.column, c.typed));
+        assert_eq!(cx("=Products["), Some(("Products", Slot::Rows, true, None, "")));
+        assert_eq!(cx("=SUM(1,Products[\"Wa"), Some(("Products", Slot::Rows, true, None, "\"Wa")));
+        assert_eq!(cx("=Products[Stock>=4"), Some(("Products", Slot::Rows, true, Some("Stock".into()), "4")));
+        assert_eq!(cx("=Products[Stock>1,[In Stock]<>\"y"), Some(("Products", Slot::Rows, false, Some("In Stock".into()), "\"y")));
+        assert_eq!(cx("=Products[Stock>1,Pro"), Some(("Products", Slot::Rows, false, None, "Pro")));
+        assert_eq!(cx("=Products[\"Bolt\"][Pr"), Some(("Products", Slot::Columns, true, None, "Pr")));
+        assert_eq!(cx("=Products[\"Bolt\"][Price,$St"), Some(("Products", Slot::Columns, false, None, "St")));
+        assert_eq!(cx("=Products[Stock>1][Price:\"Un"), Some(("Products", Slot::Columns, false, None, "\"Un")));
+        assert_eq!(cx("=[#Prev Row][To"), Some(("", Slot::Columns, true, None, "To")));
+        assert_eq!(cx("=Products[[#Headers],[Pr"), Some(("Products", Slot::Name, true, None, "Pr")));
+        assert_eq!(cx("=[@Pr"), Some(("", Slot::Rows, true, None, "@Pr")));
+        // A value that is more than a literal being typed.
+        assert_eq!(cx("=Products[Stock>A1+"), None);
+        assert_eq!(cx("=SUM(A1,"), None);
     }
 
     #[test]
-    fn table_and_column_names_are_suggested() {
+    fn table_parts_are_suggested() {
         use gridcraft_engine::Session;
         use serde_json::json;
         let mut s = Session::new();
         s.new_workbook();
-        s.execute("range.setValues", json!({"range": "A1", "values": [["Product", "Unit Price", "Pack, Size"], ["Nut", 0.1, 5]]})).unwrap();
-        s.execute("insert.table", json!({"range": "A1:C2", "header": true, "name": "Products"})).unwrap();
+        let rows = json!([
+            ["Product", "Unit Price", "Stock"],
+            ["Nut", 0.1, 500],
+            ["Washer", 0.05, 900],
+            ["nut", 0.2, 410],
+            ["Wing \"A\"", 1, 410],
+            ["W*", 1, 1]
+        ]);
+        s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+        s.execute("insert.table", json!({"range": "A1:C6", "header": true, "name": "Products"})).unwrap();
         let wb = &s.doc().unwrap().wb;
         // Typing `text` at `cell` (row, col) lists `labels`; accepting the entry at `pick` gives `after`.
         let check = |cell: (u32, u32), text: &str, labels: &[&str], pick: usize, after: &str| {
@@ -777,27 +890,29 @@ mod tests {
         // A table name, before the functions of the same start.
         check((0, 5), "=SUM(pro", &["Products", "PRODUCT"], 0, "=SUM(Products");
         check((0, 5), "=SUM(pro", &["Products", "PRODUCT"], 1, "=SUM(PRODUCT(");
-        // Columns: all of them after `[`, then by what is typed.
-        check((0, 5), "=Products[", &["Product", "Unit Price", "Pack, Size"], 1, "=Products[Unit Price");
-        check((0, 5), "=Products[p", &["Product", "Pack, Size"], 1, "=Products[[Pack, Size]");
-        check((0, 5), "=Products[@un", &["Unit Price"], 0, "=Products[@Unit Price");
-        check((0, 5), "=Products[[un", &["Unit Price"], 0, "=Products[[Unit Price]");
-        check((0, 5), "=Products[[#Headers],[pa", &["Pack, Size"], 0, "=Products[[#Headers],[Pack, Size]");
-        check((0, 5), "=Products[#h", &["#Headers"], 0, "=Products[#Headers");
-        check((0, 5), "=Products[[#", &["#All", "#Data", "#Headers", "#Totals", "#This Row", "#Prev Row", "#Next Row"], 4, "=Products[[#This Row]");
-        check((0, 5), "=Products[Product,[#p", &["#Prev Row"], 0, "=Products[Product,[#Prev Row]");
+        // First brackets: columns, and the first column's entries as keys.
+        check((0, 5), "=Products[", &["\"Nut\"", "\"Washer\"", "\"Wing \"\"A\"\"\"", "Product", "Unit Price", "Stock"], 4, "=Products[[Unit Price]");
+        check((0, 5), "=Products[\"w", &["\"Washer\"", "\"Wing \"\"A\"\"\""], 0, "=Products[\"Washer\"");
+        check((0, 5), "=Products[st", &["Stock"], 0, "=Products[Stock");
+        check((0, 5), "=Products[#p", &["#Prev Row"], 0, "=Products[#Prev Row");
+        check((0, 5), "=Products[[#", &["#This Row", "#Prev Row", "#Next Row", "#Headers", "#Data", "#Totals", "#All"], 1, "=Products[[#Prev Row]");
+        check((0, 5), "=Products[@un", &["Unit Price"], 0, "=Products[@[Unit Price]");
+        // After a comparison: that column's entries.
+        check((0, 5), "=Products[Stock=4", &["410"], 0, "=Products[Stock=410");
+        check((0, 5), "=Products[Stock>1,[Unit Price]<0.1", &[], 0, "");
+        check((0, 5), "=Products[Stock>1,Product<>\"N", &["\"Nut\""], 0, "=Products[Stock>1,Product<>\"Nut\"");
+        // Second brackets: columns, as they were started.
+        check((0, 5), "=Products[\"Nut\"][", &["Product", "Unit Price", "Stock"], 1, "=Products[\"Nut\"][Unit Price");
+        check((0, 5), "=Products[\"Nut\"][Stock,\"un", &["Unit Price"], 0, "=Products[\"Nut\"][Stock,\"Unit Price\"");
+        check((0, 5), "=Products[\"Nut\"][Product:[un", &["Unit Price"], 0, "=Products[\"Nut\"][Product:[Unit Price]");
+        // Excel's outer brackets: the entry closes its group.
+        check((0, 5), "=Products[[#Headers],[st", &["Stock"], 0, "=Products[[#Headers],[Stock]");
         // Inside the table, its name may be left out.
-        check((1, 1), "=[@pr", &["Product"], 0, "=[@Product");
-        // The column of a condition, and its values after the comparison.
-        check((0, 5), "=Products[Product,un", &["Unit Price"], 0, "=Products[Product,[Unit Price]");
-        check((0, 5), "=Products[Product,[pa", &["Pack, Size"], 0, "=Products[Product,[Pack, Size]");
-        check((0, 5), "=Products[Product,[Unit Price]>0,Pro", &["Product"], 0, "=Products[Product,[Unit Price]>0,Product");
-        check((0, 5), "=Products[Product,[Unit Price]>0,Product<>\"N", &["\"Nut\""], 0, "=Products[Product,[Unit Price]>0,Product<>\"Nut\"]");
-        // Nothing once the name is complete, for a table in a text literal, or for another table.
-        check((0, 5), "=Products[Product", &[], 0, "");
-        check((0, 5), "=\"Products[p", &["PRODUCT"], 0, "=\"Products[PRODUCT(");
-        check((0, 5), "=\"pro", &["PRODUCT"], 0, "=\"PRODUCT(");
-        check((0, 5), "=Missing[p", &[], 0, "");
+        check((1, 1), "=[#Prev Row][st", &["Stock"], 0, "=[#Prev Row][Stock");
+        // Another table has no columns to offer; a key may still call a function.
+        check((0, 5), "=Missing[p", &["PRODUCT"], 0, "=Missing[PRODUCT(");
+        // Nothing once the name is complete.
+        check((0, 5), "=Products[\"Nut\"][Stock", &[], 0, "");
     }
 
     #[test]
@@ -813,17 +928,22 @@ mod tests {
             assert_eq!(press("=SUM(Products[Qty])+A1", caret), Some(("=SUM(Products[$Qty])+A1".into(), 19)), "{caret}");
         }
         assert_eq!(press("=SUM(Products[$Qty])+A1", 12), Some(("=SUM(Products[Qty])+A1".into(), 18)));
-        let s = "=[@[Unit Price]]*2";
-        assert_eq!(press(s, 3), Some(("=[@$[Unit Price]]*2".into(), 17)));
-        assert_eq!(press("=Products[Price,\"Nut\"]", 4), Some(("=Products[$Price,\"Nut\"]".into(), 23)));
-        // A named key column: both, the first, the second, none.
-        let mut text = "=Products[Price,Stock=A2]".to_string();
+        assert_eq!(press("=[@[Unit Price]]*2", 3), Some(("=[@$[Unit Price]]*2".into(), 17)));
+        // Both brackets of `Table[rows][columns]` are the reference.
+        let s = "=Products[\"Nut\"][Price,Stock]";
+        assert_eq!(press(s, 4), Some(("=Products[\"Nut\"][$Price,$Stock]".into(), end("=Products[\"Nut\"][$Price,$Stock]"))));
+        assert_eq!(press("=[#Prev Row][Total]+1", 15), Some(("=[#Prev Row][$Total]+1".into(), 20)));
+        // Conditions too: both, the columns, the conditions, none.
+        let mut text = "=Products[Stock>A2][Price]".to_string();
         let mut seen = Vec::new();
         for _ in 0..4 {
             text = press(&text, end(&text)).unwrap().0;
             seen.push(text.clone());
         }
-        assert_eq!(seen, ["=Products[$Price,$Stock=A2]", "=Products[$Price,Stock=A2]", "=Products[Price,$Stock=A2]", "=Products[Price,Stock=A2]"]);
+        assert_eq!(
+            seen,
+            ["=Products[$Stock>A2][$Price]", "=Products[Stock>A2][$Price]", "=Products[$Stock>A2][Price]", "=Products[Stock>A2][Price]"]
+        );
         // Elsewhere F4 is the `$` of a cell address.
         for (text, caret) in
             [("=SUM(Products[Qty])+A1", 22), ("=Products[[Qty]:[Price]]", 5), ("=Products[#Headers]", 5), ("=SUM(Products)", 8), ("Products[Qty]", 4)]
@@ -858,6 +978,38 @@ mod tests {
         assert_eq!(e.text, "=SUM(");
         let e = EditState::new(0, CellRef::new(0, 0), "=IF(A1>0,SUM(B1,".into(), true, false);
         assert_eq!(e.current_function(), Some(("SUM".into(), 1)));
+    }
+
+    #[test]
+    fn table_references_are_coloured_and_outlined() {
+        use gridcraft_engine::Session;
+        use serde_json::json;
+        let mut s = Session::new();
+        s.new_workbook();
+        let rows = json!([["Product", "Price", "Stock"], ["Nut", 0.1, 500], ["Bolt", 0.25, 320], ["Washer", 0.05, 900]]);
+        s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+        s.execute("insert.table", json!({"range": "A1:C4", "header": true, "name": "Products"})).unwrap();
+        let wb = &s.doc().unwrap().wb;
+        let text = "=SUM(Products[Stock])+A1+Products[\"Bolt\"][Price]+[@Price]+products[stock]+Products[Stock>400][Product,Price]+COUNT(Products)";
+        // Edited in C3, inside the table, where `[@Price]` is its own row's.
+        let refs = colored_refs(text, wb, 0, CellRef::new(2, 2));
+        let spans: Vec<(&str, Vec<String>, usize)> =
+            refs.iter().map(|r| (&text[r.start..r.end], r.areas.iter().map(|a| a.1.a1()).collect(), r.color)).collect();
+        assert_eq!(
+            spans,
+            [
+                ("Products[Stock]", vec!["C2:C4".to_string()], 0),
+                ("A1", vec!["A1".to_string()], 1),
+                // A lookup by key outlines the cell it finds.
+                ("Products[\"Bolt\"][Price]", vec!["B3".to_string()], 2),
+                ("[@Price]", vec!["B3".to_string()], 3),
+                // The same reference, the same colour.
+                ("products[stock]", vec!["C2:C4".to_string()], 0),
+                // A filter outlines the columns it returns.
+                ("Products[Stock>400][Product,Price]", vec!["A2:A4".to_string(), "B2:B4".to_string()], 4),
+                ("Products", vec!["A2:C4".to_string()], 5),
+            ]
+        );
     }
 
     #[test]
