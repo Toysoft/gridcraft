@@ -1501,7 +1501,7 @@ pub fn refresh(wb: &mut Workbook, sheet: usize, idx: usize, replace: bool) -> Re
     if let Some(p) = shm.pivots.get_mut(idx) {
         p.last_range = Some(area);
     }
-    rebind_charts(wb, &sheet_name, &pt.name, origin, &out, label_formats);
+    rebind_charts(wb, &pt, &sheet_name, sheet, origin, &out, label_formats);
     Ok(area)
 }
 
@@ -1683,17 +1683,16 @@ struct ChartFormats {
     /// Every current series' items with its typed format (`None` without one), then the formats
     /// an earlier refresh remembered for series it dropped.
     keyed: Vec<(Vec<String>, Option<String>)>,
+    /// How many of `keyed` are the current series'.
+    current: usize,
     /// The current series' formats in order when every series is named by header cells (a
-    /// PivotChart read from a file) and none of those names shows an item of the pivot's row or
-    /// column fields, hidden ones included, or a value field's name: kept by position if no name
-    /// matches a rebuilt series, for headers whose captions aren't GridCraft's item labels.
+    /// PivotChart read from a file); see [`rebind_charts`] for when they are kept by position.
     by_position: Option<Vec<Option<String>>>,
 }
 
-/// Every label the pivot's series names can show: the items of its row and column fields,
-/// counting the ones a filter hides, and its value fields' names.
-fn pivot_labels(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> HashSet<String> {
-    let mut labels: HashSet<String> = pt.values.iter().map(|v| v.name.clone()).collect();
+/// The items of the pivot's row and column fields, counting the ones a filter hides.
+fn pivot_items(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> HashSet<String> {
+    let mut labels = HashSet::new();
     if let Ok(src) = read_source(wb, &pt.source, pivot_sheet) {
         for f in pt.rows.iter().chain(&pt.columns) {
             if let Some(c) = src.col(&f.source_col) {
@@ -1716,7 +1715,6 @@ fn chart_label_formats(
     report: Option<OldReport>,
     value_item: bool,
 ) -> Vec<ChartFormats> {
-    let mut labels: Option<HashSet<String>> = None;
     linked_charts(wb, sheet, &pt.name)
         .map(|(si, ch)| {
             let names: Vec<Option<SeriesName>> = ch.series.iter().map(|s| s.name.as_deref().map(|n| parse_series_name(wb, si, n))).collect();
@@ -1741,19 +1739,18 @@ fn chart_label_formats(
                     (!items.is_empty()).then(|| (items, s.label_number_format.clone()))
                 })
                 .collect();
-            // Names that show any of the pivot's labels are matched by item, never by position:
-            // a filter can swap the shown items and keep their count.
-            let file_names = names.iter().all(|n| matches!(n, Some(SeriesName::Cells(..))));
-            let by_position = (file_names
-                && !current.iter().any(|(k, _)| k.iter().any(|x| labels.get_or_insert_with(|| pivot_labels(wb, pt, pivot_sheet)).contains(x))))
-            .then(|| ch.series.iter().map(|s| s.label_number_format.clone()).collect());
+            let by_position = names
+                .iter()
+                .all(|n| matches!(n, Some(SeriesName::Cells(..))))
+                .then(|| ch.series.iter().map(|s| s.label_number_format.clone()).collect());
             let dropped: Vec<(Vec<String>, Option<String>)> = ch
                 .pivot_label_formats
                 .iter()
                 .filter(|(k, _)| !current.iter().any(|(c, _)| same_items(c, k, value_item)))
                 .map(|(k, f)| (k.clone(), Some(f.clone())))
                 .collect();
-            ChartFormats { keyed: current.into_iter().chain(dropped).collect(), by_position }
+            let current_len = current.len();
+            ChartFormats { keyed: current.into_iter().chain(dropped).collect(), current: current_len, by_position }
         })
         .collect()
 }
@@ -1762,9 +1759,21 @@ fn chart_label_formats(
 /// series takes the label format `label_formats` (from [`chart_label_formats`]) has for its
 /// items. An item-by-item match comes first; a looser [`same_items`] match only uses a key that
 /// no rebuilt series has item by item, so two series with the same labels in another order keep
-/// their own formats.
-fn rebind_charts(wb: &mut Workbook, sheet: &str, pivot: &str, origin: CellRef, out: &Output, label_formats: Vec<ChartFormats>) {
-    let linked = |ch: &Chart| ch.pivot.as_deref().is_some_and(|l| links_to(l, sheet, pivot));
+/// their own formats. Series named by header cells keep their formats by position when no name
+/// matches, the series count is unchanged, and no name shows any item of the pivot's row or
+/// column fields (hidden ones included) or is only value field names: captions that aren't
+/// GridCraft's item labels. Names that show the pivot's items are matched by item only, since a
+/// filter can swap the shown items and keep their count.
+fn rebind_charts(
+    wb: &mut Workbook,
+    pt: &PivotTable,
+    sheet: &str,
+    pivot_sheet: usize,
+    origin: CellRef,
+    out: &Output,
+    label_formats: Vec<ChartFormats>,
+) {
+    let linked = |ch: &Chart| ch.pivot.as_deref().is_some_and(|l| links_to(l, sheet, &pt.name));
     let hits: Vec<usize> = (0..wb.sheets.len()).filter(|i| wb.sheet(*i).is_some_and(|sh| sh.charts.iter().any(linked))).collect();
     if hits.is_empty() {
         return;
@@ -1772,11 +1781,11 @@ fn rebind_charts(wb: &mut Workbook, sheet: &str, pivot: &str, origin: CellRef, o
     let value_item = out.chart_value_item;
     let (series, items): (Vec<Series>, Vec<&[String]>) = chart_series_items(sheet, origin, out).into_iter().unzip();
     let rebuilt = |k: &[String]| items.contains(&k);
-    let mut label_formats = label_formats.into_iter();
-    for i in hits {
-        let Some(sh) = wb.sheet_mut(i) else { continue };
-        for ch in sh.charts.iter_mut().filter(|c| linked(c)) {
-            let fmts = label_formats.next().unwrap_or_default();
+    // Each chart's formats for the rebuilt series, and whether they go by position.
+    let mut pivot_labels: Option<HashSet<String>> = None;
+    let plans: Vec<(ChartFormats, Vec<Option<String>>, bool)> = label_formats
+        .into_iter()
+        .map(|fmts| {
             let matched: Vec<Option<&Option<String>>> = items
                 .iter()
                 .map(|it| {
@@ -1784,21 +1793,39 @@ fn rebind_charts(wb: &mut Workbook, sheet: &str, pivot: &str, origin: CellRef, o
                     exact.or_else(|| fmts.keyed.iter().find(|(k, _)| !rebuilt(k) && same_items(k, it, value_item))).map(|(_, f)| f)
                 })
                 .collect();
-            let by_position = fmts.by_position.as_ref().filter(|p| p.len() == items.len() && matched.iter().all(Option::is_none));
+            let by_position = fmts.by_position.as_ref().is_some_and(|p| p.len() == items.len() && matched.iter().all(Option::is_none)) && {
+                let labels = pivot_labels.get_or_insert_with(|| pivot_items(wb, pt, pivot_sheet));
+                let value_name = |x: &String| pt.values.iter().any(|v| v.name == *x);
+                !fmts.keyed.iter().take(fmts.current).any(|(k, _)| k.iter().any(|x| labels.contains(x)) || k.iter().all(value_name))
+            };
+            let f = match (by_position, &fmts.by_position) {
+                (true, Some(p)) => p.clone(),
+                _ => matched.into_iter().map(|f| f.cloned().flatten()).collect(),
+            };
+            (fmts, f, by_position)
+        })
+        .collect();
+    let mut plans = plans.into_iter();
+    for i in hits {
+        let Some(sh) = wb.sheet_mut(i) else { continue };
+        for ch in sh.charts.iter_mut().filter(|c| linked(c)) {
+            let (fmts, f, by_position) = plans.next().unwrap_or_default();
             ch.series = series.clone();
-            for (j, new) in ch.series.iter_mut().enumerate() {
-                let f = match by_position {
-                    Some(p) => p.get(j),
-                    None => matched.get(j).copied().flatten(),
-                };
-                new.label_number_format = f.cloned().flatten();
+            for (new, f) in ch.series.iter_mut().zip(f) {
+                new.label_number_format = f;
             }
             // Remembered under the rebuilt items, so the next refresh matches item by item, with
-            // the formats of series that are gone.
+            // the formats of series that are gone; after a fallback by position, not under the
+            // captions the formats were found by.
             let mut kept: Vec<(Vec<String>, String)> =
                 items.iter().zip(&ch.series).filter_map(|(k, s)| Some((k.to_vec(), s.label_number_format.clone()?))).collect();
+            let skip = if by_position { fmts.current } else { 0 };
             kept.extend(
-                fmts.keyed.into_iter().filter_map(|(k, f)| Some((k, f?))).filter(|(k, _)| !items.iter().any(|i| same_items(k, i, value_item))),
+                fmts.keyed
+                    .into_iter()
+                    .skip(skip)
+                    .filter_map(|(k, f)| Some((k, f?)))
+                    .filter(|(k, _)| !items.iter().any(|i| same_items(k, i, value_item))),
             );
             ch.pivot_label_formats = kept;
         }

@@ -2264,6 +2264,53 @@ mod tests {
     }
 
     #[test]
+    fn pivot_chart_label_formats_fall_back_to_position_with_two_value_fields() {
+        // With two value fields every Excel name ends in a value field's name; renamed product
+        // captions still show no pivot item, so the formats are kept by position.
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Product"], "values": ["Sales", "Units"]})).unwrap();
+        s.execute("insert.pivotChart", json!({"pivot": "PivotTable1"})).unwrap();
+        let refs = header_refs(&s, 0);
+        assert_eq!(refs[0], "Sheet2!$B$3:$B$5");
+        set_text(&mut s, &[("B4", "Äpfel"), ("D4", "Birnen"), ("F4", "Pflaumen")]);
+        let typed: Vec<Option<String>> = (0..6).map(|i| Some(format!("0.{}", "0".repeat(i)))).collect();
+        name_series(&mut s, &refs, &typed);
+        s.execute("pivot.refresh", json!({})).unwrap();
+        assert_eq!(chart_labels(&s), typed);
+    }
+
+    #[test]
+    fn pivot_chart_label_formats_forget_captions_after_a_fallback() {
+        // Formats kept by position are remembered under the rebuilt items, not under the file's
+        // captions: a source item that later reads like a caption doesn't take its format.
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Product"], "values": ["Sales"]})).unwrap();
+        s.execute("insert.pivotChart", json!({"pivot": "PivotTable1"})).unwrap();
+        let refs = header_refs(&s, 0);
+        set_text(&mut s, &[("B4", "Kiwis"), ("C4", "Birnen"), ("D4", "Pflaumen")]);
+        let typed = ["0;;;", "0.0", "#,##0"].map(|f| Some(f.to_string()));
+        name_series(&mut s, &refs, &typed);
+        s.execute("pivot.refresh", json!({})).unwrap();
+        assert_eq!(chart_labels(&s), typed);
+        // The last record's product (one of several Pears) becomes Kiwis.
+        {
+            let d = s.doc_mut().unwrap();
+            let wb = std::sync::Arc::make_mut(&mut d.wb);
+            let si = wb.sheet_index("Sheet1").unwrap();
+            let sh = wb.sheet_mut(si).unwrap();
+            let c = CellRef::parse("B13").unwrap();
+            assert_eq!(sh.cells.get(c).unwrap().value, Value::text("Pears"));
+            let mut cell = sh.cells.get(c).cloned().unwrap();
+            cell.value = Value::text("Kiwis");
+            sh.set_cell(c, cell);
+        }
+        s.execute("pivot.refresh", json!({})).unwrap();
+        let names: Vec<_> = pivot_chart(&s).series.iter().map(|x| x.name.clone().unwrap()).collect();
+        assert_eq!(names, ["\"Apples\"", "\"Kiwis\"", "\"Pears\"", "\"Plums\""]);
+        assert_eq!(chart_labels(&s), [typed[0].clone(), None, typed[1].clone(), typed[2].clone()]);
+    }
+
+    #[test]
     fn pivot_chart_errors() {
         let mut s = sales();
         // No PivotTable yet.
