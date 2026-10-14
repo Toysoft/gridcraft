@@ -316,13 +316,24 @@ impl<'a> Legacy<'a> {
         let operand = unwrap_at(x);
         let nested = matches!(operand, Expr::Unary(UnOp::At, _));
         let before = self.inserted;
-        // A one-cell range the `@` applies to may be what an edit left of a larger one; one-cell
-        // ranges elsewhere are not intersected.
-        let direct = self.collapsed || matches!(operand, Expr::Ref(_) | Expr::Name(_));
-        let collapsed = std::mem::replace(&mut self.collapsed, direct);
-        let (y, kind) = self.expr(operand, sheet, ctx, depth + 1);
-        self.collapsed = collapsed;
-        let implied = !nested && self.inserted > before;
+        // A one-cell range the `@` applies to, directly or through what a name returns, may be
+        // what an edit left of a larger one: when the `@` is otherwise of a single value, it is
+        // implied if it is with such ranges counted as several cells. The retry's analysis is
+        // kept only when it implies the `@`.
+        let retry = (!nested && !self.collapsed && matches!(operand, Expr::Ref(_) | Expr::Name(_))).then(|| operand.clone());
+        let (mut y, mut kind) = self.expr(operand, sheet, ctx, depth + 1);
+        let mut implied = !nested && self.inserted > before;
+        if let Some(operand) = retry.filter(|_| !implied && kind == Kind::Scalar) {
+            let state = (self.remaining, self.certain, self.complete, self.foreign);
+            self.collapsed = true;
+            let (y2, kind2) = self.expr(operand, sheet, ctx, depth + 1);
+            self.collapsed = false;
+            if self.inserted > before {
+                (y, kind, implied) = (y2, kind2, true);
+            } else {
+                (self.remaining, self.certain, self.complete, self.foreign) = state;
+            }
+        }
         match y {
             Expr::Unary(UnOp::At, inner) if implied => {
                 self.inserted -= 1;
@@ -449,15 +460,9 @@ impl<'a> Legacy<'a> {
             }
             let Ok(expr) = gridcraft_formula::parse(def.formula.trim_start_matches('=')) else { return Kind::Array };
             self.names.insert(key.clone(), None);
-            // A name's own formula does not see the formula's LET variables. Only a definition
-            // that is itself a reference (or another name) is what an `@` applies to directly;
-            // one-cell ranges deeper in it (CHOOSE's index, IF's condition) are not collapsed.
-            // The cache key holds the incoming flag, which with the definition fixes this one.
+            // A name's own formula does not see the formula's LET variables.
             let locals = std::mem::take(&mut self.locals);
-            let direct = self.collapsed && matches!(expr, Expr::Ref(_) | Expr::Name(_));
-            let collapsed = std::mem::replace(&mut self.collapsed, direct);
             let kind = self.kind_of(expr, def.scope.unwrap_or(scope), depth + 1);
-            self.collapsed = collapsed;
             self.locals = locals;
             self.names.insert(key, Some(kind));
             return kind;

@@ -273,6 +273,27 @@ fn one_cell_ranges_and_formulas_at_the_nesting_limit_save_as_read() {
     assert_eq!(xml.matches("cm=").count(), 1, "{xml}");
 }
 
+/// Deleting rows shrinks the ranges names return (directly, through another name, CHOOSE's and
+/// IF's results, parentheses) to one cell: the `@` the reader put on each name is still the one
+/// legacy Excel implies, so the formulas save as legacy ones, without `_xlfn.SINGLE`.
+#[test]
+fn names_shrunk_by_deleting_rows_save_as_legacy() {
+    let formulas: Vec<(String, String)> =
+        ["SQRT(MM)", "SQRT(CHM)", "SQRT(NCH)", "SQRT(NIF)", "SQRT(PM)"].into_iter().enumerate().map(|(i, f)| (slot(i).a1(), f.to_string())).collect();
+    let names = r#"<definedName name="MM">Sheet1!$A$1:$A$3</definedName><definedName name="CHM">MM</definedName><definedName name="NCH">CHOOSE(1,Sheet1!$A$1:$A$3,Sheet1!$B$1:$B$3)</definedName><definedName name="NIF">IF(1,Sheet1!$A$1:$A$3,Sheet1!$B$1:$B$3)</definedName><definedName name="PM">(Sheet1!$A$1:$A$3)</definedName>"#;
+    let mut s = open(&legacy_xlsx(&formulas, names));
+    s.execute("home.deleteRows", json!({"rows": "2:3"})).unwrap();
+    let saved = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap();
+    let bytes = gridcraft_engine::io::base64_decode(saved["base64"].as_str().unwrap()).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("xl/worksheets/sheet1.xml").unwrap(), &mut xml).unwrap();
+    for (a, f) in &formulas {
+        assert!(xml.contains(&format!("<f>{f}</f>")), "{a} not saved as legacy {f}: {xml}");
+    }
+    assert!(!xml.contains("SINGLE") && !xml.contains("cm="), "{xml}");
+}
+
 const CT: &str = r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#;
 
 /// A one-sheet package: numbers 1–4 in `A1:B2` and `formulas` (address, file text) saved as
