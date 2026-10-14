@@ -355,12 +355,14 @@ pub fn number_to_text(n: f64) -> String {
     if n == 0.0 || !n.is_finite() {
         return "0".into();
     }
-    let a = n.abs();
-    if !(1e-9..1e15).contains(&a) && a.round() != a || a >= 1e15 {
+    // Round to 15 significant digits first, then pick decimal or scientific from the rounded
+    // magnitude, so 999999999999999.5 reads `1E+15`, never a 16-digit integer.
+    let sci = format!("{:.14e}", n);
+    let mag: i32 = sci.split_once('e').and_then(|(_, e)| e.parse().ok()).unwrap_or(0);
+    if !(-9..15).contains(&mag) {
         return sci_text(n, 15);
     }
     // 15 significant digits, trailing zeros trimmed.
-    let mag = a.log10().floor() as i32;
     let decimals = (14 - mag).clamp(0, 30) as usize;
     let s = format!("{:.*}", decimals, n);
     trim_decimal(&s)
@@ -399,6 +401,12 @@ mod tests {
         assert_eq!(number_to_text(1234567890123456.0), "1.23456789012346E+15");
         assert_eq!(number_to_text(0.0001), "0.0001");
         assert_eq!(number_to_text(1e-10), "1E-10");
+        assert_eq!(number_to_text(1e15 - 0.5), "1E+15");
+        assert_eq!(number_to_text(1e15 - 0.1), "1E+15");
+        assert_eq!(number_to_text(-(1e15 - 0.5)), "-1E+15");
+        assert_eq!(number_to_text(999999999999999.0), "999999999999999");
+        assert_eq!(number_to_text(9.999999999999999e-10), "0.000000001");
+        assert_eq!(number_to_text(-9.999999999999999e-10), "-0.000000001");
         assert_eq!(number_to_text(1.0 / 3.0), "0.333333333333333");
     }
 
