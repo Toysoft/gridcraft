@@ -898,8 +898,9 @@ fn op_param(s: Option<&str>) -> CfOperator {
     }
 }
 
-/// `r` minus `cut`, as up to four non-overlapping rectangles.
-fn subtract_range(r: RangeRef, cut: &RangeRef) -> Vec<RangeRef> {
+/// `r` minus `cut`, as up to four non-overlapping rectangles: above, below, left, right (the
+/// order in which Excel lists what is left of a conditional format).
+pub(crate) fn subtract_range(r: RangeRef, cut: &RangeRef) -> Vec<RangeRef> {
     let Some(i) = r.intersection(cut) else { return vec![r] };
     let mut out = Vec::new();
     if i.start.row > r.start.row {

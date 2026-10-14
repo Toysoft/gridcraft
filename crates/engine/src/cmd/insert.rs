@@ -1464,10 +1464,10 @@ fn clear_cf(s: &mut Session, p: &Json) -> Result<Json> {
         if whole {
             sh.cond_formats.clear();
         } else {
-            for cf in sh.cond_formats.iter_mut() {
-                cf.ranges.retain(|r| !ranges.iter().any(|x| x.intersects(r)));
+            // Only the selected cells leave each rule (Excel keeps the rest of a rule's range).
+            for r in &ranges {
+                crate::cf::remove_cells(&mut sh.cond_formats, r);
             }
-            sh.cond_formats.retain(|c| !c.ranges.is_empty());
         }
         Ok(Json::Null)
     })

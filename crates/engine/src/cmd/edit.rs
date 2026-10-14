@@ -1156,6 +1156,17 @@ fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
                 }
             }
         }
+        // Conditional formats travel with the cells' formatting (not transposed, linked or from
+        // a multi-area copy, whose block is rebuilt).
+        if matches!(what, What::All | What::AllExceptBorders | What::Formats) && !transpose && !link && clip.areas.is_empty() {
+            let same_sheet = same_doc && dest_sheet == clip.sheet;
+            let carry = if cut_move { crate::cf::Carry::Move } else { crate::cf::Carry::Copy };
+            if cut_move && !same_sheet {
+                crate::cf::remove_cells(&mut cx.sheet_mut(clip.sheet)?.cond_formats, &src);
+            }
+            let dest = RangeRef::new(at, at.offset_clamped((tiles_r * h) as i64 - 1, (tiles_c * w) as i64 - 1));
+            crate::cf::paste(&mut cx.sheet_mut(dest_sheet)?.cond_formats, &src_sheet.cond_formats, src, dest, same_sheet, carry);
+        }
         if cut_move {
             // References elsewhere to the moved block now point to its new place.
             let dest_name = cx.wb.sheet(dest_sheet).map(|s| s.name.clone()).unwrap_or_default();
@@ -1288,6 +1299,14 @@ fn clear(s: &mut Session, p: &Json, what: &str) -> Result<Json> {
             }
             for c in r.iter().take(1_000_000) {
                 cx.changed.push((sheet, c));
+            }
+        }
+        // Conditional formats are formatting: Clear Formats and Clear All take the cells out of
+        // their rules, also beyond the used range.
+        if matches!(what, "all" | "formats") {
+            let sh = cx.sheet_mut(sheet)?;
+            for r in &ranges {
+                crate::cf::remove_cells(&mut sh.cond_formats, r);
             }
         }
         Ok(Json::Null)
@@ -1564,6 +1583,9 @@ fn format_painter(s: &mut Session, p: &Json) -> Result<Json> {
                 cx.sheet_mut(dest_sheet)?.set_style(c, st);
                 cx.touch(dest_sheet, c);
             }
+            // Conditional formats are painted too, as Paste Special › Formats copies them.
+            let same_sheet = dest_sheet == sheet && same;
+            crate::cf::paste(&mut cx.sheet_mut(dest_sheet)?.cond_formats, &src_sheet.cond_formats, src, dest, same_sheet, crate::cf::Carry::Copy);
             *cx.sel = crate::Selection::range(dest);
             Ok(())
         })?;

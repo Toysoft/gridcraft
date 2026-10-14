@@ -127,6 +127,11 @@ pub fn fill(cx: &mut Ctx, sheet: usize, src: RangeRef, target: RangeRef, mode: F
         }
     }
     sh.cell_pictures.extend(pictures);
+    // Conditional formats are formatting: they widen over the filled cells (not for Fill Without
+    // Formatting).
+    if mode != FillMode::ValuesOnly {
+        crate::cf::fill(&mut sh.cond_formats, src, target, vertical, forward);
+    }
     for (c, _) in writes {
         cx.touch(sheet, c);
     }
