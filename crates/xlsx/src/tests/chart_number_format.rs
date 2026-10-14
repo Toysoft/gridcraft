@@ -116,6 +116,36 @@ fn scatter_axes_are_the_groups_own_and_x_comes_first() {
     assert_eq!(ch.axis_number_formats, AxisNumberFormats { x: Some("0.0".into()), y: Some("0%".into()), y2: None });
 }
 
+#[test]
+fn a_100_percent_line_or_area_axis_keeps_no_typed_format() {
+    // The model reads 100% stacked line and area as plain stacked and draws absolute values, so
+    // a `0.0%` typed for the 0%–100% axis would label them "2000000.0%". A column group on its
+    // own axes keeps its format.
+    for group in ["lineChart", "areaChart"] {
+        let ch = read(&format!(
+            "<c:barChart><c:barDir val=\"col\"/><c:grouping val=\"clustered\"/>\
+             <c:ser><c:idx val=\"0\"/><c:order val=\"0\"/><c:val><c:numRef><c:f>Data!$B$2:$B$5</c:f></c:numRef></c:val></c:ser>\
+             <c:axId val=\"1\"/><c:axId val=\"2\"/></c:barChart>\
+             <c:{group}><c:grouping val=\"percentStacked\"/>\
+             <c:ser><c:idx val=\"1\"/><c:order val=\"1\"/><c:val><c:numRef><c:f>Data!$C$2:$C$5</c:f></c:numRef></c:val></c:ser>\
+             <c:axId val=\"3\"/><c:axId val=\"4\"/></c:{group}>\
+             <c:catAx><c:axId val=\"1\"/><c:crossAx val=\"2\"/></c:catAx>\
+             <c:valAx><c:axId val=\"2\"/><c:numFmt formatCode=\"#,##0\" sourceLinked=\"0\"/><c:crossAx val=\"1\"/></c:valAx>\
+             <c:catAx><c:axId val=\"3\"/><c:delete val=\"1\"/><c:crossAx val=\"4\"/></c:catAx>\
+             <c:valAx><c:axId val=\"4\"/><c:numFmt formatCode=\"0.0%\" sourceLinked=\"0\"/><c:crossAx val=\"3\"/></c:valAx>"
+        ));
+        assert_eq!(ch.axis_number_formats, AxisNumberFormats { x: None, y: Some("#,##0".into()), y2: None }, "{group} on the secondary axis");
+        let ch = read(&format!(
+            "<c:{group}><c:grouping val=\"percentStacked\"/>\
+             <c:ser><c:idx val=\"0\"/><c:order val=\"0\"/><c:val><c:numRef><c:f>Data!$B$2:$B$5</c:f></c:numRef></c:val></c:ser>\
+             <c:axId val=\"1\"/><c:axId val=\"2\"/></c:{group}>\
+             <c:catAx><c:axId val=\"1\"/><c:crossAx val=\"2\"/></c:catAx>\
+             <c:valAx><c:axId val=\"2\"/><c:numFmt formatCode=\"0.0%\" sourceLinked=\"0\"/><c:crossAx val=\"1\"/></c:valAx>"
+        ));
+        assert_eq!(ch.axis_number_formats, AxisNumberFormats::default(), "{group} alone");
+    }
+}
+
 fn series(values: &str, label: Option<&str>) -> Series {
     Series { values: values.into(), label_number_format: label.map(str::to_string), ..Series::default() }
 }

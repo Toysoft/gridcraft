@@ -250,13 +250,23 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         (cat_ax, val_axes.first().copied())
     };
     let secondary_ids = groups.iter().map(|(g, _)| axis_ids(g)).find(|ids| *ids != first_axes);
+    // A 100% stacked line or area group reads as plain stacked (the model has no 100% variant
+    // for them), so its values are drawn absolute. A format typed for its 0%–100% axis (`0.0%`)
+    // would label those absolute values ("2000000.0%"), so that axis keeps the source format.
+    let pct_unmodelled = |ids: &[String]| {
+        groups.iter().any(|(g, _)| {
+            matches!(g.name.as_str(), "lineChart" | "line3DChart" | "areaChart" | "area3DChart")
+                && g.child_val("grouping") == Some("percentStacked")
+                && axis_ids(g) == ids
+        })
+    };
     let axis_number_formats = if scatter {
         AxisNumberFormats { x: axis_num_fmt(x_ax), y: axis_num_fmt(y_ax), y2: None }
     } else {
         AxisNumberFormats {
             x: None,
-            y: axis_num_fmt(val_ax_of(&first_axes).or(y_ax)),
-            y2: axis_num_fmt(secondary_ids.and_then(|ids| val_ax_of(&ids))),
+            y: if pct_unmodelled(&first_axes) { None } else { axis_num_fmt(val_ax_of(&first_axes).or(y_ax)) },
+            y2: secondary_ids.filter(|ids| !pct_unmodelled(ids)).and_then(|ids| axis_num_fmt(val_ax_of(&ids))),
         }
     };
     let legend = match chart.child("legend") {
