@@ -89,6 +89,40 @@ fn macos_asset_font_dirs(parents: &[PathBuf]) -> Vec<PathBuf> {
     dirs
 }
 
+/// Read only the installed PingFang collection for the interface fallback, without waiting for
+/// the full background catalog. Cache its bytes so theme changes do not reread the collection.
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_chinese_fallback() -> Option<std::sync::Arc<egui::FontData>> {
+    static FACE: OnceLock<Option<std::sync::Arc<egui::FontData>>> = OnceLock::new();
+    FACE.get_or_init(|| {
+        let mut paths = vec![PathBuf::from("/System/Library/Fonts/PingFang.ttc")];
+        for dir in macos_asset_font_dirs(&["/System/Library/AssetsV2".into(), "/System/Library/AssetsV2/PreinstalledAssetsV2/InstallWithOs".into()]) {
+            let Ok(entries) = std::fs::read_dir(dir) else { continue };
+            paths.extend(entries.flatten().map(|entry| entry.path().join("AssetData/PingFang.ttc")));
+        }
+        paths.sort();
+        for path in paths {
+            if std::fs::metadata(&path).map(|m| m.len() > MAX_FONT_FILE).unwrap_or(true) {
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(path) else { continue };
+            let index = file_faces(&bytes)
+                .into_iter()
+                .find(|(_, family, style)| family == "PingFang SC" && !style_italic(style) && (style_weight(style) - 400.0).abs() < 1.0)
+                .map(|(index, _, _)| index);
+            let Some(index) = index else { continue };
+            if !crate::theme::font_parses(&bytes, index) {
+                continue;
+            }
+            let mut data = egui::FontData::from_owned(bytes);
+            data.index = index;
+            return Some(std::sync::Arc::new(data));
+        }
+        None
+    })
+    .clone()
+}
+
 /// Weight implied by a style name (`"Bold"` → 700, `"Light"` → 300).
 #[cfg(not(target_arch = "wasm32"))]
 fn style_weight(style: &str) -> f32 {
