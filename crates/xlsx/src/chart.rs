@@ -5,10 +5,10 @@ use std::fmt::Write as _;
 
 use gridcraft_core::Value;
 use gridcraft_formula::{Expr, SheetSel};
-use gridcraft_model::{Chart, ChartKind, Color, LegendPos, LineDash, Series, Trendline, TrendlineKind, Workbook};
+use gridcraft_model::{AxisNumberFormats, Chart, ChartKind, Color, LegendPos, LineDash, Series, Trendline, TrendlineKind, Workbook};
 
 use crate::drawing::{dml_color, srgb};
-use crate::xml::{El, esc, num};
+use crate::xml::{El, esc, esc_attr, num};
 
 // ---------------------------------------------------------------- reading
 
@@ -108,6 +108,7 @@ fn read_series(s: &El) -> Series {
         kind: None,
         smooth: bool_val(s, "smooth"),
         trendlines: s.kids("trendline").filter_map(read_trendline).collect(),
+        label_number_format: typed_num_fmt(s.path(&["dLbls", "numFmt"])),
     }
 }
 
@@ -183,6 +184,13 @@ fn axis_ids(g: &El) -> Vec<String> {
     g.kids("axId").filter_map(|a| a.attr("val")).map(str::to_string).collect()
 }
 
+/// A `<c:numFmt>` typed in Excel's Format pane (`sourceLinked="0"`); `None` when it follows the
+/// source cells.
+fn typed_num_fmt(e: Option<&El>) -> Option<String> {
+    let e = e.filter(|e| !e.flag("sourceLinked", false))?;
+    e.attr("formatCode").map(str::trim).filter(|c| !c.is_empty()).map(str::to_string)
+}
+
 pub fn read_chart(root: &El) -> Option<Chart> {
     let chart = root.child("chart")?;
     let plot = chart.child("plotArea")?;
@@ -196,6 +204,10 @@ pub fn read_chart(root: &El) -> Option<Chart> {
             if gi > 0 {
                 ser.kind = Some(*k);
                 ser.secondary = axis_ids(g) != first_axes;
+            }
+            // Labels set for the whole group apply to series without their own.
+            if ser.label_number_format.is_none() {
+                ser.label_number_format = typed_num_fmt(g.path(&["dLbls", "numFmt"]));
             }
             series.push(ser);
         }
@@ -212,6 +224,18 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         (x, y)
     } else {
         (cat_ax, val_axes.first().copied())
+    };
+    // Value axes by the groups that use them: the first group's, then a secondary group's.
+    let val_ax_of = |ids: &[String]| val_axes.iter().find(|a| a.child_val("axId").is_some_and(|v| ids.iter().any(|i| i == v))).copied();
+    let secondary_ids = groups.iter().map(|(g, _)| axis_ids(g)).find(|ids| *ids != first_axes);
+    let axis_number_formats = if scatter {
+        AxisNumberFormats { x: typed_num_fmt(x_ax.and_then(|a| a.child("numFmt"))), y: typed_num_fmt(y_ax.and_then(|a| a.child("numFmt"))), y2: None }
+    } else {
+        AxisNumberFormats {
+            x: None,
+            y: typed_num_fmt(val_ax_of(&first_axes).or(y_ax).and_then(|a| a.child("numFmt"))),
+            y2: typed_num_fmt(secondary_ids.and_then(|ids| val_ax_of(&ids)).and_then(|a| a.child("numFmt"))),
+        }
     };
     let legend = match chart.child("legend") {
         None => LegendPos::None,
@@ -237,6 +261,7 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         source: None,
         by_rows: false,
         pivot: root.path(&["pivotSource", "name"]).map(|n| n.text.trim().to_string()).filter(|n| !n.is_empty()),
+        axis_number_formats,
     })
 }
 
@@ -397,7 +422,7 @@ fn str_data(tag: &str, f: &str, wb: &Workbook, si: usize) -> String {
     s
 }
 
-fn series_xml(s: &Series, idx: usize, g: G, wb: &Workbook, si: usize) -> String {
+fn series_xml(s: &Series, idx: usize, g: G, labels: bool, wb: &Workbook, si: usize) -> String {
     let mut x = format!("<c:ser><c:idx val=\"{idx}\"/><c:order val=\"{idx}\"/>");
     if let Some(n) = &s.name {
         if is_ref(n) {
@@ -430,6 +455,11 @@ fn series_xml(s: &Series, idx: usize, g: G, wb: &Workbook, si: usize) -> String 
         G::Line { markers: false, .. } | G::Scatter { lines: true } | G::Stock => x.push_str("<c:marker><c:symbol val=\"none\"/></c:marker>"),
         G::Bubble => x.push_str("<c:invertIfNegative val=\"0\"/>"),
         _ => {}
+    }
+    // A typed label format needs the series' own dLbls (after dPt, before trendline in every
+    // series type written here).
+    if let Some(f) = s.label_number_format.as_deref() {
+        x.push_str(&dlbls(labels, Some(f)));
     }
     // Trendlines sit between dLbls and the data in CT_LineSer, CT_BarSer, CT_AreaSer,
     // CT_ScatterSer and CT_BubbleSer; pie and radar series have none.
@@ -522,16 +552,26 @@ fn trendline_xml(t: &Trendline, wb: &Workbook) -> String {
     x
 }
 
-fn dlbls(show: bool) -> String {
+/// `<c:numFmt>`: a typed format code, or "linked to source" when `None`.
+fn num_fmt_xml(code: Option<&str>) -> String {
+    match code {
+        Some(c) => format!("<c:numFmt formatCode=\"{}\" sourceLinked=\"0\"/>", esc_attr(c)),
+        None => "<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>".into(),
+    }
+}
+
+/// `<c:dLbls>`; a typed `fmt` comes first, as CT_DLbls orders it.
+fn dlbls(show: bool, fmt: Option<&str>) -> String {
     format!(
-        "<c:dLbls><c:showLegendKey val=\"0\"/><c:showVal val=\"{}\"/><c:showCatName val=\"0\"/><c:showSerName val=\"0\"/><c:showPercent val=\"0\"/><c:showBubbleSize val=\"0\"/></c:dLbls>",
+        "<c:dLbls>{}<c:showLegendKey val=\"0\"/><c:showVal val=\"{}\"/><c:showCatName val=\"0\"/><c:showSerName val=\"0\"/><c:showPercent val=\"0\"/><c:showBubbleSize val=\"0\"/></c:dLbls>",
+        fmt.map(|f| num_fmt_xml(Some(f))).unwrap_or_default(),
         show as u8
     )
 }
 
 fn group_xml(g: G, series: &[(usize, &Series)], ch: &Chart, axes: (u32, u32), wb: &Workbook, si: usize) -> String {
-    let sers: String = series.iter().map(|(i, s)| series_xml(s, *i, g, wb, si)).collect();
-    let dl = dlbls(ch.data_labels);
+    let sers: String = series.iter().map(|(i, s)| series_xml(s, *i, g, ch.data_labels, wb, si)).collect();
+    let dl = dlbls(ch.data_labels, None);
     let ax = format!("<c:axId val=\"{}\"/><c:axId val=\"{}\"/>", axes.0, axes.1);
     match g {
         G::Bar { bar, grouping } => {
@@ -580,6 +620,8 @@ struct Ax<'a> {
     grid: bool,
     title: Option<&'a str>,
     crosses_max: bool,
+    /// A typed number format (`None`: linked to source).
+    fmt: Option<&'a str>,
 }
 
 fn axis_xml(a: &Ax<'_>) -> String {
@@ -596,9 +638,10 @@ fn axis_xml(a: &Ax<'_>) -> String {
     if let Some(t) = a.title {
         s.push_str(&title_xml(t));
     }
+    s.push_str(&num_fmt_xml(a.fmt));
     let _ = write!(
         s,
-        "<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/><c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"{}\"/><c:crosses val=\"{}\"/>",
+        "<c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"{}\"/><c:crosses val=\"{}\"/>",
         a.cross,
         if a.crosses_max { "max" } else { "autoZero" }
     );
@@ -676,6 +719,7 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart) -> String {
                 grid: false,
                 title: ch.x_title.as_deref(),
                 crosses_max: false,
+                fmt: ch.axis_number_formats.x.as_deref(),
             }));
             s.push_str(&axis_xml(&Ax {
                 cat: false,
@@ -686,6 +730,7 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart) -> String {
                 grid: ch.gridlines,
                 title: ch.y_title.as_deref(),
                 crosses_max: false,
+                fmt: ch.axis_number_formats.y.as_deref(),
             }));
         }
         G::Bar { bar: true, .. } => {
@@ -698,6 +743,7 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart) -> String {
                 grid: false,
                 title: ch.x_title.as_deref(),
                 crosses_max: false,
+                fmt: None,
             }));
             s.push_str(&axis_xml(&Ax {
                 cat: false,
@@ -708,6 +754,7 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart) -> String {
                 grid: ch.gridlines,
                 title: ch.y_title.as_deref(),
                 crosses_max: false,
+                fmt: ch.axis_number_formats.y.as_deref(),
             }));
         }
         _ => {
@@ -720,6 +767,7 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart) -> String {
                 grid: false,
                 title: ch.x_title.as_deref(),
                 crosses_max: false,
+                fmt: None,
             }));
             s.push_str(&axis_xml(&Ax {
                 cat: false,
@@ -730,12 +778,23 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart) -> String {
                 grid: ch.gridlines,
                 title: ch.y_title.as_deref(),
                 crosses_max: false,
+                fmt: ch.axis_number_formats.y.as_deref(),
             }));
         }
     }
     if secondary.is_some() {
-        s.push_str(&axis_xml(&Ax { cat: true, id: 3, cross: 4, pos: "b", delete: true, grid: false, title: None, crosses_max: false }));
-        s.push_str(&axis_xml(&Ax { cat: false, id: 4, cross: 3, pos: "r", delete: false, grid: false, title: None, crosses_max: true }));
+        s.push_str(&axis_xml(&Ax { cat: true, id: 3, cross: 4, pos: "b", delete: true, grid: false, title: None, crosses_max: false, fmt: None }));
+        s.push_str(&axis_xml(&Ax {
+            cat: false,
+            id: 4,
+            cross: 3,
+            pos: "r",
+            delete: false,
+            grid: false,
+            title: None,
+            crosses_max: true,
+            fmt: ch.axis_number_formats.y2.as_deref(),
+        }));
     }
     s.push_str("</c:plotArea>");
     let pos = match ch.legend {

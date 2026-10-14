@@ -1569,6 +1569,7 @@ pub fn chart_series(sheet: &str, origin: CellRef, out: &Output) -> Vec<Series> {
                 kind: None,
                 smooth: false,
                 trendlines: Vec::new(),
+                label_number_format: None,
             })
         })
         .collect()
@@ -1585,7 +1586,11 @@ fn rebind_charts(wb: &mut Workbook, sheet: &str, pivot: &str, origin: CellRef, o
     for i in hits {
         let Some(sh) = wb.sheet_mut(i) else { continue };
         for ch in sh.charts.iter_mut().filter(|c| linked(c)) {
-            ch.series = series.clone();
+            let old = std::mem::replace(&mut ch.series, series.clone());
+            // Typed label formats are the chart's, by series position (Excel's pivotFmts).
+            for (new, old) in ch.series.iter_mut().zip(old) {
+                new.label_number_format = old.label_number_format;
+            }
         }
     }
 }
