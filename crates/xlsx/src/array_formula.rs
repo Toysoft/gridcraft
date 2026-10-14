@@ -237,6 +237,8 @@ struct Legacy<'a> {
     foreign: bool,
     /// Analysing an expression whose rewrite is discarded (see [`Legacy::kind_of`]).
     discarded: bool,
+    /// Analysing a union that is a function's single-value argument (see [`Legacy::expr`]).
+    union_arg: bool,
     /// The kind of the whole formula, before any whole-formula `@`.
     top: Kind,
 }
@@ -257,6 +259,7 @@ impl<'a> Legacy<'a> {
             collapsed: false,
             foreign: false,
             discarded: false,
+            union_arg: false,
             top: Kind::Scalar,
         }
     }
@@ -327,11 +330,16 @@ impl<'a> Legacy<'a> {
             return (e, Kind::Array);
         }
         self.remaining -= 1;
+        // The flag reaches the union through parentheses and `@`, and not its operands.
+        let union_arg = std::mem::take(&mut self.union_arg);
+        self.union_arg = union_arg && matches!(e, Expr::Paren(_) | Expr::Unary(UnOp::At, _));
         let (e, kind) = self.node(e, sheet, ctx, depth);
+        self.union_arg = false;
         if ctx == Ctx::Value && kind == Kind::Ref {
-            if matches!(e, Expr::Binary(BinOp::Union, ..)) {
-                // A union, which only stands in parentheses: Excel has no legacy text for its
-                // `@` (it shows `(F25,F26)%`), and intersecting a union gives #VALUE! either way.
+            if matches!(e, Expr::Binary(BinOp::Union, ..)) && !union_arg {
+                // A union, which only stands in parentheses, as an operand: Excel has no legacy
+                // text for its `@` (it shows `(F25,F26)%`), and the operator gives #VALUE! either
+                // way. A function's argument is intersected, as the function would spill it.
                 return (e, Kind::Scalar);
             }
             self.inserted += 1;
@@ -458,6 +466,12 @@ impl<'a> Legacy<'a> {
                 }
             };
             let arg_ctx = if ctx == Ctx::Array && (param != Param::Single || self.discarded) { Ctx::Array } else { arg_ctx };
+            // A union argument, under the file's parentheses and any `@` the reader put on it.
+            let mut operand = &arg;
+            while let Expr::Paren(x) | Expr::Unary(UnOp::At, x) = operand {
+                operand = x;
+            }
+            self.union_arg = arg_ctx == Ctx::Value && matches!(operand, Expr::Binary(BinOp::Union, ..));
             let (arg, kind) = self.expr(arg, sheet, arg_ctx, depth);
             // A value parameter given several values evaluates the function once per value.
             lifted |= match param {

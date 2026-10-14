@@ -1008,7 +1008,10 @@ fn implicit_intersection_keeps_its_parentheses() {
 /// A legacy formula read from a file saves back exactly as it was read, without `cm` or
 /// `_xlfn.SINGLE`: a union already in parentheses where one value is expected, a name whose
 /// definition holds IF of a range (legacy Excel evaluates a name's definition as an array), and a
-/// multi-valued result in the file's own parentheses.
+/// multi-valued result in the file's own parentheses. A union given to a function is intersected
+/// (`SQRT((@(A1:A2,C1:C2)))`), as the function would otherwise spill it; one under an operator is
+/// shown as Excel shows it. The engine's `legacy_array_functions.rs` checks the same formulas on a
+/// calculated workbook, where nothing spills.
 #[test]
 fn legacy_unions_in_parentheses_and_names_with_if_save_as_read() {
     let body = r#"<sheetData>
@@ -1033,6 +1036,8 @@ fn legacy_unions_in_parentheses_and_names_with_if_save_as_read() {
     let wrong: Vec<_> =
         cases.iter().map(|(a, f)| (*a, *f, written_formula(&bytes, a))).filter(|(_, f, w)| *w != (Some(f.to_string()), None)).collect();
     assert!(wrong.is_empty(), "{wrong:?}");
+    assert_eq!(text("E1"), "SQRT((@(A1:A2,C1:C2)))");
+    assert_eq!(text("E2"), "(A1:A2,C1:C2)+1");
     assert_eq!(text("F3"), "@SQRT(Flag)");
     let (xml, _) = sheet1_xml(&bytes);
     assert!(!xml.contains("SINGLE") && !xml.contains("cm=") && !xml.contains("t=\"array\""), "{xml}");
@@ -1064,9 +1069,9 @@ fn implied_intersection_made_redundant_by_an_edit_saves_legacy() {
 
 /// Excel keeps an `@` that legacy evaluation does not imply as `_xlfn.SINGLE` inside a legacy
 /// formula (Excel Online's UnionSpillIntersectionOperatorTest.xlsx, EPPlus's
-/// DefinedNameRelative.xlsx): such formulas save back with it, without `cm`. The reader shows a
-/// union's implied intersection as Excel does, without `@`, and a spill reference's `@` without
-/// parentheses. A typed `@` of a single value saves the same way.
+/// DefinedNameRelative.xlsx): such formulas save back with it, without `cm`. The reader shows the
+/// implied intersection of a union that is an operator's operand as Excel does, without `@`, and a
+/// spill reference's `@` without parentheses. A typed `@` of a single value saves the same way.
 #[test]
 fn single_in_a_legacy_formula_saves_as_read() {
     let body = r#"<sheetData>

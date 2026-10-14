@@ -200,6 +200,34 @@ fn deep_and_unfinished_legacy_formulas_calculate_and_save_as_read() {
     assert!(!xml.contains("cm=") && !xml.contains("SINGLE") && !xml.contains("t=\"array\""), "{xml}");
 }
 
+/// Legacy unions where one value is expected, a name whose definition is IF of a range, and
+/// multi-valued results in the file's own parentheses: calculated, none spills (legacy Excel
+/// intersects a union to #VALUE!), and saving writes each as read, as a plain `<f>`.
+#[test]
+fn legacy_unions_names_and_parentheses_calculate_and_save_as_read() {
+    let formulas: Vec<(String, String)> = ["SQRT((A1:A2,B1:B2))", "ABS(((A1:A2,B1:B2)))", "(A1:A2,B1:B2)+1", "SQRT(Flag)", "({1,2}+1)", "{1,2}+1"]
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (slot(i).a1(), f.to_string()))
+        .collect();
+    let names = r#"<definedName name="Flag">IF(Sheet1!$A$1:$A$3&gt;1,1,0)</definedName>"#;
+    let mut s = open(&legacy_xlsx(&formulas, names));
+    for (a, _) in &formulas {
+        one_value(&s, CellRef::parse(a).unwrap(), a).unwrap();
+    }
+    let shown: Vec<String> = formulas.iter().map(|(a, _)| value(&s, CellRef::parse(a).unwrap()).display()).collect();
+    assert_eq!(shown, ["#VALUE!", "#VALUE!", "#VALUE!", "0", "2", "2"]);
+    let saved = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap();
+    let bytes = gridcraft_engine::io::base64_decode(saved["base64"].as_str().unwrap()).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("xl/worksheets/sheet1.xml").unwrap(), &mut xml).unwrap();
+    for (a, f) in &formulas {
+        assert!(xml.contains(&format!("<f>{f}</f>")), "{a} not saved as read: {xml}");
+    }
+    assert!(!xml.contains("cm=") && !xml.contains("SINGLE") && !xml.contains("t=\"array\""), "{xml}");
+}
+
 const CT: &str = r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#;
 
 /// A one-sheet package: numbers 1–4 in `A1:B2` and `formulas` (address, file text) saved as
