@@ -251,6 +251,11 @@ pub(crate) fn anchor_rect(geo: &Geo, sh: &Sheet, a: &Anchor) -> Rect {
 
 static TEXTURES: std::sync::LazyLock<Mutex<HashMap<(u32, usize), egui::TextureHandle>>> = std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Display-only decoding; the workbook retains the original encoded picture for saving.
+pub(crate) fn decode_picture(data: &[u8]) -> Option<image::DynamicImage> {
+    image::load_from_memory(data).ok().or_else(|| crate::emf_bitmap::decode(data).map(image::DynamicImage::ImageRgba8))
+}
+
 /// The shapes one floating object painted (indices into the painter's layer) and its logical
 /// rectangle, so a right-to-left sheet can move it as a whole instead of mirroring it.
 pub(crate) struct PaintedObject {
@@ -335,7 +340,7 @@ pub(crate) fn paint_objects(app: &SheetApp, p: &Painter, geo: &Geo, wb: &Workboo
         let key = (im.id, im.data.len());
         let mut cache = TEXTURES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if !cache.contains_key(&key)
-            && let Ok(img) = image::load_from_memory(&im.data)
+            && let Some(img) = decode_picture(&im.data)
         {
             let rgba = img.to_rgba8();
             let size = [rgba.width() as usize, rgba.height() as usize];

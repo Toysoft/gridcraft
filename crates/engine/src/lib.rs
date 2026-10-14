@@ -222,6 +222,8 @@ impl Default for Prefs {
 pub enum UiRequest {
     Dialog(String, Json),
     Message(String),
+    /// Compatibility notes after a successful import, shown without blocking the workbook.
+    OpenWarnings(Vec<String>),
     /// Start editing the active cell (F2) with optional initial text.
     EditCell(Option<String>),
     OpenUrl(String),

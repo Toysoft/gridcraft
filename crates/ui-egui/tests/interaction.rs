@@ -765,8 +765,10 @@ fn opening_a_macro_workbook_shows_a_notice() {
         res.get("warnings").and_then(|w| w.as_array()).is_some_and(|a| a.iter().any(|m| m.as_str().is_some_and(|s| s.contains("macros")))),
         "engine reports the macro warning: {res}"
     );
-    // The UI-side handler turns that open result into the notice (open_path does this in the app).
-    h.state_mut().show_open_warnings(&res);
+    // Startup and programmatic opens must consume the actual queued import notes, without
+    // leaving a modal message that app.open would misreport as an open failure.
+    h.state_mut().after_engine();
+    assert!(h.state().message.is_none(), "successful import must not show an error-like dialog");
     let n = h.state().notice.clone().expect("a notice was shown");
     assert!(n.text.contains("VBA"), "{}", n.text);
     assert_eq!(n.kind, gridcraft_ui_egui::NoticeKind::Warning);
@@ -784,14 +786,62 @@ fn opening_a_macro_workbook_shows_a_notice() {
 #[test]
 fn plain_open_warning_becomes_an_info_notice() {
     let mut h = harness(blank());
-    h.state_mut().show_open_warnings(&json!({"warnings": ["links to external workbooks are not supported"]}));
+    h.state_mut().show_open_warnings(&json!({"warnings": ["links to external workbooks were kept; they are not followed or refreshed"]}));
     let n = h.state().notice.clone().unwrap();
     assert_eq!(n.kind, gridcraft_ui_egui::NoticeKind::Info);
     assert!(n.action.is_none());
-    assert!(n.text.contains("external"));
+    assert!(n.text.contains("preserved"));
+    assert!(n.text.contains("does not read or automatically update"));
+    h.state_mut().run("app.language.set", json!({"language":"zh"})).unwrap();
+    h.run_steps(2);
+    assert!(h.query_by_label("外部活页簿链接已保留。此版本不会读取或自动更新外部活页簿。").is_some());
+    h.state_mut().run("app.language.set", json!({"language":"en"})).unwrap();
+    h.run_steps(2);
+    assert!(h.query_by_label(&n.text).is_some(), "the existing notice follows the interface language");
+    h.state_mut().show_open_warnings(&json!({"warnings": ["links to external workbooks were dropped: a link has no part"]}));
+    assert!(h.state().notice.as_ref().unwrap().text.contains("dropped"), "dropped links must not be described as preserved");
+    h.state_mut().show_open_warnings(&json!({"warnings": ["optional item skipped: Synthetic|Part"]}));
+    h.run_steps(2);
+    assert!(h.query_by_label("optional item skipped: Synthetic|Part").is_some(), "raw document text must not be treated as a translation key");
     // No warnings → no notice, no panic.
     h.state_mut().show_open_warnings(&json!({"warnings": []}));
     assert!(h.state().notice.is_none());
+}
+
+#[test]
+fn control_open_reports_success_for_a_workbook_with_import_notes() {
+    let path = std::env::temp_dir().join(format!("gridcraft-open-warning-{}.xlsm", std::process::id()));
+    std::fs::write(&path, macro_workbook_bytes()).unwrap();
+    let mut app = SheetApp::new(blank(), Default::default());
+    let ctx = egui::Context::default();
+    let gridcraft_ui_egui::control::Outcome::Done(result) = gridcraft_ui_egui::control::handle(&mut app, &ctx, "app.open", &json!({"path": path}))
+    else {
+        panic!("app.open must return a result");
+    };
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(result["ok"], true, "the import succeeded: {result}");
+    assert!(app.message.is_none());
+    assert!(app.notice.as_ref().is_some_and(|n| n.kind == gridcraft_ui_egui::NoticeKind::Warning));
+    assert_eq!(app.session.documents().len(), 1);
+    // A genuine read error still fails, leaving the successfully opened workbook in place.
+    let gridcraft_ui_egui::control::Outcome::Done(failed) =
+        gridcraft_ui_egui::control::handle(&mut app, &ctx, "app.open", &json!({"path": path.with_extension("missing.xlsx")}))
+    else {
+        panic!("app.open must return a result");
+    };
+    assert_eq!(failed["ok"], false);
+    assert_eq!(app.session.documents().len(), 1);
+    let clean = path.with_extension("clean.xlsx");
+    let bytes = gridcraft_engine::io::save_bytes(&gridcraft_engine::model::Workbook::new(), "clean.xlsx").unwrap();
+    std::fs::write(&clean, bytes).unwrap();
+    let gridcraft_ui_egui::control::Outcome::Done(clean_result) =
+        gridcraft_ui_egui::control::handle(&mut app, &ctx, "app.open", &json!({"path": clean}))
+    else {
+        panic!("app.open must return a result");
+    };
+    let _ = std::fs::remove_file(clean);
+    assert_eq!(clean_result["ok"], true);
+    assert!(app.notice.is_none(), "a clean open clears the previous import notice");
 }
 
 #[test]

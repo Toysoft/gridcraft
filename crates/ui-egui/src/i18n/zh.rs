@@ -2,6 +2,9 @@
 
 pub(super) fn translate(text: &str) -> Option<&'static str> {
     Some(match text {
+        "External workbook links are preserved. This version does not read or automatically update linked workbooks." => {
+            "外部活页簿链接已保留。此版本不会读取或自动更新外部活页簿。"
+        }
         "Paste" => "粘贴",
         "Paste Values" => "粘贴值",
         "Paste Formulas" => "粘贴公式",

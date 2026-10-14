@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (XLSX chart sheets are kept on save (#727); previously minor: CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-14 · **Change:** minor (bitmap-only EMF display and nonblocking import notes) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -10,6 +10,15 @@ Excel's list comes from Microsoft's public "File formats that are supported in E
 documentation (the Office bundle is off limits under this repo's clean-room rule). GridCraft's
 support comes from `crates/engine/src/io.rs` (`FileKind`), `crates/xlsx/src` and the tests in
 `crates/xlsx/src/tests/` (round-trip, fixtures, malformed input, CSV, ODS, XLSB, XLS, PivotTables).
+
+Bitmap-only EMF pictures containing exactly a header, one SRCCOPY EMR_STRETCHDIBITS and EOF
+are displayed from their embedded uncompressed 24/32-bit DIB, with original EMF bytes retained
+for saving. Other vector/raster metafile operations are not rendered. Successful import warnings
+reach the existing nonblocking notice bar, including startup and control opens; actual read errors
+remain failures. External workbook parts are preserved but not followed or refreshed. The
+notice states explicitly that this version does not read or automatically update linked
+workbooks, with Chinese interface text and English fallback; it offers no refresh/enable action.
+The synthetic reproduction generator is `crates/ui-egui/examples/bitmap_emf_repro.rs`.
 
 ## Workbook formats
 
@@ -85,6 +94,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Display bitmap-only EMF pictures without changing saved image bytes; successful import notes use the notice bar instead of an error-like modal/control failure |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |
 | 2026-10-12 | trivial | CSV and TSV export is capped at 512 MiB and refuses a larger used range with an error (#528) |
 | 2026-10-12 | minor | `.xls` import reads the calculation settings (CalcMode, CalcIter, CalcCount, CalcDelta, CalcPrecision), so circular models calculate instead of showing `#CIRC!` (#724) |

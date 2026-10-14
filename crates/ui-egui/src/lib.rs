@@ -14,6 +14,7 @@ pub mod control;
 pub mod credits;
 pub mod dialogs;
 pub mod editor;
+mod emf_bitmap;
 pub mod fonts;
 pub mod formula_bar;
 mod formula_locale;
@@ -690,6 +691,7 @@ impl SheetApp {
             match req {
                 UiRequest::Dialog(name, params) => self.open_dialog(&name, params),
                 UiRequest::Message(m) => self.message = Some(("GridCraft".into(), m)),
+                UiRequest::OpenWarnings(warnings) => self.show_open_warnings(&json!({"warnings": warnings})),
                 UiRequest::EditCell(text) => {
                     let text = text.map(|text| {
                         self.session
@@ -806,10 +808,16 @@ impl SheetApp {
                 action: Some(("What this means".into(), "macros".into())),
             });
         } else {
+            let first = match msgs[0] {
+                "links to external workbooks were kept; they are not followed or refreshed" => {
+                    "External workbook links are preserved. This version does not read or automatically update linked workbooks."
+                }
+                other => other,
+            };
             let text = if msgs.len() == 1 {
-                msgs[0].to_string()
+                first.to_string()
             } else {
-                format!("{} items in this file were handled differently. First: {}", msgs.len(), msgs[0])
+                format!("{} items in this file were handled differently. First: {}", msgs.len(), first)
             };
             self.notice = Some(Notice { text, kind: NoticeKind::Info, action: None });
         }
