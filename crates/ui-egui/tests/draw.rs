@@ -255,6 +255,43 @@ fn shapes(h: &Harness) -> Vec<gridcraft_engine::model::Shape> {
 }
 
 #[test]
+fn a_fast_zigzag_within_one_frame_keeps_its_turns() {
+    let mut h = harness();
+    h.state_mut().session.execute("draw.pen", json!({"index":0,"on":true})).unwrap();
+    let start = h.state().grid.rect.unwrap().min + vec2(150.0, 300.0);
+    h.input_mut().events.push(Event::PointerMoved(start));
+    h.run_steps(2);
+    button(&mut h, start, true);
+    h.input_mut().events.push(Event::PointerMoved(start + vec2(5.0, 0.0)));
+    h.run_steps(1);
+    // Six moves in one frame: a mouse flicked up and down faster than the screen refreshes.
+    for (i, dy) in [-200.0, 0.0, -200.0, 0.0, -200.0, 0.0].into_iter().enumerate() {
+        h.input_mut().events.push(Event::PointerMoved(start + vec2(20.0 + 20.0 * i as f32, dy)));
+    }
+    h.run_steps(1);
+    button(&mut h, start + vec2(120.0, 0.0), false);
+    let shape = &shapes(&h)[0];
+    let (min, max) = shape.ink.as_ref().unwrap().bounds().unwrap();
+    let z = h.state().grid.geo.as_ref().unwrap().z;
+    assert!((max[1] - min[1]) * z > 190.0, "the turns reach the top: {} px", (max[1] - min[1]) * z);
+}
+
+#[test]
+fn a_stroke_follows_the_pointer_past_the_cells() {
+    let mut h = harness();
+    h.state_mut().session.execute("draw.pen", json!({"index":0,"on":true})).unwrap();
+    let cells = h.state().grid.geo.as_ref().unwrap().cells;
+    let start = cells.left_top() + vec2(300.0, 300.0);
+    // Up over the column headers and the ribbon, then back down: the turn is where the hand turned.
+    let top = pos2(start.x + 40.0, cells.top() - 60.0);
+    drag(&mut h, &[start, pos2(start.x + 20.0, cells.top() + 20.0), top, pos2(start.x + 60.0, cells.top() + 20.0), start + vec2(80.0, 0.0)]);
+    let shape = &shapes(&h)[0];
+    let (min, max) = shape.ink.as_ref().unwrap().bounds().unwrap();
+    let z = h.state().grid.geo.as_ref().unwrap().z;
+    assert!((max[1] - min[1]) * z > 300.0 + 50.0, "the turn above the cells is kept: {} px", (max[1] - min[1]) * z);
+}
+
+#[test]
 fn the_live_stroke_is_the_saved_stroke() {
     let mut h = harness();
     h.state_mut().session.execute("draw.pen", json!({"index":0,"on":true})).unwrap();

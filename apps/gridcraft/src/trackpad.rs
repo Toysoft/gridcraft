@@ -46,6 +46,34 @@ pub fn service() -> (Option<TrackpadCapture>, Option<String>) {
     (Some(Box::new(capture)), None)
 }
 
+/// While a Draw tool is in use: every pointer move (macOS merges mouse drags by default, which
+/// thins fast strokes) and Force Touch's generic pressure, so pressing hard mid-stroke doesn't
+/// force-click (Look Up). Called every frame.
+pub fn precise_pointer(on: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::{NSApplication, NSEvent, NSPressureBehavior, NSPressureConfiguration};
+        let Some(mtm) = objc2::MainThreadMarker::new() else { return };
+        thread_local!(static CURRENT: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) });
+        if CURRENT.with(|c| c.replace(Some(on))) != Some(on) {
+            NSEvent::setMouseCoalescingEnabled(!on);
+        }
+        // The key window can come and go (dialogs): checked each frame, set only when it differs.
+        if let Some(view) = NSApplication::sharedApplication(mtm).keyWindow().and_then(|w| w.contentView()) {
+            let generic = view.pressureConfiguration().is_some_and(|c| c.pressureBehavior() == NSPressureBehavior::PrimaryGeneric);
+            if on && !generic {
+                use objc2::AllocAnyThread;
+                let config = NSPressureConfiguration::initWithPressureBehavior(NSPressureConfiguration::alloc(), NSPressureBehavior::PrimaryGeneric);
+                view.setPressureConfiguration(Some(&config));
+            } else if !on && generic {
+                view.setPressureConfiguration(None);
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = on;
+}
+
 #[cfg(target_os = "macos")]
 mod platform {
     pub const SUPPORTED: bool = true;

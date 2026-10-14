@@ -43,6 +43,7 @@ impl eframe::App for App {
             apple_events::poll(&self.2, &mut self.0, ctx);
         }
         self.0.logic(ctx);
+        trackpad::precise_pointer(self.0.session.draw.tool != gridcraft_engine::cmd::draw::DrawTool::Select);
         self.0.poll_printing(ctx);
         if ctx.input(|input| input.viewport().close_requested()) && self.0.printing.busy() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);

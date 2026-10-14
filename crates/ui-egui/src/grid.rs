@@ -2444,11 +2444,26 @@ fn draw_input(
         Some(gesture @ (InkGesture::Pen | InkGesture::Lasso)) => {
             let lasso = gesture == InkGesture::Lasso;
             let paused = ctx.input(|i| i.key_down(egui::Key::Space));
-            if let Some(p) = pos.filter(|_| in_cells && !paused && resp.dragged()) {
-                let q = sheet_point(p);
-                if app.grid.ink.len() < 5000 && app.grid.ink.last().is_none_or(|last| (last[0] - q[0]).hypot(last[1] - q[1]) > 0.15) {
-                    app.grid.ink.push(q);
-                    app.grid.ink_times.push(now);
+            // Once a stroke has started it follows the pointer past the cells (over the headers or
+            // out of the window), like Excel: a fast stroke's turns are where the hand turned, and
+            // the grid clips what lies outside.
+            if let Some(p) = pos.filter(|_| !paused && resp.dragged()) {
+                // Every pointer move since the last frame, not just where the pointer is now: a fast
+                // stroke keeps its turns. The moves share the frame's time evenly.
+                let mut moves: Vec<Pos2> = ctx.input(|i| {
+                    i.events.iter().filter_map(|e| if let egui::Event::PointerMoved(m) = e { Some(geo.mirror_pos(*m)) } else { None }).collect()
+                });
+                if moves.is_empty() {
+                    moves.push(p);
+                }
+                let since = app.grid.ink_times.last().copied().filter(|t| *t <= now).unwrap_or(now);
+                let n = moves.len();
+                for (k, m) in moves.into_iter().enumerate() {
+                    let q = sheet_point(m);
+                    if app.grid.ink.len() < 5000 && app.grid.ink.last().is_none_or(|last| (last[0] - q[0]).hypot(last[1] - q[1]) > 0.15) {
+                        app.grid.ink.push(q);
+                        app.grid.ink_times.push(since + (now - since) * (k + 1) as f64 / n as f64);
+                    }
                 }
             }
             if lasso {
