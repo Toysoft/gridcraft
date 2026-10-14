@@ -122,6 +122,9 @@ fn language_tables_are_sorted_unique_and_unambiguous() {
             let upper = local.to_uppercase();
             let boolean = upper == locale.boolean_name(true) || upper == locale.boolean_name(false);
             assert_eq!(boolean, matches!(*en, "TRUE" | "FALSE"), "{locale:?}: {en} = {local}");
+            // Every name can be typed (dots, digits, accents, mixed scripts) and shown back.
+            assert_eq!(canonical(&format!("{}(A1)", local.to_lowercase()), locale), format!("{en}(A1)"));
+            assert_eq!(shown(&format!("{en}(A1)"), locale), format!("{local}(A1)"));
         }
         for e in CellError::ALL {
             assert_eq!(canonical(locale.error_name(e), locale), e.as_str(), "{locale:?}");

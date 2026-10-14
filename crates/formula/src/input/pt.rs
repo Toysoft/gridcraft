@@ -162,6 +162,8 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("ERFC", "FUNERROCOMPL"),
         ("ERFC.PRECISE", "FUNERROCOMPL.PRECISO"),
         ("ERROR.TYPE", "TIPO.ERRO"),
+        // reviewed: MS page title and syntax CONVERTEREURO; usuariosdoexcel agrees | sources: https://support.microsoft.com/pt-br/excel/functions/euroconvert-function | https://usuariosdoexcel.wordpress.com/lista-de-funcoes-do-excel/
+        ("EUROCONVERT", "CONVERTEREURO"),
         ("EVEN", "PAR"),
         ("EXACT", "EXATO"),
         // reviewed: real formulas | sources: https://www.guiadoexcel.com.br/funcao-expandir-excel/
@@ -181,7 +183,7 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("FILTERXML", "FILTROXML"),
         // reviewed: blog formulas use PROCURAR (MS vote weak) | sources: https://www.guiadoexcel.com.br/funcoes-de-texto/
         ("FIND", "PROCURAR"),
-        // reviewed: B-variant of PROCURAR; follows ESQUERDAB/DIREITAB/NÚM.CARACTB/LOCALIZARB pattern; no direct source for the B form
+        // reviewed: MS text-functions reference "Funções PROCURAR e PROCURARB"; excelcalcula (old pt-BR Microsoft article) and excel-translator agree | sources: https://support.microsoft.com/pt-br/excel/text-functions-reference | http://excelcalcula.blogspot.com/2012/10/funcao-de-texto-procurar.html | https://en.excel-translator.de/functions/text/
         ("FINDB", "PROCURARB"),
         ("FINV", "INVF"),
         // reviewed: MS syntax/examples; blog | sources: https://www.guiadoexcel.com.br/funcoes-de-texto/
@@ -190,6 +192,14 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("FLOOR.MATH", "ARREDMULTB.MAT"),
         ("FLOOR.PRECISE", "ARREDMULTB.PRECISO"),
         ("FORECAST", "PREVISÃO"),
+        // reviewed: MS page title PREVISÃO.ETS; excel-translator (pt-BR column) and usuariosdoexcel agree | sources: https://support.microsoft.com/pt-br/excel/functions/forecast-ets-function | https://en.excel-translator.de/functions/statistical/ | https://usuariosdoexcel.wordpress.com/lista-de-funcoes-do-excel/
+        ("FORECAST.ETS", "PREVISÃO.ETS"),
+        // reviewed: MS page title PREVISÃO.ETS.CONFINT; excel-translator and usuariosdoexcel agree | sources: https://support.microsoft.com/pt-br/excel/functions/forecast-ets-confint-function | https://en.excel-translator.de/functions/statistical/ | https://usuariosdoexcel.wordpress.com/lista-de-funcoes-do-excel/
+        ("FORECAST.ETS.CONFINT", "PREVISÃO.ETS.CONFINT"),
+        // reviewed: MS page title PREVISÃO.ETS.SAZONALIDADE; excel-translator and usuariosdoexcel agree | sources: https://support.microsoft.com/pt-br/excel/functions/forecast-ets-seasonality-function | https://en.excel-translator.de/functions/statistical/ | https://usuariosdoexcel.wordpress.com/lista-de-funcoes-do-excel/
+        ("FORECAST.ETS.SEASONALITY", "PREVISÃO.ETS.SAZONALIDADE"),
+        // reviewed: MS page title PREVISÃO.ETS.STAT; excel-translator (pt-BR; pt-PT has ESTATÍSTICA) and usuariosdoexcel agree | sources: https://support.microsoft.com/pt-br/excel/functions/forecast-ets-stat-function | https://en.excel-translator.de/functions/statistical/ | https://usuariosdoexcel.wordpress.com/lista-de-funcoes-do-excel/
+        ("FORECAST.ETS.STAT", "PREVISÃO.ETS.STAT"),
         ("FORECAST.LINEAR", "PREVISÃO.LINEAR"),
         ("FORMULATEXT", "FÓRMULATEXTO"),
         ("FREQUENCY", "FREQÜÊNCIA"),
@@ -291,7 +301,7 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("MDURATION", "MDURAÇÃO"),
         ("MEDIAN", "MED"),
         ("MID", "EXT.TEXTO"),
-        // reviewed: B-variant of EXT.TEXTO; pattern ESQUERDAB/DIREITAB; no direct source
+        // reviewed: MS text-functions reference "Funções EXT.TEXTO, EXT.TEXTOB"; excelcalcula, excel-translator and LibreOffice pt-BR agree | sources: https://support.microsoft.com/pt-br/excel/text-functions-reference | http://excelcalcula.blogspot.com/2012/10/funcao-de-texto-exttexto.html | https://en.excel-translator.de/functions/text/
         ("MIDB", "EXT.TEXTOB"),
         ("MIN", "MÍNIMO"),
         ("MINA", "MÍNIMOA"),
@@ -326,6 +336,14 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("OCT2DEC", "OCTADEC"),
         ("OCT2HEX", "OCTAHEX"),
         ("ODD", "ÍMPAR"),
+        // reviewed: MS page title PREÇOPRIMINC; excel-translator, doutoresdoexcel and usuariosdoexcel agree | sources: https://support.microsoft.com/pt-br/excel/functions/oddfprice-function | https://en.excel-translator.de/functions/financial/ | https://www.doutoresdoexcel.com.br/traducao-de-formulas-excel/
+        ("ODDFPRICE", "PREÇOPRIMINC"),
+        // reviewed: MS page title LUCROPRIMINC; excel-translator, doutoresdoexcel and usuariosdoexcel agree | sources: https://support.microsoft.com/pt-br/excel/functions/oddfyield-function | https://en.excel-translator.de/functions/financial/ | https://www.doutoresdoexcel.com.br/traducao-de-formulas-excel/
+        ("ODDFYIELD", "LUCROPRIMINC"),
+        // reviewed: MS page title PREÇOÚLTINC; excel-translator and doutoresdoexcel agree | sources: https://support.microsoft.com/pt-br/excel/functions/oddlprice-function | https://en.excel-translator.de/functions/financial/ | https://www.doutoresdoexcel.com.br/traducao-de-formulas-excel/
+        ("ODDLPRICE", "PREÇOÚLTINC"),
+        // reviewed: MS page title LUCROÚLTINC; excel-translator and usuariosdoexcel agree | sources: https://support.microsoft.com/pt-br/excel/functions/oddlyield-function | https://en.excel-translator.de/functions/financial/ | https://usuariosdoexcel.wordpress.com/lista-de-funcoes-do-excel/
+        ("ODDLYIELD", "LUCROÚLTINC"),
         ("OFFSET", "DESLOC"),
         ("OR", "OU"),
         ("PDURATION", "DURAÇÃOP"),
@@ -333,6 +351,8 @@ pub(super) const DIALECT: Dialect = Dialect {
         // reviewed: vote wrongly gave EXC; MS title/syntax
         ("PERCENTILE.EXC", "PERCENTIL.EXC"),
         ("PERCENTILE.INC", "PERCENTIL.INC"),
+        // reviewed: MS page title and example =PORCENTAGEMDE(; guiadoexcel uses it in AGRUPAR(…;EMPILHARH(SOMA;PORCENTAGEMDE);…); hashtagtreinamentos names it | sources: https://support.microsoft.com/pt-br/excel/functions/percentof-function | https://www.guiadoexcel.com.br/funcao-porcentagemde-percentof-excel/ | https://www.hashtagtreinamentos.com/novas-formulas-excel
+        ("PERCENTOF", "PORCENTAGEMDE"),
         ("PERCENTRANK", "ORDEM.PORCENTUAL"),
         ("PERCENTRANK.EXC", "ORDEM.PORCENTUAL.EXC"),
         ("PERCENTRANK.INC", "ORDEM.PORCENTUAL.INC"),
@@ -363,13 +383,9 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("RANK.EQ", "ORDEM.EQ"),
         ("RATE", "TAXA"),
         ("RECEIVED", "RECEBER"),
-        // reviewed: real formula in blog | sources: https://www.guiadoexcel.com.br/como-usar-procx-e-regex-excel/
-        ("REGEXREPLACE", "REGEX.SUBSTITUIR"),
-        // reviewed: real formula in blog | sources: https://www.guiadoexcel.com.br/como-usar-procx-e-regex-excel/
-        ("REGEXTEST", "REGEX.TESTAR"),
         ("REPLACE", "MUDAR"),
-        // reviewed: B-variant of MUDAR; pattern ESQUERDAB/DIREITAB; no direct source
-        ("REPLACEB", "MUDARB"),
+        // reviewed: MS text-functions reference "Funções MUDAR, SUBSTITUIRB"; excelcalcula (old pt-BR Microsoft article), LibreOffice pt-BR and excel-translator agree; the earlier MUDARB was a pattern guess | sources: https://support.microsoft.com/pt-br/excel/text-functions-reference | http://excelcalcula.blogspot.com/2012/10/funcao-de-texto-mudar.html | https://raw.githubusercontent.com/LibreOffice/translations/master/source/pt-BR/formula/messages.po
+        ("REPLACEB", "SUBSTITUIRB"),
         ("RIGHT", "DIREITA"),
         ("RIGHTB", "DIREITAB"),
         ("ROMAN", "ROMANO"),

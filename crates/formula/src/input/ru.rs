@@ -56,6 +56,8 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("AVERAGEA", "СРЗНАЧА"),
         ("AVERAGEIF", "СРЗНАЧЕСЛИ"),
         ("AVERAGEIFS", "СРЗНАЧЕСЛИМН"),
+        // reviewed: perfectxl and excel-translator text table; MS page title and example =БАТТЕКСТ(A2) | sources: https://www.perfectxl.com/academy/functions/translations/english-russian/ | https://en.excel-translator.de/functions/text/ | https://support.microsoft.com/ru-ru/excel/functions/bahttext-function
+        ("BAHTTEXT", "БАТТЕКСТ"),
         ("BASE", "ОСНОВАНИЕ"),
         ("BESSELI", "БЕССЕЛЬ.I"),
         ("BESSELJ", "БЕССЕЛЬ.J"),
@@ -282,6 +284,14 @@ pub(super) const DIALECT: Dialect = Dialect {
         // reviewed | sources: https://www.perfectxl.com/academy/functions/translations/english-russian/ | https://functiontranslator.com/ru/ | https://excel-academy.ru/tools/excel-functions/
         ("FLOOR.PRECISE", "ОКРВНИЗ.ТОЧН"),
         ("FORECAST", "ПРЕДСКАЗ"),
+        // reviewed: MS page syntax ПРЕДСКАЗ.ETS (Latin ETS); excel-translator statistical table agrees | sources: https://support.microsoft.com/ru-ru/excel/functions/forecast-ets-function | https://en.excel-translator.de/functions/statistical/
+        ("FORECAST.ETS", "ПРЕДСКАЗ.ETS"),
+        // reviewed: MS page title and syntax, excel-translator and a planetaexcel reader formula all spell it with a Cyrillic Е before a Latin TS | sources: https://support.microsoft.com/ru-ru/excel/functions/forecast-ets-confint-function | https://en.excel-translator.de/functions/statistical/ | https://www.planetaexcel.ru/techniques/25/2823/
+        ("FORECAST.ETS.CONFINT", "ПРЕДСКАЗ.ЕTS.ДОВИНТЕРВАЛ"),
+        // reviewed: MS page syntax ПРЕДСКАЗ.ETS.СЕЗОННОСТЬ; excel-translator agrees | sources: https://support.microsoft.com/ru-ru/excel/functions/forecast-ets-seasonality-function | https://en.excel-translator.de/functions/statistical/
+        ("FORECAST.ETS.SEASONALITY", "ПРЕДСКАЗ.ETS.СЕЗОННОСТЬ"),
+        // reviewed: MS page syntax ПРЕДСКАЗ.ETS.СТАТ; excel-translator agrees | sources: https://support.microsoft.com/ru-ru/excel/functions/forecast-ets-stat-function | https://en.excel-translator.de/functions/statistical/
+        ("FORECAST.ETS.STAT", "ПРЕДСКАЗ.ETS.СТАТ"),
         // reviewed | sources: https://functiontranslator.com/ru/ | https://excel-academy.ru/tools/excel-functions/
         ("FORECAST.LINEAR", "ПРЕДСКАЗ.ЛИНЕЙН"),
         // reviewed | sources: https://functiontranslator.com/ru/ | https://easy-excel.com/excel-in-other-languages/excel-functions-in-russian/ | https://excel-academy.ru/tools/excel-functions/
@@ -566,6 +576,14 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("OCT2HEX", "ВОСЬМ.В.ШЕСТН"),
         // reviewed | sources: https://www.perfectxl.com/academy/functions/translations/english-russian/ | https://functiontranslator.com/ru/ | https://easy-excel.com/excel-in-other-languages/excel-functions-in-russian/ | https://excel-academy.ru/tools/excel-functions/
         ("ODD", "НЕЧЁТ"),
+        // reviewed: perfectxl, excel-translator and excelworld agree; MS example =ЦЕНАПЕРВНЕРЕГ( | sources: https://www.perfectxl.com/academy/functions/translations/english-russian/ | https://en.excel-translator.de/functions/financial/ | http://www.excelworld.ru/stuff/worksheet_function/list_worksheet_function/all_worksheet_function/16-1-0-3
+        ("ODDFPRICE", "ЦЕНАПЕРВНЕРЕГ"),
+        // reviewed: perfectxl, excel-translator and excelworld agree; MS example =ДОХОДПЕРВНЕРЕГ( | sources: https://www.perfectxl.com/academy/functions/translations/english-russian/ | https://en.excel-translator.de/functions/financial/ | http://www.excelworld.ru/stuff/worksheet_function/list_worksheet_function/all_worksheet_function/16-1-0-3
+        ("ODDFYIELD", "ДОХОДПЕРВНЕРЕГ"),
+        // reviewed: perfectxl, excel-translator and excelworld agree; MS example =ЦЕНАПОСЛНЕРЕГ( | sources: https://www.perfectxl.com/academy/functions/translations/english-russian/ | https://en.excel-translator.de/functions/financial/ | http://www.excelworld.ru/stuff/worksheet_function/list_worksheet_function/all_worksheet_function/16-1-0-3
+        ("ODDLPRICE", "ЦЕНАПОСЛНЕРЕГ"),
+        // reviewed: perfectxl, excel-translator and excelworld agree; MS example =ДОХОДПОСЛНЕРЕГ( | sources: https://www.perfectxl.com/academy/functions/translations/english-russian/ | https://en.excel-translator.de/functions/financial/ | http://www.excelworld.ru/stuff/worksheet_function/list_worksheet_function/all_worksheet_function/16-1-0-3
+        ("ODDLYIELD", "ДОХОДПОСЛНЕРЕГ"),
         // reviewed | sources: https://www.perfectxl.com/academy/functions/translations/english-russian/ | https://functiontranslator.com/ru/ | https://easy-excel.com/excel-in-other-languages/excel-functions-in-russian/ | https://excel-academy.ru/tools/excel-functions/
         ("OFFSET", "СМЕЩ"),
         // reviewed | sources: https://www.perfectxl.com/academy/functions/translations/english-russian/ | https://functiontranslator.com/ru/ | https://easy-excel.com/excel-in-other-languages/excel-functions-in-russian/ | https://excel-academy.ru/tools/excel-functions/
@@ -578,6 +596,8 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("PERCENTILE.EXC", "ПРОЦЕНТИЛЬ.ИСКЛ"),
         // reviewed | sources: https://www.perfectxl.com/academy/functions/translations/english-russian/ | https://functiontranslator.com/ru/ | https://easy-excel.com/excel-in-other-languages/excel-functions-in-russian/ | https://excel-academy.ru/tools/excel-functions/
         ("PERCENTILE.INC", "ПРОЦЕНТИЛЬ.ВКЛ"),
+        // reviewed: MS page title and example =ПРОЦЕНТ(; shagabutdinov uses it as the СВОДПО aggregator | sources: https://support.microsoft.com/ru-ru/excel/functions/percentof-function | https://shagabutdinov.ru/tpost/zjc1ca6uy1-funktsii-grupppo-groupby-i-svodpo-pivotb
+        ("PERCENTOF", "ПРОЦЕНТ"),
         // reviewed | sources: https://www.perfectxl.com/academy/functions/translations/english-russian/ | https://functiontranslator.com/ru/ | https://easy-excel.com/excel-in-other-languages/excel-functions-in-russian/ | https://excel-academy.ru/tools/excel-functions/
         ("PERCENTRANK", "ПРОЦЕНТРАНГ"),
         // reviewed | sources: https://www.perfectxl.com/academy/functions/translations/english-russian/ | https://functiontranslator.com/ru/ | https://easy-excel.com/excel-in-other-languages/excel-functions-in-russian/ | https://excel-academy.ru/tools/excel-functions/
@@ -791,6 +811,8 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("TRIM", "СЖПРОБЕЛЫ"),
         // reviewed | sources: https://www.perfectxl.com/academy/functions/translations/english-russian/ | https://functiontranslator.com/ru/ | https://excel-academy.ru/tools/excel-functions/
         ("TRIMMEAN", "УРЕЗСРЕДНЕЕ"),
+        // reviewed: MS page title and example =УРЕЗДИАПАЗОН(; shagabutdinov: "Новая функция УРЕЗДИАПАЗОН (TRIMRANGE)" | sources: https://support.microsoft.com/ru-ru/excel/functions/trimrange-function | https://shagabutdinov.ru/tpost/i65crd6tu1-novaya-funktsiya-urezdiapazon-trimrange
+        ("TRIMRANGE", "УРЕЗДИАПАЗОН"),
         ("TRUE", "ИСТИНА"),
         // reviewed | sources: https://www.perfectxl.com/academy/functions/translations/english-russian/ | https://functiontranslator.com/ru/ | https://excel-academy.ru/tools/excel-functions/
         ("TRUNC", "ОТБР"),
@@ -804,6 +826,8 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("UNIQUE", "УНИК"),
         // reviewed | sources: https://www.perfectxl.com/academy/functions/translations/english-russian/ | https://functiontranslator.com/ru/ | https://easy-excel.com/excel-in-other-languages/excel-functions-in-russian/ | https://excel-academy.ru/tools/excel-functions/
         ("UPPER", "ПРОПИСН"),
+        // reviewed: excel-translator hidden-function table and excelworld list ДОЛЛСША | sources: https://en.excel-translator.de/functions/hidden/ | http://www.excelworld.ru/stuff/worksheet_function/list_worksheet_function/all_worksheet_function/16-1-0-3
+        ("USDOLLAR", "ДОЛЛСША"),
         // reviewed | sources: https://www.perfectxl.com/academy/functions/translations/english-russian/ | https://functiontranslator.com/ru/ | https://excel-academy.ru/tools/excel-functions/
         ("VALUE", "ЗНАЧЕН"),
         // reviewed: Microsoft title, meta, syntax and examples all agree; the function tables only list the English name | sources: https://support.microsoft.com/ru-ru/excel/functions/valuetotext-function

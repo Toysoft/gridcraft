@@ -135,6 +135,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
+| 2026-10-14 | Formulas in German, Spanish, Brazilian Portuguese and Russian name the functions their tables were missing (bond functions with an odd period, `FORECAST.ETS*`, `PERCENTOF`, `TRIMRANGE`…), each from two sources: 413, 434, 420 and 471 names; Brazilian `REGEXTEST`/`REGEXREPLACE` stay English, `REPLACEB` is `SUBSTITUIRB` |
 | 2026-10-13 | Formulas in French: 405 local function names, `VRAI`/`FAUX`, French errors and table specifiers, `;` arguments and `.` array columns; separators and some names checked in French Excel 2013 and 2024 (#191) |
 | 2026-10-12 | Rows auto-fit oversized fonts: opening a file and whole-row/column formatting grow non-custom rows to their tallest font (#833) |
 | 2026-10-12 | Number formats: parsing a format code is linear in its length (long runs of `[`, `,` or `/` no longer take quadratic time), and an unclosed `[` is a literal when splitting sections as well as when tokenizing (#810) |

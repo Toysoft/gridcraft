@@ -193,7 +193,7 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("FILTERXML", "XMLFILTERN"),
         // reviewed: SEARCH page: "…Groß- und Kleinschreibung… können Sie FINDEN verwenden" (FIND page retired) | sources: https://support.microsoft.com/de-de/excel/functions/search-function
         ("FIND", "FINDEN"),
-        // reviewed: B-variant pattern of FINDEN (LINKSB, TEILB, RECHTSB, LÄNGEB, SUCHENB documented); name itself not on a cached page [inferred] | sources: https://support.microsoft.com/de-de/excel/functions/c7912941-af2a-4bdf-a553-d0d89b0a0628
+        // reviewed: MS text-functions reference "FINDEN, FINDENB"; perfectxl and excel-translator agree | sources: https://support.microsoft.com/de-de/excel/text-functions-reference | https://www.perfectxl.com/academy/functions/translations/english-german/ | https://en.excel-translator.de/functions/text/
         ("FINDB", "FINDENB"),
         ("FIXED", "FEST"),
         ("FLOOR", "UNTERGRENZE"),
@@ -201,6 +201,14 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("FLOOR.PRECISE", "UNTERGRENZE.GENAU"),
         // reviewed: page: "PROGNOSE.LINEAR(x;Y_Werte;X_Werte) oder SCHÄTZER(x;Y_Werte;X_Werte)"; PROGNOSE replaced SCHÄTZER only as .LINEAR | sources: https://support.microsoft.com/de-de/excel/forecast-and-forecast-linear-functions
         ("FORECAST", "SCHÄTZER"),
+        // reviewed: MS page title and syntax PROGNOSE.ETS; excel-translator statistical table and excel-for-you agree | sources: https://support.microsoft.com/de-de/excel/functions/forecast-ets-function | https://en.excel-translator.de/functions/statistical/ | https://excel-for-you.com/excel-funktionen-deutsch-englisch/
+        ("FORECAST.ETS", "PROGNOSE.ETS"),
+        // reviewed: MS page syntax PROGNOSE.ETS.KONFINT; excel-translator and excel-for-you agree | sources: https://support.microsoft.com/de-de/excel/functions/forecast-ets-confint-function | https://en.excel-translator.de/functions/statistical/ | https://excel-for-you.com/excel-funktionen-deutsch-englisch/
+        ("FORECAST.ETS.CONFINT", "PROGNOSE.ETS.KONFINT"),
+        // reviewed: MS page syntax PROGNOSE.ETS.SAISONALITÄT; excel-translator and excel-for-you agree | sources: https://support.microsoft.com/de-de/excel/functions/forecast-ets-seasonality-function | https://en.excel-translator.de/functions/statistical/ | https://excel-for-you.com/excel-funktionen-deutsch-englisch/
+        ("FORECAST.ETS.SEASONALITY", "PROGNOSE.ETS.SAISONALITÄT"),
+        // reviewed: MS page syntax PROGNOSE.ETS.STAT; excel-translator and excel-for-you agree | sources: https://support.microsoft.com/de-de/excel/functions/forecast-ets-stat-function | https://en.excel-translator.de/functions/statistical/ | https://excel-for-you.com/excel-funktionen-deutsch-englisch/
+        ("FORECAST.ETS.STAT", "PROGNOSE.ETS.STAT"),
         // reviewed: same page syntax and example =PROGNOSE.LINEAR(30,A2:A6,B2:B6) | sources: https://support.microsoft.com/de-de/excel/forecast-and-forecast-linear-functions
         ("FORECAST.LINEAR", "PROGNOSE.LINEAR"),
         ("FORMULATEXT", "FORMELTEXT"),
@@ -323,11 +331,21 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("OCT2DEC", "OKTINDEZ"),
         ("OCT2HEX", "OKTINHEX"),
         ("ODD", "UNGERADE"),
+        // reviewed: MS page title and example =UNREGER.KURS(; perfectxl, excel-translator and excel-for-you agree | sources: https://support.microsoft.com/de-de/excel/functions/oddfprice-function | https://www.perfectxl.com/academy/functions/translations/english-german/ | https://en.excel-translator.de/functions/financial/
+        ("ODDFPRICE", "UNREGER.KURS"),
+        // reviewed: MS page syntax UNREGER.REND; perfectxl and excel-translator agree | sources: https://support.microsoft.com/de-de/excel/functions/oddfyield-function | https://www.perfectxl.com/academy/functions/translations/english-german/ | https://en.excel-translator.de/functions/financial/
+        ("ODDFYIELD", "UNREGER.REND"),
+        // reviewed: MS page syntax UNREGLE.KURS; perfectxl and excel-translator agree | sources: https://support.microsoft.com/de-de/excel/functions/oddlprice-function | https://www.perfectxl.com/academy/functions/translations/english-german/ | https://en.excel-translator.de/functions/financial/
+        ("ODDLPRICE", "UNREGLE.KURS"),
+        // reviewed: MS page syntax UNREGLE.REND; perfectxl and excel-translator agree | sources: https://support.microsoft.com/de-de/excel/functions/oddlyield-function | https://www.perfectxl.com/academy/functions/translations/english-german/ | https://en.excel-translator.de/functions/financial/
+        ("ODDLYIELD", "UNREGLE.REND"),
         ("OFFSET", "BEREICH.VERSCHIEBEN"),
         ("OR", "ODER"),
         ("PERCENTILE", "QUANTIL"),
         ("PERCENTILE.EXC", "QUANTIL.EXKL"),
         ("PERCENTILE.INC", "QUANTIL.INKL"),
+        // reviewed: MS page title and example =PROZENTVON(; excel-nervt uses it inside GRUPPIERENNACH/PIVOTMIT; excel-for-you agrees | sources: https://support.microsoft.com/de-de/excel/functions/percentof-function | https://excel-nervt.de/tag/prozentvon/ | https://excel-for-you.com/excel-funktionen-deutsch-englisch/
+        ("PERCENTOF", "PROZENTVON"),
         ("PERCENTRANK", "QUANTILSRANG"),
         ("PERCENTRANK.EXC", "QUANTILSRANG.EXKL"),
         ("PERCENTRANK.INC", "QUANTILSRANG.INKL"),
@@ -357,7 +375,7 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("RATE", "ZINS"),
         ("RECEIVED", "AUSZAHLUNG"),
         ("REPLACE", "ERSETZEN"),
-        // reviewed: B-variant pattern of ERSETZEN; not named on a cached page [inferred] | sources: https://support.microsoft.com/de-de/excel/functions/replace-function
+        // reviewed: MS text-functions reference "ERSETZEN, ERSETZENB"; perfectxl and excel-translator agree | sources: https://support.microsoft.com/de-de/excel/text-functions-reference | https://www.perfectxl.com/academy/functions/translations/english-german/ | https://en.excel-translator.de/functions/text/
         ("REPLACEB", "ERSETZENB"),
         ("REPT", "WIEDERHOLEN"),
         ("RIGHT", "RECHTS"),
@@ -435,6 +453,8 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("TRANSPOSE", "MTRANS"),
         ("TRIM", "GLÄTTEN"),
         ("TRIMMEAN", "GESTUTZTMITTEL"),
+        // reviewed: soprani.at names ABSCHNBEREICH as the German TRIMRANGE; excelarete and excel-for-you agree. The MS page title says GESTUTZTBEREICH but its syntax and examples keep TRIMRANGE (MT) | sources: https://blog.soprani.at/2025/04/27/leerzellen-abschneiden-wenn-ein-punkt-nicht-funktioniert/ | https://excel-for-you.com/excel-funktionen-deutsch-englisch/ | https://support.microsoft.com/de-de/excel/functions/trimrange-function
+        ("TRIMRANGE", "ABSCHNBEREICH"),
         ("TRUE", "WAHR"),
         ("TRUNC", "KÜRZEN"),
         ("TYPE", "TYP"),

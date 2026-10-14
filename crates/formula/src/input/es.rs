@@ -56,6 +56,8 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("AVERAGEA", "PROMEDIOA"),
         ("AVERAGEIF", "PROMEDIO.SI"),
         ("AVERAGEIFS", "PROMEDIO.SI.CONJUNTO"),
+        // reviewed: perfectxl and excel-translator text table TEXTOBAHT; MS example =TEXTOBAHT(A2) | sources: https://www.perfectxl.com/academy/functions/translations/english-spanish/ | https://en.excel-translator.de/functions/text/ | https://support.microsoft.com/es-es/excel/functions/bahttext-function
+        ("BAHTTEXT", "TEXTOBAHT"),
         ("BETA.DIST", "DISTR.BETA.N"),
         ("BETA.INV", "INV.BETA.N"),
         ("BETADIST", "DISTR.BETA"),
@@ -185,7 +187,7 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("FILTERXML", "XMLFILTRO"),
         // reviewed: FIND/FINDB page absent/retired in cache; ONLYOFFICE, PhpSpreadsheet, HyperFormula agree | sources: OO=https://raw.githubusercontent.com/ONLYOFFICE/web-apps/master/apps/spreadsheeteditor/main/resources/formula-lang/es.json | ZK=https://raw.githubusercontent.com/zekke-io/zekke/main/src/lib/spreadsheets/function-names/es.json
         ("FIND", "ENCONTRAR"),
-        // reviewed: B-variant of ENCONTRAR; ONLYOFFICE only (zekke has English FINDB) | sources: OO=https://raw.githubusercontent.com/ONLYOFFICE/web-apps/master/apps/spreadsheeteditor/main/resources/formula-lang/es.json | ZK=https://raw.githubusercontent.com/zekke-io/zekke/main/src/lib/spreadsheets/function-names/es.json
+        // reviewed: MS text-functions reference "Funciones ENCONTRAR y ENCONTRARB"; perfectxl, excel-translator and ONLYOFFICE agree (zekke has English FINDB) | sources: https://support.microsoft.com/es-es/excel/text-functions-reference | https://www.perfectxl.com/academy/functions/translations/english-spanish/ | https://en.excel-translator.de/functions/text/
         ("FINDB", "ENCONTRARB"),
         ("FINV", "DISTR.F.INV"),
         ("FISHERINV", "PRUEBA.FISHER.INV"),
@@ -194,6 +196,12 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("FLOOR.MATH", "MULTIPLO.INFERIOR.MAT"),
         ("FLOOR.PRECISE", "MULTIPLO.INFERIOR.EXACTO"),
         ("FORECAST", "PRONOSTICO"),
+        // reviewed: MS page syntax PRONOSTICO.ETS; excel-translator statistical table agrees | sources: https://support.microsoft.com/es-es/excel/functions/forecast-ets-function | https://en.excel-translator.de/functions/statistical/
+        ("FORECAST.ETS", "PRONOSTICO.ETS"),
+        // reviewed: MS page syntax PRONOSTICO.ETS.CONFINT; excel-translator agrees | sources: https://support.microsoft.com/es-es/excel/functions/forecast-ets-confint-function | https://en.excel-translator.de/functions/statistical/
+        ("FORECAST.ETS.CONFINT", "PRONOSTICO.ETS.CONFINT"),
+        // reviewed: MS page syntax PRONOSTICO.ETS.ESTACIONALIDAD; excel-translator agrees. FORECAST.ETS.STAT stays English: the MS title says PRONOSTICO.ETS.ESTADISTICA, its body and excel-translator PRONOSTICO.ETS.STAT | sources: https://support.microsoft.com/es-es/excel/functions/forecast-ets-seasonality-function | https://en.excel-translator.de/functions/statistical/
+        ("FORECAST.ETS.SEASONALITY", "PRONOSTICO.ETS.ESTACIONALIDAD"),
         // reviewed: page syntax and meta; PhpSpreadsheet agrees | sources: OO=https://raw.githubusercontent.com/ONLYOFFICE/web-apps/master/apps/spreadsheeteditor/main/resources/formula-lang/es.json | ZK=https://raw.githubusercontent.com/zekke-io/zekke/main/src/lib/spreadsheets/function-names/es.json
         ("FORECAST.LINEAR", "PRONOSTICO.LINEAL"),
         ("FORMULATEXT", "FORMULATEXTO"),
@@ -337,6 +345,14 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("OCT2DEC", "OCT.A.DEC"),
         ("OCT2HEX", "OCT.A.HEX"),
         ("ODD", "REDONDEA.IMPAR"),
+        // reviewed: perfectxl and excel-translator financial table; MS example =PRECIO.PER.IRREGULAR.1( | sources: https://www.perfectxl.com/academy/functions/translations/english-spanish/ | https://en.excel-translator.de/functions/financial/ | https://support.microsoft.com/es-es/excel/functions/oddfprice-function
+        ("ODDFPRICE", "PRECIO.PER.IRREGULAR.1"),
+        // reviewed: perfectxl and excel-translator financial table; MS example =RENDTO.PER.IRREGULAR.1( | sources: https://www.perfectxl.com/academy/functions/translations/english-spanish/ | https://en.excel-translator.de/functions/financial/ | https://support.microsoft.com/es-es/excel/functions/oddfyield-function
+        ("ODDFYIELD", "RENDTO.PER.IRREGULAR.1"),
+        // reviewed: perfectxl and excel-translator financial table; MS example =PRECIO.PER.IRREGULAR.2( | sources: https://www.perfectxl.com/academy/functions/translations/english-spanish/ | https://en.excel-translator.de/functions/financial/ | https://support.microsoft.com/es-es/excel/functions/oddlprice-function
+        ("ODDLPRICE", "PRECIO.PER.IRREGULAR.2"),
+        // reviewed: perfectxl and excel-translator financial table; MS example =RENDTO.PER.IRREGULAR.2( | sources: https://www.perfectxl.com/academy/functions/translations/english-spanish/ | https://en.excel-translator.de/functions/financial/ | https://support.microsoft.com/es-es/excel/functions/oddlyield-function
+        ("ODDLYIELD", "RENDTO.PER.IRREGULAR.2"),
         ("OFFSET", "DESREF"),
         ("OR", "O"),
         ("PDURATION", "P.DURACION"),
@@ -344,6 +360,8 @@ pub(super) const DIALECT: Dialect = Dialect {
         // reviewed: vote was truncated "EXC"; ONLYOFFICE, zekke, PhpSpreadsheet, HyperFormula and Microsoft nav list agree | sources: OO=https://raw.githubusercontent.com/ONLYOFFICE/web-apps/master/apps/spreadsheeteditor/main/resources/formula-lang/es.json | ZK=https://raw.githubusercontent.com/zekke-io/zekke/main/src/lib/spreadsheets/function-names/es.json
         ("PERCENTILE.EXC", "PERCENTIL.EXC"),
         ("PERCENTILE.INC", "PERCENTIL.INC"),
+        // reviewed: a user formula =AGRUPARPOR(A1:A15;D1:D15;PORCENTAJEDE;;1) on Microsoft Q&A; desafiandoexcel and exceleinfo agree (the MS function page keeps PERCENTOF) | sources: https://learn.microsoft.com/es-es/answers/questions/5373070/funci-n-agruparpor | https://desafiandoexcel.com/funciones-de-excel/funcion-porcentajede-en-excel/
+        ("PERCENTOF", "PORCENTAJEDE"),
         ("PERCENTRANK", "RANGO.PERCENTIL"),
         ("PERCENTRANK.EXC", "RANGO.PERCENTIL.EXC"),
         ("PERCENTRANK.INC", "RANGO.PERCENTIL.INC"),
@@ -465,6 +483,8 @@ pub(super) const DIALECT: Dialect = Dialect {
         ("TREND", "TENDENCIA"),
         ("TRIM", "ESPACIOS"),
         ("TRIMMEAN", "MEDIA.ACOTADA"),
+        // reviewed: MS page title RECORTAR.RANGO (syntax line garbled); desafiandoexcel and mundo-datos agree | sources: https://support.microsoft.com/es-es/excel/functions/trimrange-function | https://desafiandoexcel.com/funciones-de-excel/funcion-recortar-rango-en-excel/ | https://mundo-datos.com/recortar-rango/
+        ("TRIMRANGE", "RECORTAR.RANGO"),
         // reviewed: page meta/examples VERDADERO; all independent sources agree; vote picked truncated "VERDAD" | sources: OO=https://raw.githubusercontent.com/ONLYOFFICE/web-apps/master/apps/spreadsheeteditor/main/resources/formula-lang/es.json | ZK=https://raw.githubusercontent.com/zekke-io/zekke/main/src/lib/spreadsheets/function-names/es.json
         ("TRUE", "VERDADERO"),
         ("TRUNC", "TRUNCAR"),
