@@ -107,13 +107,27 @@ pub fn small_button(ui: &mut Ui, icon: Icon, label: &str, tip: &str, dropdown: b
 /// A split button: main part runs the default action, the arrow opens a menu.
 /// Returns (main clicked, arrow response).
 pub fn split_button(ui: &mut Ui, icon: Icon, accent: Option<Color32>, tip: &str) -> (bool, Response) {
+    let (main, arrow) = split_button_state(ui, icon, accent, false, tip);
+    (main.clicked(), arrow)
+}
+
+/// The split button again, drawn pressed while `on` holds: the ribbon's toggle form. It hands back the
+/// main button and the arrow, so a caller can hang a key tip on the main one.
+pub fn split_toggle(ui: &mut Ui, icon: Icon, accent: Option<Color32>, on: bool, tip: &str) -> (Response, Response) {
+    split_button_state(ui, icon, accent, on, tip)
+}
+
+fn split_button_state(ui: &mut Ui, icon: Icon, accent: Option<Color32>, on: bool, tip: &str) -> (Response, Response) {
     let t = Tokens::get(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(38.0, 24.0), Sense::hover());
     let main = Rect::from_min_size(rect.min, vec2(25.0, 24.0));
     let arrow = Rect::from_min_max(pos2(main.right(), rect.top()), rect.max);
     let m = ui.interact(main, ui.id().with((tip, "main")), Sense::click());
     let a = ui.interact(arrow, ui.id().with((tip, "arrow")), Sense::click());
-    if m.hovered() || a.hovered() {
+    if on {
+        ui.painter().rect_filled(rect, 4.0, t.pressed);
+        ui.painter().rect_stroke(rect, 4.0, Stroke::new(1.0, t.separator), StrokeKind::Inside);
+    } else if m.hovered() || a.hovered() {
         ui.painter().rect_filled(rect, 4.0, t.hover);
         ui.painter().line_segment([pos2(main.right(), rect.top() + 3.0), pos2(main.right(), rect.bottom() - 3.0)], Stroke::new(1.0, t.separator));
     }
@@ -122,7 +136,7 @@ pub fn split_button(ui: &mut Ui, icon: Icon, accent: Option<Color32>, tip: &str)
         ui.painter().rect_filled(Rect::from_min_size(pos2(main.left() + 4.0, main.bottom() - 5.0), vec2(17.0, 3.0)), 0.0, c);
     }
     icons::paint(ui.painter(), Rect::from_center_size(arrow.center(), vec2(10.0, 10.0)), Icon::Chevron, t.text_dim);
-    (m.on_hover_text(tr(ui, tip)).clicked(), a)
+    (m.on_hover_text(tr(ui, tip)), a)
 }
 
 /// A one-line text field for a value stored in the workbook, which callers reload every frame. The text being typed is
