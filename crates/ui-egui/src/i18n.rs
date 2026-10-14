@@ -760,8 +760,13 @@ mod tests {
         for (label, first, second) in [("ورقة جديدة", "ورقة", "جديدة"), ("حفظ كـ PDF…", "حفظ", "PDF")] {
             let galley = painter.layout_no_wrap(bidi::visual_rtl(label), font.clone(), egui::Color32::WHITE);
             let glyphs = &galley.rows[0].row.glyphs;
-            let x_of = |word: &str| glyphs.iter().filter(|g| word.contains(g.chr)).map(|g| g.pos.x).collect::<Vec<f32>>();
-            let (a, b) = (x_of(first), x_of(second));
+            // A glyph counts for a side only when its letter belongs to that word alone: Arabic
+            // words share letters (ة ends both words here), and a shared glyph would feed both
+            // sides of the comparison.
+            let x_of = |word: &str, other: &str| {
+                glyphs.iter().filter(|g| word.contains(g.chr) && !other.contains(g.chr)).map(|g| g.pos.x).collect::<Vec<f32>>()
+            };
+            let (a, b) = (x_of(first, second), x_of(second, first));
             assert!(!a.is_empty() && !b.is_empty(), "{label}: no glyphs for `{first}`/`{second}`");
             assert!(
                 a.iter().all(|&x| b.iter().all(|&y| x > y)),
