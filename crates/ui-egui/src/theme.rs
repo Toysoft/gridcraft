@@ -121,8 +121,8 @@ impl Tokens {
             header_sel_bg: roles.selection,
             header_sel_text: roles.selection_text,
             header_all_bg: roles.selection,
-            sel_fill: Color32::from_rgba_unmultiplied(0x2D, 0x81, 0xFF, 0x24),
-            sel_border: Color32::from_rgb(0x2D, 0x81, 0xFF),
+            sel_fill: Color32::from_rgba_unmultiplied(0x10, 0x7C, 0x41, 0x24),
+            sel_border: Color32::from_rgb(0x10, 0x7C, 0x41),
             input_bg: roles.input,
             input_border: roles.border_strong,
             tab_bar: roles.chrome,
@@ -767,8 +767,8 @@ mod palette_tests {
         assert_eq!(dark.status_bar, roles.chrome);
         assert_eq!(dark.menu_bg, roles.panel);
         // Cell-range overlays remain editing colors, independent of the interface-row roles.
-        assert_eq!(dark.sel_fill, Color32::from_rgba_unmultiplied(0x2D, 0x81, 0xFF, 0x24));
-        assert_eq!(dark.sel_border, Color32::from_rgb(0x2D, 0x81, 0xFF));
+        assert_eq!(dark.sel_fill, Color32::from_rgba_unmultiplied(0x10, 0x7C, 0x41, 0x24));
+        assert_eq!(dark.sel_border, Color32::from_rgb(0x10, 0x7C, 0x41));
         assert_eq!(dark.grid_bg, Color32::WHITE);
         assert_eq!(dark.cell_text, Color32::BLACK);
         assert_eq!(dark.danger, Color32::from_rgb(0xF1, 0x70, 0x5F));
