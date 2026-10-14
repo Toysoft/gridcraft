@@ -854,7 +854,7 @@ fn pivot_slicer_on_a_coarser_date_level_is_skipped_with_a_warning() {
     assert!(b.slicers.is_empty(), "{:?}", b.slicers);
     let about: Vec<&String> = report.warnings.iter().filter(|w| w.contains("slicer")).collect();
     assert_eq!(about.len(), 1, "{:?}", report.warnings);
-    assert!(about[0].contains("Years"), "{about:?}");
+    assert!(about[0].contains("coarser date level of \"Date\""), "{about:?}");
     let pb = b.pivots.iter().find(|p| p.name == "By Year").unwrap();
     assert_eq!(pb.rows.iter().map(|f| f.date_group).collect::<Vec<_>>(), [PivotDateGroup::Years, PivotDateGroup::Months]);
     let _ = write_xlsx(&back).unwrap();
