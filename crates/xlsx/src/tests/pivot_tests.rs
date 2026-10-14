@@ -630,6 +630,20 @@ fn manual_order_in_cache_order_is_kept() {
 }
 
 #[test]
+fn early_dates_in_caches_count_real_days() {
+    // Excel writes serial 1 as 1899-12-31 (ISO dates count days from 1899-12-30), not as the
+    // 1900 calendar's 1900-01-01, which it reads as serial 2.
+    let mut wb = workbook();
+    let date_style = wb.sheet(0).unwrap().cells.get(at("C2")).unwrap().style;
+    wb.sheet_mut(0).unwrap().cells.set(at("C2"), Cell { value: Value::number(1.5), formula: None, style: date_style });
+    let parts = unzip(&write_xlsx(&wb).unwrap());
+    let caches: String =
+        parts.iter().filter(|(k, _)| k.contains("pivotCacheDefinition")).map(|(_, v)| String::from_utf8_lossy(v).into_owned()).collect();
+    assert!(caches.contains("minDate=\"1899-12-31T12:00:00\"") && caches.contains("startDate=\"1899-12-31T00:00:00\""), "{caches}");
+    assert!(!caches.contains("1900-01-01T"), "{caches}");
+}
+
+#[test]
 fn location_without_field_headers_has_no_values_row() {
     let mut wb = workbook();
     {

@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-use gridcraft_core::date::datetime_from_serial;
+use gridcraft_core::date::{datetime_from_serial, iso_ymd};
 use gridcraft_core::{CellRef, DateSystem, RangeRef, Value, number_to_text};
 use gridcraft_formula::quote_sheet;
 use gridcraft_model::{
@@ -157,10 +157,11 @@ fn group_caption(g: PivotDateGroup) -> &'static str {
     }
 }
 
-/// `2024-03-05T00:00:00` for a date serial.
+/// `2024-03-05T00:00:00` for a date serial; a time alone is on `1899-12-30` (see [`iso_ymd`]).
 fn iso(sys: DateSystem, serial: f64) -> Option<String> {
     let d = datetime_from_serial(sys, serial)?;
-    Some(format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}", d.year, d.month, d.day, d.hour, d.minute, d.second))
+    let (y, m, day) = iso_ymd(sys, d.year, d.month, d.day);
+    Some(format!("{y:04}-{m:02}-{day:02}T{:02}:{:02}:{:02}", d.hour, d.minute, d.second))
 }
 
 /// `3/5/2024` for a date serial (group boundary captions).
