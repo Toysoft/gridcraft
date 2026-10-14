@@ -99,14 +99,25 @@ Observed in Excel for Mac 16.113.4 with synthetic workbooks (clean-room: behavio
 
 ## Editing
 
+- **Which form a row gets** depends on where the formula is:
+  - **inside the table**, rows relative to the formula's own: `[@Qty]`, `[#Prev Row][Qty]`,
+    `[#Next Row][Qty]`, which fill down with the formula; any other row by its key,
+    `["Bolt"][Qty]` (inside its table a reference leaves out the table name, as Excel writes it);
+  - **outside the table**, rows by key only, `Products["Bolt"][Qty]`, even on the formula's own row.
+
+  A key is used only when the table's first column is unique (no entry repeated, texts compared
+  ignoring case) and the row's entry is a text, number or boolean without `*`, `?` or `~`;
+  otherwise the cell stays an address.
 - **Shift+F4** (`formulas.useTableNames`; `formulas.tableNames` returns the text without changing
   anything) rewrites the A1 references of the formula being edited, or of the selected cells, that
-  name part of a table: `C2:C9` → `Products[Stock]`, the formula's own row → `[@Stock]`, the row
-  above or below → `[#Prev Row][Stock]` / `[#Next Row][Stock]`, a cell of another row →
-  `Products["Bolt"][Stock]` by its key (only when the key is a text, number or boolean that no
-  earlier row repeats and holds no wildcard). Anything else stays A1. Undoable.
-- **F4** on a table reference toggles `$` on its columns; with conditions it cycles both / columns
-  only / conditions only / none, like the `$` of a cell address. Elsewhere F4 cycles `$A$1`.
+  name part of a table: `C2:C9` → `Products[Stock]`, a row as above, `A3:C3` → `Products["Bolt"][]`.
+  Anything else (a block of rows) stays A1. Undoable.
+- **F4** on a reference to one row goes through its row and column anchors like `A1` → `$A$1` →
+  `A$1` → `$A1`: the row anchored is its key, relative its `@` / `#Prev Row` / `#Next Row`
+  (`[@Qty]` → `["Bolt"][$Qty]` → `["Bolt"][Qty]` → `[@$Qty]`). A row with no other form (a key
+  from outside the table, or two rows away) toggles only the column's `$`. On other table
+  references F4 toggles `$` on the columns; with conditions it cycles both / columns only /
+  conditions only / none. Elsewhere F4 cycles `$A$1`.
 - **Suggestions** while typing a formula: table names (before the function names); in the row
   brackets the columns, the row items and the first column's entries as keys; after a comparison
   that column's entries; in the column brackets the columns, written bare, `[bracketed]` or
@@ -116,7 +127,13 @@ Observed in Excel for Mac 16.113.4 with synthetic workbooks (clean-room: behavio
   (`Products[Stock]`), the cell a key finds (`Products["Bolt"][Price]`), the row's cell
   (`[@Price]`), the table's data (`Products`); a filter outlines the columns it returns. The same
   reference text has the same colour.
-- Not done: clicking a table cell in point mode still inserts an A1 reference.
+- **Point mode** writes table references by default, as Excel's *Use table names in formulas*:
+  clicking, dragging or arrowing over cells of a table while typing a formula writes the same
+  forms as Shift+F4. A reference keeps the way it started while arrows or a drag carry it on:
+  one started on a cell outside the table stays an address when it moves into the table, the
+  usual way to point at a table's cells by address; one started in the table goes back to a
+  table reference once it covers one again (`B3:B5` → `[Qty]`). File ▸ Options ▸ Editing ▸
+  *Use table names in formulas* (`options.tableNames`) turns it off.
 
 ## History
 

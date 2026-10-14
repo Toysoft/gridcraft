@@ -406,6 +406,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Options|Save" => "Сохранение",
         "Show formula bar" => "Показывать строку формул",
         "Enable AutoComplete for cell values" => "Включить автозавершение значений ячеек",
+        "Use table names in formulas" => "Использовать имена таблиц в формулах",
         "Save .xlsx workbooks automatically after every change" => "Автоматически сохранять книги .xlsx после каждого изменения",
         "Workbook calculation" => "Вычисления в книге",
         "Enable iterative calculation" => "Включить итеративные вычисления",

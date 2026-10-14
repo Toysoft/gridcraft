@@ -1,5 +1,7 @@
-//! Cell references into tables rewritten as table names: `C2:C9` → `Table1[Qty]`, `C5` →
-//! `Table1[@Qty]` on its own row and `Table1["Widget"][Qty]` by its key on any other.
+//! Cell references into tables rewritten as table names: `C2:C9` → `Table1[Qty]`; one row of
+//! the table from a formula inside it relative to the formula's row (`[@Qty]`,
+//! `[#Prev Row][Qty]`), any other by its key in the first column (`Table1["Widget"][Qty]`),
+//! when that column's entries are unique.
 
 use gridcraft_core::{CellRef, RangeRef, Value};
 use gridcraft_formula::{ColumnSpan, Expr, RefKind, RowSel, SheetSel, StructItem, StructRef, TableRef};
@@ -57,8 +59,11 @@ fn named(wb: &Workbook, sh: &Sheet, range: RangeRef, at: Option<CellRef>, formul
     let data = t.data_range().map(|d| (d.start.row, d.end.row));
     let (top, bottom) = (t.range.start.row, t.range.end.row);
     let in_data = data.is_some_and(|(d0, d1)| d0 <= rows.0 && rows.1 <= d1);
-    let reference = |table: String, specifiers: Vec<StructItem>| {
-        Expr::Struct(StructRef { table, specifiers, col_start: col_start.clone(), col_end: col_end.clone(), col_abs: false })
+    // Inside its own table a reference leaves out the table name, as Excel writes it (`[@Qty]`).
+    let inside = at.is_some_and(|c| t.range.contains(c));
+    let name = if inside { String::new() } else { t.name.clone() };
+    let reference = |specifiers: Vec<StructItem>| {
+        Expr::Struct(StructRef { table: name.clone(), specifiers, col_start: col_start.clone(), col_end: col_end.clone(), col_abs: false })
     };
     let specifiers = match () {
         _ if Some(rows) == data => vec![],
@@ -67,55 +72,125 @@ fn named(wb: &Workbook, sh: &Sheet, range: RangeRef, at: Option<CellRef>, formul
         _ if t.totals_row && rows == (bottom, bottom) => vec![StructItem::Totals],
         _ if t.header_row && data.is_some_and(|(_, d1)| rows == (top, d1)) => vec![StructItem::Headers, StructItem::Data],
         _ if t.totals_row && data.is_some_and(|(d0, _)| rows == (d0, bottom)) => vec![StructItem::Data, StructItem::Totals],
-        // The formula's own row: `Table1[@Qty]`, and `[@Qty]` inside the table.
-        _ if in_data && rows.0 == rows.1 && at.is_some_and(|c| c.row == rows.0) => {
-            let inside = at.is_some_and(|c| t.range.contains(c));
-            return Some(reference(if inside { String::new() } else { t.name.clone() }, vec![StructItem::ThisRow]));
+        // One row, from a formula inside the table: its own row, the row above or below it,
+        // which fill down with the formula (`[@Qty]`, `[#Prev Row][Qty]`).
+        _ if in_data && rows.0 == rows.1 && inside => {
+            let item = match at.map(|c| i64::from(rows.0) - i64::from(c.row)) {
+                Some(0) => StructItem::ThisRow,
+                Some(-1) => StructItem::PrevRow,
+                Some(1) => StructItem::NextRow,
+                _ => return keyed(sh, t, &name, rows.0, col_start.as_deref(), col_end.as_deref()),
+            };
+            return Some(reference(vec![item]));
         }
-        // The row above or below the formula's: `Table1[#Prev Row][Qty]`, which fills down.
-        _ if in_data
-            && rows.0 == rows.1
-            && col_end.is_none()
-            && at.is_some_and(|c| t.range.start.row <= c.row && c.row <= bottom && c.row.abs_diff(rows.0) == 1) =>
-        {
-            let inside = at.is_some_and(|c| t.range.contains(c));
-            let item = if at.is_some_and(|c| c.row > rows.0) { StructItem::PrevRow } else { StructItem::NextRow };
-            return Some(reference(if inside { String::new() } else { t.name.clone() }, vec![item]));
-        }
-        // One cell of another row: by the key in the table's first column.
-        _ if in_data && range.is_single() => return keyed(sh, t, range.start, col_start.clone()?),
+        // Any other row by its key in the first column, the same from anywhere.
+        _ if in_data && rows.0 == rows.1 => return keyed(sh, t, &name, rows.0, col_start.as_deref(), col_end.as_deref()),
         _ => return None,
     };
     // The whole data body is the table's bare name, unless a defined name hides it.
     if specifiers.is_empty() && col_start.is_none() && wb.name(&t.name, formula_sheet).is_none() {
         return Some(Expr::Name(t.name.clone()));
     }
-    Some(reference(t.name.clone(), specifiers))
+    Some(reference(specifiers))
 }
 
-/// `Table1["Widget"][Qty]` for a data cell, when the first column's entry on its row is a key
-/// that finds this row: a text, number or boolean no earlier row repeats.
-fn keyed(sh: &Sheet, t: &Table, cell: CellRef, column: String) -> Option<Expr> {
+/// The first column's entry on `row` as the literal of a key that finds that row: `None` when
+/// it can't be one (empty, an error, a text with `*`, `?` or `~`, which an exact match takes as
+/// wildcards) or when the column's entries aren't unique, so no key reliably finds a row.
+pub fn row_key(sh: &Sheet, t: &Table, row: u32) -> Option<Expr> {
     let data = t.data_range()?;
     let key_col = t.range.start.col;
-    let key = sh.value(CellRef::new(cell.row, key_col));
-    let literal = match &key {
-        // `*`, `?` and `~` are wildcards to an exact-match lookup.
-        Value::Text(s) if !s.is_empty() && !s.contains(['*', '?', '~']) => Expr::Text(s.clone()),
-        Value::Number(n) if n.is_finite() => Expr::Number(*n),
-        Value::Bool(b) => Expr::Bool(*b),
-        _ => return None,
+    // Keys as an exact MATCH compares them: texts ignoring case.
+    let normal = |v: &Value| match v {
+        Value::Text(s) if !s.is_empty() => Some(format!("t{}", s.to_lowercase())),
+        Value::Number(n) => Some(format!("n{n}")),
+        Value::Bool(b) => Some(format!("b{b}")),
+        _ => None,
     };
-    let same = |v: &Value| match (v, &key) {
-        (Value::Text(a), Value::Text(b)) => a.to_lowercase() == b.to_lowercase(),
-        (Value::Number(a), Value::Number(b)) => a == b,
-        (Value::Bool(a), Value::Bool(b)) => a == b,
-        _ => false,
-    };
-    if (data.start.row..cell.row).any(|row| same(&sh.value(CellRef::new(row, key_col)))) {
-        return None;
+    let mut seen = std::collections::HashSet::new();
+    for r in data.start.row..=data.end.row {
+        if let Some(k) = normal(&sh.value(CellRef::new(r, key_col)))
+            && !seen.insert(k)
+        {
+            return None;
+        }
     }
-    Some(Expr::Table(TableRef { table: t.name.clone(), rows: RowSel::Key(Box::new(literal)), columns: vec![ColumnSpan::one(&column)] }))
+    match sh.value(CellRef::new(row, key_col)) {
+        Value::Text(s) if !s.is_empty() && !s.contains(['*', '?', '~']) => Some(Expr::Text(s)),
+        Value::Number(n) if n.is_finite() => Some(Expr::Number(n)),
+        Value::Bool(b) => Some(Expr::Bool(b)),
+        _ => None,
+    }
+}
+
+/// `Table1["Widget"][Qty]` (`[Qty:Price]`, or `[]` for the whole row) for `row`, by its key.
+fn keyed(sh: &Sheet, t: &Table, name: &str, row: u32, first: Option<&str>, last: Option<&str>) -> Option<Expr> {
+    let key = row_key(sh, t, row)?;
+    let columns = first.map(|first| ColumnSpan { first: first.to_string(), last: last.map(str::to_string), abs: false }).into_iter().collect();
+    Some(Expr::Table(TableRef { table: name.to_string(), rows: RowSel::Key(Box::new(key)), columns }))
+}
+
+/// F4's row anchor for a reference to one row of a table, in a formula in `at` of `sheet`:
+/// a relative row (`[@Qty]`, `[#Prev Row][Qty]`) becomes the same cells by key
+/// (`["Bolt"][Qty]`), and a key back to the relative row when the formula is inside the table
+/// on that row or next to it. `None` when the other form can't name those cells.
+pub fn toggle_row_anchor(wb: &Workbook, sheet: usize, at: CellRef, e: &Expr) -> Option<Expr> {
+    let table_of = |name: &str| -> Option<(usize, &Sheet, &Table)> {
+        if name.is_empty() {
+            let sh = wb.sheet(sheet)?;
+            return sh.table_at(at).map(|t| (sheet, sh, t));
+        }
+        let (si, ti) = wb.table(name)?;
+        let sh = wb.sheet(si)?;
+        sh.tables.get(ti).map(|t| (si, sh, t))
+    };
+    match e {
+        Expr::Struct(s) if s.col_start.is_some() => {
+            let offset = match s.specifiers.as_slice() {
+                [StructItem::ThisRow] => 0,
+                [StructItem::PrevRow] => -1,
+                [StructItem::NextRow] => 1,
+                _ => return None,
+            };
+            let (_, sh, t) = table_of(&s.table)?;
+            let row = u32::try_from(i64::from(at.row) + offset).ok()?;
+            let data = t.data_range()?;
+            if row < data.start.row || row > data.end.row {
+                return None;
+            }
+            let span = ColumnSpan { first: s.col_start.clone()?, last: s.col_end.clone(), abs: s.col_abs };
+            Some(Expr::Table(TableRef { table: s.table.clone(), rows: RowSel::Key(Box::new(row_key(sh, t, row)?)), columns: vec![span] }))
+        }
+        Expr::Table(TableRef { table, rows: RowSel::Key(key), columns }) => {
+            let [span] = columns.as_slice() else { return None };
+            let (si, sh, t) = table_of(table)?;
+            if si != sheet || !t.range.contains(at) {
+                return None;
+            }
+            // The row the key finds.
+            let data = t.data_range()?;
+            // An exact MATCH ignores the case of texts.
+            let same = |a: &Expr| match (a, &**key) {
+                (Expr::Text(a), Expr::Text(b)) => a.to_lowercase() == b.to_lowercase(),
+                (a, b) => a == b,
+            };
+            let row = (data.start.row..=data.end.row).find(|&r| row_key(sh, t, r).as_ref().is_some_and(same))?;
+            let item = match i64::from(row) - i64::from(at.row) {
+                0 => StructItem::ThisRow,
+                -1 => StructItem::PrevRow,
+                1 => StructItem::NextRow,
+                _ => return None,
+            };
+            Some(Expr::Struct(StructRef {
+                table: table.clone(),
+                specifiers: vec![item],
+                col_start: Some(span.first.clone()),
+                col_end: span.last.clone(),
+                col_abs: span.abs,
+            }))
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -205,37 +280,66 @@ mod tests {
     #[test]
     fn a1_references_become_table_names() {
         let mut s = stock();
-        for (cell, input, named) in [
-            ("E2", "=B2*$C$2", "=Stock[@Qty]*Stock[@[Unit Price]]"),
-            ("E3", "=SUM(B2:B5)+SUM(Sheet1!A2:C5)", "=SUM(Stock[Qty])+SUM(Stock)"),
-            ("E4", "=COUNTA(A1:C1)&B1&COUNTA(A1:C5)", "=COUNTA(Stock[#Headers])&Stock[[#Headers],[Qty]]&COUNTA(Stock[#All])"),
-            (
-                "E5",
-                "=SUM(B2:C5)+B2+C4+A3",
-                "=SUM(Stock[[Qty]:[Unit Price]])+Stock[\"Nut\"][Qty]+Stock[#Prev Row][Unit Price]+Stock[\"Bolt\"][Product]",
-            ),
-            // Not a part of the table a name stands for: a block of rows, the second "bolt"
-            // (the lookup would find the first), cells outside.
-            ("E7", "=SUM(B2:B3)+B5+F9+SUM(A:A)", "=SUM(B2:B3)+B5+F9+SUM(A:A)"),
-        ] {
-            set(&mut s, cell, input);
-            let before = value(&s, cell);
+        // The first column's entries are unique once the second "bolt" is renamed.
+        s.execute("range.setValues", json!({"range": "A5", "values": [["Screw"]]})).unwrap();
+        let check = |s: &mut Session, cell: &str, input: &str, named: &str| {
+            set(s, cell, input);
+            let before = value(s, cell);
             let shown = s.execute("formulas.tableNames", json!({"formula": input, "cell": cell})).unwrap();
             assert_eq!(shown["formula"], named, "{input}");
             let changed = s.execute("formulas.useTableNames", json!({"range": cell})).unwrap()["changed"].as_u64();
             assert_eq!(changed, Some(u64::from(input != named)), "{input}");
-            assert_eq!(formula(&mut s, cell), named);
-            assert_eq!(value(&s, cell), before, "{input}");
-        }
-        // Inside the table, its own row needs no table name.
-        s.execute("range.setValues", json!({"range": "H1", "values": [["Code", "Twice"], [4, null], [6, null]]})).unwrap();
-        s.execute("insert.table", json!({"range": "H1:I3", "header": true, "name": "Codes"})).unwrap();
-        set(&mut s, "I2", "=H2*2+H3");
-        s.execute("formulas.useTableNames", json!({"range": "I2"})).unwrap();
-        assert_eq!(formula(&mut s, "I2"), "=[@Code]*2+[#Next Row][Code]");
-        assert_eq!(value(&s, "I2"), Value::Number(14.0));
+            assert_eq!(formula(s, cell), named);
+            assert_eq!(value(s, cell), before, "{input}");
+        };
+        // Outside the table every row is found by its key, even the formula's own row.
+        check(&mut s, "E2", "=B2*$C$2", "=Stock[\"Nut\"][Qty]*Stock[\"Nut\"][Unit Price]");
+        check(&mut s, "E3", "=SUM(B2:B5)+SUM(Sheet1!A2:C5)", "=SUM(Stock[Qty])+SUM(Stock)");
+        check(&mut s, "E4", "=COUNTA(A1:C1)&B1&COUNTA(A1:C5)", "=COUNTA(Stock[#Headers])&Stock[[#Headers],[Qty]]&COUNTA(Stock[#All])");
+        check(
+            &mut s,
+            "E5",
+            "=SUM(B2:C5)+B2+C4+SUM(A3:C3)",
+            "=SUM(Stock[[Qty]:[Unit Price]])+Stock[\"Nut\"][Qty]+Stock[\"Washer\"][Unit Price]+SUM(Stock[\"Bolt\"][])",
+        );
+        // Not a part of the table a name stands for: a block of rows, cells outside.
+        check(&mut s, "E7", "=SUM(B2:B3)+F9+SUM(A:A)", "=SUM(B2:B3)+F9+SUM(A:A)");
+        // When the first column repeats an entry, no key finds a row reliably: rows stay addresses.
+        s.execute("range.setValues", json!({"range": "A5", "values": [["bolt"]]})).unwrap();
+        check(&mut s, "E8", "=B2+SUM(C2:C5)", "=B2+SUM(Stock[Unit Price])");
+        // Inside the table: its own row and the rows next to it relative to the formula's, which
+        // fill down with it; others by key, without the table name.
+        s.execute("range.setValues", json!({"range": "H1", "values": [["Code", "Twice"], [4, null], [6, null], [8, null]]})).unwrap();
+        s.execute("insert.table", json!({"range": "H1:I4", "header": true, "name": "Codes"})).unwrap();
+        check(&mut s, "I2", "=H2*2+H3+H4", "=[@Code]*2+[#Next Row][Code]+[8][Code]");
+        assert_eq!(value(&s, "I2"), Value::Number(22.0));
         s.execute("edit.undo", json!({})).unwrap();
-        assert_eq!(formula(&mut s, "I2"), "=H2*2+H3");
+        assert_eq!(formula(&mut s, "I2"), "=H2*2+H3+H4");
+    }
+
+    #[test]
+    fn f4_toggles_a_row_between_relative_and_key() {
+        let mut s = stock();
+        s.execute("range.setValues", json!({"range": "A5", "values": [["Screw"]]})).unwrap();
+        let wb = &s.doc().unwrap().wb;
+        let at = gridcraft_core::CellRef::parse("C3").unwrap();
+        let toggle = |src: &str| super::toggle_row_anchor(wb, 0, at, &gridcraft_formula::parse(src).unwrap()).map(|e| gridcraft_formula::print(&e));
+        assert_eq!(toggle("[@Qty]").as_deref(), Some("[\"Bolt\"][Qty]"));
+        assert_eq!(toggle("[#Prev Row][$Qty]").as_deref(), Some("[\"Nut\"][$Qty]"));
+        assert_eq!(toggle("Stock[#Next Row][Qty:Unit Price]").as_deref(), Some("Stock[\"Washer\"][Qty:Unit Price]"));
+        assert_eq!(toggle("[\"BOLT\"][Qty]").as_deref(), Some("[@Qty]"));
+        assert_eq!(toggle("Stock[\"Washer\"][Qty]").as_deref(), Some("Stock[#Next Row][Qty]"));
+        // A key two rows away has no relative form; a whole column has no row to toggle.
+        assert_eq!(toggle("[\"Screw\"][Qty]"), None);
+        assert_eq!(toggle("Stock[Qty]"), None);
+        // From outside the table a key stays a key.
+        let outside = super::toggle_row_anchor(
+            wb,
+            0,
+            gridcraft_core::CellRef::parse("E3").unwrap(),
+            &gridcraft_formula::parse("Stock[\"Bolt\"][Qty]").unwrap(),
+        );
+        assert_eq!(outside, None);
     }
 
     #[test]

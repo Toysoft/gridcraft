@@ -42,6 +42,12 @@ pub struct EditState {
     pub point: Option<(usize, usize)>,
     /// Where point mode's keyboard cursor is.
     pub point_cell: Option<CellRef>,
+    /// The cells the reference at `point` covers, whatever it is written as (`B2:B9` or
+    /// `Products[Stock]`): what extending it with Shift+arrows starts from.
+    pub point_range: Option<RangeRef>,
+    /// The reference at `point` started by table name; one that started as an address (outside
+    /// a table) stays an address while arrows or a drag carry it on, into a table too.
+    pub point_named: bool,
     pub autocomplete: Vec<String>,
     /// What each `autocomplete` entry does; an entry without one is a function name.
     pub completions: Vec<Completion>,
@@ -68,6 +74,8 @@ impl EditState {
             caret,
             point: None,
             point_cell: None,
+            point_range: None,
+            point_named: false,
             autocomplete: vec![],
             completions: vec![],
             ac_index: 0,
@@ -118,6 +126,21 @@ impl EditState {
         self.caret = self.text.get(..new_end).map(|s| s.chars().count()).unwrap_or(0);
         self.caret_to_end = false;
         self.sync_caret = true;
+        self.point_range = None;
+        self.point_named = false;
+    }
+
+    /// Point mode: inserts (or replaces the last pointed) reference to `range`, written as `text`
+    /// (by table name when `named`).
+    pub fn insert_point(&mut self, text: &str, range: RangeRef, named: bool) {
+        self.insert_ref(text);
+        self.point_range = Some(range);
+        self.point_named = named;
+    }
+
+    /// Whether the next point-mode reference replaces the one just pointed at (arrows, a drag).
+    pub fn continues_point(&self) -> bool {
+        self.point.is_some_and(|(_, e)| e == self.byte_caret())
     }
 
     /// Updates function autocomplete for the word before the caret.
@@ -297,8 +320,8 @@ impl EditState {
     /// stays when the formula is filled sideways. One with conditions goes through both, its
     /// columns only, the conditions' columns only, like the `$` of a cell address. `false` when
     /// the caret is not on a table reference with one-column spans.
-    pub fn cycle_table_anchor(&mut self) -> bool {
-        use gridcraft_engine::formula::{self, Expr, RowSel, lexer::Tok};
+    pub fn cycle_table_anchor(&mut self, wb: Option<&gridcraft_engine::model::Workbook>) -> bool {
+        use gridcraft_engine::formula::{self, Expr, RowSel, StructItem, TableRef, lexer::Tok};
         let Some(body) = self.text.strip_prefix('=') else { return false };
         let caret = self.byte_caret().saturating_sub(1);
         let Ok(tokens) = formula::lexer::tokenize_locale(body, self.locale) else { return false };
@@ -322,7 +345,45 @@ impl EditState {
                 continue;
             }
             let Some(reference) = body.get(start..end) else { return false };
-            let anchored = match formula::parse(reference) {
+            // One row of one column (or span): F4 goes through its row and column anchors like
+            // `A1` → `$A$1` → `A$1` → `$A1`, the row anchored as a key (`["Bolt"][$Qty]`) and
+            // relative as `[@Qty]` / `[#Prev Row][Qty]` / `[#Next Row][Qty]`.
+            let parsed = formula::parse(reference);
+            let row_state = match &parsed {
+                Ok(Expr::Struct(r))
+                    if r.col_start.is_some()
+                        && matches!(r.specifiers.as_slice(), [StructItem::ThisRow | StructItem::PrevRow | StructItem::NextRow]) =>
+                {
+                    Some((false, r.col_abs))
+                }
+                Ok(Expr::Table(TableRef { rows: RowSel::Key(_), columns, .. })) if columns.len() == 1 => {
+                    Some((true, columns.first().is_some_and(|c| c.abs && c.last.is_none())))
+                }
+                _ => None,
+            };
+            if let (Some((row, col)), Some(wb), Ok(e)) = (row_state, wb, &parsed) {
+                let (want_row, want_col) = match (row, col) {
+                    (false, false) => (true, true),
+                    (true, true) => (true, false),
+                    (true, false) => (false, true),
+                    (false, true) => (false, false),
+                };
+                let toggled =
+                    if want_row != row { gridcraft_engine::table_refs::toggle_row_anchor(wb, self.sheet, self.cell, e) } else { Some(e.clone()) };
+                // A row with no other form keeps it; its column anchor alone goes on toggling.
+                let (mut next, col) = match toggled {
+                    Some(t) => (t, want_col),
+                    None => (e.clone(), !col),
+                };
+                match &mut next {
+                    Expr::Struct(r) if r.col_end.is_none() => r.col_abs = col,
+                    Expr::Table(t) => t.columns.iter_mut().filter(|c| c.last.is_none()).for_each(|c| c.abs = col),
+                    _ => {}
+                }
+                self.replace_reference(start, end, &formula::print(&next));
+                return true;
+            }
+            let anchored = match parsed {
                 Ok(Expr::Struct(mut r)) if r.col_start.is_some() && r.col_end.is_none() => {
                     r.col_abs = !r.col_abs;
                     Expr::Struct(r)
@@ -354,18 +415,23 @@ impl EditState {
                 }
                 _ => return false,
             };
-            let written = formula::print(&anchored);
-            let (Some(a), Some(b)) = (body.get(..start), body.get(end..)) else { return false };
-            let new_end = 1 + start + written.len();
-            self.text = format!("={a}{written}{b}");
-            self.caret = self.text.get(..new_end).map(|s| s.chars().count()).unwrap_or(0);
-            self.point = None;
-            self.caret_to_end = false;
-            self.request_focus = true;
-            self.sync_caret = true;
+            self.replace_reference(start, end, &formula::print(&anchored));
             return true;
         }
         false
+    }
+
+    /// Writes `written` over the formula body's bytes `start..end` and puts the caret after it.
+    fn replace_reference(&mut self, start: usize, end: usize, written: &str) {
+        let body = self.text.get(1..).unwrap_or("");
+        let (Some(a), Some(b)) = (body.get(..start), body.get(end..)) else { return };
+        let new_end = 1 + start + written.len();
+        self.text = format!("={a}{written}{b}");
+        self.caret = self.text.get(..new_end).map(|s| s.chars().count()).unwrap_or(0);
+        self.point = None;
+        self.caret_to_end = false;
+        self.request_focus = true;
+        self.sync_caret = true;
     }
 
     /// The function call the caret is inside and the argument index (for the hint tooltip).
@@ -916,11 +982,41 @@ mod tests {
     }
 
     #[test]
+    fn f4_cycles_a_row_and_its_column() {
+        use gridcraft_engine::Session;
+        use serde_json::json;
+        let mut s = Session::new();
+        s.new_workbook();
+        let rows = json!([["Product", "Qty", "Total"], ["Nut", 5, null], ["Bolt", 7, null], ["Washer", 9, null]]);
+        s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+        s.execute("insert.table", json!({"range": "A1:C4", "header": true, "name": "Stock"})).unwrap();
+        let wb = &s.doc().unwrap().wb;
+        let cycle = |cell: &str, start: &str| {
+            let mut e = EditState::new(0, CellRef::parse(cell).unwrap(), start.into(), true, false);
+            let mut seen = Vec::new();
+            for _ in 0..4 {
+                e.caret = e.text.chars().count();
+                assert!(e.cycle_table_anchor(Some(wb)));
+                seen.push(e.text.clone());
+            }
+            seen
+        };
+        // Inside the table, like `A1` → `$A$1` → `A$1` → `$A1`: the row anchored is its key.
+        assert_eq!(cycle("C3", "=[@Qty]"), ["=[\"Bolt\"][$Qty]", "=[\"Bolt\"][Qty]", "=[@$Qty]", "=[@Qty]"]);
+        assert_eq!(cycle("C3", "=2*[#Prev Row][Qty]"), ["=2*[\"Nut\"][$Qty]", "=2*[\"Nut\"][Qty]", "=2*[#Prev Row][$Qty]", "=2*[#Prev Row][Qty]"]);
+        // From outside the table a key has no relative form: only its column anchor toggles.
+        assert_eq!(
+            cycle("E3", "=Stock[\"Bolt\"][Qty]"),
+            ["=Stock[\"Bolt\"][$Qty]", "=Stock[\"Bolt\"][Qty]", "=Stock[\"Bolt\"][$Qty]", "=Stock[\"Bolt\"][Qty]"]
+        );
+    }
+
+    #[test]
     fn f4_anchors_a_table_column() {
         let press = |text: &str, caret: usize| {
             let mut e = EditState::new(0, CellRef::new(0, 0), text.into(), true, false);
             e.caret = caret;
-            e.cycle_table_anchor().then(|| (e.text.clone(), e.caret))
+            e.cycle_table_anchor(None).then(|| (e.text.clone(), e.caret))
         };
         let end = |s: &str| s.chars().count();
         // With the caret anywhere on the reference, or right after it.

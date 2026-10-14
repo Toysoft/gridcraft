@@ -406,6 +406,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Options|Save" => "Salvar",
         "Show formula bar" => "Mostrar barra de fórmulas",
         "Enable AutoComplete for cell values" => "Habilitar AutoConclusão para valores de célula",
+        "Use table names in formulas" => "Usar nomes de tabela em fórmulas",
         "Save .xlsx workbooks automatically after every change" => "Salvar pastas de trabalho .xlsx automaticamente após cada alteração",
         "Workbook calculation" => "Cálculo da pasta de trabalho",
         "Enable iterative calculation" => "Habilitar cálculo iterativo",

@@ -182,6 +182,11 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
                 ("view.theme", "Display Theme", ""),
                 ("view.animations", "Animations", "{on?: bool} (toggles without it) → {on}"),
                 ("options.autoComplete", "Enable AutoComplete for cell values", "{on?: bool} (toggles without it) → {on}"),
+                (
+                    "options.tableNames",
+                    "Use table names in formulas",
+                    "{on?: bool} (toggles without it) → {on}. Point mode writes cells of a table as table references (`Products[Stock]`, `[@Qty]`, `Products[\"Bolt\"][Price]`); on by default",
+                ),
                 ("view.interfaceScale", "Interface Size", "{percent: 75–200 | \"auto\"} (100 = auto; clamped)"),
                 ("ui.dialog", "Open Dialog", ""),
                 ("ui.backstage", "File (Backstage view)", "{page?: home|new|open|info|saveAs|print|export|options|close}"),

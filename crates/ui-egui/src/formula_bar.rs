@@ -258,7 +258,7 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
         }
         // F4 cycles $ anchors of the reference before the caret: a table column (`Table1[$Qty]`)
         // or a cell address.
-        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::F4)) && !ed.cycle_table_anchor() {
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::F4)) && !ed.cycle_table_anchor(app.session.active().map(|d| &*d.wb)) {
             cycle_anchor(&mut ed);
         }
     }

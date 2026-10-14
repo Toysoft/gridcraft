@@ -320,6 +320,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Options|Save" => "Uložit",
         "Show formula bar" => "Zobrazit řádek vzorců",
         "Enable AutoComplete for cell values" => "Povolit automatické dokončování hodnot buněk",
+        "Use table names in formulas" => "Používat názvy tabulek ve vzorcích",
         "Save .xlsx workbooks automatically after every change" => "Automaticky ukládat sešity .xlsx po každé změně",
         "Workbook calculation" => "Výpočet sešitu",
         "Enable iterative calculation" => "Povolit iterativní výpočet",

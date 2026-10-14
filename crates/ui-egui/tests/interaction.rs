@@ -277,6 +277,73 @@ fn shift_arrows_in_point_mode_extend_from_the_pointed_cell() {
 }
 
 #[test]
+fn point_mode_writes_table_references() {
+    let mut s = blank();
+    let rows = json!([["Product", "Qty", "Total"], ["Nut", 5, null], ["Bolt", 7, null], ["Washer", 9, null], ["Screw", 1, null]]);
+    s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+    s.execute("insert.table", json!({"range": "A1:C5", "header": true, "name": "Stock"})).unwrap();
+    s.execute("selection.set", json!({"cell": "C3"})).unwrap();
+    let mut h = harness(s);
+    let edited = |h: &egui_kittest::Harness<'static, SheetApp>| h.state().editor.as_ref().map(|e| e.text.clone());
+    // In the table: its own row, the row above.
+    text(&mut h, "=");
+    click_cell(&mut h, "B3");
+    assert_eq!(edited(&h).as_deref(), Some("=[@Qty]"));
+    text(&mut h, "+");
+    click_cell(&mut h, "C2");
+    assert_eq!(edited(&h).as_deref(), Some("=[@Qty]+[#Prev Row][Total]"));
+    // The keyboard goes on from the cell pointed at last (C2).
+    text(&mut h, "+");
+    key(&mut h, Key::ArrowDown, Modifiers::NONE);
+    assert_eq!(edited(&h).as_deref(), Some("=[@Qty]+[#Prev Row][Total]+[@Total]"));
+    key(&mut h, Key::ArrowDown, Modifiers::NONE);
+    assert_eq!(edited(&h).as_deref(), Some("=[@Qty]+[#Prev Row][Total]+[#Next Row][Total]"));
+    // Another row by its key; Shift+arrows extend from the cells pointed at, however they are
+    // written, up to the whole column.
+    text(&mut h, "+SUM(");
+    click_cell(&mut h, "B5");
+    let start = "=[@Qty]+[#Prev Row][Total]+[#Next Row][Total]+SUM(";
+    assert_eq!(edited(&h), Some(format!("{start}[\"Screw\"][Qty]")));
+    h.input_mut().events.push(Event::ModifiersChanged(Modifiers::SHIFT));
+    key(&mut h, Key::ArrowUp, Modifiers::SHIFT);
+    key(&mut h, Key::ArrowUp, Modifiers::SHIFT);
+    assert_eq!(edited(&h), Some(format!("{start}B3:B5")));
+    key(&mut h, Key::ArrowUp, Modifiers::SHIFT);
+    assert_eq!(edited(&h), Some(format!("{start}[Qty]")));
+    h.input_mut().events.push(Event::ModifiersChanged(Modifiers::NONE));
+    key(&mut h, Key::Escape, Modifiers::NONE);
+
+    // A reference started outside the table stays an address when arrows carry it into the table.
+    text(&mut h, "=");
+    click_cell(&mut h, "D4");
+    assert_eq!(edited(&h).as_deref(), Some("=D4"));
+    key(&mut h, Key::ArrowLeft, Modifiers::NONE);
+    assert_eq!(edited(&h).as_deref(), Some("=C4"));
+    // A new reference clicked in the table goes by name again.
+    text(&mut h, "+");
+    click_cell(&mut h, "C4");
+    assert_eq!(edited(&h).as_deref(), Some("=C4+[#Next Row][Total]"));
+    key(&mut h, Key::Escape, Modifiers::NONE);
+
+    // From outside the table, a row is found by its key, even the formula's own row.
+    h.state_mut().session.run("selection.set", json!({"cell": "E3"})).unwrap();
+    h.run();
+    text(&mut h, "=");
+    click_cell(&mut h, "B3");
+    assert_eq!(edited(&h).as_deref(), Some("=Stock[\"Bolt\"][Qty]"));
+    key(&mut h, Key::Escape, Modifiers::NONE);
+
+    // Turned off, point mode writes addresses.
+    assert_eq!(h.state_mut().run("options.tableNames", json!({"on": false})), Ok(json!({"on": false})));
+    text(&mut h, "=");
+    click_cell(&mut h, "B3");
+    assert_eq!(edited(&h).as_deref(), Some("=B3"));
+    assert!(gridcraft_ui_egui::UiState::default().table_names);
+    let old: gridcraft_ui_egui::UiState = serde_json::from_str(r#"{"dark": true}"#).unwrap();
+    assert!(old.table_names, "a ui.json written before the setting existed has it on");
+}
+
+#[test]
 fn shortcuts_format_and_extend() {
     let mut s = blank();
     s.execute("range.setValues", json!({"range": "A1", "values": [[1, 2], [3, 4]]})).unwrap();
