@@ -221,8 +221,8 @@ struct FieldItems {
     index: HashMap<String, u32>,
 }
 
-/// Sort classes: numbers, text, dates (a number shown with a date format; Excel sorts these
-/// after text), logicals, errors, blanks.
+/// Sort classes: numbers, text, logicals, errors, dates (a number shown with a date format;
+/// Excel sorts these after errors), blanks.
 fn cmp_items(a: &Item, b: &Item) -> Ordering {
     a.class.cmp(&b.class).then(a.num.total_cmp(&b.num)).then_with(|| a.text.cmp(&b.text))
 }
@@ -259,15 +259,15 @@ fn make_item(wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str, first: 
                 return (format!("g{key}"), it(Value::text(label.as_str()), label, 0, key, false));
             }
             let shown = crate::display::format(v, fmt, wb);
-            let class = if crate::display::number_format(fmt).is_date() { 2 } else { 0 };
+            let class = if crate::display::number_format(fmt).is_date() { 4 } else { 0 };
             (format!("n{}", n.to_bits()), it(v.clone(), shown.text, class, *n, true))
         }
         Value::Text(t) => (format!("t{}", t.to_lowercase()), it(v.clone(), t.to_string(), 1, 0.0, false)),
         Value::Bool(b) => {
             let l = if *b { "TRUE" } else { "FALSE" };
-            (format!("l{l}"), it(Value::Bool(*b), l.into(), 3, *b as u8 as f64, false))
+            (format!("l{l}"), it(Value::Bool(*b), l.into(), 2, *b as u8 as f64, false))
         }
-        Value::Error(e) => (format!("e{}", e.as_str()), it(v.clone(), e.as_str().into(), 4, 0.0, false)),
+        Value::Error(e) => (format!("e{}", e.as_str()), it(v.clone(), e.as_str().into(), 3, 0.0, false)),
         Value::Array(_) => make_item(wb, &v.scalar(), group, fmt, first),
     }
 }

@@ -2169,6 +2169,25 @@ mod tests {
         assert_eq!(text(&s, "A5"), "NA");
     }
 
+    #[test]
+    fn dates_sort_after_logicals_and_errors() {
+        // Excel's ascending item order: numbers, text, logicals, errors, dates, blanks.
+        let mut s = sales();
+        s.execute("cell.set", json!({"cell": "C11", "input": "TRUE"})).unwrap();
+        s.execute("cell.set", json!({"cell": "C12", "input": "=1/0"})).unwrap();
+        s.execute("cell.set", json!({"cell": "C13", "input": "NA"})).unwrap();
+        s.execute("insert.pivotTable", json!({"rows": ["Date"], "values": ["Sales"]})).unwrap();
+        edit_pt(&mut s, |p| {
+            p.rows[0].number_format = None;
+            p.rows[0].sort = PivotSort::Asc;
+        });
+        let p = pt(&s);
+        let r = p.last_range.unwrap();
+        let labels: Vec<String> = (r.start.row + 1..=r.end.row).map(|row| text(&s, &CellRef::new(row, r.start.col).a1())).collect();
+        // 46037 is 1/15/2026, the first date.
+        assert_eq!(labels[..4], ["NA", "TRUE", "#DIV/0!", "46037"]);
+    }
+
     fn pivot_chart(s: &Session) -> gridcraft_model::Chart {
         s.doc().unwrap().wb.active().unwrap().charts.last().unwrap().clone()
     }
@@ -2533,6 +2552,10 @@ mod tests {
 
     /// Saves the active workbook, applies `patch` to the first PivotTable part and reopens it.
     fn reopen_patched(s: &Session, patch: impl Fn(&str) -> String) -> (gridcraft_model::Workbook, Vec<String>) {
+        reopen_patched_part(s, "xl/pivotTables/pivotTable1.xml", patch)
+    }
+    /// Saves the active workbook, applies `patch` to `part` and reopens it.
+    fn reopen_patched_part(s: &Session, part: &str, patch: impl Fn(&str) -> String) -> (gridcraft_model::Workbook, Vec<String>) {
         use std::io::{Read, Write};
         let bytes = crate::io::save_bytes(&s.doc().unwrap().wb, "t.xlsx").unwrap();
         let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
@@ -2542,7 +2565,7 @@ mod tests {
             let name = f.name().to_string();
             let mut b = Vec::new();
             f.read_to_end(&mut b).unwrap();
-            if name == "xl/pivotTables/pivotTable1.xml" {
+            if name == part {
                 b = patch(&String::from_utf8(b).unwrap()).into_bytes();
             }
             out.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
@@ -2731,5 +2754,43 @@ mod tests {
         wb.sheet_mut(si).unwrap().pivots.last_mut().unwrap().rows[0].item_order = vec!["Qtr3".into()];
         assert_eq!(first_col(&wb, &quarters), ["Qtr3", "Qtr1", "Qtr2", "Qtr4"]);
         assert_eq!(first_col(&reopen(&wb), &quarters), ["Qtr3", "Qtr1", "Qtr2", "Qtr4"]);
+    }
+
+    #[test]
+    fn manual_order_of_time_items_from_an_excel_cache() {
+        // Excel caches times as `<d v="1899-12-30T08:00:00"/>`: those items must name the
+        // report's 8:00 and 9:30, or a refresh puts the blank ahead of them.
+        let mut s = Session::new();
+        s.new_workbook();
+        for (cell, input) in [("A1", "Shift"), ("B1", "Sales"), ("A2", "8:00"), ("B2", "10"), ("A3", "9:30"), ("B3", "20"), ("B4", "5")] {
+            s.execute("cell.set", json!({"cell": cell, "input": input})).unwrap();
+        }
+        s.execute("selection.set", json!({"range": "A1"})).unwrap();
+        s.execute("insert.pivotTable", json!({"rows": ["Shift"], "values": ["Sales"]})).unwrap();
+        s.execute("pivot.sort", json!({"field": "Shift", "order": "none"})).unwrap();
+        // The report's first column: times as minutes, and the blank item.
+        let shifts = |wb: &gridcraft_model::Workbook| -> Vec<String> {
+            let si = wb.active_sheet;
+            let out = crate::pivot::compute(wb, wb.sheet(si).unwrap().pivots.last().unwrap(), si).unwrap();
+            out.grid
+                .iter()
+                .filter_map(|r| match &r.first()?.value {
+                    Value::Number(n) => Some(format!("{}", (n * 1440.0).round())),
+                    v if v.display() == "(blank)" => Some(v.display()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let order = ["480", "570", "(blank)"];
+        assert_eq!(shifts(&s.doc().unwrap().wb), order);
+        let excel_items = "<d v=\"1899-12-30T08:00:00\"/><d v=\"1899-12-30T09:30:00\"/><m/>";
+        let (back, _) = reopen_patched_part(&s, "xl/pivotCache/pivotCacheDefinition1.xml", |x| {
+            let ours = "<n v=\"0.3333333333333333\"/><n v=\"0.3958333333333333\"/><m/>";
+            assert!(x.contains(ours), "{x}");
+            x.replace(ours, excel_items)
+        });
+        assert_eq!(shifts(&back), order);
+        // Saving writes that order back.
+        assert_eq!(shifts(&reopen(&back)), order);
     }
 }
