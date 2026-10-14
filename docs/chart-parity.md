@@ -55,7 +55,7 @@ open PRs #158, #161, and issue #190.
 | Recommended Charts | yes | partial (Insert ▸ Recommended) |
 | Switch Row/Column, Select Data | yes | yes (Switch on charts read from files landed in #116); Select Data dialog: data range, remove series, Horizontal (Category) Axis Labels (#287). No series add/edit or hidden/empty cell options |
 | Sparklines (line, column, win/loss, markers, axis) | yes | line, column, win/loss |
-| PivotCharts | yes | Insert ▸ PivotChart (`insert.pivotChart`): bound to a PivotTable's report, rebuilt on refresh and layout changes, `c:pivotSource` round trip; no field buttons, innermost category level only. Opened from a file, a series whose referenced cells don't hold its cached points (Excel often points them at the PivotTable's corner cell, or takes in the grand total row) plots the cached points until the PivotTable is refreshed; data labels and the value axis use the cache's number format, which is kept through a save |
+| PivotCharts | yes | Insert ▸ PivotChart (`insert.pivotChart`): bound to a PivotTable's report, rebuilt on refresh and layout changes, `c:pivotSource` round trip; no field buttons, innermost category level only. Opened from a file, a series whose referenced cells don't hold its cached points (Excel often points them at the PivotTable's corner cell, or takes in the grand total row) plots the cached points until the PivotTable is refreshed, as does a multi-level category block (its innermost level, one label per point); data labels and the value axis use the cache's number format, which is kept through a save |
 | Animation on data change | yes (Windows) | no |
 
 ## XLSX round-trip
@@ -80,7 +80,7 @@ back.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-13 | minor | XLSX: PivotChart series whose referenced cells don't hold their cached points plot the cached points (they drew empty or with the grand total), in the cache's number format; `autoTitleDeleted` keeps a deleted automatic title off; array-constant series keep quoted text, gaps and their number format through a save |
+| 2026-10-13 | minor | XLSX: PivotChart series whose referenced cells don't hold their cached points plot the cached points (they drew empty or with the grand total), in the cache's number format, and multi-level category blocks plot their innermost level (they drew every level's cells); `autoTitleDeleted` keeps a deleted automatic title off; array-constant series keep quoted text, gaps and their number format through a save, and literal series names keep their quotes |
 | 2026-10-12 | trivial | chart sheets are kept on save, still not editable (#727) |
 | 2026-10-11 | minor | Trendlines: all six types modelled, round-tripped through `c:trendline`, drawn with forecast and equation/R² labels; `chart.addElement` `trendline` |
 | 2026-10-11 | minor | PivotCharts (`insert.pivotChart`) |

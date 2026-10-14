@@ -3,7 +3,7 @@
 
 use std::fmt::Write as _;
 
-use gridcraft_core::{CellRef, RangeRef, Value};
+use gridcraft_core::Value;
 use gridcraft_formula::{BinOp, Expr, Reference, SheetSel};
 use gridcraft_model::{Chart, ChartKind, Color, LegendPos, LineDash, Series, Trendline, TrendlineKind, Workbook};
 
@@ -122,9 +122,6 @@ fn literal<S: AsRef<str>>(points: &[Option<S>], numeric: bool) -> String {
 struct CachedPoints {
     points: Vec<Option<String>>,
     numeric: bool,
-    /// A `multiLvlStrRef`: one column (or row) of cells per level, the innermost last. The
-    /// cache holds the innermost level.
-    multi_level: bool,
 }
 
 /// What a PivotChart series saved with its references, plotted when the referenced cells don't
@@ -139,16 +136,18 @@ pub(crate) struct PivotSeriesCache {
 }
 
 /// `numCache`, `strCache`, or the innermost level of a `multiLvlStrCache`, under `cat` or `val`.
+/// A `multiLvlStrRef` block of more than one level has a cell per level for each point, so its
+/// cell count isn't the point count and the innermost level is plotted from the cache.
 fn cached_points(e: Option<&El>) -> Option<CachedPoints> {
     let e = e?;
     let owned = |p: Vec<Option<&str>>| p.into_iter().map(|v| v.map(str::to_string)).collect();
     if let Some(c) = e.path(&["numRef", "numCache"]) {
-        Some(CachedPoints { points: owned(read_points(c, c)?), numeric: true, multi_level: false })
+        Some(CachedPoints { points: owned(read_points(c, c)?), numeric: true })
     } else if let Some(c) = e.path(&["strRef", "strCache"]) {
-        Some(CachedPoints { points: owned(read_points(c, c)?), numeric: false, multi_level: false })
+        Some(CachedPoints { points: owned(read_points(c, c)?), numeric: false })
     } else {
         let c = e.path(&["multiLvlStrRef", "multiLvlStrCache"])?;
-        Some(CachedPoints { points: owned(read_points(c, c.child("lvl")?)?), numeric: false, multi_level: true })
+        Some(CachedPoints { points: owned(read_points(c, c.child("lvl")?)?), numeric: false })
     }
 }
 
@@ -213,19 +212,6 @@ fn live_matches(wb: &Workbook, home: usize, f: &str, p: &CachedPoints) -> bool {
         areas.push((sheet, r.range()));
     }
     let n = p.points.len();
-    if p.multi_level {
-        // Only the innermost level is cached: the last column of a block with a row per point,
-        // or the last row of one with a column per point.
-        let [(sheet, r)] = areas[..] else { return false };
-        let leaf = if r.height() as usize == n {
-            RangeRef::new(CellRef::new(r.start.row, r.end.col), r.end)
-        } else if r.width() as usize == n {
-            RangeRef::new(CellRef::new(r.end.row, r.start.col), r.end)
-        } else {
-            return false;
-        };
-        areas = vec![(sheet, leaf)];
-    }
     if areas.iter().try_fold(0u64, |t, (_, r)| t.checked_add(r.count())) != Some(n as u64) {
         return false;
     }
@@ -626,14 +612,22 @@ fn str_data(tag: &str, f: &str, wb: &Workbook, si: usize) -> String {
     s
 }
 
+/// The text of a literal series name: a quoted formula literal (`"Sales ""East"""`) without its
+/// quotes and with `""` read as `"`; bare text as is.
+pub(crate) fn literal_text(n: &str) -> std::borrow::Cow<'_, str> {
+    match n.trim().strip_prefix('"').and_then(|t| t.strip_suffix('"')) {
+        Some(t) => t.replace("\"\"", "\"").into(),
+        None => n.into(),
+    }
+}
+
 fn series_xml(s: &Series, idx: usize, g: G, wb: &Workbook, si: usize) -> String {
     let mut x = format!("<c:ser><c:idx val=\"{idx}\"/><c:order val=\"{idx}\"/>");
     if let Some(n) = &s.name {
         if is_ref(n) {
             x.push_str(&str_data("tx", n, wb, si));
         } else {
-            let lit = n.trim().strip_prefix('"').and_then(|t| t.strip_suffix('"')).unwrap_or(n);
-            let _ = write!(x, "<c:tx><c:v>{}</c:v></c:tx>", esc(lit));
+            let _ = write!(x, "<c:tx><c:v>{}</c:v></c:tx>", esc(&literal_text(n)));
         }
     }
     let color = s.color.as_ref().and_then(|c: &Color| srgb(c, &wb.theme));

@@ -107,12 +107,7 @@ fn pivot_charts_plot_their_cached_points_when_the_references_do_not_cover_them()
     let c = read(&chart_xml(true, &plot, ""));
     let back = read(&crate::chart::write_chart(&Workbook::new(), 0, &c));
     assert_eq!(back.pivot, c.pivot);
-    let parts = |c: &Chart| {
-        c.series
-            .iter()
-            .map(|s| (s.name.as_deref().map(|n| n.trim_matches('"').to_string()), s.categories.clone(), s.values.clone()))
-            .collect::<Vec<_>>()
-    };
+    let parts = |c: &Chart| c.series.iter().map(|s| (shown(s.name.as_deref()), s.categories.clone(), s.values.clone())).collect::<Vec<_>>();
     assert_eq!(parts(&back), parts(&c));
 }
 
@@ -142,41 +137,72 @@ fn a_one_point_pivot_chart_at_the_corner_cell_plots_its_cache() {
 }
 
 #[test]
-fn multi_level_pivot_categories_stay_live_when_their_cells_hold_the_cache() {
+fn multi_level_pivot_categories_plot_their_innermost_level() {
     // Two levels of row labels in A4:B7, the outer one (country) on the left; the cache keeps
     // the innermost level first.
     let cities = ["Ottawa", "Toronto", "Boston", "NYC"];
     let leaf: String = cities.iter().enumerate().map(|(i, v)| format!(r#"<c:pt idx="{i}"><c:v>{v}</c:v></c:pt>"#)).collect();
     let outer = r#"<c:pt idx="0"><c:v>Canada</c:v></c:pt><c:pt idx="2"><c:v>USA</c:v></c:pt>"#;
-    let cat = format!(
-        r#"<c:multiLvlStrRef><c:f>Graph!$A$4:$B$7</c:f><c:multiLvlStrCache><c:ptCount val="4"/><c:lvl>{leaf}</c:lvl><c:lvl>{outer}</c:lvl></c:multiLvlStrCache></c:multiLvlStrRef>"#
-    );
-    let val = num_cache("Graph!$C$4:$C$7", 4, &[(0, "1"), (1, "2"), (2, "3"), (3, "4")]);
-    let xml = chart_xml(
-        true,
-        &format!(
-            r#"<c:barChart><c:barDir val="col"/>{}<c:axId val="1"/><c:axId val="2"/></c:barChart>"#,
-            ser(&str_cache("Graph!$C$3", &["Total"]), &cat, &val)
-        ),
-        "",
-    );
+    let xml = |f: &str, levels: &str| {
+        let cat =
+            format!(r#"<c:multiLvlStrRef><c:f>{f}</c:f><c:multiLvlStrCache><c:ptCount val="4"/>{levels}</c:multiLvlStrCache></c:multiLvlStrRef>"#);
+        let val = num_cache("Graph!$C$4:$C$7", 4, &[(0, "1"), (1, "2"), (2, "3"), (3, "4")]);
+        chart_xml(
+            true,
+            &format!(
+                r#"<c:barChart><c:barDir val="col"/>{}<c:axId val="1"/><c:axId val="2"/></c:barChart>"#,
+                ser(&str_cache("Graph!$C$3", &["Total"]), &cat, &val)
+            ),
+            "",
+        )
+    };
     let mut cells = vec![("A4", Value::text("Canada")), ("A6", Value::text("USA")), ("C3", Value::text("Total"))];
     for (i, city) in cities.iter().enumerate() {
         cells.push((["B4", "B5", "B6", "B7"][i], Value::text(*city)));
         cells.push((["C4", "C5", "C6", "C7"][i], Value::Number(i as f64 + 1.0)));
     }
     let wb = book("Graph", &cells);
-    let c = read_in(&wb, &xml);
+    // The two-level block would draw both levels' cells (8 labels for 4 points): the innermost
+    // level is plotted from the cache, one label per point. The values' cells hold their cache.
+    let two_levels = xml("Graph!$A$4:$B$7", &format!("<c:lvl>{leaf}</c:lvl><c:lvl>{outer}</c:lvl>"));
+    let c = read_in(&wb, &two_levels);
     let s = &c.series[0];
-    assert_eq!((s.name.as_deref(), s.categories.as_deref(), s.values.as_str()), (Some("Graph!$C$3"), Some("Graph!$A$4:$B$7"), "Graph!$C$4:$C$7"));
-    // A save keeps the reference.
+    let labels = r#"{"Ottawa","Toronto","Boston","NYC"}"#;
+    assert_eq!((s.categories.as_deref(), s.values.as_str()), (Some(labels), "Graph!$C$4:$C$7"));
+    // A save keeps one label per point.
     let back = read_in(&wb, &crate::chart::write_chart(&wb, 0, &c));
-    assert_eq!(back.series[0].categories.as_deref(), Some("Graph!$A$4:$B$7"));
+    assert_eq!(back.series[0].categories.as_deref(), Some(labels));
 
-    // When the innermost level's cells show other labels, the cache is plotted.
+    // A one-level reference whose cells hold the cache stays live; when a cell shows another
+    // label, the cache is plotted.
+    let one_level = xml("Graph!$B$4:$B$7", &format!("<c:lvl>{leaf}</c:lvl>"));
+    assert_eq!(read_in(&wb, &one_level).series[0].categories.as_deref(), Some("Graph!$B$4:$B$7"));
     cells.push(("B5", Value::text("Montreal")));
-    let c = read_in(&book("Graph", &cells), &xml);
-    assert_eq!(c.series[0].categories.as_deref(), Some(r#"{"Ottawa","Toronto","Boston","NYC"}"#));
+    assert_eq!(read_in(&book("Graph", &cells), &one_level).series[0].categories.as_deref(), Some(labels));
+}
+
+/// A series name as the chart shows it: a quoted literal without its quotes, `""` read as `"`.
+fn shown(name: Option<&str>) -> Option<String> {
+    name.map(|n| n.strip_prefix('"').and_then(|q| q.strip_suffix('"')).map_or_else(|| n.to_string(), |q| q.replace("\"\"", "\"")))
+}
+
+#[test]
+fn series_names_with_quotes_survive_a_save() {
+    // A stale PivotChart series takes its cached name, quotes and all.
+    let s =
+        ser(&str_cache("Graph!$J$2", &["Sales \"East\""]), &str_cache("Graph!$J$2", &["a", "b"]), &num_cache("Graph!$J$2", 2, &[(0, "1"), (1, "2")]));
+    let c = read(&chart_xml(true, &format!("<c:pieChart>{s}</c:pieChart>"), ""));
+    assert_eq!(shown(c.series[0].name.as_deref()).as_deref(), Some("Sales \"East\""));
+    let back = read(&crate::chart::write_chart(&Workbook::new(), 0, &c));
+    assert_eq!(shown(back.series[0].name.as_deref()).as_deref(), Some("Sales \"East\""));
+
+    // So does a literal name on a chartex chart.
+    let mut c = Chart { kind: ChartKind::Waterfall, ..c };
+    c.series[0].categories = None;
+    let mut names = Vec::new();
+    let xml = crate::chartex::write_chartex(&Workbook::new(), 0, &c, &mut names);
+    let back = crate::chartex::read_chartex(&crate::xml::parse(xml.as_bytes()).unwrap()).unwrap();
+    assert_eq!(shown(back.series[0].name.as_deref()).as_deref(), Some("Sales \"East\""));
 }
 
 #[test]
