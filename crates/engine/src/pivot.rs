@@ -1474,6 +1474,10 @@ pub fn refresh(wb: &mut Workbook, sheet: usize, idx: usize, replace: bool) -> Re
         let e = widths.entry(c.col).or_insert(0.0);
         *e = e.max(wpt.min(320.0));
     }
+    // The charts' label formats by series name, read while their names still point at the old
+    // report.
+    let sheet_name = wb.sheet(sheet).ok_or("There's no such sheet.")?.name.clone();
+    let label_formats = chart_label_formats(wb, &sheet_name, &pt.name);
     let shm = wb.sheet_mut(sheet).ok_or("There's no such sheet.")?;
     if let Some(old) = pt.last_range {
         shm.take_cells(old);
@@ -1490,8 +1494,7 @@ pub fn refresh(wb: &mut Workbook, sheet: usize, idx: usize, replace: bool) -> Re
     if let Some(p) = shm.pivots.get_mut(idx) {
         p.last_range = Some(area);
     }
-    let sheet_name = shm.name.clone();
-    rebind_charts(wb, &sheet_name, &pt.name, origin, &out);
+    rebind_charts(wb, &sheet_name, &pt.name, origin, &out, label_formats);
     Ok(area)
 }
 
@@ -1575,24 +1578,53 @@ pub fn chart_series(sheet: &str, origin: CellRef, out: &Output) -> Vec<Series> {
         .collect()
 }
 
-/// Rebuilds the series of every PivotChart of a PivotTable after its report was written.
-fn rebind_charts(wb: &mut Workbook, sheet: &str, pivot: &str, origin: CellRef, out: &Output) {
+/// Every PivotChart of a PivotTable, in sheet and chart order, with the sheet it sits on.
+fn linked_charts<'a>(wb: &'a Workbook, sheet: &'a str, pivot: &'a str) -> impl Iterator<Item = (usize, &'a Chart)> + 'a {
+    wb.sheets
+        .iter()
+        .enumerate()
+        .flat_map(move |(i, sh)| sh.charts.iter().filter(move |c| c.pivot.as_deref().is_some_and(|l| links_to(l, sheet, pivot))).map(move |c| (i, c)))
+}
+
+/// The typed data label formats of every PivotChart of a PivotTable by series name: the current
+/// series' (names that are references are evaluated, so call this before the report is
+/// rewritten), then those an earlier refresh dropped with their series. Excel ties a PivotChart
+/// series' formatting to its pivot items, not to its position, so a filter that hides a leading
+/// item doesn't pass its format to the next series.
+fn chart_label_formats(wb: &Workbook, sheet: &str, pivot: &str) -> Vec<Vec<(String, String)>> {
+    linked_charts(wb, sheet, pivot)
+        .map(|(si, ch)| {
+            let current: Vec<(String, Option<&String>)> = ch
+                .series
+                .iter()
+                .filter_map(|s| Some((gridcraft_chart::series_name(wb, si, s.name.as_deref()?), s.label_number_format.as_ref())))
+                .filter(|(k, _)| !k.is_empty())
+                .collect();
+            let dropped = ch.pivot_label_formats.iter().filter(|(k, _)| !current.iter().any(|(c, _)| c == k)).cloned();
+            current.iter().filter_map(|(k, f)| Some((k.clone(), (*f)?.clone()))).chain(dropped).collect()
+        })
+        .collect()
+}
+
+/// Rebuilds the series of every PivotChart of a PivotTable after its report was written; each
+/// series takes the label format `label_formats` (from [`chart_label_formats`]) has for its name.
+fn rebind_charts(wb: &mut Workbook, sheet: &str, pivot: &str, origin: CellRef, out: &Output, label_formats: Vec<Vec<(String, String)>>) {
     let linked = |ch: &Chart| ch.pivot.as_deref().is_some_and(|l| links_to(l, sheet, pivot));
     let hits: Vec<usize> = (0..wb.sheets.len()).filter(|i| wb.sheet(*i).is_some_and(|sh| sh.charts.iter().any(linked))).collect();
     if hits.is_empty() {
         return;
     }
     let series = chart_series(sheet, origin, out);
+    // The new series' names are literals, so the sheet they're evaluated on doesn't matter.
+    let names: Vec<String> = series.iter().map(|s| s.name.as_deref().map(|n| gridcraft_chart::series_name(wb, 0, n)).unwrap_or_default()).collect();
+    let mut label_formats = label_formats.into_iter();
     for i in hits {
         let Some(sh) = wb.sheet_mut(i) else { continue };
         for ch in sh.charts.iter_mut().filter(|c| linked(c)) {
-            let old = std::mem::replace(&mut ch.series, series.clone());
-            // Typed label formats go by series position. Positions past the old series keep
-            // the formats an earlier refresh dropped with them.
-            let mut fmts: Vec<Option<String>> = old.into_iter().map(|s| s.label_number_format).collect();
-            fmts.extend(ch.pivot_label_formats.drain(..).skip(fmts.len()));
-            for (new, f) in ch.series.iter_mut().zip(&fmts) {
-                new.label_number_format.clone_from(f);
+            let fmts = label_formats.next().unwrap_or_default();
+            ch.series = series.clone();
+            for (new, name) in ch.series.iter_mut().zip(&names) {
+                new.label_number_format = fmts.iter().find(|(k, _)| k == name).map(|(_, f)| f.clone());
             }
             ch.pivot_label_formats = fmts;
         }

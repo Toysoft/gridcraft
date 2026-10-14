@@ -2035,7 +2035,7 @@ mod tests {
     }
 
     #[test]
-    fn pivot_chart_label_formats_come_back_with_dropped_series() {
+    fn pivot_chart_label_formats_follow_their_items() {
         let mut s = sales();
         s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Product"], "values": ["Sales"]})).unwrap();
         s.execute("insert.pivotChart", json!({"pivot": "B5"})).unwrap();
@@ -2056,6 +2056,33 @@ mod tests {
         assert_eq!(labels(&s), typed[..1]);
         s.execute("pivot.filter", json!({"field": "Product", "selected": null})).unwrap();
         assert_eq!(labels(&s), typed);
+        // Hiding the leading item leaves each remaining series its own format, not the one of
+        // the series before it.
+        s.execute("pivot.filter", json!({"field": "Product", "selected": ["Pears", "Plums"]})).unwrap();
+        let names: Vec<_> = pivot_chart(&s).series.iter().map(|x| x.name.clone()).collect();
+        assert_eq!(names, [Some("\"Pears\"".to_string()), Some("\"Plums\"".to_string())]);
+        assert_eq!(labels(&s), typed[1..]);
+        s.execute("pivot.filter", json!({"field": "Product", "selected": null})).unwrap();
+        assert_eq!(labels(&s), typed);
+        // A PivotChart read from a file names its series by the report's header cells; those
+        // are read before the refresh moves the headers.
+        {
+            let d = s.doc_mut().unwrap();
+            let si = d.wb.active_sheet;
+            let sh = std::sync::Arc::make_mut(&mut d.wb).sheet_mut(si).unwrap();
+            let area = sh.pivots[0].last_range.unwrap();
+            let header = |item: &str| sh.cells.iter_range(area).find(|(_, c)| c.value.as_text() == Some(item)).map(|(r, _)| r).unwrap();
+            let refs: Vec<String> = ["Apples", "Pears", "Plums"]
+                .iter()
+                .map(|i| header(i))
+                .map(|c| format!("{}!${}${}", crate::pivot::quote_sheet(&sh.name), gridcraft_core::col_to_letters(c.col), c.row + 1))
+                .collect();
+            for (x, r) in sh.charts.last_mut().unwrap().series.iter_mut().zip(refs) {
+                x.name = Some(r);
+            }
+        }
+        s.execute("pivot.filter", json!({"field": "Product", "selected": ["Pears", "Plums"]})).unwrap();
+        assert_eq!(labels(&s), typed[1..]);
     }
 
     #[test]

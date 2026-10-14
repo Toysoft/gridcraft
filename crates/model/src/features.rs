@@ -521,11 +521,11 @@ pub struct Chart {
     pub pivot: Option<String>,
     #[serde(default)]
     pub axis_number_formats: AxisNumberFormats,
-    /// A PivotChart's typed data label formats by series position, as of its last refresh. A
-    /// refresh that drops series keeps theirs here, so they come back with their format. Only
-    /// the current series' formats are saved.
+    /// A PivotChart's typed data label formats by series name (its pivot items, as the series
+    /// shows them), as of its last refresh. A refresh that drops series keeps theirs here, so
+    /// they come back with their format. Only the current series' formats are saved.
     #[serde(default)]
-    pub pivot_label_formats: Vec<Option<String>>,
+    pub pivot_label_formats: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
