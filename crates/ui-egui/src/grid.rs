@@ -102,6 +102,10 @@ pub enum Drag {
 
 #[derive(Default)]
 pub struct GridState {
+    /// Where the pointer went down to draw the picked shape (`SheetApp::shape_tool`).
+    pub shape_drag: Option<Pos2>,
+    /// An object just inserted, to scroll into view (a new chart placed below the others).
+    pub reveal_object: Option<u32>,
     pub drag: Drag,
     pub ensure_visible: bool,
     /// With `ensure_visible`: scroll to the moving end of the selection instead of the active cell
@@ -692,6 +696,22 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
             } else if cr.right() > area.right() - 2.0 {
                 view.scroll.x += ((cr.right() - area.right() + 2.0) / geo.z).min(cr.left() - area.left());
             }
+        }
+        view.scroll = view.scroll.max(egui::Vec2::ZERO);
+        geo = make_geo(app, view.scroll);
+    }
+    // A new object out of view (placed below the others): scroll its top-left corner in.
+    if let Some(id) = app.grid.reveal_object.take()
+        && let Some(a) = ["chart", "image", "slicer", "shape"].into_iter().find_map(|k| object_anchor(sh, k, id))
+    {
+        let r = geo.cell_rect(sh, a.cell).translate(vec2(a.dx, a.dy) * geo.z);
+        let r = Rect::from_min_size(r.min, vec2(a.width, a.height) * geo.z);
+        let area = Rect::from_min_max(pos2(geo.cells.left() + geo.frozen_w, geo.cells.top() + geo.frozen_h), geo.cells.max);
+        if a.cell.row >= geo.fr && (r.top() < area.top() || r.bottom() > area.bottom()) {
+            view.scroll.y += (r.top() - area.top() - 24.0 * geo.z) / geo.z;
+        }
+        if a.cell.col >= geo.fc && (r.left() < area.left() || r.right() > area.right()) {
+            view.scroll.x += (r.left() - area.left() - 24.0 * geo.z) / geo.z;
         }
         view.scroll = view.scroll.max(egui::Vec2::ZERO);
         geo = make_geo(app, view.scroll);
@@ -1911,6 +1931,57 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
             }
             crate::chartview::SlicerAction::Clear => {
                 let _ = app.run("slicer.clear", json!({"slicer": id}));
+            }
+        }
+        return;
+    }
+    // Drawing the shape picked from Insert › Shapes: drag out its box, or click for a default-size
+    // one there, as in Excel. Escape puts the tool down.
+    if let Some(kind) = app.shape_tool.clone() {
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            app.shape_tool = None;
+            app.grid.shape_drag = None;
+            return;
+        }
+        if pos.is_some_and(|p| geo.in_cells(p)) {
+            ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+        }
+        if resp.drag_started() {
+            app.grid.shape_drag = pointer.press_origin().map(|p| geo.mirror_pos(p)).or(pos);
+        }
+        if let (Some(a), Some(b)) = (app.grid.shape_drag, pos) {
+            let preview = geo.mirror_rect(Rect::from_two_pos(a, b));
+            ui.painter().rect_stroke(preview, 0.0, Stroke::new(1.5, Color32::from_rgb(0x1F, 0x5F, 0xC9)), StrokeKind::Middle);
+        }
+        let flat = matches!(kind.as_str(), "line" | "arrow");
+        let default = vec2(144.0, if flat { 0.0 } else { 96.0 }) * geo.z;
+        let placed = if resp.drag_stopped() {
+            app.grid.shape_drag.take().zip(pos).map(|(a, b)| Rect::from_two_pos(a, b))
+        } else if primary_clicked && !resp.drag_started() {
+            pos.filter(|p| geo.in_cells(*p)).map(|p| Rect::from_min_size(p, default))
+        } else {
+            None
+        };
+        if let Some(r) = placed {
+            // A press that barely moved is a click: the default size.
+            let r = if r.width() < 4.0 && r.height() < 4.0 { Rect::from_min_size(r.min, default) } else { r };
+            let c = geo.cell_at(sh, r.min);
+            let dx = ((r.min.x - geo.x(sh, c.col)) / geo.z).max(0.0);
+            let dy = ((r.min.y - geo.y(sh, c.row)) / geo.z).max(0.0);
+            let height = if flat && r.height() < 4.0 { 0.0 } else { r.height() / geo.z };
+            app.shape_tool = None;
+            let params = json!({"kind": kind, "at": c.a1(), "dx": dx, "dy": dy, "width": (r.width() / geo.z).max(1.0), "height": height});
+            match app.run("insert.shape", params) {
+                Ok(v) => {
+                    let id = v.get("shape").and_then(serde_json::Value::as_u64).and_then(|id| u32::try_from(id).ok());
+                    app.selected_chart = id;
+                    if kind == "textBox"
+                        && let Some(id) = id
+                    {
+                        app.begin_text_box_edit(id);
+                    }
+                }
+                Err(e) => app.message = Some(("GridCraft".into(), crate::clean_error(&e))),
             }
         }
         return;
