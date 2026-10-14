@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-use gridcraft_core::date::{datetime_from_serial, iso_ymd};
+use gridcraft_core::date::{datetime_from_serial, iso_ymd, serial_from_iso_ymd};
 use gridcraft_core::{CellRef, DateSystem, RangeRef, Value, number_to_text};
 use gridcraft_formula::quote_sheet;
 use gridcraft_model::{
@@ -1215,7 +1215,10 @@ fn item_label_el(e: &El, sys: DateSystem) -> String {
         "m" => "(blank)".into(),
         "n" => v.trim().parse::<f64>().ok().filter(|n| n.is_finite()).map(number_to_text).unwrap_or_else(|| v.to_string()),
         "b" => if matches!(v.trim(), "1" | "true") { "TRUE" } else { "FALSE" }.into(),
-        "d" => crate::sheet_read::parse_iso_datetime(v, sys).map(number_to_text).unwrap_or_else(|| v.to_string()),
+        // Cache dates count real days from the epoch, as Excel writes them (see `iso`).
+        "d" => crate::sheet_read::parse_iso_datetime_with(v, |y, m, d| serial_from_iso_ymd(sys, y, m, d))
+            .map(number_to_text)
+            .unwrap_or_else(|| v.to_string()),
         _ => v.to_string(),
     }
 }

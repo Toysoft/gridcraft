@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use gridcraft_core::date::{serial_from_iso_ymd, time_fraction};
+use gridcraft_core::date::{serial_from_ymd, time_fraction};
 use gridcraft_core::{CellError, CellRef, DateSystem, MAX_COLS, MAX_ROWS, RangeRef, Value};
 use gridcraft_formula::Expr;
 use gridcraft_model::{
@@ -508,9 +508,13 @@ fn read_formula(cx: &mut Ctx<'_>, st: &mut RowState, f: &El, pos: CellRef, dynam
     }
 }
 
-/// `2024-03-15`, `2024-03-15T10:30:00Z`, `10:30:00` → serial. Dates count real days from the
-/// epoch, so `1899-12-30T08:00:00` is the time 8:00 (see [`serial_from_iso_ymd`]).
+/// `2024-03-15`, `2024-03-15T10:30:00Z`, `10:30:00` → serial.
 pub fn parse_iso_datetime(s: &str, sys: DateSystem) -> Option<f64> {
+    parse_iso_datetime_with(s, |y, m, d| serial_from_ymd(sys, y, m, d))
+}
+
+/// [`parse_iso_datetime`] with `ymd` turning the date part (year, month 1–12, day 1–31) into a serial.
+pub(crate) fn parse_iso_datetime_with(s: &str, ymd: impl Fn(i64, i64, i64) -> Option<f64>) -> Option<f64> {
     let s = s.trim_end_matches('Z');
     let (date, time) = match s.split_once('T') {
         Some((d, t)) => (d, Some(t)),
@@ -523,7 +527,10 @@ pub fn parse_iso_datetime(s: &str, sys: DateSystem) -> Option<f64> {
         let y: i64 = it.next()?.parse().ok()?;
         let m: i64 = it.next()?.parse().ok()?;
         let d: i64 = it.next()?.parse().ok()?;
-        serial = serial_from_iso_ymd(sys, y, m, d)?;
+        if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+            return None;
+        }
+        serial = ymd(y, m, d)?;
     }
     if let Some(t) = time {
         // Drop a time-zone offset.
@@ -1005,10 +1012,7 @@ mod tests {
 
     #[test]
     fn iso_dates() {
-        assert_eq!(parse_iso_datetime("1900-01-01", DateSystem::D1900), Some(2.0));
-        assert_eq!(parse_iso_datetime("1899-12-31T12:30:00", DateSystem::D1900), Some(1.0 + time_fraction(12.0, 30.0, 0.0)));
-        assert_eq!(parse_iso_datetime("1899-12-30T08:00:00", DateSystem::D1900), Some(time_fraction(8.0, 0.0, 0.0)));
-        assert_eq!(parse_iso_datetime("1900-03-01", DateSystem::D1900), Some(61.0));
+        assert_eq!(parse_iso_datetime("1900-01-01", DateSystem::D1900), Some(1.0));
         assert_eq!(parse_iso_datetime("2024-01-01T12:00:00Z", DateSystem::D1900), Some(45292.5));
         assert_eq!(parse_iso_datetime("1904-01-02", DateSystem::D1904), Some(1.0));
         assert_eq!(parse_iso_datetime("06:00:00", DateSystem::D1900), Some(0.25));

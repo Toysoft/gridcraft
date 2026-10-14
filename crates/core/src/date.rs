@@ -139,12 +139,12 @@ pub fn serial_from_ymd(sys: DateSystem, year: i64, month: i64, day: i64) -> Opti
     Some(serial as f64)
 }
 
-/// The calendar date ISO 8601 text (pivot cache `<d>` items, `t="d"` cells) gives a date of a
-/// date system's calendar, as [`datetime_from_serial`] returns it. ISO dates count real days:
-/// from 1899-12-30 in the 1900 system and from 1904-01-01 in the 1904 system. Up to February
-/// 1900 the 1900 system's own calendar, with its day 1900-01-00 and the fictitious 1900-02-29,
-/// runs one day ahead of that: serial 0 (the date part of a time) is 1899-12-30, serial 1 is
-/// 1899-12-31 and serial 60 is 1900-02-28. Excel writes them that way.
+/// The calendar date a pivot cache's ISO 8601 date items (`<d>`, `minDate`, `startDate`…) give
+/// a date of a date system's calendar, as [`datetime_from_serial`] returns it. Those dates count
+/// real days: from 1899-12-30 in the 1900 system and from 1904-01-01 in the 1904 system. Up to
+/// February 1900 the 1900 system's own calendar, with its day 1900-01-00 and the fictitious
+/// 1900-02-29, runs one day ahead of that: serial 0 (the date part of a time) is 1899-12-30,
+/// serial 1 is 1899-12-31 and serial 60 is 1900-02-28. Excel writes its caches that way.
 pub fn iso_ymd(sys: DateSystem, year: i32, month: u32, day: u32) -> (i32, u32, u32) {
     if sys == DateSystem::D1900 && year == 1900 && month <= 2 {
         let serial = if month <= 1 { day } else { 31 + day };
