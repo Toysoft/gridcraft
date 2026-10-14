@@ -188,7 +188,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Conditional Formatting",
             ["Home", "Styles"],
             None,
-            "{range?, rule: {type: cellIs|expression|containsText|beginsWith|endsWith|blanks|noBlanks|errors|noErrors|duplicate|unique|top10|aboveAverage|timePeriod|colorScale|dataBar|iconSet, operator?, value?, value2?, formula?, text?, rank?, bottom?, percent?, below?, period?, colors?: [..], color?, set?, style?: {font..fill..}|preset: lightRedFill|redText|yellowFill|greenFill|redBorder|lightRedFillDarkRedText…}}",
+            "{range?, rule: {type: cellIs|expression|containsText|beginsWith|endsWith|blanks|noBlanks|errors|noErrors|duplicate|unique|top10|aboveAverage|timePeriod|colorScale|dataBar|iconSet, operator?, value?, value2?, formula?, text?, rank?, bottom?, percent?, below?, period?, colors?: [..], color?, gradient?, min?|max?: {type: autoMin|autoMax|min|max|num|percent|percentile|formula, value?}, set?, style?: {font..fill..}|preset: lightRedFill|redText|yellowFill|greenFill|redBorder|lightRedFillDarkRedText…}}",
             has_doc,
             add_cf
         ),
@@ -1358,6 +1358,8 @@ fn add_cf(s: &mut Session, p: &Json) -> Result<Json> {
                 match t {
                     "min" => CfValueKind::Min,
                     "max" => CfValueKind::Max,
+                    "autoMin" => CfValueKind::AutoMin,
+                    "autoMax" => CfValueKind::AutoMax,
                     "percent" => CfValueKind::Percent(val),
                     "percentile" => CfValueKind::Percentile(val),
                     "formula" => CfValueKind::Formula(o.get("value").and_then(Json::as_str).unwrap_or("").into()),
@@ -1427,12 +1429,16 @@ fn add_cf(s: &mut Session, p: &Json) -> Result<Json> {
             };
             CfRule::ColorScale { stops }
         }
+        // Excel's Data Bars gallery: Automatic bounds unless given, bars from 0 % to 100 % of the
+        // cell. Excel's dialogs offer no other lengths.
         "dataBar" => CfRule::DataBar {
-            min: value_kind(rule.get("min"), CfValueKind::Min),
-            max: value_kind(rule.get("max"), CfValueKind::Max),
+            min: value_kind(rule.get("min"), CfValueKind::AutoMin),
+            max: value_kind(rule.get("max"), CfValueKind::AutoMax),
             color: super::format::color_param(rule.get("color")).unwrap_or(Color::rgb(0x63, 0x8E, 0xC6)),
             gradient: rule.get("gradient").and_then(Json::as_bool).unwrap_or(true),
             show_value: true,
+            min_length: 0,
+            max_length: 100,
         },
         "iconSet" => CfRule::IconSet {
             set: g("set").unwrap_or_else(|| "3TrafficLights1".into()),

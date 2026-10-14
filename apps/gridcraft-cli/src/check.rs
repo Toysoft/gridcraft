@@ -1453,7 +1453,15 @@ mod tests {
         use gridcraft_engine::model::{CfRule, CfValueKind, Color, CondFormat};
         let bar = |gradient: bool, priority: u32| CondFormat {
             ranges: vec![gridcraft_engine::core::RangeRef::parse("A1").unwrap()],
-            rule: CfRule::DataBar { min: CfValueKind::Min, max: CfValueKind::Max, color: Color::Rgb(0x638EC6), gradient, show_value: true },
+            rule: CfRule::DataBar {
+                min: CfValueKind::Min,
+                max: CfValueKind::Max,
+                color: Color::Rgb(0x638EC6),
+                gradient,
+                show_value: true,
+                min_length: 10,
+                max_length: 90,
+            },
             priority,
             stop_if_true: false,
         };

@@ -131,8 +131,14 @@ pub enum CfOperator {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CfValueKind {
+    /// Lowest Value: the lowest number in the range.
     Min,
+    /// Highest Value: the highest number in the range.
     Max,
+    /// Automatic, data bars only: 0, or the lowest number when that is negative (x14 `autoMin`).
+    AutoMin,
+    /// Automatic, data bars only: the highest number (x14 `autoMax`).
+    AutoMax,
     Number(f64),
     Percent(f64),
     Percentile(f64),
@@ -214,6 +220,12 @@ pub enum CfRule {
         color: Color,
         gradient: bool,
         show_value: bool,
+        /// Shortest and longest bar, in percent of the cell (`minLength`, `maxLength`); a file
+        /// that leaves them out means 10 and 90.
+        #[serde(default = "bar_min_length")]
+        min_length: u8,
+        #[serde(default = "bar_max_length")]
+        max_length: u8,
     },
     /// Icon set name (`3Arrows`, `3TrafficLights1`, `4Rating`, `5Quarters`…).
     IconSet {
@@ -222,6 +234,16 @@ pub enum CfRule {
         reverse: bool,
         show_value: bool,
     },
+}
+
+/// A data bar's shortest bar, in percent of the cell, when the file gives none.
+pub fn bar_min_length() -> u8 {
+    10
+}
+
+/// A data bar's longest bar, in percent of the cell, when the file gives none.
+pub fn bar_max_length() -> u8 {
+    90
 }
 
 /// Number of icons in an icon set (`3Arrows` → 3, `5Quarters` → 5), always 3 to 5.

@@ -9,7 +9,7 @@ use gridcraft_formula::Expr;
 use gridcraft_model::{
     AutoFilter, Cell, CfOperator, CfRule, CfValueKind, Comment, CondFormat, EditRange, ErrorStyle, FilterCriterion, Formula, Hyperlink, LineInfo,
     Orientation, PasswordHash, Sheet, SheetProtection, Sparkline, SparklineKind, Style, Table, TableColumn, TotalsFn, Validation, ValidationKind,
-    XmlColumnPr,
+    XmlColumnPr, bar_max_length, bar_min_length,
 };
 
 use crate::IoError;
@@ -563,8 +563,10 @@ fn cfvo(e: &El) -> CfValueKind {
     let val = e.attr("val").unwrap_or("");
     let n = val.trim().parse::<f64>().ok().filter(|v| v.is_finite());
     match e.attr("type").unwrap_or("num") {
-        "min" | "autoMin" => CfValueKind::Min,
-        "max" | "autoMax" => CfValueKind::Max,
+        "min" => CfValueKind::Min,
+        "max" => CfValueKind::Max,
+        "autoMin" => CfValueKind::AutoMin,
+        "autoMax" => CfValueKind::AutoMax,
         "percent" => n.map(CfValueKind::Percent).unwrap_or_else(|| CfValueKind::Formula(from_file(val))),
         "percentile" => n.map(CfValueKind::Percentile).unwrap_or_else(|| CfValueKind::Formula(from_file(val))),
         "formula" => CfValueKind::Formula(from_file(val)),
@@ -586,6 +588,11 @@ fn cfvos(e: &El) -> Vec<CfValueKind> {
             cfvo(c)
         })
         .collect()
+}
+
+/// A data bar's `minLength` or `maxLength`, in percent of the cell (0–100).
+fn bar_length(db: &El, name: &str, default: u8) -> u8 {
+    db.attr_u32(name).map_or(default, |n| n.min(100) as u8)
 }
 
 fn read_cf(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
@@ -665,6 +672,8 @@ fn cf_rule(cx: &Ctx<'_>, r: &El, ty: &str, formulas: Vec<String>, style: Box<Sty
                 color: db.child("color").map(|c| read_color(c, &cx.palette)).unwrap_or_default(),
                 gradient: true,
                 show_value: db.flag("showValue", true),
+                min_length: bar_length(db, "minLength", bar_min_length()),
+                max_length: bar_length(db, "maxLength", bar_max_length()),
             }
         }
         "iconSet" => {
@@ -685,8 +694,8 @@ fn cf_rule(cx: &Ctx<'_>, r: &El, ty: &str, formulas: Vec<String>, style: Box<Sty
 /// `xm:f` formulas, an inline `x14:dxf` and priorities shared with the main-section rules.
 /// Read: cellIs, expression, (not)containsBlanks, (not)containsErrors, duplicate/unique values,
 /// top10, aboveAverage and timePeriod. The x14 extension a main-section data bar links to by
-/// `x14:id` adds no rule, only that bar's solid fill (its other settings are skipped with a
-/// warning). Skipped with a warning (and so lost on save): other data bars, icon sets, colour
+/// `x14:id` adds no rule, only that bar's fill, bounds (Automatic `autoMin`/`autoMax` exist only
+/// here) and lengths; its other settings are skipped with a warning. Skipped with a warning (and so lost on save): other data bars, icon sets, colour
 /// scales and the text rules containsText, notContainsText, beginsWith and endsWith.
 fn read_x14_cf(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
     for cf in e.kids("conditionalFormatting") {
@@ -696,11 +705,22 @@ fn read_x14_cf(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
             let linked = r.attr("id").and_then(|id| cx.cf_ext_ids.iter().find(|(i, _)| i == id.trim())).map(|(_, n)| *n);
             if let Some(n) = linked {
                 match (sheet.cond_formats.get_mut(n), r.child("dataBar")) {
-                    (Some(CondFormat { rule: CfRule::DataBar { gradient, .. }, .. }), Some(db)) => {
+                    (Some(CondFormat { rule: CfRule::DataBar { min, max, gradient, min_length, max_length, .. }, .. }), Some(db)) => {
                         *gradient = db.flag("gradient", true);
-                        // Only the fill style is modelled; borders, lengths, axis or negative colours are lost.
-                        if db.attrs.iter().any(|(k, _)| k != "gradient") || db.children.iter().any(|k| k.name != "cfvo") {
-                            cx.warn(format!("Excel 2010 conditional format extension \"{ty}\" was partly skipped (only its solid fill is kept)"));
+                        // The main section writes Automatic as min/max; Excel 2010 reads the bounds here.
+                        let v = cfvos(db);
+                        if let [lo, hi, ..] = v.as_slice() {
+                            (*min, *max) = (lo.clone(), hi.clone());
+                        }
+                        *min_length = bar_length(db, "minLength", bar_min_length());
+                        *max_length = bar_length(db, "maxLength", bar_max_length());
+                        // Borders, the axis and negative bar colours aren't modelled, so they are lost.
+                        if db.attrs.iter().any(|(k, _)| !matches!(k.as_str(), "gradient" | "minLength" | "maxLength"))
+                            || db.children.iter().any(|k| k.name != "cfvo")
+                        {
+                            cx.warn(format!(
+                                "Excel 2010 conditional format extension \"{ty}\" was partly skipped (only its fill, bounds and lengths are kept)"
+                            ));
                         }
                     }
                     _ => cx.warn(format!("Excel 2010 conditional format extension \"{ty}\" was skipped")),

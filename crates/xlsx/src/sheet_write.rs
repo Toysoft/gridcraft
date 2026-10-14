@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use gridcraft_core::{CellError, CellRef, RangeRef, Value};
 use gridcraft_model::{
     Cell, CfOperator, CfRule, CfValueKind, Color, CondFormat, ErrorStyle, FilterCriterion, LineInfo, Orientation, Sheet, SparklineKind, Style, Table,
-    TotalsFn, Validation, ValidationKind, Workbook, default_icon_thresholds, icon_count,
+    TotalsFn, Validation, ValidationKind, Workbook, bar_max_length, bar_min_length, default_icon_thresholds, icon_count,
 };
 
 use crate::drawing::{Obj, image_content_type, image_ext};
@@ -368,7 +368,7 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
     }
     // Rules referring to other sheets go to the Excel 2010 extension, as the one such file seen
     // (saved by LibreOffice) places them; where Excel itself puts them is unverified.
-    // A solid data bar is in both sections: the extension holds its fill.
+    // A data bar whose fill, Automatic bounds or lengths only Excel 2010 holds is in both sections.
     let mut x14_cf = String::new();
     for (i, cf) in sheet.cond_formats.iter().enumerate() {
         if cf.ranges.is_empty() {
@@ -380,7 +380,7 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
             None => {
                 let _ =
                     write!(s, "<conditionalFormatting sqref=\"{}\">{}</conditionalFormatting>", sqref(&cf.ranges), cf_rule_xml(cf, priority, out));
-                solid_bar_x14(cf, priority)
+                bar_x14(cf, priority)
             }
         };
         if let Some(rule) = x14 {
@@ -731,8 +731,10 @@ fn write_cell(
 
 fn cfvo_xml(v: &CfValueKind) -> String {
     match v {
-        CfValueKind::Min => "<cfvo type=\"min\"/>".into(),
-        CfValueKind::Max => "<cfvo type=\"max\"/>".into(),
+        // The main section has no Automatic bounds: Excel writes them as min/max there, and as
+        // autoMin/autoMax in the data bar's x14 rule.
+        CfValueKind::Min | CfValueKind::AutoMin => "<cfvo type=\"min\"/>".into(),
+        CfValueKind::Max | CfValueKind::AutoMax => "<cfvo type=\"max\"/>".into(),
         CfValueKind::Number(n) => format!("<cfvo type=\"num\" val=\"{}\"/>", num(*n)),
         CfValueKind::Percent(n) => format!("<cfvo type=\"percent\" val=\"{}\"/>", num(*n)),
         CfValueKind::Percentile(n) => format!("<cfvo type=\"percentile\" val=\"{}\"/>", num(*n)),
@@ -747,22 +749,36 @@ fn quote(t: &str) -> String {
 const X14_NS: &str = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main";
 const XM_NS: &str = "http://schemas.microsoft.com/office/excel/2006/main";
 
-/// The id linking a solid data bar's `cfRule` to its x14 extension; unique per sheet because priorities are.
-fn solid_bar_id(priority: u32) -> String {
+/// The id linking a data bar's `cfRule` to its x14 extension; unique per sheet because priorities are.
+fn bar_x14_id(priority: u32) -> String {
     format!("{{00000000-0000-0000-0000-{priority:012}}}")
 }
 
-/// The `cfRule` extension that points a solid data bar at its x14 rule.
-fn solid_bar_ext(priority: u32) -> String {
-    let id = solid_bar_id(priority);
+/// The `cfRule` extension that points a data bar at its x14 rule.
+fn bar_x14_ext(priority: u32) -> String {
+    let id = bar_x14_id(priority);
     format!("<extLst><ext uri=\"{{B025F937-C7B1-47D3-B67F-A62EFF666E3E}}\" xmlns:x14=\"{X14_NS}\"><x14:id>{id}</x14:id></ext></extLst>")
 }
 
-/// The x14 rule a solid data bar's `cfRule` links to (it holds the fill); `None` for other rules.
-fn solid_bar_x14(cf: &CondFormat, priority: u32) -> Option<String> {
-    let CfRule::DataBar { min, max, gradient: false, .. } = &cf.rule else { return None };
-    let (id, lo, hi) = (solid_bar_id(priority), x14_cfvo(min), x14_cfvo(max));
-    Some(format!("<x14:cfRule type=\"dataBar\" id=\"{id}\"><x14:dataBar gradient=\"0\">{lo}{hi}</x14:dataBar></x14:cfRule>"))
+/// Whether a data bar needs its x14 rule: a solid fill, an Automatic bound or lengths other than
+/// the file's default 10–90 exist only there (Excel 2010 writes one for every bar).
+fn bar_needs_x14(rule: &CfRule) -> bool {
+    let CfRule::DataBar { min, max, gradient, min_length, max_length, .. } = rule else { return false };
+    let auto = |k: &CfValueKind| matches!(k, CfValueKind::AutoMin | CfValueKind::AutoMax);
+    !gradient || auto(min) || auto(max) || (*min_length, *max_length) != (bar_min_length(), bar_max_length())
+}
+
+/// The x14 rule a data bar's `cfRule` links to (fill, bounds, lengths); `None` for other rules.
+fn bar_x14(cf: &CondFormat, priority: u32) -> Option<String> {
+    let CfRule::DataBar { min, max, gradient, min_length, max_length, .. } = &cf.rule else { return None };
+    if !bar_needs_x14(&cf.rule) {
+        return None;
+    }
+    let (id, lo, hi) = (bar_x14_id(priority), x14_cfvo(min), x14_cfvo(max));
+    let fill = if *gradient { "" } else { " gradient=\"0\"" };
+    Some(format!(
+        "<x14:cfRule type=\"dataBar\" id=\"{id}\"><x14:dataBar minLength=\"{min_length}\" maxLength=\"{max_length}\"{fill}>{lo}{hi}</x14:dataBar></x14:cfRule>"
+    ))
 }
 
 /// An x14 `cfvo`: unlike the 2006 one it has no `val` attribute, the value is an `xm:f` child.
@@ -770,6 +786,8 @@ fn x14_cfvo(v: &CfValueKind) -> String {
     let (ty, val) = match v {
         CfValueKind::Min => return "<x14:cfvo type=\"min\"/>".into(),
         CfValueKind::Max => return "<x14:cfvo type=\"max\"/>".into(),
+        CfValueKind::AutoMin => return "<x14:cfvo type=\"autoMin\"/>".into(),
+        CfValueKind::AutoMax => return "<x14:cfvo type=\"autoMax\"/>".into(),
         CfValueKind::Number(n) => ("num", num(*n)),
         CfValueKind::Percent(n) => ("percent", num(*n)),
         CfValueKind::Percentile(n) => ("percentile", num(*n)),
@@ -873,13 +891,18 @@ fn cf_rule_xml(cf: &CondFormat, priority: u32, out: &mut Out) -> String {
             b.push_str("</colorScale>");
             format!("<cfRule type=\"colorScale\" priority=\"{priority}\"{stop}>{b}</cfRule>")
         }
-        CfRule::DataBar { min, max, color, show_value, gradient } => format!(
-            "<cfRule type=\"dataBar\" priority=\"{priority}\"{stop}><dataBar{}>{}{}<color {}/></dataBar>{}</cfRule>",
+        CfRule::DataBar { min, max, color, show_value, min_length, max_length, .. } => format!(
+            "<cfRule type=\"dataBar\" priority=\"{priority}\"{stop}><dataBar{}{}>{}{}<color {}/></dataBar>{}</cfRule>",
+            if (*min_length, *max_length) == (bar_min_length(), bar_max_length()) {
+                String::new()
+            } else {
+                format!(" minLength=\"{min_length}\" maxLength=\"{max_length}\"")
+            },
             if *show_value { "" } else { " showValue=\"0\"" },
             cfvo_xml(min),
             cfvo_xml(max),
             if *color == Color::Auto { "rgb=\"FF638EC6\"".to_string() } else { color_attrs(color) },
-            if *gradient { String::new() } else { solid_bar_ext(priority) }
+            if bar_needs_x14(&cf.rule) { bar_x14_ext(priority) } else { String::new() }
         ),
         CfRule::IconSet { set, thresholds, reverse, show_value } => {
             let mut b = format!("<iconSet iconSet=\"{}\"", esc_attr(set));

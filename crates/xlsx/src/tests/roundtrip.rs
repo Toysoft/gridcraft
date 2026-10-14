@@ -152,6 +152,8 @@ fn sample() -> Workbook {
             color: Color::Rgb(0x638EC6),
             gradient: true,
             show_value: false,
+            min_length: 5,
+            max_length: 95,
         },
         CfRule::IconSet {
             set: "3Arrows".into(),
@@ -872,8 +874,9 @@ const X14_CF_SHEET: &str = r#"<sheetData/>
 
 /// Rules in the `x14:conditionalFormattings` extension (such as those referring to other sheets)
 /// carry `xm:f` formulas and an inline `x14:dxf`; their priorities interleave with the main
-/// section's. A data bar's linked extension adds no rule, only the bar's solid fill (its other
-/// settings are skipped with a warning); x14 icon sets are skipped with a warning.
+/// section's. A data bar's linked extension adds no rule, only the bar's fill, bounds and lengths
+/// (`data_bar_bounds_and_lengths` covers the settings it skips); x14 icon sets are skipped with a
+/// warning.
 #[test]
 fn x14_conditional_formats_are_read() {
     let (wb, rep) = read_xlsx(&super::minimal(X14_CF_SHEET, &[], "", "")).unwrap();
@@ -890,7 +893,11 @@ fn x14_conditional_formats_are_read() {
         }
         r => panic!("{r:?}"),
     }
-    assert!(matches!(bar.rule, CfRule::DataBar { gradient: false, .. }), "{bar:?}");
+    let auto_solid_0_100 = matches!(
+        bar.rule,
+        CfRule::DataBar { min: CfValueKind::AutoMin, max: CfValueKind::AutoMax, gradient: false, min_length: 0, max_length: 100, .. }
+    );
+    assert!(auto_solid_0_100, "{bar:?}");
     assert_eq!(bar.ranges, [rr("B1:B5")]);
     match &cell.rule {
         CfRule::CellIs { op, a, b, style } => {
@@ -903,10 +910,70 @@ fn x14_conditional_formats_are_read() {
         }
         r => panic!("{r:?}"),
     }
-    // Unsupported x14 kinds still warn, by name; nothing else does.
-    assert!(rep.warnings.iter().any(|w| w.contains("\"dataBar\"")), "{:?}", rep.warnings);
+    // Unsupported x14 kinds still warn, by name; nothing else does (this bar has no setting the
+    // model lacks).
     assert!(rep.warnings.iter().any(|w| w.contains("\"iconSet\"")), "{:?}", rep.warnings);
-    assert_eq!(rep.warnings.iter().filter(|w| w.contains("conditional format")).count(), 2, "{:?}", rep.warnings);
+    assert_eq!(rep.warnings.iter().filter(|w| w.contains("conditional format")).count(), 1, "{:?}", rep.warnings);
+}
+
+/// Excel writes a data bar's Automatic bounds as `min`/`max` in the main section and as
+/// `autoMin`/`autoMax` in its x14 rule, together with the bar lengths (issues #1158, #1159).
+const DATA_BAR_SHEET: &str = r#"<sheetData/>
+  <conditionalFormatting sqref="B1:B5"><cfRule type="dataBar" priority="1"><dataBar><cfvo type="min"/><cfvo type="max"/><color rgb="FF638EC6"/></dataBar><extLst><ext uri="{B025F937-C7B1-47D3-B67F-A62EFF666E3E}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:id>{00000000-0000-0000-0000-00000000000B}</x14:id></ext></extLst></cfRule></conditionalFormatting>
+  <conditionalFormatting sqref="C1:C5"><cfRule type="dataBar" priority="2"><dataBar><cfvo type="min"/><cfvo type="max"/><color rgb="FF638EC6"/></dataBar><extLst><ext uri="{B025F937-C7B1-47D3-B67F-A62EFF666E3E}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:id>{00000000-0000-0000-0000-00000000000C}</x14:id></ext></extLst></cfRule></conditionalFormatting>
+  <conditionalFormatting sqref="D1:D5"><cfRule type="dataBar" priority="3"><dataBar><cfvo type="min"/><cfvo type="max"/><color rgb="FF638EC6"/></dataBar></cfRule></conditionalFormatting>
+  <conditionalFormatting sqref="E1:E5"><cfRule type="dataBar" priority="4"><dataBar minLength="20" maxLength="80"><cfvo type="num" val="2"/><cfvo type="percent" val="90"/><color rgb="FF638EC6"/></dataBar></cfRule></conditionalFormatting>
+  <extLst><ext uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:conditionalFormattings>
+    <x14:conditionalFormatting xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main"><x14:cfRule type="dataBar" id="{00000000-0000-0000-0000-00000000000B}"><x14:dataBar minLength="0" maxLength="100" border="1" negativeBarBorderColorSameAsPositive="0"><x14:cfvo type="autoMin"/><x14:cfvo type="autoMax"/><x14:borderColor rgb="FF638EC6"/><x14:negativeFillColor rgb="FFFF0000"/><x14:negativeBorderColor rgb="FFFF0000"/><x14:axisColor rgb="FF000000"/></x14:dataBar></x14:cfRule><xm:sqref>B1:B5</xm:sqref></x14:conditionalFormatting>
+    <x14:conditionalFormatting xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main"><x14:cfRule type="dataBar" id="{00000000-0000-0000-0000-00000000000C}"><x14:dataBar minLength="0" maxLength="100" gradient="0"><x14:cfvo type="min"/><x14:cfvo type="max"/></x14:dataBar></x14:cfRule><xm:sqref>C1:C5</xm:sqref></x14:conditionalFormatting>
+  </x14:conditionalFormattings></ext></extLst>"#;
+
+#[test]
+fn data_bar_bounds_and_lengths() {
+    let (wb, rep) = read_xlsx(&super::minimal(DATA_BAR_SHEET, &[], "", "")).unwrap();
+    let mut cfs = wb.sheet(0).unwrap().cond_formats.clone();
+    cfs.sort_by_key(|cf| cf.priority);
+    let bars: Vec<_> = cfs
+        .iter()
+        .map(|cf| match &cf.rule {
+            CfRule::DataBar { min, max, gradient, min_length, max_length, .. } => (min.clone(), max.clone(), *gradient, *min_length, *max_length),
+            r => panic!("{r:?}"),
+        })
+        .collect();
+    use CfValueKind::*;
+    assert_eq!(
+        bars,
+        [
+            // Excel's gallery bar: Automatic, 0–100 %.
+            (AutoMin, AutoMax, true, 0, 100),
+            // Lowest and Highest Value in both sections.
+            (Min, Max, false, 0, 100),
+            // No x14 rule (Excel 2007, other writers): the lowest value, file default lengths.
+            (Min, Max, true, 10, 90),
+            (Number(2.0), Percent(90.0), true, 20, 80),
+        ]
+    );
+    // The border, axis and negative bar colours of the first bar aren't modelled.
+    let partly = rep.warnings.iter().filter(|w| w.contains("\"dataBar\" was partly skipped")).count();
+    assert_eq!(partly, 1, "{:?}", rep.warnings);
+
+    // Written back: Automatic only in the x14 rule, lengths in both; a bar that needs nothing
+    // from Excel 2010 gets no x14 rule.
+    let bytes = write_xlsx(&wb).unwrap();
+    let (xml, _) = sheet1_xml(&bytes);
+    assert_eq!(xml.matches("<x14:cfRule type=\"dataBar\"").count(), 3, "{xml}");
+    assert!(
+        xml.contains("<x14:dataBar minLength=\"0\" maxLength=\"100\"><x14:cfvo type=\"autoMin\"/><x14:cfvo type=\"autoMax\"/></x14:dataBar>"),
+        "{xml}"
+    );
+    assert!(xml.contains("<x14:dataBar minLength=\"0\" maxLength=\"100\" gradient=\"0\"><x14:cfvo type=\"min\"/><x14:cfvo type=\"max\"/>"), "{xml}");
+    assert!(xml.contains("<dataBar minLength=\"20\" maxLength=\"80\"><cfvo type=\"num\" val=\"2\"/>"), "{xml}");
+    assert!(!xml.contains("<cfvo type=\"autoMin\"") && !xml.contains("<cfvo type=\"autoMax\""), "{xml}");
+    let (back, rep) = read_xlsx(&bytes).unwrap();
+    let mut again = back.sheet(0).unwrap().cond_formats.clone();
+    again.sort_by_key(|cf| cf.priority);
+    assert_eq!(again.iter().map(|cf| &cf.rule).collect::<Vec<_>>(), cfs.iter().map(|cf| &cf.rule).collect::<Vec<_>>());
+    assert!(rep.warnings.is_empty(), "{:?}", rep.warnings);
 }
 
 /// A rule referring to another sheet is written in the x14 extension (as the LibreOffice-saved
@@ -1265,8 +1332,15 @@ fn solid_data_bar_survives_with_sparklines_and_gradient_neighbours() {
     let mut wb = Workbook::new();
     let s = wb.sheet_mut(0).unwrap();
     s.set_value(at("A1"), Value::Number(1.0));
-    let bar =
-        |gradient: bool, max: CfValueKind| CfRule::DataBar { min: CfValueKind::Min, max, color: Color::Rgb(0x638EC6), gradient, show_value: true };
+    let bar = |gradient: bool, max: CfValueKind| CfRule::DataBar {
+        min: CfValueKind::Min,
+        max,
+        color: Color::Rgb(0x638EC6),
+        gradient,
+        show_value: true,
+        min_length: 10,
+        max_length: 90,
+    };
     let rules = [(true, "A1", CfValueKind::Max), (false, "B1", CfValueKind::Formula("$C$1".into())), (false, "D1:D3", CfValueKind::Number(9.0))];
     for (i, (gradient, range, max)) in rules.into_iter().enumerate() {
         s.cond_formats.push(CondFormat { ranges: vec![rr(range)], rule: bar(gradient, max), priority: i as u32 + 1, stop_if_true: false });

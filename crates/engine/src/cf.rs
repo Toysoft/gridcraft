@@ -73,7 +73,8 @@ fn threshold(wb: &Workbook, sheet: usize, at: CellRef, st: &RuleStats, k: &CfVal
     let max = st.sorted.last().copied().unwrap_or(0.0);
     match k {
         CfValueKind::Min => min,
-        CfValueKind::Max => max,
+        CfValueKind::Max | CfValueKind::AutoMax => max,
+        CfValueKind::AutoMin => min.min(0.0),
         CfValueKind::Number(n) => *n,
         CfValueKind::Percent(p) => min + (max - min) * p / 100.0,
         CfValueKind::Percentile(p) => percentile(&st.sorted, *p),
@@ -238,18 +239,18 @@ impl CfCache {
                     }
                     None
                 }
-                CfRule::DataBar { min, max, color, gradient, show_value } => {
+                CfRule::DataBar { min, max, color, gradient, show_value, min_length, max_length } => {
                     if let Some(n) = v.as_f64() {
+                        // As in Excel: the value's place between the bounds, mapped onto the
+                        // rule's shortest..longest bar. Only Automatic starts the bar at 0.
+                        // (Excel's automatic axis, not modelled, halves a nonzero shortest bar.)
                         let lo = threshold(wb, sheet, c, &st, min);
                         let hi = threshold(wb, sheet, c, &st, max);
-                        let lo = if lo > 0.0 { 0.0 } else { lo };
                         let frac = if hi > lo { ((n - lo) / (hi - lo)).clamp(0.0, 1.0) } else { 1.0 };
+                        let (short, long) = (f64::from((*min_length).min(100)), f64::from((*max_length).min(100)));
+                        let len = ((short + (long - short) * frac) / 100.0).clamp(0.0, 1.0);
                         if out.bar.is_none() {
-                            out.bar = Some((
-                                (frac as f32) * 0.9 + 0.1 * (frac > 0.0) as u8 as f32,
-                                color.resolve(&wb.theme).unwrap_or([0x63, 0x8E, 0xC6]),
-                                *gradient,
-                            ));
+                            out.bar = Some((len as f32, color.resolve(&wb.theme).unwrap_or([0x63, 0x8E, 0xC6]), *gradient));
                             out.hide_value |= !show_value;
                             any = true;
                         }
@@ -371,6 +372,80 @@ mod tests {
         let both = look("A3").unwrap();
         assert_eq!(both.fill, only_fill.fill);
         assert!(!both.borders.top.is_none());
+    }
+
+    #[test]
+    fn data_bar_lengths_as_in_excel() {
+        // Issues #1158 and #1159: bar lengths in Excel for Microsoft 365, as a fraction of the
+        // cell, read from captures of its window. Only Automatic starts the bar at 0.
+        let check = |values: std::ops::RangeInclusive<i32>, rule: serde_json::Value, excel: &[(i32, f32)]| {
+            let mut s = crate::Session::new();
+            s.new_workbook();
+            let col: Vec<_> = values.clone().map(|v| json!([v])).collect();
+            s.execute("range.setValues", json!({"range": "A1", "values": col})).unwrap();
+            s.execute("range.setValues", json!({"range": "Z1", "values": [[2], [9]]})).unwrap();
+            s.execute("home.conditionalFormat", json!({"range": format!("A1:A{}", col.len()), "rule": rule})).unwrap();
+            let d = s.doc().unwrap();
+            let mut cache = CfCache::new();
+            for &(v, want) in excel {
+                let row = values.clone().position(|x| x == v).unwrap() + 1;
+                let got = cache.look(&d.wb, 0, CellRef::parse(&format!("A{row}")).unwrap()).and_then(|l| l.bar).unwrap().0;
+                assert!((got - want).abs() < 0.02, "{rule}: {v} has a bar of {got}, Excel {want}");
+            }
+        };
+        let bar = |min: serde_json::Value, max: serde_json::Value| json!({"type": "dataBar", "min": min, "max": max});
+        let k = |t: &str, v: f64| json!({"type": t, "value": v});
+        let (lowest, highest) = (json!({"type": "min"}), json!({"type": "max"}));
+        // The command's defaults are those of Excel's Data Bars gallery: Automatic, 0–100 %.
+        check(10..=20, json!({"type": "dataBar"}), &[(10, 0.50), (20, 1.0)]);
+        check(0..=10, bar(k("num", 3.0), k("num", 8.0)), &[(3, 0.0), (4, 0.20), (6, 0.60), (8, 1.0)]);
+        check(0..=10, bar(k("percent", 20.0), k("percent", 80.0)), &[(3, 0.17), (5, 0.50)]);
+        check(0..=10, bar(k("percentile", 10.0), k("percentile", 90.0)), &[(2, 0.13), (5, 0.50)]);
+        let formula = |f: &str| json!({"type": "formula", "value": f});
+        check(0..=10, bar(formula("$Z$1"), formula("$Z$2")), &[(3, 0.14), (6, 0.57)]);
+        check(10..=20, bar(lowest.clone(), highest.clone()), &[(10, 0.0), (15, 0.50)]);
+        check(0..=10, bar(lowest, highest), &[(1, 0.10), (5, 0.50)]);
+    }
+
+    #[test]
+    fn data_bar_lengths_from_a_file() {
+        // A file's bar lengths, as Excel draws them without an axis (and for a bar without the
+        // Excel 2010 part, which means 10–90 %: GridCraft's bars before #1159, opened in Excel).
+        let excel: [((u8, u8), [(f64, f32); 3]); 4] = [
+            ((10, 90), [(10.0, 0.10), (12.0, 0.26), (20.0, 0.89)]),
+            ((50, 100), [(10.0, 0.51), (15.0, 0.76), (20.0, 1.0)]),
+            ((20, 100), [(10.0, 0.21), (15.0, 0.60), (20.0, 1.0)]),
+            ((40, 60), [(10.0, 0.40), (15.0, 0.50), (20.0, 0.60)]),
+        ];
+        let mut wb = Workbook::new();
+        let sh = wb.sheet_mut(0).unwrap();
+        for (col, ((min_length, max_length), _)) in excel.iter().enumerate() {
+            for (row, v) in (10..=20).enumerate() {
+                sh.set_value(CellRef::new(row as u32, col as u32), Value::Number(f64::from(v)));
+            }
+            sh.cond_formats.push(CondFormat {
+                ranges: vec![RangeRef::new(CellRef::new(0, col as u32), CellRef::new(10, col as u32))],
+                rule: CfRule::DataBar {
+                    min: CfValueKind::Min,
+                    max: CfValueKind::Max,
+                    color: Color::Auto,
+                    gradient: false,
+                    show_value: true,
+                    min_length: *min_length,
+                    max_length: *max_length,
+                },
+                priority: col as u32 + 1,
+                stop_if_true: false,
+            });
+        }
+        let mut cache = CfCache::new();
+        for (col, (lengths, probes)) in excel.iter().enumerate() {
+            for (v, want) in probes {
+                let at = CellRef::new(*v as u32 - 10, col as u32);
+                let got = cache.look(&wb, 0, at).and_then(|l| l.bar).unwrap().0;
+                assert!((got - want).abs() < 0.02, "{lengths:?}: {v} has a bar of {got}, Excel {want}");
+            }
+        }
     }
 
     #[test]
