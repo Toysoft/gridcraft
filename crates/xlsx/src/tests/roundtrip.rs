@@ -394,6 +394,7 @@ fn sample() -> Workbook {
         by_rows: false,
         pivot: None,
         axis_number_formats: Default::default(),
+        pivot_label_formats: Vec::new(),
     };
     for kind in [
         ChartKind::ColumnClustered,

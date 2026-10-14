@@ -1587,10 +1587,14 @@ fn rebind_charts(wb: &mut Workbook, sheet: &str, pivot: &str, origin: CellRef, o
         let Some(sh) = wb.sheet_mut(i) else { continue };
         for ch in sh.charts.iter_mut().filter(|c| linked(c)) {
             let old = std::mem::replace(&mut ch.series, series.clone());
-            // Typed label formats are the chart's, by series position (Excel's pivotFmts).
-            for (new, old) in ch.series.iter_mut().zip(old) {
-                new.label_number_format = old.label_number_format;
+            // Typed label formats go by series position. Positions past the old series keep
+            // the formats an earlier refresh dropped with them.
+            let mut fmts: Vec<Option<String>> = old.into_iter().map(|s| s.label_number_format).collect();
+            fmts.extend(ch.pivot_label_formats.drain(..).skip(fmts.len()));
+            for (new, f) in ch.series.iter_mut().zip(&fmts) {
+                new.label_number_format.clone_from(f);
             }
+            ch.pivot_label_formats = fmts;
         }
     }
 }

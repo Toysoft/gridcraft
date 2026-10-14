@@ -49,6 +49,73 @@ fn typed_formats_are_read_and_linked_ones_are_not() {
     assert_eq!(labels, [Some("0;;;"), None, Some("0.0%")]);
 }
 
+fn read(plot: &str) -> Chart {
+    read_chart(&parse(format!("<c:chartSpace {NS}><c:chart><c:plotArea>{plot}</c:plotArea></c:chart></c:chartSpace>").as_bytes()).unwrap()).unwrap()
+}
+
+#[test]
+fn a_percentage_label_format_is_not_applied_to_values() {
+    // Driver-Safety-Scorecard's doughnut: labels show percentages only, in `0.0%`. On the values
+    // that format would read 3 as "300.0%".
+    let ch = read(
+        "<c:doughnutChart><c:ser><c:idx val=\"0\"/><c:order val=\"0\"/>\
+         <c:dLbls><c:numFmt formatCode=\"0.0%\" sourceLinked=\"0\"/><c:showVal val=\"0\"/><c:showPercent val=\"1\"/></c:dLbls>\
+         <c:val><c:numRef><c:f>Data!$B$2:$B$5</c:f></c:numRef></c:val></c:ser>\
+         <c:dLbls><c:numFmt formatCode=\"0.00%\" sourceLinked=\"0\"/><c:showVal val=\"1\"/></c:dLbls></c:doughnutChart>",
+    );
+    // The series' own labels win over the group's, so the group format doesn't step in either.
+    assert_eq!(ch.series[0].label_number_format, None);
+}
+
+#[test]
+fn a_format_typed_for_sizes_or_x_values_is_not_applied_to_values() {
+    let labels = |group: &str, shows: &str| {
+        let ch = read(&format!(
+            "<c:{group}><c:ser><c:idx val=\"0\"/><c:order val=\"0\"/>\
+             <c:dLbls><c:numFmt formatCode=\"0&quot; kg&quot;\" sourceLinked=\"0\"/>{shows}</c:dLbls>\
+             <c:yVal><c:numRef><c:f>Data!$B$2:$B$5</c:f></c:numRef></c:yVal></c:ser></c:{group}>"
+        ));
+        ch.series[0].label_number_format.clone()
+    };
+    let kg = Some("0\" kg\"".to_string());
+    let off = "<c:showVal val=\"0\"/>";
+    assert_eq!(labels("bubbleChart", &format!("{off}<c:showBubbleSize val=\"1\"/>")), None);
+    assert_eq!(labels("scatterChart", &format!("{off}<c:showCatName val=\"1\"/>")), None);
+    // Values shown next to the sizes take the format; category names on a column chart are text.
+    assert_eq!(labels("bubbleChart", "<c:showVal val=\"1\"/><c:showBubbleSize val=\"1\"/>"), kg);
+    assert_eq!(labels("barChart", &format!("{off}<c:showCatName val=\"1\"/>")), kg);
+    // Labels showing nothing yet keep it for when values are switched on.
+    assert_eq!(labels("bubbleChart", off), kg);
+}
+
+#[test]
+fn a_hidden_value_axis_keeps_no_typed_format() {
+    // ELD-Unverified-Logs: a 100% stacked chart whose deleted value axis says `#,##0`. Drawn, it
+    // would label 0% to 100% as 0, 0, 0, 1, 1, 1.
+    let ch = read(
+        "<c:barChart><c:barDir val=\"col\"/><c:grouping val=\"percentStacked\"/>\
+         <c:ser><c:idx val=\"0\"/><c:order val=\"0\"/><c:val><c:numRef><c:f>Data!$B$2:$B$5</c:f></c:numRef></c:val></c:ser>\
+         <c:axId val=\"1\"/><c:axId val=\"2\"/></c:barChart>\
+         <c:catAx><c:axId val=\"1\"/><c:crossAx val=\"2\"/></c:catAx>\
+         <c:valAx><c:axId val=\"2\"/><c:delete val=\"1\"/><c:numFmt formatCode=\"#,##0\" sourceLinked=\"0\"/><c:crossAx val=\"1\"/></c:valAx>",
+    );
+    assert_eq!(ch.axis_number_formats, AxisNumberFormats::default());
+}
+
+#[test]
+fn scatter_axes_are_the_groups_own_and_x_comes_first() {
+    // openpyxl writes axPos "l" on both scatter axes; an unrelated value axis is listed first.
+    let ch = read(
+        "<c:scatterChart><c:ser><c:idx val=\"0\"/><c:order val=\"0\"/>\
+         <c:xVal><c:numRef><c:f>Data!$A$2:$A$5</c:f></c:numRef></c:xVal><c:yVal><c:numRef><c:f>Data!$B$2:$B$5</c:f></c:numRef></c:yVal></c:ser>\
+         <c:axId val=\"10\"/><c:axId val=\"20\"/></c:scatterChart>\
+         <c:valAx><c:axId val=\"99\"/><c:axPos val=\"b\"/><c:numFmt formatCode=\"@\" sourceLinked=\"0\"/><c:crossAx val=\"98\"/></c:valAx>\
+         <c:valAx><c:axId val=\"10\"/><c:axPos val=\"l\"/><c:numFmt formatCode=\"0.0\" sourceLinked=\"0\"/><c:crossAx val=\"20\"/></c:valAx>\
+         <c:valAx><c:axId val=\"20\"/><c:axPos val=\"l\"/><c:numFmt formatCode=\"0%\" sourceLinked=\"0\"/><c:crossAx val=\"10\"/></c:valAx>",
+    );
+    assert_eq!(ch.axis_number_formats, AxisNumberFormats { x: Some("0.0".into()), y: Some("0%".into()), y2: None });
+}
+
 fn series(values: &str, label: Option<&str>) -> Series {
     Series { values: values.into(), label_number_format: label.map(str::to_string), ..Series::default() }
 }
@@ -70,6 +137,7 @@ fn chart(id: u32, kind: ChartKind, series: Vec<Series>, axes: AxisNumberFormats)
         by_rows: false,
         pivot: None,
         axis_number_formats: axes,
+        pivot_label_formats: Vec::new(),
     }
 }
 

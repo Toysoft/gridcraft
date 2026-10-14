@@ -1446,6 +1446,7 @@ fn insert_pivot_chart(s: &mut Session, p: &Json) -> Result<Json> {
         by_rows: false,
         pivot: Some(link),
         axis_number_formats: Default::default(),
+        pivot_label_formats: Vec::new(),
     };
     edit(s, |cx| {
         cx.sheet_mut(si)?.charts.push(chart);
@@ -2031,6 +2032,30 @@ mod tests {
         // Deleting the PivotTable leaves an ordinary chart.
         s.execute("pivot.delete", json!({})).unwrap();
         assert_eq!(pivot_chart(&s).pivot, None);
+    }
+
+    #[test]
+    fn pivot_chart_label_formats_come_back_with_dropped_series() {
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Product"], "values": ["Sales"]})).unwrap();
+        s.execute("insert.pivotChart", json!({"pivot": "B5"})).unwrap();
+        let labels = |s: &Session| pivot_chart(s).series.iter().map(|x| x.label_number_format.clone()).collect::<Vec<_>>();
+        let typed = ["0;;;", "0.0", "#,##0"].map(|f| Some(f.to_string()));
+        {
+            let d = s.doc_mut().unwrap();
+            let si = d.wb.active_sheet;
+            let ch = std::sync::Arc::make_mut(&mut d.wb).sheet_mut(si).unwrap().charts.last_mut().unwrap();
+            for (x, f) in ch.series.iter_mut().zip(&typed) {
+                x.label_number_format.clone_from(f);
+            }
+        }
+        assert_eq!(labels(&s), typed);
+        // Filtering to one product drops the other two series; clearing the filter restores
+        // them with the formats they had.
+        s.execute("pivot.filter", json!({"field": "Product", "selected": ["Apples"]})).unwrap();
+        assert_eq!(labels(&s), typed[..1]);
+        s.execute("pivot.filter", json!({"field": "Product", "selected": null})).unwrap();
+        assert_eq!(labels(&s), typed);
     }
 
     #[test]

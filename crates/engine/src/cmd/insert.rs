@@ -764,6 +764,7 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
         by_rows,
         pivot: None,
         axis_number_formats: Default::default(),
+        pivot_label_formats: Vec::new(),
     };
     Ok((sheet, chart))
 }

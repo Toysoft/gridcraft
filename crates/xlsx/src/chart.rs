@@ -83,7 +83,7 @@ fn data_ref(e: Option<&El>) -> Option<String> {
     None
 }
 
-fn read_series(s: &El) -> Series {
+fn read_series(s: &El, xy: bool) -> Series {
     let name = s.child("tx").and_then(|tx| {
         if let Some(f) = tx.path(&["strRef", "f"]) {
             let t = f.text.trim();
@@ -108,7 +108,7 @@ fn read_series(s: &El) -> Series {
         kind: None,
         smooth: bool_val(s, "smooth"),
         trendlines: s.kids("trendline").filter_map(read_trendline).collect(),
-        label_number_format: typed_num_fmt(s.path(&["dLbls", "numFmt"])),
+        label_number_format: label_num_fmt(s.child("dLbls"), xy),
     }
 }
 
@@ -191,6 +191,22 @@ fn typed_num_fmt(e: Option<&El>) -> Option<String> {
     e.attr("formatCode").map(str::trim).filter(|c| !c.is_empty()).map(str::to_string)
 }
 
+/// The typed number format of a `<c:dLbls>` that shows values. Labels that show other numbers
+/// but not the values keep none: percentages, bubble sizes, and on scatter and bubble charts
+/// (`xy`) the X values. The format was typed for those, and on the values `0.0%` reads 3 as
+/// "300.0%".
+fn label_num_fmt(d: Option<&El>, xy: bool) -> Option<String> {
+    let other = |d: &El| bool_val(d, "showPercent") || bool_val(d, "showBubbleSize") || (xy && bool_val(d, "showCatName"));
+    let d = d.filter(|d| bool_val(d, "showVal") || !other(d))?;
+    typed_num_fmt(d.child("numFmt"))
+}
+
+/// The typed number format of an axis that is drawn: a deleted (hidden) axis keeps none, since
+/// the model draws every axis and its format would show up on an axis Excel doesn't show.
+fn axis_num_fmt(a: Option<&El>) -> Option<String> {
+    typed_num_fmt(a.filter(|a| !bool_val(a, "delete")).and_then(|a| a.child("numFmt")))
+}
+
 pub fn read_chart(root: &El) -> Option<Chart> {
     let chart = root.child("chart")?;
     let plot = chart.child("plotArea")?;
@@ -199,15 +215,16 @@ pub fn read_chart(root: &El) -> Option<Chart> {
     let first_axes = axis_ids(first);
     let mut series = vec![];
     for (gi, (g, k)) in groups.iter().enumerate() {
+        let xy = matches!(k, ChartKind::Scatter | ChartKind::ScatterLines | ChartKind::Bubble);
         for s in g.kids("ser") {
-            let mut ser = read_series(s);
+            let mut ser = read_series(s, xy);
             if gi > 0 {
                 ser.kind = Some(*k);
                 ser.secondary = axis_ids(g) != first_axes;
             }
-            // Labels set for the whole group apply to series without their own.
-            if ser.label_number_format.is_none() {
-                ser.label_number_format = typed_num_fmt(g.path(&["dLbls", "numFmt"]));
+            // Labels set for the whole group apply to series without their own `dLbls`.
+            if s.child("dLbls").is_none() {
+                ser.label_number_format = label_num_fmt(g.child("dLbls"), xy);
             }
             series.push(ser);
         }
@@ -218,23 +235,28 @@ pub fn read_chart(root: &El) -> Option<Chart> {
     let val_axes: Vec<&El> = plot.kids("valAx").collect();
     let cat_ax = plot.child("catAx").or_else(|| plot.child("dateAx"));
     let scatter = matches!(first_kind, ChartKind::Scatter | ChartKind::ScatterLines | ChartKind::Bubble);
+    // Value axes by the groups that use them: the first group's, then a secondary group's.
+    let val_ax_of = |ids: &[String]| val_axes.iter().find(|a| a.child_val("axId").is_some_and(|v| ids.iter().any(|i| i == v))).copied();
     let (x_ax, y_ax) = if scatter {
-        let x = val_axes.iter().find(|a| matches!(a.child_val("axPos"), Some("b") | Some("t"))).copied();
-        let y = val_axes.iter().find(|a| matches!(a.child_val("axPos"), Some("l") | Some("r"))).copied();
-        (x, y)
+        // The first group's two value axes: X lies along the bottom or top. When `axPos`
+        // doesn't tell them apart (openpyxl writes "l" on both), the group lists X first.
+        let own: Vec<&El> = first_axes.iter().filter_map(|id| val_axes.iter().find(|a| a.child_val("axId") == Some(id.as_str())).copied()).collect();
+        let horizontal = |a: &&El| matches!(a.child_val("axPos"), Some("b") | Some("t"));
+        match (own.iter().find(|a| horizontal(a)), own.iter().find(|a| !horizontal(a))) {
+            (Some(x), Some(y)) => (Some(*x), Some(*y)),
+            _ => (own.first().copied(), own.get(1).copied()),
+        }
     } else {
         (cat_ax, val_axes.first().copied())
     };
-    // Value axes by the groups that use them: the first group's, then a secondary group's.
-    let val_ax_of = |ids: &[String]| val_axes.iter().find(|a| a.child_val("axId").is_some_and(|v| ids.iter().any(|i| i == v))).copied();
     let secondary_ids = groups.iter().map(|(g, _)| axis_ids(g)).find(|ids| *ids != first_axes);
     let axis_number_formats = if scatter {
-        AxisNumberFormats { x: typed_num_fmt(x_ax.and_then(|a| a.child("numFmt"))), y: typed_num_fmt(y_ax.and_then(|a| a.child("numFmt"))), y2: None }
+        AxisNumberFormats { x: axis_num_fmt(x_ax), y: axis_num_fmt(y_ax), y2: None }
     } else {
         AxisNumberFormats {
             x: None,
-            y: typed_num_fmt(val_ax_of(&first_axes).or(y_ax).and_then(|a| a.child("numFmt"))),
-            y2: typed_num_fmt(secondary_ids.and_then(|ids| val_ax_of(&ids)).and_then(|a| a.child("numFmt"))),
+            y: axis_num_fmt(val_ax_of(&first_axes).or(y_ax)),
+            y2: axis_num_fmt(secondary_ids.and_then(|ids| val_ax_of(&ids))),
         }
     };
     let legend = match chart.child("legend") {
@@ -262,6 +284,7 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         by_rows: false,
         pivot: root.path(&["pivotSource", "name"]).map(|n| n.text.trim().to_string()).filter(|n| !n.is_empty()),
         axis_number_formats,
+        pivot_label_formats: Vec::new(),
     })
 }
 

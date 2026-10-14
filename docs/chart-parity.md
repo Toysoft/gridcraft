@@ -38,9 +38,9 @@ open PRs #158, #161, and issue #190.
 | Move and resize the chart object | yes | yes (corner handle, Format Chart Area Size fields) |
 | Chart title, axis titles | text, linked to cells, full formatting | text only |
 | Legend | position, overlay, formatting, per-entry delete | position only |
-| Data labels | value, category, series, percentage, from cells, callouts, position | one on/off flag; a typed number format per series (`c:dLbls/c:numFmt` with `sourceLinked="0"`) is read, drawn and saved |
+| Data labels | value, category, series, percentage, from cells, callouts, position | one on/off flag; a typed number format per series (`c:dLbls/c:numFmt` with `sourceLinked="0"`) is read, drawn and saved, except on labels that show percentages, bubble sizes or scatter X values but not the values (the format was typed for those) |
 | Gridlines | major/minor per axis, formatting | one on/off flag |
-| Axis options | min/max/units, log scale, reverse order, crossing point, display units, date axis, number format | number format only: a typed format on the value axis, the secondary value axis and a scatter/bubble X axis is read, drawn and saved ("Linked to source" follows the source cells; a category axis's typed format isn't kept); everything else **missing** (auto only) |
+| Axis options | min/max/units, log scale, reverse order, crossing point, display units, date axis, number format | number format only: a typed format on the value axis, the secondary value axis and a scatter/bubble X axis is read, drawn and saved ("Linked to source" follows the source cells; a category axis's or a deleted axis's typed format isn't kept); everything else **missing** (auto only) |
 | Secondary axis | any series | line series in combo charts |
 | Trendlines | linear, exponential, logarithmic, polynomial, power, moving average, equation and R² | all six types, several per series, name, forward/backward forecast, set intercept, equation and R² label, line colour/width/dash; read, written and drawn on 2-D column, bar, line, area, scatter and bubble series; `chart.addElement` `trendline` adds/removes them. No Format Trendline pane, label position/number format not kept |
 | Error bars | fixed, %, standard deviation/error, custom | **missing** |
@@ -80,7 +80,7 @@ back.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-13 | minor | Typed number formats (`sourceLinked="0"`) on value axes (primary, secondary, scatter/bubble X) and on data labels (per series, or the group's) are read, drawn and saved; PivotChart refresh keeps label formats |
+| 2026-10-13 | minor | Typed number formats (`sourceLinked="0"`) on value axes (primary, secondary, scatter/bubble X) and on data labels (per series, or the group's) are read, drawn and saved; PivotChart refresh keeps label formats by series position, also for series a refresh dropped and brought back |
 | 2026-10-12 | trivial | chart sheets are kept on save, still not editable (#727) |
 | 2026-10-11 | minor | Trendlines: all six types modelled, round-tripped through `c:trendline`, drawn with forecast and equation/R² labels; `chart.addElement` `trendline` |
 | 2026-10-11 | minor | PivotCharts (`insert.pivotChart`) |

@@ -136,6 +136,7 @@ pub fn read_chartex(root: &El) -> Option<Chart> {
         by_rows: false,
         pivot: None,
         axis_number_formats: Default::default(),
+        pivot_label_formats: Vec::new(),
     })
 }
 
