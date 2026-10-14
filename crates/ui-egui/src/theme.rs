@@ -96,39 +96,40 @@ impl Tokens {
     }
 
     pub fn dark() -> Tokens {
+        let roles = craft_ui::theme::SuiteDarkPalette::ARTCRAFT;
         Tokens {
             dark: true,
-            // Standard ArtCraft dark chrome; worksheet and notice colors remain separate.
-            window: Color32::from_rgb(0x12, 0x13, 0x16),
-            ribbon: Color32::from_rgb(0x10, 0x10, 0x14),
-            ribbon_border: Color32::from_rgb(0x36, 0x37, 0x3A),
-            text: Color32::from_rgb(0xF2, 0xF1, 0xEE),
-            text_dim: Color32::from_rgb(0xA6, 0xA6, 0xA8),
-            text_disabled: Color32::from_rgb(0x71, 0x71, 0x76),
-            accent: Color32::from_rgb(0x2D, 0x81, 0xFF),
-            accent_dark: Color32::from_rgb(0x74, 0xAA, 0xFF),
-            accent_soft: Color32::from_rgb(0x20, 0x3B, 0x65),
-            hover: Color32::from_rgb(0x32, 0x33, 0x37),
-            pressed: Color32::from_rgb(0x41, 0x42, 0x46),
-            separator: Color32::from_rgb(0x36, 0x37, 0x3A),
+            // Shared ArtCraft standard-dark chrome; worksheet and notice colors remain separate.
+            window: roles.window,
+            ribbon: roles.panel,
+            ribbon_border: roles.border,
+            text: roles.text,
+            text_dim: roles.text_secondary,
+            text_disabled: roles.text_disabled,
+            accent: roles.accent,
+            accent_dark: roles.focus,
+            accent_soft: roles.selection,
+            hover: roles.hover,
+            pressed: roles.pressed,
+            separator: roles.border,
             grid_bg: Color32::WHITE,
-            desk: Color32::from_rgb(0x12, 0x13, 0x16),
+            desk: roles.window,
             gridline: Color32::from_rgb(0xE1, 0xE1, 0xE1),
-            header_bg: Color32::from_rgb(0x10, 0x10, 0x14),
-            header_text: Color32::from_rgb(0xA6, 0xA6, 0xA8),
-            header_line: Color32::from_rgb(0x36, 0x37, 0x3A),
-            header_sel_bg: Color32::from_rgb(0x20, 0x3B, 0x65),
-            header_sel_text: Color32::from_rgb(0xF2, 0xF1, 0xEE),
-            header_all_bg: Color32::from_rgb(0x20, 0x3B, 0x65),
+            header_bg: roles.panel,
+            header_text: roles.text_secondary,
+            header_line: roles.border,
+            header_sel_bg: roles.selection,
+            header_sel_text: roles.selection_text,
+            header_all_bg: roles.selection,
             sel_fill: Color32::from_rgba_unmultiplied(0x2D, 0x81, 0xFF, 0x24),
             sel_border: Color32::from_rgb(0x2D, 0x81, 0xFF),
-            input_bg: Color32::from_rgb(0x06, 0x06, 0x07),
-            input_border: Color32::from_rgb(0x77, 0x78, 0x7C),
-            tab_bar: Color32::from_rgb(0x0A, 0x0A, 0x0C),
-            tab_active: Color32::from_rgb(0x1E, 0x1F, 0x22),
-            status_bar: Color32::from_rgb(0x0A, 0x0A, 0x0C),
+            input_bg: roles.input,
+            input_border: roles.border_strong,
+            tab_bar: roles.chrome,
+            tab_active: roles.raised,
+            status_bar: roles.chrome,
             cell_text: Color32::BLACK,
-            menu_bg: Color32::from_rgb(0x10, 0x10, 0x14),
+            menu_bg: roles.panel,
             shadow: Color32::from_black_alpha(90),
             danger: Color32::from_rgb(0xF1, 0x70, 0x5F),
             notice_warn_bg: Color32::from_rgb(0x4A, 0x3F, 0x1E),
@@ -735,6 +736,52 @@ pub fn color32(rgb: [u8; 3]) -> Color32 {
 #[cfg(test)]
 mod palette_tests {
     use super::*;
+
+    #[test]
+    fn dark_adapter_reads_shared_roles_and_retains_cell_selection_and_notices() {
+        let roles = craft_ui::theme::SuiteDarkPalette::ARTCRAFT;
+        let dark = Tokens::dark();
+        assert_eq!(dark.window, roles.window);
+        assert_eq!(dark.ribbon, roles.panel);
+        assert_eq!(dark.ribbon_border, roles.border);
+        assert_eq!(dark.text, roles.text);
+        assert_eq!(dark.text_dim, roles.text_secondary);
+        assert_eq!(dark.text_disabled, roles.text_disabled);
+        assert_eq!(dark.accent, roles.accent);
+        assert_eq!(dark.accent_dark, roles.focus);
+        assert_eq!(dark.accent_soft, roles.selection);
+        assert_eq!(dark.hover, roles.hover);
+        assert_eq!(dark.pressed, roles.pressed);
+        assert_eq!(dark.separator, roles.border);
+        assert_eq!(dark.desk, roles.window);
+        assert_eq!(dark.header_bg, roles.panel);
+        assert_eq!(dark.header_text, roles.text_secondary);
+        assert_eq!(dark.header_line, roles.border);
+        assert_eq!(dark.header_sel_bg, roles.selection);
+        assert_eq!(dark.header_sel_text, roles.selection_text);
+        assert_eq!(dark.header_all_bg, roles.selection);
+        assert_eq!(dark.input_bg, roles.input);
+        assert_eq!(dark.input_border, roles.border_strong);
+        assert_eq!(dark.tab_bar, roles.chrome);
+        assert_eq!(dark.tab_active, roles.raised);
+        assert_eq!(dark.status_bar, roles.chrome);
+        assert_eq!(dark.menu_bg, roles.panel);
+        // Cell-range overlays remain editing colors, independent of the interface-row roles.
+        assert_eq!(dark.sel_fill, Color32::from_rgba_unmultiplied(0x2D, 0x81, 0xFF, 0x24));
+        assert_eq!(dark.sel_border, Color32::from_rgb(0x2D, 0x81, 0xFF));
+        assert_eq!(dark.grid_bg, Color32::WHITE);
+        assert_eq!(dark.cell_text, Color32::BLACK);
+        assert_eq!(dark.danger, Color32::from_rgb(0xF1, 0x70, 0x5F));
+        assert_eq!(dark.notice_warn_bg, Color32::from_rgb(0x4A, 0x3F, 0x1E));
+        assert_eq!(dark.notice_info_bg, Color32::from_rgb(0x24, 0x33, 0x44));
+        let light = Tokens::light();
+        assert_eq!(light.accent, Color32::from_rgb(0x10, 0x7C, 0x41));
+        assert_eq!(light.sel_fill, Color32::from_rgba_unmultiplied(0x10, 0x7C, 0x41, 0x1C));
+        assert_eq!(light.sel_border, Color32::from_rgb(0x10, 0x7C, 0x41));
+        assert_eq!(light.grid_bg, dark.grid_bg);
+        assert_eq!(light.cell_text, dark.cell_text);
+        assert_eq!(light.gridline, dark.gridline);
+    }
 
     #[test]
     fn dark_interface_is_blue_and_the_worksheet_keeps_its_document_colors() {
