@@ -208,8 +208,10 @@ fn write_expr(s: &mut String, e: &Expr, r1c1: Option<CellRef>) {
         },
         Expr::Name(n) => match n.rsplit_once('!') {
             // A sheet-qualified name is stored with the bare sheet name (`My Sheet!Total`): quote it so it parses back.
+            // A linked workbook's own name (`[1]!Rate`, `[Source.xlsx]!Rate`) has no sheet to quote.
             Some((sheet, name)) => {
-                s.push_str(&quote_sheet(sheet));
+                let book_only = sheet.strip_prefix('[').and_then(|b| b.strip_suffix(']')).is_some_and(|b| !b.is_empty() && !b.contains(['[', ']']));
+                s.push_str(&if book_only { sheet.to_string() } else { quote_sheet(sheet) });
                 s.push('!');
                 s.push_str(name);
             }

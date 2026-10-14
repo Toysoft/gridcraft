@@ -102,6 +102,20 @@ fn linked_workbook_sheet_ranges_round_trip() {
 }
 
 #[test]
+fn names_of_linked_workbooks_print_as_excel_writes_them() {
+    // `[1]!Rate` is the linked workbook's own name: Excel writes no quotes, and `'[1]'!Rate`
+    // would name a sheet called `[1]` in this workbook. A sheet of the link is quoted as needed.
+    for (src, printed) in [
+        ("[1]!Rate", "[1]!Rate"),
+        ("SUM([1]!Rate,1)", "SUM([1]!Rate,1)"),
+        ("[1]Prices!Rate", "[1]Prices!Rate"),
+        ("'My Sheet'!Total", "'My Sheet'!Total"),
+    ] {
+        assert_eq!(print(&parse(src).unwrap()), printed, "{src}");
+    }
+}
+
+#[test]
 fn renaming_or_deleting_a_sheet_leaves_linked_spans_alone() {
     // `[1]Jan:Dec` is a span of the linked workbook's sheets; this workbook's `Dec` isn't in it.
     let order = ["Jan".to_string(), "Dec".to_string()];
