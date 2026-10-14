@@ -1,6 +1,6 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (formulas in es, de, pt-BR, ru and fr) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (formulas in es, de, pt-BR, ru and fr; regional formats added) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Per-language status against Excel, which ships its UI in dozens of languages (Windows language
 packs cover 100+), with localized function names, argument separators, number and date formats,
@@ -27,8 +27,8 @@ right-to-left sheets and full complex-script support. Part of
   ([formula-input.md](formula-input.md)). The names come from machine-translated Microsoft pages
   (two agreeing signals per entry, sources in `crates/formula/src/input/`); only the French
   separators and a few French words were checked in a running Excel (#191). Czech and Serbian
-  formulas stay English. Number and date formats are en-US only
-  (`crates/numfmt` says "en-US only"); PR #163 (German formulas and numbers) is open.
+  formulas stay English. Number, date and time formats follow a separate Regional format setting
+  (see below); PR #163 (German formulas and numbers) is open.
 - **Script support.** System-font fallback for CJK, Thai and Hebrew landed in #38 (closes #32;
   #142 is still open pending confirmation). There is no complex-text shaping: Arabic and
   Devanagari don't join or reorder, and there is no bidirectional layout. **Sheet Right-to-Left**
@@ -38,6 +38,34 @@ right-to-left sheets and full complex-script support. Part of
   (no bidi), and the sheet tabs, horizontal scrollbar and printing/PDF are not mirrored yet. IME input goes
   through egui/winit and is unverified for Chinese, Japanese and Korean.
 - **PDF export** uses only the 14 standard PDF fonts: non-Latin text cannot export.
+
+## Regional formats
+
+File › Options › Regional format (command `app.region`, [control-protocol.md](control-protocol.md))
+selects the region, independently of the interface language, as Excel's Region setting does. It
+is a session preference saved with the others; the desktop app starts from the system region, the
+web app from `navigator.language`, and headless sessions from en-US. 15 regions are built in
+(`crates/core/src/region.rs`, data from CLDR): en-US, en-GB, en-IN, es-ES, de-DE, fr-FR, it-IT,
+pt-BR, pt-PT, ru-RU, cs-CZ, ja-JP, ko-KR, zh-CN, zh-TW. Other system regions fall back to their
+language's main region.
+
+- **Typing:** decimal and group separators, Indian grouping, currency symbols, percent, dates in
+  the region's day/month/year order (two-digit years, local month names, ISO), and times with the
+  region's AM/PM words. Typing `25/09/2026` in en-GB stores 46290 with the canonical date format.
+- **Showing:** separators and the General decimal, month and day names (genitive forms in
+  Russian and Czech), AM/PM words, and Excel's built-in date formats 14 and 22, which show the
+  region's short date; `[$-F800]` and `[$-F400]` (Long Date, Time) show the region's long date and
+  time. Stored values, formulas and format codes are never rewritten, so changing region only
+  changes how they read.
+- **Commands stay canonical.** Text sent to a command (`cell.set`, scripts, MCP) is read as en-US
+  unless the call carries `region`, so a recorded script never depends on the preference; the
+  interface passes the workbook's region when it commits typed input. Files stay en-US: CSV is
+  written and read with en-US separators and dates, whatever the region.
+- **Not covered yet:** worksheet-function text coercion (`VALUE`, `DATEVALUE`, `TEXT`, `*IF`
+  criteria) stays en-US; chart axis labels; goal seek and solver inputs; the CSV delimiter and
+  CSV number format (en-US, as above); scenario values; a custom format that is exactly
+  `m/d/yyyy` is shown as the region's short date like built-in 14; the web app keeps en-US for
+  the CJK regions until a CJK font is loaded.
 
 ## Languages
 
@@ -86,6 +114,7 @@ language (none so far) and of localized function names.
 | 2026-10-12 | minor | Format Cells looks up its tabs, labels, options and note through `Language::tr` (Fill tab keyed `Format Cells\|Fill`); dialog titles and OK/Cancel too. Labels already in a table (Number, Currency, Fill…) show translated; the rest fall back to English until the tables add them |
 | 2026-10-12 | minor | Brazilian Portuguese catalog (`i18n/pt.rs`) grows from 377 to 923 entries: every key the other catalogs translate, including the dialog strings #669 starts looking up (~42%) |
 | 2026-10-11 | minor | Formulas follow the interface language in es, de, pt-BR and ru (names, booleans, errors, table specifiers, separators); infrastructure item 2 partly done |
+| 2026-10-11 | minor | Regional formats: typing and showing numbers, dates and times by region (`app.region`, 15 regions, Backstage Options combo) |
 | 2026-10-11 | minor | German ribbon catalog (`i18n/de.rs`, 266 labels, ~12%); `de` locale tags (de-DE, de-AT, de-CH…) resolve to German. PR #163 (localized German formulas/numbers) still open |
 | 2026-10-11 | minor | Sheet Right-to-Left mirrors the grid (#146) |
 | 2026-10-11 | minor | Czech (cs) ribbon table: 266 labels (~12%), menus only |

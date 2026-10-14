@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~25 points of "ready for real work" and ~160–240 h away
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (rows auto-fit oversized fonts on open and whole-row/column formatting) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (regional formats, `app.region`) · **Target:** Microsoft Excel (Microsoft 365)
 
 GridCraft aims at full Microsoft Excel parity, and at being better in places: faster, open (XLSX
 is the native format), fully scriptable by agents (MCP, control channel, CLI), and on the web.
@@ -96,7 +96,8 @@ interface follows the system language, and CJK, Thai and Hebrew text falls back 
 (#38). Dialogs, menus and messages are English. Formulas follow the interface language in
 Spanish, German, Brazilian Portuguese, Russian and French (function names, booleans, errors, table
 specifiers and separators at the editor; files keep English: [formula-input.md](docs/formula-input.md));
-number formats are en-US only. PR #163 (German formulas and numbers) is open. Detail:
+numbers, dates and times follow a Regional format setting (15 regions; File › Options, `app.region`).
+PR #163 (German formulas and numbers) is open. Detail:
 [localization-parity.md](docs/localization-parity.md).
 
 | Language | Code | Status | UI strings |
@@ -170,6 +171,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 | 2026-10-11 | XLSX pass-through: custom XML, external links, connections, query tables, printer settings, form/ActiveX controls and OLE objects are kept on save (#330, #324) |
 | 2026-10-11 | Data › Forecast › Forecast Sheet: a new sheet with the history, FORECAST.ETS forecast, confidence bounds, statistics and a chart (#322) |
 | 2026-10-11 | Startup no longer panics on a system font egui can't parse: fonts are validated and skipped (#226) |
+| 2026-10-11 | Regional formats: File › Options › Regional format (`app.region`) changes how numbers, dates and times are typed and shown, for 15 regions |
 | 2026-10-11 | Ctrl+drag on the fill handle swaps copying and extending a series (#264) |
 | 2026-10-11 | Odd-period bond functions ODDFPRICE, ODDFYIELD, ODDLPRICE, ODDLYIELD: Financial 55 / 55 (#275) |
 | 2026-10-11 | PERCENTOF and EUROCONVERT worksheet functions (#279) |
@@ -208,6 +210,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 | 2026-10-12 | minor | Desktop File > Print now discovers printers and submits PDF jobs through pinned craft-print with printer choice, copies, duplex and grayscale; browser printing and PDF export remain available. Remaining print parity includes page ranges and driver-specific tray/options UI; physical printer fidelity needs hardware validation. |
 | 2026-10-11 | minor | Languages: formulas follow the interface language in es, de, pt-BR and ru; progress log row |
 | 2026-10-11 | minor | Password-encrypted workbooks open (#11); progress log row |
+| 2026-10-11 | minor | Regional formats (`app.region`); progress log row |
 | 2026-10-11 | minor | Forecast Sheet (#322); progress log row |
 | 2026-10-11 | minor | Worksheet functions 505 / 523 (ODD* bond functions); progress log row |
 | 2026-10-11 | minor | Worksheet functions 503 / 523 (PERCENTOF, EUROCONVERT); progress log row |

@@ -223,6 +223,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Light" => "Svetla",
         "Dark" => "Tamna",
         "Interface language" => "Jezik interfejsa",
+        "Regional format" => "Regionalni format",
         "Interface size" => "Veličina interfejsa",
         "Auto" => "Automatski",
         "Drag to freeze columns" => "Prevuci da zamrzneš kolone",

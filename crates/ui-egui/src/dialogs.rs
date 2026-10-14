@@ -1257,7 +1257,13 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         confirm = false;
     }
     if confirm && let Some(cmd) = d.command {
-        let params = build_params(&d);
+        let mut params = build_params(&d);
+        // The forecast end is a date or number the user typed, in the workbook's region.
+        if cmd == "data.forecastSheet"
+            && let Some(map) = params.as_object_mut()
+        {
+            map.insert("region".into(), json!(app.session.region().tag));
+        }
         match app.run(cmd, params) {
             Ok(r) => {
                 open = false;
@@ -2730,8 +2736,8 @@ mod tests {
         app.run(d.command.unwrap(), build_params(&d)).unwrap();
         let doc = app.session.active().unwrap();
         let at = gridcraft_engine::core::CellRef::new(0, 0);
-        assert!(gridcraft_engine::cmd::data::check_validation(&doc.wb, 0, at, "6").is_none());
-        assert!(gridcraft_engine::cmd::data::check_validation(&doc.wb, 0, at, "4").is_some());
+        assert!(gridcraft_engine::cmd::data::check_validation(&doc.wb, 0, at, "6", doc.wb.region).is_none());
+        assert!(gridcraft_engine::cmd::data::check_validation(&doc.wb, 0, at, "4", doc.wb.region).is_some());
     }
 
     #[test]

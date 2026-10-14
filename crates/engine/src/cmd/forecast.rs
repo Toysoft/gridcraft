@@ -42,7 +42,7 @@ pub fn specs() -> Vec<CommandSpec> {
         "Forecast Sheet",
         ["Data", "Forecast"],
         None,
-        "{timeline?: \"A2:A25\", values?: \"B2:B25\" (default: the first two columns of `range`, the selection or the current region; a text first cell is the header), end?: timeline value or date text | periods?: n (default: a third of the history, at least 1; ≤10,000 and history × periods ≤ 500,000; history ≤ 10,000 rows), forecastStart?: a timeline value or date text on the history, before its last point (hindcast: the model is fit to the points before it, the forecast columns start there and run over the actuals; default and the last point: forecast after the history), confidenceInterval?: bool (default true), confidence?: 0.95 or 95, seasonality?: \"auto\" | 0 (none) | 2–8,760, fillMissing?: interpolate|zeros, aggregate?: average|count|counta|max|median|min|sum, statistics?: bool, chart?: line|column} → {sheet, table, chart, history, periods}. Inserts a sheet before the active one: timeline, values, Forecast (FORECAST.ETS), Lower/Upper Confidence Bound (FORECAST.ETS.CONFINT), optional FORECAST.ETS.STAT table, and a chart.",
+        "{timeline?: \"A2:A25\", values?: \"B2:B25\" (default: the first two columns of `range`, the selection or the current region; a text first cell is the header), end?: timeline value or date text (typed in `region`, default canonical en-US), region?: tag `end` and `forecastStart` were typed in | periods?: n (default: a third of the history, at least 1; ≤10,000 and history × periods ≤ 500,000; history ≤ 10,000 rows), forecastStart?: a timeline value or date text on the history, before its last point (hindcast: the model is fit to the points before it, the forecast columns start there and run over the actuals; default and the last point: forecast after the history), confidenceInterval?: bool (default true), confidence?: 0.95 or 95, seasonality?: \"auto\" | 0 (none) | 2–8,760, fillMissing?: interpolate|zeros, aggregate?: average|count|counta|max|median|min|sum, statistics?: bool, chart?: line|column} → {sheet, table, chart, history, periods}. Inserts a sheet before the active one: timeline, values, Forecast (FORECAST.ETS), Lower/Upper Confidence Bound (FORECAST.ETS.CONFINT), optional FORECAST.ETS.STAT table, and a chart.",
         has_doc,
         forecast_sheet
     )]
@@ -223,10 +223,11 @@ fn forecast_sheet(s: &mut Session, p: &Json) -> Result<Json> {
     if !rows.iter().any(|r| matches!(r.1, Value::Number(_))) {
         return Err(EngineError::Other("There are no values to forecast.".into()));
     }
+    let region = typed_region(p, CMD)?;
     let time_param = |key: &str| -> Result<Option<f64>> {
         match p.get(key) {
             Some(Json::Number(n)) => Ok(n.as_f64()),
-            Some(Json::String(t)) if !t.trim().is_empty() => match gridcraft_core::parse::parse_input(t.trim(), sys).value {
+            Some(Json::String(t)) if !t.trim().is_empty() => match gridcraft_core::parse::parse_input_in(t.trim(), sys, region).value {
                 Value::Number(x) => Ok(Some(x)),
                 _ => Err(bad(CMD, format!("`{key}` is not a number or a date: `{t}`"))),
             },
@@ -560,6 +561,25 @@ mod tests {
         let big = MAX_HISTORY + 2;
         let r = s.execute("data.forecastSheet", json!({"timeline": format!("A1:A{big}"), "values": format!("B1:B{big}")}));
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn forecast_times_are_read_in_the_region_they_were_typed_in() {
+        let run = |key: &str, text: &str, region: Option<&str>| {
+            let mut s = session_with_history();
+            s.execute("app.region", json!({"region": "de-DE"})).unwrap();
+            let mut p = json!({"timeline": "A2:A17", "values": "B2:B17", "seasonality": 4, "periods": 2});
+            p[key] = json!(text);
+            if let Some(tag) = region {
+                p["region"] = json!(tag);
+            }
+            s.execute("data.forecastSheet", p)
+        };
+        // Canonical text: `22,0` is no number, whatever the session's region is.
+        assert!(run("end", "22,0", None).unwrap_err().to_string().contains("not a number"));
+        assert_eq!(run("end", "22,0", Some("de-DE")).unwrap()["periods"], 6);
+        assert!(run("forecastStart", "13,0", None).unwrap_err().to_string().contains("not a number"));
+        assert_eq!(run("forecastStart", "13,0", Some("de-DE")).unwrap()["fitted"], 12);
     }
 
     #[test]

@@ -155,7 +155,8 @@ fn cell_list(wb: &Workbook, t: &str, cmd: &str, cap: usize) -> Result<(usize, Ve
     Ok((sheet.unwrap_or(wb.active_sheet), out))
 }
 
-/// What a JSON value typed into a cell is, as a constant.
+/// What a JSON value typed into a cell is, as a constant. Scenario values are stored in the
+/// workbook, so their text is canonical (en-US), whatever the region.
 fn json_value(v: &Json, wb: &Workbook) -> Value {
     match v {
         Json::Null => Value::Empty,
@@ -489,7 +490,7 @@ fn scenario_show(s: &mut Session, p: &Json) -> Result<Json> {
     edit(s, |cx| {
         for (c, v) in cells.iter().zip(sc.values.iter()) {
             let input = super::edit::json_to_input(v);
-            let cell = super::edit::input_to_cell(&input, si, *c, &mut cx.wb)?;
+            let cell = super::edit::input_to_cell(&input, si, *c, &mut cx.wb, &gridcraft_core::region::EN_US)?;
             let sh = cx.sheet_mut(si)?;
             match cell {
                 Some(cell) => sh.set_cell(*c, cell),

@@ -220,6 +220,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Unfreeze Panes" => "틀 고정 취소",
         "Dark Mode" => "다크 모드",
         "Interface language" => "인터페이스 언어",
+        "Regional format" => "지역 형식",
         "Interface size" => "인터페이스 크기",
         "Auto" => "자동",
         "Drag to freeze columns" => "끌어서 열 고정",

@@ -3282,3 +3282,335 @@ fn paste_special_validation_moves_relative_references() {
     assert!(!ok(&mut s, "C3", "5"), "the pasted rule checks C3, not A1");
     assert!(ok(&mut s, "C3", "20"));
 }
+
+fn text_of(s: &Session, a: &str) -> String {
+    let d = s.doc().unwrap();
+    crate::display::cell_text(&d.wb, d.wb.active().unwrap(), CellRef::parse(a).unwrap())
+}
+
+#[test]
+fn app_region_sets_reports_and_rejects() {
+    let mut s = s();
+    // No params reports the current region and never changes it.
+    let r = s.execute("app.region", json!({})).unwrap();
+    assert_eq!(r["region"], "en-US");
+    assert_eq!(r["decimal"], ".");
+    assert_eq!(r["group"], ",");
+    assert_eq!(r["dateOrder"], "MDY");
+    assert_eq!(r["shortDate"], "m/d/yyyy");
+    assert!(r["available"].as_array().unwrap().iter().any(|t| t == "pt-BR"));
+    assert_eq!(s.prefs.region, "en-US");
+    // Setting returns the new region and stores it in the preferences.
+    let r = s.execute("app.region", json!({"region": "pt-BR"})).unwrap();
+    assert_eq!((r["region"].as_str(), r["decimal"].as_str(), r["dateOrder"].as_str()), (Some("pt-BR"), Some(","), Some("DMY")));
+    assert_eq!(s.prefs.region, "pt-BR");
+    assert_eq!(s.doc().unwrap().wb.region.tag, "pt-BR");
+    assert_eq!(s.execute("app.region", json!({})).unwrap()["region"], "pt-BR");
+    // Tags are matched like the system writes them; unknown regions are errors that keep the setting.
+    assert_eq!(s.execute("app.region", json!({"region": "de_de"})).unwrap()["region"], "de-DE");
+    for bad in [json!({"region": "xx-XX"}), json!({"region": ""}), json!({"region": "de"}), json!({"region": 7}), json!({"region": ["de-DE"]})] {
+        let e = s.execute("app.region", bad.clone()).unwrap_err().to_string();
+        assert!(e.contains("region"), "{bad}: {e}");
+        assert_eq!(s.prefs.region, "de-DE", "{bad}");
+    }
+    assert!(s.execute("app.region", json!({"region": "xx-XX"})).unwrap_err().to_string().contains("pt-BR"), "the error lists the regions");
+    // Programmatic calls never ask for a dialog.
+    assert!(s.ui_requests.is_empty());
+    // Without a workbook it only stores the preference.
+    let mut empty = Session::new();
+    assert_eq!(empty.execute("app.region", json!({"region": "fr-FR"})).unwrap()["region"], "fr-FR");
+    empty.new_workbook();
+    assert_eq!(empty.doc().unwrap().wb.region.tag, "fr-FR", "new documents get the preference");
+    // It is journaled (a recorded session replays with the same region) but is not an undo step.
+    assert!(s.journal.iter().any(|(id, p)| id == "app.region" && p["region"] == "pt-BR"));
+    assert!(s.doc().unwrap().undo.is_empty());
+}
+
+#[test]
+fn region_changes_how_typed_dates_are_read_and_shown_but_not_the_value() {
+    let mut s = s();
+    s.execute("app.region", json!({"region": "en-GB"})).unwrap();
+    s.execute("cell.set", json!({"cell": "A1", "input": "25/09/2026", "region": "en-GB"})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::Number(46290.0));
+    assert_eq!(fmt_of(&s, "A1"), "m/d/yyyy", "the stored code stays canonical");
+    assert_eq!(text_of(&s, "A1"), "25/09/2026");
+    // A date and time are built-in format 22.
+    s.execute("cell.set", json!({"cell": "A2", "input": "25/09/2026 18:00", "region": "en-GB"})).unwrap();
+    assert_eq!(v(&s, "A2"), Value::Number(46290.75));
+    assert_eq!(text_of(&s, "A2"), "25/09/2026 18:00");
+    // The editor starts from what reads back in the region.
+    {
+        let d = s.doc().unwrap();
+        assert_eq!(crate::display::edit_text(&d.wb, d.wb.active().unwrap(), CellRef::parse("A1").unwrap()), "25/09/2026");
+    }
+    // Switching back displays the same values the en-US way.
+    s.execute("app.region", json!({"region": "en-US"})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::Number(46290.0));
+    assert_eq!(text_of(&s, "A1"), "9/25/2026");
+    assert_eq!(text_of(&s, "A2"), "9/25/2026 18:00");
+    assert_eq!(s.doc().unwrap().undo.len(), 2, "switching the region adds no undo step");
+    s.execute("cell.set", json!({"cell": "A3", "input": "25/09/2026"})).unwrap();
+    assert_eq!(v(&s, "A3"), Value::from("25/09/2026"), "day first isn't a date in en-US");
+    s.execute("cell.set", json!({"cell": "A3", "input": "9/25/2026"})).unwrap();
+    assert_eq!(v(&s, "A3"), Value::Number(46290.0));
+}
+
+#[test]
+fn decimal_comma_regions_type_and_show_numbers() {
+    let mut s = s();
+    s.execute("app.region", json!({"region": "pt-BR"})).unwrap();
+    s.execute("cell.set", json!({"cell": "A1", "input": "1.234,56", "region": "pt-BR"})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::Number(1234.56));
+    assert_eq!(text_of(&s, "A1"), "1.234,56");
+    s.execute("cell.set", json!({"cell": "A2", "input": "3,5", "region": "pt-BR"})).unwrap();
+    assert_eq!(v(&s, "A2"), Value::Number(3.5));
+    assert_eq!(text_of(&s, "A2"), "3,5", "General shows the region's decimal");
+    s.execute("cell.set", json!({"cell": "A3", "input": "R$ 10,50", "region": "pt-BR"})).unwrap();
+    assert_eq!(v(&s, "A3"), Value::Number(10.5));
+    assert_eq!(text_of(&s, "A3"), "R$ 10,50");
+    s.execute("cell.set", json!({"cell": "A4", "input": "12,5%", "region": "pt-BR"})).unwrap();
+    assert_eq!(text_of(&s, "A4"), "12,50%");
+    // The editor shows the number as it reads back in the region.
+    {
+        let d = s.doc().unwrap();
+        let sh = d.wb.active().unwrap();
+        assert_eq!(crate::display::edit_text(&d.wb, sh, CellRef::parse("A2").unwrap()), "3,5");
+        assert_eq!(crate::display::edit_text(&d.wb, sh, CellRef::parse("A1").unwrap()), "1234,56");
+    }
+    // A leading minus before a currency amount is a number, not a formula.
+    s.execute("cell.set", json!({"cell": "A5", "input": "-R$ 5", "region": "pt-BR"})).unwrap();
+    assert_eq!(v(&s, "A5"), Value::Number(-5.0));
+    // Formulas stay canonical; a constant inside one keeps the point.
+    s.execute("cell.set", json!({"cell": "B1", "input": "=A2*2", "region": "pt-BR"})).unwrap();
+    assert_eq!(v(&s, "B1"), Value::Number(7.0));
+    assert_eq!(text_of(&s, "B1"), "7");
+    // The same text in en-US stays text.
+    s.execute("app.region", json!({"region": "en-US"})).unwrap();
+    assert_eq!(text_of(&s, "A1"), "1,234.56");
+    s.execute("cell.set", json!({"cell": "C1", "input": "3,5"})).unwrap();
+    assert_eq!(v(&s, "C1"), Value::from("3,5"));
+}
+
+#[test]
+fn region_applies_to_every_document_new_documents_and_undo() {
+    let mut s = s();
+    s.new_workbook();
+    s.execute("cell.set", json!({"cell": "A1", "input": "9/25/2026"})).unwrap();
+    s.execute("app.region", json!({"region": "de-DE"})).unwrap();
+    assert!(s.documents().iter().all(|d| d.wb.region.tag == "de-DE"));
+    assert_eq!(text_of(&s, "A1"), "25.09.2026");
+    s.new_workbook();
+    assert_eq!(s.doc().unwrap().wb.region.tag, "de-DE");
+    // Undo brings back an older snapshot; it shows in the current region.
+    s.set_active(1);
+    s.execute("cell.set", json!({"cell": "A2", "input": "1,5", "region": "de-DE"})).unwrap();
+    s.execute("app.region", json!({"region": "ja-JP"})).unwrap();
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().wb.region.tag, "ja-JP");
+    s.execute("edit.redo", json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().wb.region.tag, "ja-JP");
+    assert_eq!(text_of(&s, "A1"), "2026/9/25");
+    // A saved workbook doesn't turn dirty because the region changed.
+    let mut c = Session::new();
+    c.new_workbook();
+    assert!(!c.doc().unwrap().is_dirty());
+    c.execute("app.region", json!({"region": "fr-FR"})).unwrap();
+    assert!(!c.doc().unwrap().is_dirty());
+    // The region isn't saved with the workbook and a file opens in the current one.
+    let json_bytes = serde_json::to_string(&*c.doc().unwrap().wb).unwrap();
+    assert!(!json_bytes.contains("fr-FR"));
+    let back: gridcraft_model::Workbook = serde_json::from_str(&json_bytes).unwrap();
+    assert_eq!(back.region.tag, "en-US");
+    c.add_document(crate::DocState::new(back, None, "Back".into()));
+    assert_eq!(c.doc().unwrap().wb.region.tag, "fr-FR");
+    // Preferences replaced from a file are applied explicitly.
+    c.prefs = serde_json::from_str(r#"{"region": "it-IT"}"#).unwrap();
+    c.apply_region();
+    assert!(c.documents().iter().all(|d| d.wb.region.tag == "it-IT"));
+    c.prefs = serde_json::from_str(r#"{"region": "nonsense"}"#).unwrap();
+    c.apply_region();
+    assert!(c.documents().iter().all(|d| d.wb.region.tag == "en-US"), "an unknown saved region reads as en-US");
+    assert_eq!(serde_json::from_str::<crate::Prefs>("{}").unwrap().region, "en-US", "prefs saved before regions existed");
+}
+
+#[test]
+fn data_validation_and_status_bar_follow_the_region() {
+    let mut s = s();
+    s.execute("app.region", json!({"region": "de-DE"})).unwrap();
+    s.execute("cell.set", json!({"cell": "A1", "input": "1.234,5", "region": "de-DE"})).unwrap();
+    s.execute("cell.set", json!({"cell": "A2", "input": "2,25", "region": "de-DE"})).unwrap();
+    s.execute("selection.set", json!({"range": "A1:A2"})).unwrap();
+    let d = s.doc().unwrap();
+    let st = crate::display::stats(d.wb.active().unwrap(), &d.selection.ranges);
+    assert_eq!(st.sum, 1236.75);
+    // The status bar formats its sum with General's wide code through display::format.
+    let shown = crate::display::format(&Value::Number(st.sum), "#,##0.##########", &d.wb).text;
+    assert_eq!(shown.trim_end_matches(','), "1.236,75");
+    // Typed input is checked as the region reads it.
+    s.execute("data.validation", json!({"range": "B1", "type": "decimal", "operator": "between", "formula1": "0", "formula2": "5"})).unwrap();
+    assert_eq!(s.execute("data.validate", json!({"cell": "B1", "input": "4,5", "region": "de-DE"})).unwrap()["ok"], true);
+    assert_eq!(s.execute("data.validate", json!({"cell": "B1", "input": "5,5", "region": "de-DE"})).unwrap()["ok"], false);
+    s.execute("app.region", json!({"region": "en-US"})).unwrap();
+    assert_eq!(s.execute("data.validate", json!({"cell": "B1", "input": "4,5"})).unwrap()["ok"], false, "4,5 isn't a number in en-US");
+}
+
+/// Text in command params is canonical (en-US) unless the call says it was typed in a region.
+#[test]
+fn commands_read_text_canonically_unless_given_the_region_it_was_typed_in() {
+    let mut s = s();
+    s.execute("app.region", json!({"region": "de-DE"})).unwrap();
+    // A JSON number is a value, not typed text: de-DE must not read its point as a group separator.
+    s.execute("cell.set", json!({"cell": "A1", "value": 1.234})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::Number(1.234));
+    // Text without a region is canonical, whatever the preference is...
+    s.execute("cell.set", json!({"cell": "A2", "input": "1.234"})).unwrap();
+    assert_eq!(v(&s, "A2"), Value::Number(1.234));
+    s.execute("cell.set", json!({"cell": "A3", "input": "1,234"})).unwrap();
+    assert_eq!(v(&s, "A3"), Value::Number(1234.0), "en-US reads the comma as a group separator");
+    // ...and with a region it is read the way that region writes it.
+    s.execute("cell.set", json!({"cell": "A4", "input": "1.234", "region": "de-DE"})).unwrap();
+    assert_eq!(v(&s, "A4"), Value::Number(1234.0));
+    s.execute("cell.set", json!({"cell": "A5", "input": "1,234", "region": "de-DE"})).unwrap();
+    assert_eq!(v(&s, "A5"), Value::Number(1.234));
+    // A value (not text) stays a value even when a region is named.
+    s.execute("cell.set", json!({"cell": "A6", "value": 1.5, "region": "de-DE"})).unwrap();
+    assert_eq!(v(&s, "A6"), Value::Number(1.5));
+    // Headless: day-first text stays text after a region change unless the call names the region.
+    let mut h = self::s();
+    h.execute("app.region", json!({"region": "en-GB"})).unwrap();
+    h.execute("cell.set", json!({"cell": "A1", "input": "25/09/2026"})).unwrap();
+    assert_eq!(v(&h, "A1"), Value::from("25/09/2026"));
+    h.execute("cell.set", json!({"cell": "A1", "input": "25/09/2026", "region": "en-GB"})).unwrap();
+    assert_eq!(v(&h, "A1"), Value::Number(46290.0));
+    // range.fill, range.setValues and plain-text paste take the same parameter.
+    h.execute("range.fill", json!({"range": "B1:B2", "input": "25/09/2026", "region": "en-GB"})).unwrap();
+    assert_eq!((v(&h, "B1"), v(&h, "B2")), (Value::Number(46290.0), Value::Number(46290.0)));
+    h.execute("range.setValues", json!({"range": "C1", "values": [["25/09/2026"]]})).unwrap();
+    assert_eq!(v(&h, "C1"), Value::from("25/09/2026"));
+    h.execute("range.setValues", json!({"range": "C1", "values": [["25/09/2026"]], "region": "en-GB"})).unwrap();
+    assert_eq!(v(&h, "C1"), Value::Number(46290.0));
+    h.execute("edit.paste", json!({"at": "D1", "text": "25/09/2026\t1,5"})).unwrap();
+    assert_eq!((v(&h, "D1"), v(&h, "E1")), (Value::from("25/09/2026"), Value::from("1,5")));
+    h.execute("edit.paste", json!({"at": "D2", "text": "25/09/2026\t1,5", "region": "de-DE"})).unwrap();
+    assert_eq!(v(&h, "D2"), Value::Number(46290.0), "de-DE is day first too");
+    assert_eq!(v(&h, "E2"), Value::Number(1.5));
+    // A bad tag is an error naming the valid ones, and changes nothing.
+    for bad in [json!("xx"), json!(7), json!("")] {
+        let e = h.execute("cell.set", json!({"cell": "Z1", "input": "1", "region": bad.clone()})).unwrap_err().to_string();
+        assert!(e.contains("region"), "{bad}: {e}");
+    }
+    assert!(h.execute("cell.set", json!({"cell": "Z1", "input": "1", "region": "xx"})).unwrap_err().to_string().contains("en-GB"));
+    assert_eq!(v(&h, "Z1"), Value::Empty);
+    assert_eq!(h.execute("data.validate", json!({"cell": "Z1", "input": "1", "region": null})).unwrap()["ok"], true, "null is no region");
+}
+
+/// A script means the same thing whatever the session's region is when it runs.
+#[test]
+fn recorded_scripts_and_the_journal_replay_independently_of_the_current_region() {
+    let mut s = s();
+    s.execute("app.region", json!({"region": "de-DE"})).unwrap();
+    s.execute("automate.recordActions", json!({})).unwrap();
+    s.execute("cell.set", json!({"cell": "A1", "input": "1.234", "region": "de-DE"})).unwrap();
+    s.execute("cell.set", json!({"cell": "A2", "input": "1.234"})).unwrap();
+    s.execute("automate.recordActions", json!({"stop": true, "name": "Typed"})).unwrap();
+    assert_eq!((v(&s, "A1"), v(&s, "A2")), (Value::Number(1234.0), Value::Number(1.234)));
+    s.execute("app.region", json!({"region": "en-US"})).unwrap();
+    s.execute("edit.clearAll", json!({"range": "A1:A2"})).unwrap();
+    s.execute("automate.runScript", json!({"name": "Typed"})).unwrap();
+    assert_eq!((v(&s, "A1"), v(&s, "A2")), (Value::Number(1234.0), Value::Number(1.234)), "same result in en-US");
+    // Replaying the journal in a fresh session gives the same cells.
+    let mut r = self::s();
+    for (id, p) in s.journal.iter().filter(|(id, _)| id == "cell.set") {
+        r.execute(id, p.clone()).unwrap();
+    }
+    assert_eq!((v(&r, "A1"), v(&r, "A2")), (Value::Number(1234.0), Value::Number(1.234)));
+}
+
+#[test]
+fn canonical_producers_stay_canonical_in_a_decimal_comma_region() {
+    let mut s = s();
+    s.execute("app.region", json!({"region": "de-DE"})).unwrap();
+    // Replace builds its candidates from the stored (canonical) text.
+    s.execute("cell.set", json!({"cell": "A1", "value": 1.234})).unwrap();
+    s.execute("edit.replace", json!({"what": "1", "with": "2", "matchCase": true, "all": true})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::Number(2.234));
+    // Restoring a scenario writes the values it captured.
+    s.execute("data.scenarioAdd", json!({"name": "S", "changing": "A1"})).unwrap();
+    s.execute("cell.set", json!({"cell": "A1", "value": 9})).unwrap();
+    s.execute("data.scenarioShow", json!({"name": "S"})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::Number(2.234));
+    // Circle Invalid Data agrees with validating the same number typed in the region.
+    s.execute("data.validation", json!({"range": "A1", "type": "decimal", "operator": "between", "formula1": "0", "formula2": "3"})).unwrap();
+    assert_eq!(s.execute("data.validate", json!({"cell": "A1", "input": "2,234", "region": "de-DE"})).unwrap()["ok"], true);
+    assert_eq!(s.execute("data.circleInvalid", json!({})).unwrap()["invalid"], json!([]));
+    s.execute("cell.set", json!({"cell": "A1", "value": 7.5})).unwrap();
+    assert_eq!(s.execute("data.validate", json!({"cell": "A1", "input": "7,5", "region": "de-DE"})).unwrap()["ok"], false);
+    assert_eq!(s.execute("data.circleInvalid", json!({})).unwrap()["invalid"], json!(["A1"]));
+}
+
+#[test]
+fn csv_files_stay_en_us_whatever_the_region() {
+    let reopen = |wb: &gridcraft_model::Workbook, name: &str| crate::io::open_bytes(name, &crate::io::save_bytes(wb, name).unwrap()).unwrap().0;
+    let mut s = s();
+    s.execute("app.region", json!({"region": "de-DE"})).unwrap();
+    s.execute("cell.set", json!({"cell": "A1", "value": 1000})).unwrap();
+    s.execute("home.numberFormat", json!({"range": "A1", "code": "#,##0"})).unwrap();
+    s.execute("cell.set", json!({"cell": "B1", "value": 1.5})).unwrap();
+    s.execute("cell.set", json!({"cell": "C1", "value": 46290})).unwrap();
+    s.execute("home.numberFormat", json!({"range": "C1", "code": "m/d/yyyy"})).unwrap();
+    let wb = s.doc().unwrap().wb.clone();
+    let bytes = crate::io::save_bytes(&wb, "book.csv").unwrap();
+    assert_eq!(String::from_utf8(bytes).unwrap(), "\"1,000\",1.5,9/25/2026\r\n");
+    let back = reopen(&wb, "book.csv");
+    let sh = back.active().unwrap();
+    assert_eq!(sh.value(CellRef::parse("A1").unwrap()), Value::Number(1000.0));
+    assert_eq!(sh.value(CellRef::parse("B1").unwrap()), Value::Number(1.5));
+    assert_eq!(sh.value(CellRef::parse("C1").unwrap()), Value::Number(46290.0));
+    // The same in a day-first region; the screen keeps showing the region's way.
+    s.execute("app.region", json!({"region": "en-GB"})).unwrap();
+    assert_eq!(text_of(&s, "C1"), "25/09/2026");
+    let wb = s.doc().unwrap().wb.clone();
+    assert!(String::from_utf8(crate::io::save_bytes(&wb, "book.csv").unwrap()).unwrap().ends_with("9/25/2026\r\n"));
+    assert_eq!(reopen(&wb, "book.csv").active().unwrap().value(CellRef::parse("C1").unwrap()), Value::Number(46290.0));
+    // The clipboard text and HTML are what the screen shows (Excel copies the displayed text).
+    let d = s.doc().unwrap();
+    assert!(crate::display::range_text(&d.wb, 0, gridcraft_core::RangeRef::parse("C1").unwrap()).starts_with("25/09/2026"));
+}
+
+#[test]
+fn get_data_from_a_range_keeps_the_numbers_in_a_decimal_comma_region() {
+    let mut s = s();
+    s.execute("app.region", json!({"region": "de-DE"})).unwrap();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["n", "d"], [1234.5, 46290]]})).unwrap();
+    s.execute("home.numberFormat", json!({"range": "A2", "code": "#,##0.00"})).unwrap();
+    s.execute("home.numberFormat", json!({"range": "B2", "code": "m/d/yyyy"})).unwrap();
+    assert_eq!(text_of(&s, "A2"), "1.234,50");
+    s.execute("data.fromTableRange", json!({"range": "A1:B2"})).unwrap();
+    assert_eq!(s.doc().unwrap().wb.sheets.len(), 2);
+    assert_eq!(v(&s, "A2"), Value::Number(1234.5));
+    assert_eq!(v(&s, "B2"), Value::Number(46290.0));
+}
+
+/// F2 then Enter must keep the value, also where the editor falls back to the raw number.
+#[test]
+fn edit_text_falls_back_to_the_region_decimal_in_date_formats() {
+    let mut s = s();
+    s.execute("app.region", json!({"region": "de-DE"})).unwrap();
+    // A negative number is no date.
+    s.execute("cell.set", json!({"cell": "A1", "value": -1.234})).unwrap();
+    s.execute("home.numberFormat", json!({"range": "A1", "code": "m/d/yyyy"})).unwrap();
+    // A time with fractions of a second doesn't read back from `hh:mm:ss`.
+    s.execute("cell.set", json!({"cell": "A2", "value": 46290.123456789})).unwrap();
+    s.execute("home.numberFormat", json!({"range": "A2", "code": "m/d/yyyy"})).unwrap();
+    let edit = |s: &Session, a: &str| {
+        let d = s.doc().unwrap();
+        crate::display::edit_text(&d.wb, d.wb.active().unwrap(), CellRef::parse(a).unwrap())
+    };
+    assert_eq!(edit(&s, "A1"), "-1,234");
+    assert_eq!(edit(&s, "A2"), "46290,123456789");
+    for (a, want) in [("A1", -1.234), ("A2", 46290.123456789)] {
+        let text = edit(&s, a);
+        s.execute("cell.set", json!({"cell": a, "input": text, "region": "de-DE"})).unwrap();
+        assert_eq!(v(&s, a), Value::Number(want), "{a}");
+    }
+}

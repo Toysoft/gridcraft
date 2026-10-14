@@ -220,6 +220,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Unfreeze Panes" => "取消冻结窗格",
         "Dark Mode" => "深色模式",
         "Interface language" => "界面语言",
+        "Regional format" => "区域格式",
         "Interface size" => "界面大小",
         "Auto" => "自动",
         "Drag to freeze columns" => "拖动以冻结列",

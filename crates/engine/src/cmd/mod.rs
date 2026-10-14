@@ -201,6 +201,16 @@ pub(crate) fn f64_param(p: &Json, key: &str) -> Option<f64> {
 pub(crate) fn bool_param(p: &Json, key: &str) -> Option<bool> {
     p.get(key).and_then(Json::as_bool)
 }
+/// The region typed text in `p` was written in: the `region` tag, or en-US without one. Command
+/// text is canonical (en-US) unless the caller says it was typed in a region, so a recorded
+/// command or script means the same whatever the session's regional preference is.
+pub(crate) fn typed_region(p: &Json, cmd: &str) -> Result<&'static gridcraft_core::Region> {
+    match p.get("region") {
+        None | Some(Json::Null) => Ok(gridcraft_core::region::default_region()),
+        Some(Json::String(tag)) => crate::find_region(tag),
+        Some(_) => Err(bad(cmd, "`region` must be a tag such as \"pt-BR\"")),
+    }
+}
 pub(crate) fn u32_param(p: &Json, key: &str) -> Option<u32> {
     p.get(key).and_then(Json::as_u64).map(|v| v.min(u32::MAX as u64) as u32)
 }

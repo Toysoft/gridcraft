@@ -337,6 +337,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Light" => "Světlý",
         "Dark" => "Tmavý",
         "Interface language" => "Jazyk rozhraní",
+        "Regional format" => "Regionální formát",
         "Command\nPalette" => "Paleta\npříkazů",
         "Agent\nControl" => "Řízení\nagenty",
         "Action\nJournal" => "Deník\nakcí",

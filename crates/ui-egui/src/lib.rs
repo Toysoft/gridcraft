@@ -436,9 +436,11 @@ impl SheetApp {
             self.cut_text = None;
         }
         let html = self.services.paste_html.as_mut().and_then(|read| read());
+        // Text from outside is read as typed in the workbook's region, as Excel does.
+        let region = self.session.region().tag;
         let params = match html {
-            Some(html) => json!({"text": text, "html": html}),
-            None => json!({"text": text}),
+            Some(html) => json!({"text": text, "html": html, "region": region}),
+            None => json!({"text": text, "region": region}),
         };
         self.run_or_alert("edit.paste", params);
     }
@@ -918,7 +920,7 @@ impl SheetApp {
         };
         // Data validation.
         if let Some(d) = self.session.active()
-            && let Some((dv, msg)) = gridcraft_engine::cmd::data::check_validation(&d.wb, ed.sheet, ed.cell, &text)
+            && let Some((dv, msg)) = gridcraft_engine::cmd::data::check_validation(&d.wb, ed.sheet, ed.cell, &text, d.wb.region)
         {
             if dv.error_style == gridcraft_engine::model::ErrorStyle::Stop {
                 let title = if dv.error_title.is_empty() { "GridCraft".to_string() } else { dv.error_title.clone() };
@@ -929,10 +931,12 @@ impl SheetApp {
             }
             self.toast = Some((msg, now_ms()));
         }
+        // What was typed is read in the workbook's region; commands take canonical text otherwise.
+        let region = self.session.region().tag;
         let r = if fill_selection {
-            self.session.run("range.fill", json!({"input": text}))
+            self.session.run("range.fill", json!({"input": text, "region": region}))
         } else {
-            self.session.run("cell.set", json!({"cell": ed.cell.a1(), "input": text, "array": array}))
+            self.session.run("cell.set", json!({"cell": ed.cell.a1(), "input": text, "array": array, "region": region}))
         };
         match r {
             Ok(_) => {
