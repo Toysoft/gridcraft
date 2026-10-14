@@ -1891,6 +1891,11 @@ fn data(app: &mut SheetApp, ui: &mut Ui) {
     if gd.clicked() {
         app.open_dialog("open", json!({}));
     }
+    let db = big_button(ui, Icon::Table, "From\nDatabase", "Import the result of an SQL query (PostgreSQL, MySQL, SQLite, ODBC)", false);
+    control_keytip(app, ui, &db, "data.fromDatabase");
+    if db.clicked() {
+        app.open_dialog("fromDatabase", json!({}));
+    }
     sep(ui);
     ui.vertical(|ui| {
         let __k = small_button(ui, Icon::SortAsc, "", "Sort A to Z", false);

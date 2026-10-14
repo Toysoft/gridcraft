@@ -437,6 +437,25 @@ impl Dialog {
                 vec![Check { key: "header", label: "My data has headers" }, Text { key: "columnsText", label: "Columns (blank = all, e.g. A,C):" }],
                 json!({"header": true}),
             ),
+            "fromDatabase" => Dialog::form(
+                "fromDatabase",
+                "From Database",
+                "data.fromDatabase",
+                vec![
+                    Choice {
+                        key: "driver",
+                        label: "Database:",
+                        options: vec![("postgres", "PostgreSQL"), ("mysql", "MySQL / MariaDB"), ("sqlite", "SQLite file"), ("odbc", "ODBC")],
+                    },
+                    Text { key: "connection", label: "Connection (URL, file path or ODBC connection string, without the password):" },
+                    Note("e.g. postgres://user@host:5432/db · mysql://user@host:3306/db · /path/data.db · DSN=Sales".into()),
+                    Text { key: "user", label: "User name (optional):" },
+                    Password { key: "password", label: "Password (not saved):" },
+                    Text { key: "query", label: "SQL query:" },
+                    Text { key: "sheet", label: "New sheet name:" },
+                ],
+                json!({"driver": "postgres", "connection": "", "query": "SELECT ", "sheet": "Query"}),
+            ),
             "goalSeek" => Dialog::custom("goalSeek", "Goal Seek", json!({"set": active, "to": "0", "changing": ""})),
             "forecastSheet" => Dialog::form(
                 "forecastSheet",
@@ -969,6 +988,12 @@ fn build_params(d: &Dialog) -> Json {
             }
             v["delimiters"] = Json::Array(delims);
         }
+        "fromDatabase" => {
+            // Blank optional fields are left out, so the command uses its defaults.
+            if let Some(m) = v.as_object_mut() {
+                m.retain(|k, x| !matches!(k.as_str(), "user" | "password" | "sheet") || x.as_str().is_some_and(|s| !s.trim().is_empty()));
+            }
+        }
         "removeDuplicates" | "subtotal" => {
             if let Some(t) = d.values.get("columnsText").and_then(Json::as_str).filter(|t| !t.trim().is_empty()) {
                 v["columns"] = Json::Array(t.split(',').map(|c| json!(c.trim().to_ascii_uppercase())).collect());
@@ -1400,7 +1425,7 @@ fn form_fields(ui: &mut egui::Ui, d: &mut Dialog) {
                             .get(key)
                             .map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| if v.is_null() { String::new() } else { v.to_string() }))
                             .unwrap_or_default();
-                        let multiline = key == "text";
+                        let multiline = key == "text" || key == "query";
                         let r = if multiline {
                             ui.add(egui::TextEdit::multiline(&mut s).desired_rows(4).desired_width(320.0))
                         } else {
