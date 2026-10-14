@@ -7,6 +7,11 @@
 //! `FORMULATEXT` showed how Polish Excel displays it. Functions not listed kept their English
 //! name there, including LAMBDA, LET, MAP, REDUCE, SCAN, MAKEARRAY and BYCOL (while BYROW is
 //! WIERSZAMI). JIS, EUROCONVERT and ADD2 are unknown to Excel for the web and keep English names.
+//! Rechecked 2026-10-14 after a review compared the table with Microsoft's pl-pl pages, which name
+//! PERCENTOF `PROCENT` and MAP `MAPUJ`. Confirmed in Excel for the web (excel.cloud.microsoft,
+//! Polish interface): `=ODSETEK(1;4)` is 0,25 and shows ODSETEK's Polish argument help, and
+//! `=MAP(…)` and `=BYCOL(…)` calculate, while `PROCENT`, `MAPUJ` and `KOLUMNAMI` are not functions
+//! there (#NAZWA?, no autocomplete).
 //! No file produced by Excel is in the repository.
 //!
 //! Other words, observed the same way unless a source is given:
