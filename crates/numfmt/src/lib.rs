@@ -256,20 +256,9 @@ impl NumberFormat {
     }
 
     /// Formats a number. The flag is true when the value cannot be shown (date out of range).
-    /// With `full`, General is not narrowed to the cell width: an integer f64 holds exactly
-    /// (|n| < 2^53) is written with all its digits, so 16-digit card and order numbers survive a
-    /// CSV round trip; any other number reads as `&` turns it into text (15 significant digits).
+    /// With `full`, General is not narrowed to the cell width but written by [`general_full`].
     fn format_number(&self, n: f64, sys: DateSystem, full: bool) -> (Formatted, bool) {
-        const EXACT_INT: f64 = 9_007_199_254_740_992.0; // 2^53
-        let general_text = |n: f64, width: usize| {
-            if !full {
-                format_general_fit(n, width)
-            } else if n != 0.0 && n.fract() == 0.0 && n.abs() < EXACT_INT {
-                Some(format!("{}", n as i64))
-            } else {
-                Some(gridcraft_core::number_to_text(n))
-            }
-        };
+        let general_text = |n: f64, width: usize| if full { Some(general_full(n)) } else { format_general_fit(n, width) };
         let general =
             |n: f64| Formatted { text: general_text(n, GENERAL_WIDTH).unwrap_or_else(|| OVERFLOW.into()), color: None, fill: None, numeric: true };
         if self.is_general() {
@@ -321,10 +310,27 @@ pub fn format_value(v: &Value, fmt: &NumberFormat, sys: DateSystem) -> Formatted
 
 /// Formats a cell value as Save As CSV/Text writes it: like [`format_value`], except that a number
 /// shown as General (a General or Text section, with or without colour and literals) is not
-/// narrowed to the cell width but written as `&` turns it into text: `124412140710`, not
-/// `1.24412E+11`. Excel writes the cell display here; GridCraft keeps the digits.
+/// narrowed to the cell width but written by `general_full`: `124412140710`, not `1.24412E+11`.
+/// Excel writes the cell display here; GridCraft keeps the digits.
 pub fn format_value_full(v: &Value, fmt: &NumberFormat, sys: DateSystem) -> Formatted {
     format_value_with(v, fmt, sys, true)
+}
+
+/// General for Save As CSV/Text: the text `&` gives (15 significant digits), but never with an
+/// exponent, because reopening the file would give the cell a scientific format that rounds it
+/// on the next save. Where `&` writes an exponent, a number of 1 or more is written as the
+/// shortest digits that read back as the same value (every integer f64 holds below 1e16 exactly,
+/// so 16-digit card numbers survive), and a smaller one as its 15 significant digits in full.
+fn general_full(n: f64) -> String {
+    let text = gridcraft_core::number_to_text(n);
+    if !text.contains('E') {
+        text
+    } else if n.abs() >= 1.0 {
+        format!("{n}")
+    } else {
+        let mag: i32 = format!("{n:.14e}").split_once('e').and_then(|(_, e)| e.parse().ok()).unwrap_or(0);
+        gridcraft_core::value::trim_decimal(&format!("{:.*}", (14 - mag).max(0) as usize, n))
+    }
 }
 
 fn format_value_with(v: &Value, fmt: &NumberFormat, sys: DateSystem, full: bool) -> Formatted {

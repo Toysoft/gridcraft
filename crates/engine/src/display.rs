@@ -94,8 +94,9 @@ pub fn cell_text(wb: &Workbook, sheet: &Sheet, c: CellRef) -> String {
 
 /// A cell's value with its number format applied, independent of column width: no `#####`
 /// and no General narrowing (Save As CSV/Text writes this). Formulas give their result. A number
-/// shown as General (also through a coloured or sectioned General, or a Text format) reads as `&`
-/// turns it into text (`124412140710`, not `1.24412E+11`); Excel writes the cell display there.
+/// shown as General (also through a coloured or sectioned General, or a Text format) is written
+/// as [`format_value_full`] writes it: `&`'s 15 significant digits without an exponent, an integer
+/// below 1e16 with every digit (`124412140710`, not `1.24412E+11`). Excel writes the cell display.
 pub fn value_text(wb: &Workbook, sheet: &Sheet, c: CellRef) -> String {
     let style = wb.styles.get(sheet.style_id(c));
     with_fill_space(format_value_full(&sheet.value(c), &parsed(style.num_fmt.as_str()), wb.date_system))

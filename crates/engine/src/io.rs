@@ -231,8 +231,10 @@ pub fn source_dir(path: &str) -> Option<std::path::PathBuf> {
 /// Save As CSV/Text writes "the text and values as they are displayed in cells" with "all
 /// characters in each cell" (Microsoft Support, *Excel formatting and features that are not
 /// transferred to other file formats*): number formats applied, never column-width `#####`.
-/// One intentional difference: a number shown as General is written as `&` converts it (15
-/// significant digits), not narrowed to the cell width, so long identifiers survive.
+/// One intentional difference: a number shown as General is not narrowed to the cell width but
+/// written as `&` converts it (15 significant digits) without an exponent, and an integer below
+/// 1e16 with every digit, so long identifiers survive a reopen and save
+/// (`gridcraft_numfmt::format_value_full`).
 fn csv(wb: &Workbook, sh: &Sheet, delimiter: u8) -> Result<Vec<u8>> {
     gridcraft_xlsx::write_csv(sh, delimiter, |c| crate::display::value_text(wb, sh, c)).map_err(|e| EngineError::Other(e.to_string()))
 }
@@ -695,27 +697,40 @@ mod tests {
         sheet.set_cell(CellRef::new(0, 0), Cell { value: Value::Number(124412140710.0), ..Default::default() });
         sheet.set_cell(CellRef::new(0, 1), Cell { value: Value::Number(1.23456789012345), ..Default::default() });
         sheet.set_cell(CellRef::new(0, 2), Cell { value: Value::Number(124412140710.0), style: scientific, ..Default::default() });
-        // Integers f64 holds exactly (below 2^53) keep every digit; larger integers and
-        // non-integers get the 15 significant digits `&` gives.
-        for (col, n) in [(3, 1234567890123456.0), (4, -9007199254740991.0), (5, 12345678901234567.0), (6, 1e15 - 0.5)] {
-            sheet.set_cell(CellRef::new(0, col), Cell { value: Value::Number(n), ..Default::default() });
+        // Every integer below 1e16 that f64 holds (also 2^53 and the even integers above it) keeps
+        // every digit; larger numbers keep the shortest digits that read back as the same value,
+        // and a number `&` would write with an exponent is written out in full, so reopening the
+        // file can't give it a scientific format that then rounds it on the next save.
+        let cells = [
+            (1234567890123456.0, "1234567890123456"),
+            (-9007199254740991.0, "-9007199254740991"),
+            (9007199254740992.0, "9007199254740992"),
+            (9007199254740994.0, "9007199254740994"),
+            (9123456789012346.0, "9123456789012346"),
+            (-9999999999999998.0, "-9999999999999998"),
+            (12345678901234567.0, "12345678901234568"),
+            (1e20, "100000000000000000000"),
+            (1e15 - 0.5, "999999999999999.5"),
+            (1.0 / 3.0 * 1e-6, "0.000000333333333333333"),
+            (1.23456789012346e-10, "0.000000000123456789012346"),
+        ];
+        for (col, (n, _)) in cells.iter().enumerate() {
+            sheet.set_cell(CellRef::new(0, col as u32 + 3), Cell { value: Value::Number(*n), ..Default::default() });
         }
         for (path, separator) in [("data.csv", ","), ("data.tsv", "\t")] {
             let output = String::from_utf8(save_bytes(&workbook, path).unwrap()).unwrap();
-            assert_eq!(
-                output,
-                format!(
-                    "124412140710{s}1.23456789012345{s}1.24E+11{s}1234567890123456{s}-9007199254740991{s}1.23456789012346E+16{s}1E+15\r\n",
-                    s = separator
-                )
-            );
+            let tail: Vec<&str> = cells.iter().map(|(_, text)| *text).collect();
+            assert_eq!(output, format!("124412140710{s}1.23456789012345{s}1.24E+11{s}{}\r\n", tail.join(separator), s = separator));
+            // Reopening the file and saving it again changes nothing.
+            let (reopened, _) = open_bytes(path, output.as_bytes()).unwrap();
+            assert_eq!(String::from_utf8(save_bytes(&reopened, path).unwrap()).unwrap(), output);
         }
     }
 
     /// A number shown as General is written as `&` converts it (15 significant digits), whatever
     /// colour, sections or literals the format adds, and in a Text cell. Excel writes the cell
     /// display (`1.24412E+11`, `0.333333333`); GridCraft keeps the digits so part codes survive
-    /// (integers below 2^53 keep all their digits; see the test above).
+    /// (integers below 1e16 keep all their digits, and nothing gets an exponent; see the test above).
     #[test]
     fn delimited_exports_write_general_numbers_as_text_converts_them() {
         use gridcraft_core::Value;
@@ -731,6 +746,7 @@ mod tests {
             (Value::Number(0.1 + 0.2), StyleId::DEFAULT),
             (Value::Number(1e20), StyleId::DEFAULT),
             (Value::Number(code), blue),
+            (Value::Number(9007199254740994.0), blue),
             (Value::Number(-1.0 / 3.0), blue),
             (Value::Number(-code), signed),
             (Value::Number(-code), red),
@@ -745,8 +761,9 @@ mod tests {
             let expected = [
                 "0.333333333333333",
                 "0.3",
-                "1E+20",
+                "100000000000000000000",
                 "124412140710",
+                "9007199254740994",
                 "-0.333333333333333",
                 "-124412140710",
                 "-124412140710",
