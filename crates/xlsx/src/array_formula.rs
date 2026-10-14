@@ -110,24 +110,32 @@ pub(crate) fn export(wb: &Workbook, sheet: usize, at: CellRef, formula: &Formula
     // dropped (the reader puts it back), and so is one of a range an edit made one cell; any other
     // `@` of a single value stays, written as `_xlfn.SINGLE` in the legacy formula as Excel does.
     legacy.explicit = true;
-    legacy.collapsed = true;
     let out = legacy.formula(expr.as_ref().clone(), sheet);
     if !legacy.complete || !legacy.certain {
-        // The reader's whole-formula `@` over a formula it cannot analyse in full, or whose
-        // semantics it does not know: saved as the text it was read from.
-        return match expr.as_ref() {
-            Expr::Unary(UnOp::At, x) => {
-                let text = unwrap_at(x.as_ref().clone());
-                let read = Formula::from_expr(text.clone());
-                match self::legacy(wb, sheet, at, &read, functions) {
-                    Some(f) if f.expr_arc().is_some_and(|e| *e == *expr) => reads_back(text).map_or(Export::Dynamic, Export::Legacy),
-                    _ => Export::Dynamic,
-                }
+        // A formula this analysis cannot finish or whose semantics it does not know, but that is
+        // the reader's reading of some text: saved as that text. The reader adds a whole-formula
+        // `@` over such formulas, or `@` where it intersects.
+        let mut candidates = vec![remove_at(expr.as_ref().clone())];
+        if let Expr::Unary(UnOp::At, x) = expr.as_ref() {
+            candidates.insert(0, unwrap_at(x.as_ref().clone()));
+        }
+        for text in candidates {
+            let read = self::legacy(wb, sheet, at, &Formula::from_expr(text.clone()), functions);
+            if read.map_or(text == *expr, |f| f.expr_arc().is_some_and(|e| *e == *expr)) {
+                return reads_back(text).map_or(Export::Dynamic, Export::Legacy);
             }
-            _ => Export::Dynamic,
-        };
+        }
+        return Export::Dynamic;
     }
     if !legacy.foreign && legacy.inserted == 0 { reads_back(out).map_or(Export::Dynamic, Export::Legacy) } else { Export::Dynamic }
+}
+
+/// `e` without any `@` and the parentheses [`at`] adds with one.
+fn remove_at(e: Expr) -> Expr {
+    e.map(&mut |x| match x {
+        Expr::Unary(UnOp::At, x) => unwrap_at(*x),
+        other => other,
+    })
 }
 
 /// Rewrites the legacy cell formulas at `cells` (model sheet index, positions) to their
@@ -163,15 +171,23 @@ fn legacy(wb: &Workbook, sheet: usize, at: CellRef, formula: &Formula, functions
     let mut legacy = Legacy::new(wb, at, functions);
     let out = legacy.formula(expr.as_ref().clone(), sheet);
     if legacy.certain && legacy.complete {
+        if legacy.inserted == 0 {
+            return None;
+        }
         // Text round trip: the stored expression is exactly what the text parses to.
-        return (legacy.inserted > 0).then(|| Formula::new(&gridcraft_formula::print(&out)));
+        if let Some(out) = reads_back(out) {
+            return Some(Formula::new(&gridcraft_formula::print(&out)));
+        }
+        // The reading's `@` take it past the parser's nesting limit: handled as unfinished.
     }
     // An analysis that stopped at its limits, or met semantics it does not know (the array
     // arguments of dynamic-array functions, LAMBDA), leaves the formula as it was read, with only
     // the whole-formula `@` when the result may be several values: legacy Excel shows one value,
-    // so the formula must not spill.
+    // so the formula must not spill. When that text does not parse either, the formula stays as
+    // it was read.
     let whole = matches!(expr.as_ref(), Expr::Unary(UnOp::At, _));
-    (legacy.top != Kind::Scalar && !whole).then(|| Formula::new(&gridcraft_formula::print(&self::at(expr.as_ref().clone()))))
+    let multi = legacy.top != Kind::Scalar || (legacy.certain && legacy.complete);
+    (multi && !whole).then(|| self::at(expr.as_ref().clone())).and_then(reads_back).map(|e| Formula::new(&gridcraft_formula::print(&e)))
 }
 
 /// `e` when its text (the printer writes only the parentheses the expression has) reads back as
@@ -219,9 +235,9 @@ struct Legacy<'a> {
     functions: FunctionInfo,
     remaining: usize,
     locals: Vec<(String, Kind)>,
-    /// Kinds of the names analysed so far, by upper-case name and scope; `None` while a name's
-    /// definition is being analysed (a cycle).
-    names: HashMap<(String, usize), Option<Kind>>,
+    /// Kinds of the names analysed so far, by upper-case name, scope and whether one-cell ranges
+    /// counted as collapsed ones; `None` while a name's definition is being analysed (a cycle).
+    names: HashMap<(String, usize, bool), Option<Kind>>,
     /// How many `@` were inserted.
     inserted: usize,
     /// The analysis covered only established legacy semantics.
@@ -300,7 +316,12 @@ impl<'a> Legacy<'a> {
         let operand = unwrap_at(x);
         let nested = matches!(operand, Expr::Unary(UnOp::At, _));
         let before = self.inserted;
+        // A one-cell range the `@` applies to may be what an edit left of a larger one; one-cell
+        // ranges elsewhere are not intersected.
+        let direct = self.collapsed || matches!(operand, Expr::Ref(_) | Expr::Name(_));
+        let collapsed = std::mem::replace(&mut self.collapsed, direct);
         let (y, kind) = self.expr(operand, sheet, ctx, depth + 1);
+        self.collapsed = collapsed;
         let implied = !nested && self.inserted > before;
         match y {
             Expr::Unary(UnOp::At, inner) if implied => {
@@ -416,7 +437,7 @@ impl<'a> Legacy<'a> {
             None => (sheet, n),
         };
         if let Some(def) = self.wb.name(bare, scope) {
-            let key = (bare.to_ascii_uppercase(), scope);
+            let key = (bare.to_ascii_uppercase(), scope, self.collapsed);
             match self.names.get(&key) {
                 Some(Some(kind)) => return *kind,
                 Some(None) => {
