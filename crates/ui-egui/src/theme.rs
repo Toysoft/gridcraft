@@ -96,7 +96,7 @@ impl Tokens {
     }
 
     pub fn dark() -> Tokens {
-        let roles = craft_ui::theme::SuiteDarkPalette::ARTCRAFT;
+        let roles = craft_ui::theme::SuitePalette::ARTCRAFT_DARK;
         Tokens {
             dark: true,
             // Shared ArtCraft standard-dark chrome; worksheet and notice colors remain separate.
@@ -744,7 +744,7 @@ mod palette_tests {
 
     #[test]
     fn dark_adapter_reads_shared_roles_and_retains_cell_selection_and_notices() {
-        let roles = craft_ui::theme::SuiteDarkPalette::ARTCRAFT;
+        let roles = craft_ui::theme::SuitePalette::ARTCRAFT_DARK;
         let dark = Tokens::dark();
         assert_eq!(dark.window, roles.window);
         assert_eq!(dark.ribbon, roles.panel);
