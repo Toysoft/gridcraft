@@ -97,6 +97,8 @@ fn operators() {
     assert_eq!(t.num("A3"), 0.5);
     t.set("A4", "=\"abc\"=\"ABC\"");
     assert_eq!(t.get("A4"), Value::Bool(true));
+    t.set("A6", "=\"เกม\"<\"กา\"");
+    assert_eq!(t.get("A6"), Value::Bool(true));
     t.set("A5", "=\"5\"+1");
     assert_eq!(t.num("A5"), 6.0);
     t.set("A6", "=\"x\"+1");

@@ -1058,6 +1058,8 @@ mod tests {
     fn sort() {
         let r = ev("SORT", vec![rf(grid())]);
         assert_eq!(rows_of(&r).iter().map(|l| l[0].clone()).collect::<Vec<_>>(), vec![tv("a"), tv("b"), tv("c")]);
+        let thai = arr(["ไก่", "กา", "เกม", "แกง", "โต๊ะ", "กิน", "ขาว", "ข้าว", "อ่าน", "ฮา"].map(|s| vec![tv(s)]).to_vec());
+        assert_eq!(rows_of(&ev("SORT", vec![av(thai)])), ["เกม", "แกง", "โต๊ะ", "ไก่", "กา", "กิน", "ขาว", "ข้าว", "อ่าน", "ฮา"].map(|s| vec![tv(s)]),);
         let r = ev("SORT", vec![rf(grid()), n(2.0), n(-1.0)]);
         assert_eq!(rows_of(&r).iter().map(|l| l[1].clone()).collect::<Vec<_>>(), vec![nv(3.0), nv(2.0), nv(1.0)]);
         let r = ev("SORT", vec![av(row(&[3.0, 1.0, 2.0])), n(1.0), n(1.0), b(true)]);

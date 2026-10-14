@@ -302,10 +302,21 @@ pub fn compare(a: &Value, b: &Value) -> Ordering {
     }
 }
 
-/// Case-insensitive text order (Unicode lowercase).
+/// Case-insensitive text order (Unicode lowercase), with Thai leading vowels before consonants.
 pub fn compare_text(a: &str, b: &str) -> Ordering {
     let mut ai = a.chars().flat_map(char::to_lowercase);
     let mut bi = b.chars().flat_map(char::to_lowercase);
+    let first_a = ai.next();
+    let first_b = bi.next();
+    match (first_a, first_b) {
+        (Some(x), Some(y)) => {
+            let order = first_text_char_key(x).cmp(&first_text_char_key(y));
+            if !order.is_eq() {
+                return order;
+            }
+        }
+        _ => return first_a.cmp(&first_b),
+    }
     loop {
         match (ai.next(), bi.next()) {
             (None, None) => return Ordering::Equal,
@@ -314,6 +325,17 @@ pub fn compare_text(a: &str, b: &str) -> Ordering {
             (Some(x), Some(y)) if x != y => return x.cmp(&y),
             _ => {}
         }
+    }
+}
+
+fn first_text_char_key(c: char) -> (u32, bool, u32) {
+    let codepoint = c as u32;
+    if ('\u{0E40}'..='\u{0E44}').contains(&c) {
+        // Put Thai leading vowels at the start of the Thai block without crossing scripts,
+        // preserving a total order for Rust's sorting algorithms.
+        (0x0E01, false, codepoint)
+    } else {
+        (codepoint, true, codepoint)
     }
 }
 
@@ -396,6 +418,11 @@ mod tests {
     #[test]
     fn comparisons() {
         assert_eq!(compare(&Value::from("abc"), &Value::from("ABC")), Ordering::Equal);
+        assert_eq!(compare(&Value::from("เกม"), &Value::from("กา")), Ordering::Less);
+        assert_eq!(compare_text("ไก่", "ฮา"), Ordering::Less);
+        assert_eq!(compare_text("A", "เ"), Ordering::Less);
+        assert_eq!(compare_text("เ", "ก"), Ordering::Less);
+        assert_eq!(compare_text("A", "ก"), Ordering::Less);
         assert_eq!(compare(&Value::Number(5.0), &Value::from("1")), Ordering::Less);
         assert_eq!(compare(&Value::from("z"), &Value::Bool(false)), Ordering::Less);
         assert_eq!(compare(&Value::Empty, &Value::Number(0.0)), Ordering::Equal);
