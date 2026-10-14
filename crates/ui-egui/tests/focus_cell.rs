@@ -112,6 +112,19 @@ fn the_view_ribbon_focus_cell_button_toggles_the_setting() {
 }
 
 #[test]
+fn the_focus_cell_control_reads_with_the_show_group() {
+    let h = view_harness();
+    let button = h.get_by_role_and_label(Role::Button, "Focus Cell").rect();
+    // The name sits beside the button, and the pair centers on the checkbox stack.
+    let name = h.get_by_role_and_label(Role::Label, "Focus Cell").rect();
+    assert!(name.left() > button.right() - 1.0, "the name reads to the right of the button: {name:?} vs {button:?}");
+    let top = h.get_by_label("Ruler").rect();
+    let bottom = h.get_by_label("Headings").rect();
+    let centre = (top.top() + bottom.bottom()) / 2.0;
+    assert!((button.center().y - centre).abs() <= 3.0, "the control lines up with the group: {button:?}, group centre {centre}");
+}
+
+#[test]
 fn the_split_arrow_opens_the_color_palette_and_picks_a_tint() {
     let mut h = view_harness();
     let main = h.get_by_role_and_label(Role::Button, "Focus Cell").rect();
