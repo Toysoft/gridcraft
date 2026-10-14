@@ -605,7 +605,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Lock Cell" => "تأمين الخلية",
         "Lock the sheet structure so sheets can't be added, moved, renamed or deleted." => "يؤمّن بنية الأوراق فلا يمكن إضافة الأوراق أو نقلها أو إعادة تسميتها أو حذفها.",
         "Locked" => "مؤمّنة",
-        "Locking cells or hiding formulas has no effect until you protect the worksheet (Review › Protect Sheet)." => "لا ي产出 لتأمين الخلايا أو إخفاء الصيغ أي تأثير حتى تحمي ورقة العمل (مراجعة ‹ حماية الورقة).",
+        "Locking cells or hiding formulas has no effect until you protect the worksheet (Review › Protect Sheet)." => "لا يكون لقفل الخلايا أو إخفاء الصيغ أي تأثير حتى تحمي ورقة العمل (مراجعة ‹ حماية الورقة).",
         "Logical" => "منطقية",
         "Long Date" => "تاريخ طويل",
         "Lookup &\nReference" => "بحث\nومرجع",
