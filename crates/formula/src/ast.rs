@@ -212,6 +212,9 @@ pub enum Expr {
     Invoke(Box<Expr>, Vec<Expr>),
     /// An omitted argument `F(1,,3)`.
     Missing,
+    /// A reference Excel found deleted in a linked workbook, kept with its link
+    /// (`[1]Data!#REF!`, `[1]Jan:Dec!#REF!`): `#REF!`, written back with the sheet it was in.
+    LinkedRefError(SheetSel),
     Paren(Box<Expr>),
 }
 

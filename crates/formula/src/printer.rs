@@ -47,16 +47,6 @@ fn sheet_prefix(s: &SheetSel) -> String {
     }
 }
 
-/// The sheet of a deleted reference into a linked workbook, carried as a name (`[1]Data!#REF!`,
-/// `[1]Jan:Dec!#REF!`).
-fn linked_ref_error(name: &str) -> Option<SheetSel> {
-    let sheet = name.strip_suffix("!#REF!").filter(|s| book_prefix(s).is_some())?;
-    Some(match sheet.split_once(':') {
-        Some((a, b)) => SheetSel::Span(a.to_string(), b.to_string()),
-        None => SheetSel::Named(sheet.to_string()),
-    })
-}
-
 fn anchor_a1(a: &Anchor) -> String {
     format!("{}{}{}{}", if a.col_abs { "$" } else { "" }, col_to_letters(a.col), if a.row_abs { "$" } else { "" }, a.row as u64 + 1)
 }
@@ -216,9 +206,8 @@ fn write_expr(s: &mut String, e: &Expr, r1c1: Option<CellRef>) {
             Some(at) => s.push_str(&reference_r1c1(r, at)),
             None => s.push_str(&reference_a1(r)),
         },
-        // A reference Excel found deleted in a linked workbook, kept with its link (`[1]Data!#REF!`).
-        Expr::Name(n) if linked_ref_error(n).is_some() => {
-            s.push_str(&linked_ref_error(n).map(|sel| sheet_prefix(&sel)).unwrap_or_default());
+        Expr::LinkedRefError(sheet) => {
+            s.push_str(&sheet_prefix(sheet));
             s.push_str("#REF!");
         }
         Expr::Name(n) => match n.rsplit_once('!') {

@@ -313,6 +313,7 @@ impl<'h> Evaluator<'h> {
             Expr::Text(t) => Ev::V(Value::Text(t.clone())),
             Expr::Bool(b) => Ev::V(Value::Bool(*b)),
             Expr::Error(x) => err(*x),
+            Expr::LinkedRefError(_) => err(CellError::Ref),
             Expr::Missing => Ev::V(Value::Empty),
             Expr::Paren(x) => self.eval(x),
             Expr::Array(rows) => {
@@ -1938,7 +1939,10 @@ pub fn precedents(wb: &Workbook, sheet: usize, e: &Expr) -> (Vec<Area>, bool) {
                 let (crit, sum) = (c.range(), s.range());
                 push(&mut out, s, resized_sum_range(sum, crit.height(), crit.width()));
             }
-            (_, Some(Expr::Number(_) | Expr::Text(_) | Expr::Bool(_) | Expr::Error(_) | Expr::Array(_) | Expr::Missing)) => {}
+            (
+                _,
+                Some(Expr::Number(_) | Expr::Text(_) | Expr::Bool(_) | Expr::Error(_) | Expr::LinkedRefError(_) | Expr::Array(_) | Expr::Missing),
+            ) => {}
             _ => dynamic = true,
         },
         Expr::Call(n, _)

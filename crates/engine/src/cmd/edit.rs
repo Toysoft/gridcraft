@@ -214,13 +214,12 @@ fn sheet_book(s: &str) -> std::result::Result<Option<usize>, String> {
 fn sheets_named(e: &gridcraft_formula::Expr) -> Vec<(&str, bool)> {
     use gridcraft_formula::{Expr, SheetSel};
     match e {
-        Expr::Ref(r) => match &r.sheet {
+        Expr::Ref(gridcraft_formula::Reference { sheet, .. }) | Expr::LinkedRefError(sheet) => match sheet {
             SheetSel::Named(a) => vec![(a.as_str(), false)],
             SheetSel::Span(a, b) => vec![(a.as_str(), false), (b.as_str(), true)],
             SheetSel::Current => vec![],
         },
-        // `[1]Data!#REF!` (a deleted reference into a linked workbook) is carried as a name.
-        Expr::Name(n) => n.strip_suffix("!#REF!").or_else(|| n.rsplit_once('!').map(|(s, _)| s)).map(|s| vec![(s, false)]).unwrap_or_default(),
+        Expr::Name(n) => n.rsplit_once('!').map(|(s, _)| vec![(s, false)]).unwrap_or_default(),
         _ => vec![],
     }
 }
@@ -254,12 +253,8 @@ fn first_book_only_ref(expr: &gridcraft_formula::Expr) -> Option<String> {
     let mut bad = None;
     expr.walk(&mut |e| {
         let sheet = match e {
-            Expr::Ref(r) => match &r.sheet {
-                SheetSel::Named(a) => Some(a.as_str()),
-                _ => None,
-            },
-            // `[1]!#REF!`: an error, not a name.
-            Expr::Name(n) => n.strip_suffix("!#REF!"),
+            // `[1]!#REF!` too: an error, not a name.
+            Expr::Ref(gridcraft_formula::Reference { sheet: SheetSel::Named(a), .. }) | Expr::LinkedRefError(SheetSel::Named(a)) => Some(a.as_str()),
             _ => None,
         };
         if bad.is_none()

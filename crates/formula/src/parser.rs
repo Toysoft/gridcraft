@@ -288,10 +288,9 @@ impl Parser {
                 match self.next() {
                     Tok::Word(w) => self.reference_from_word(sheet, &w),
                     // A reference Excel found deleted in a linked workbook keeps the link
-                    // (`[1]Data!#REF!`): carried as a name, which evaluates to `#REF!` and prints back.
-                    Tok::Error(CellError::Ref) => Ok(match sheet {
-                        SheetSel::Named(s) if book_prefix(&s).is_some_and(|(n, _)| n > 0) => Expr::Name(format!("{s}!#REF!")),
-                        SheetSel::Span(a, b) if book_prefix(&a).is_some_and(|(n, _)| n > 0) => Expr::Name(format!("{a}:{b}!#REF!")),
+                    // (`[1]Data!#REF!`), so it prints back as written.
+                    Tok::Error(CellError::Ref) => Ok(match &sheet {
+                        SheetSel::Named(s) | SheetSel::Span(s, _) if book_prefix(s).is_some_and(|(n, _)| n > 0) => Expr::LinkedRefError(sheet),
                         _ => Expr::Error(CellError::Ref),
                     }),
                     t => Err(self.err(format!("expected a reference after the sheet name, found {}", describe(&t)))),
