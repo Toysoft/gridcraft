@@ -254,6 +254,9 @@ pub struct SheetApp {
     pub(crate) shots: control::Shots,
     /// Chart selected on the sheet (id).
     pub selected_chart: Option<u32>,
+    /// The shape picked from Insert › Shapes (or Text Box), waiting to be drawn on the grid: the
+    /// pointer drags out its box, a click drops a default-size one, Escape cancels (`grid.rs`).
+    pub shape_tool: Option<String>,
     /// The system clipboard's text when GridCraft last copied without publishing to it (a
     /// control-channel or MCP `edit.copy`/`edit.cut`). While the system clipboard still holds this
     /// text, GridCraft's copy is the newer one and Paste uses it.
@@ -303,6 +306,7 @@ impl SheetApp {
             keytips: keytips::KeyTips::default(),
             shots: control::Shots::default(),
             selected_chart: None,
+            shape_tool: None,
             clipboard_text_at_copy: None,
             cut_text: None,
             started: now_ms(),
@@ -388,6 +392,7 @@ impl SheetApp {
             && let Some(chart) = r.get("chart").and_then(Json::as_u64).and_then(|id| u32::try_from(id).ok())
         {
             self.selected_chart = Some(chart);
+            self.grid.reveal_object = Some(chart);
         }
         if id == "file.exportPdf"
             && let Ok(r) = &r

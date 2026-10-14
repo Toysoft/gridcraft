@@ -185,6 +185,28 @@ pub fn jump(sheet: &Sheet, from: CellRef, dr: i64, dc: i64) -> CellRef {
 }
 
 /// The contiguous data region around `c` (Ctrl+A / Ctrl+Shift+8, AutoSum, sort, tables).
+/// The data a chart or PivotTable made from the single cell `c` reads: the table at `c` (its
+/// totals row left out), else the [`current_region`] without the title lines above its column
+/// headers. A sheet often starts with a heading (and a subtitle) in a row of its own right above
+/// the headers; taken into the block, its blank neighbours became nameless fields ("The PivotTable
+/// field name is not valid") and its text a bogus series.
+pub fn data_region(sheet: &Sheet, c: CellRef) -> RangeRef {
+    if let Some(t) = sheet.table_at(c) {
+        let mut r = t.range;
+        if t.totals_row && r.end.row > r.start.row {
+            r.end.row -= 1;
+        }
+        return r;
+    }
+    let mut r = current_region(sheet, c);
+    let filled = |row: u32| (r.start.col..=r.end.col).filter(|col| !sheet.value(CellRef::new(row, *col)).is_empty()).count();
+    // A top line holding at most one value, over a line holding several, is a title.
+    while r.width() >= 2 && r.height() >= 3 && r.start.row < c.row && filled(r.start.row) <= 1 && filled(r.start.row + 1) >= 2 {
+        r.start.row += 1;
+    }
+    r
+}
+
 pub fn current_region(sheet: &Sheet, c: CellRef) -> RangeRef {
     let filled = |c: CellRef| sheet.cell(c).is_some_and(|x| !x.value.is_empty() || x.formula.is_some()) || sheet.spill.contains_key(&c);
     // Whether a row (or column) has a filled cell between two columns (rows), inclusive.

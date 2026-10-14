@@ -1630,6 +1630,10 @@ dependencies = [
 [[package]]
 name = "gridcraft-pdf"
 version = "0.6.1"
+dependencies = [
+ "epaint_default_fonts",
+ "skrifa",
+]
 
 [[package]]
 name = "gridcraft-ui-egui"
@@ -1641,6 +1645,7 @@ dependencies = [
  "epaint_default_fonts",
  "gridcraft-chart",
  "gridcraft-engine",
+ "gridcraft-pdf",
  "gridcraft-xlsx",
  "image",
  "log",

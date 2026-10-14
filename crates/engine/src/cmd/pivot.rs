@@ -12,7 +12,7 @@ use serde_json::{Value as Json, json};
 
 use super::*;
 use crate::pivot as pv;
-use crate::selection::current_region;
+use crate::selection::data_region;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -561,7 +561,7 @@ fn default_source(s: &Session) -> Result<String> {
     }
     let sel = d.selection.current();
     let r = if sel.is_single() {
-        current_region(sh, d.selection.active)
+        data_region(sh, d.selection.active)
     } else {
         let used = sh.used_range().unwrap_or(sel);
         sel.intersection(&used).unwrap_or(sel)

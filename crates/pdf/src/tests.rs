@@ -277,3 +277,118 @@ fn info_strings_are_capped() {
     let pdf = doc.finish();
     assert_eq!(utf16_entry(&pdf, "/Title").chars().count(), MAX_INFO_CHARS);
 }
+
+/// Ubuntu Light (compiled into epaint) has the Vietnamese base letters `ă â đ ê ô ơ ư`.
+fn ubuntu() -> Vec<u8> {
+    epaint_default_fonts::UBUNTU_LIGHT.to_vec()
+}
+
+#[test]
+fn vietnamese_text_embeds_a_unicode_face() {
+    let mut d = PdfDoc::new();
+    assert!(d.set_unicode_font(Font::Helvetica, ubuntu(), 0));
+    // A slot takes one face.
+    assert!(!d.set_unicode_font(Font::Helvetica, ubuntu(), 0));
+    let p = d.add_page(612.0, 792.0);
+    p.text(72.0, 72.0, 12.0, Font::Helvetica, [0, 0, 0], "Đơn vị: ư ă");
+    p.text(72.0, 90.0, 12.0, Font::Helvetica, [0, 0, 0], "Plain ASCII");
+    let pdf = d.finish();
+    let s = String::from_utf8_lossy(&pdf);
+    assert!(s.contains("/Subtype /Type0"), "Type0 font written");
+    assert!(s.contains("/Encoding /Identity-H"));
+    assert!(s.contains("/FontFile2"));
+    assert!(s.contains("/CIDToGIDMap /Identity"));
+    // The Unicode text uses the embedded face, the ASCII text the standard font.
+    assert!(s.contains("/U1 12 Tf"));
+    assert!(s.contains("/F1 12 Tf"));
+    assert!(!s.contains("(?n v"), "no question marks");
+    // ToUnicode maps glyphs back to Đ (0110), ơ (01A1), ư (01B0), ă (0103).
+    for u in ["<0110>", "<01A1>", "<01B0>", "<0103>"] {
+        assert!(s.contains(u), "ToUnicode has {u}");
+    }
+    // Subset tag (six capitals and `+`) on the base font name.
+    let i = s.find("/Subtype /Type0 /BaseFont /").unwrap() + 27;
+    let name = &s[i..i + 7];
+    assert!(name[..6].chars().all(|c| c.is_ascii_uppercase()) && name.ends_with('+'), "{name}");
+    assert!(check_xref(&pdf) >= 10);
+}
+
+#[test]
+fn embedded_subset_is_a_valid_truetype_file() {
+    let face = embed::Face::parse(ubuntu(), 0).unwrap();
+    let glyphs = face.glyphs("ăơư");
+    assert!(glyphs.iter().all(|(_, g)| g.is_some()));
+    let mut usage = embed::Usage::new();
+    for (c, g) in &glyphs {
+        usage.insert(g.unwrap(), *c);
+    }
+    let mut next = 10;
+    let (objs, id) = embed::write_objects(&face, &usage, &mut next);
+    assert_eq!(id, 10);
+    assert_eq!(next, 15);
+    let file = &objs.iter().find(|(i, _)| *i == 13).unwrap().1;
+    let start = find(file, b"stream\n").unwrap() + 7;
+    let font = &file[start..file.len() - b"\nendstream".len()];
+    // Re-parse the subset: glyph ids are kept, and it is much smaller than the original.
+    // (No cmap: the PDF maps codes to glyph ids directly.)
+    let sub = embed::Face::parse(font.to_vec(), 0).expect("subset parses");
+    for (_, g) in &glyphs {
+        assert!(sub.glyph_len(g.unwrap()).unwrap() > 0, "used glyph kept");
+    }
+    let unused = face.glyphs("Q")[0].1.unwrap();
+    assert_eq!(sub.glyph_len(unused), Some(0), "unused glyph emptied");
+    assert!(font.len() * 4 < ubuntu().len(), "{} vs {}", font.len(), ubuntu().len());
+}
+
+#[test]
+fn decomposed_vietnamese_is_composed_before_encoding() {
+    let mut d = PdfDoc::new();
+    assert!(d.set_unicode_font(Font::Helvetica, ubuntu(), 0));
+    let p = d.add_page(612.0, 792.0);
+    // "ơ" written as o + combining horn: one glyph, not two.
+    p.text(72.0, 72.0, 12.0, Font::Helvetica, [0, 0, 0], "o\u{031B}");
+    let face = embed::Face::parse(ubuntu(), 0).unwrap();
+    let g = face.glyphs("ơ")[0].1.unwrap();
+    let pdf = String::from_utf8_lossy(&d.finish()).to_string();
+    assert!(pdf.contains(&format!("<{g:04X}> Tj")), "composed glyph shown alone");
+    // Widths: a decomposed letter measures like the composed one.
+    assert_eq!(text_width(Font::Helvetica, 10.0, "e\u{0302}\u{0301}"), text_width(Font::Helvetica, 10.0, "ế"));
+    assert_eq!(text_width(Font::Helvetica, 10.0, "ế"), text_width(Font::Helvetica, 10.0, "e"));
+}
+
+#[test]
+fn without_a_face_unicode_text_keeps_the_question_mark_fallback() {
+    let d = PdfDoc::new();
+    // A face that can't be embedded (garbage) is refused.
+    let mut d2 = PdfDoc::new();
+    assert!(!d2.set_unicode_font(Font::TimesRoman, b"not a font".to_vec(), 0));
+    drop(d);
+    // Characters WinAnsi has stay in the standard font, no embedding.
+    let mut d = PdfDoc::new();
+    d.add_page(100.0, 100.0).text(10.0, 10.0, 10.0, Font::Courier, [0, 0, 0], "café à ê");
+    let s = String::from_utf8_lossy(&d.finish()).to_string();
+    assert!(!s.contains("Type0"));
+}
+
+#[test]
+fn hostile_font_bytes_never_panic() {
+    let real = ubuntu();
+    // Truncations and byte flips of a real font.
+    for cut in [0usize, 12, 100, 1000, real.len() / 2] {
+        let _ = embed::Face::parse(real[..cut.min(real.len())].to_vec(), 0);
+    }
+    let mut seed = 0x1234_5678u32;
+    for _ in 0..64 {
+        let mut m = real.clone();
+        for _ in 0..32 {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+            let i = (seed as usize) % m.len();
+            m[i] = (seed >> 16) as u8;
+        }
+        if let Some(face) = embed::Face::parse(m, 0) {
+            let usage: embed::Usage = face.glyphs("ăâđêôơư").into_iter().filter_map(|(c, g)| Some((g?, c))).collect();
+            let mut next = 4;
+            let _ = embed::write_objects(&face, &usage, &mut next);
+        }
+    }
+}
