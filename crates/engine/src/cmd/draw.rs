@@ -431,7 +431,17 @@ fn ink_to_shape(s: &mut Session, p: &Json) -> Result<Json> {
     })
 }
 
-/// Two smoothing passes followed by bounded Catmull-Rom interpolation. Endpoints stay fixed.
+/// Most one smoothing pass moves a point (sheet pixels): enough to settle hand and sensor
+/// jitter, too little to pull a fast stroke's turns inward (Excel keeps them where they were drawn).
+const JITTER: f64 = 1.5;
+/// Sheet pixels between interpolated points, and the most points one segment gets.
+const SPACING: f64 = 3.0;
+const MAX_STEPS: usize = 16;
+
+/// Two jitter-bounded smoothing passes, then a centripetal Catmull-Rom curve through every
+/// sample: it passes through the samples, so sharp, far-apart turns keep their reach, and
+/// unlike the uniform spline it never loops or overshoots between unevenly spaced samples.
+/// Endpoints stay fixed.
 fn smooth_stroke(points: &[[f64; 2]], pressure: &[f32]) -> (Vec<[f64; 2]>, Vec<f32>) {
     let points = points.get(..points.len().min(MAX_INK_POINTS)).unwrap_or_default();
     let mut filtered = points.to_vec();
@@ -439,26 +449,28 @@ fn smooth_stroke(points: &[[f64; 2]], pressure: &[f32]) -> (Vec<[f64; 2]>, Vec<f
         let before = filtered.clone();
         for i in 1..points.len().saturating_sub(1) {
             if let (Some(a), Some(b), Some(c), Some(out)) = (before.get(i - 1), before.get(i), before.get(i + 1), filtered.get_mut(i)) {
-                *out = [(a[0] + 2.0 * b[0] + c[0]) / 4.0, (a[1] + 2.0 * b[1] + c[1]) / 4.0];
+                let (dx, dy) = ((a[0] + 2.0 * b[0] + c[0]) / 4.0 - b[0], (a[1] + 2.0 * b[1] + c[1]) / 4.0 - b[1]);
+                let d = dx.hypot(dy);
+                let k = if d > JITTER { JITTER / d } else { 1.0 };
+                *out = [b[0] + dx * k, b[1] + dy * k];
             }
         }
     }
     // Interpolation multiplies the points: keep the result under the stroke cap.
-    let steps = (MAX_INK_POINTS / points.len().max(1)).clamp(1, 4);
+    let segments = filtered.len().saturating_sub(1).max(1);
+    let budget = ((MAX_INK_POINTS - 1) / segments).clamp(1, MAX_STEPS);
     let mut result = Vec::new();
     let mut forces = Vec::new();
     for (i, pair) in filtered.windows(2).enumerate() {
         let (b, c) = (pair[0], pair[1]);
-        let a = filtered.get(i.saturating_sub(1)).copied().unwrap_or(b);
-        let d = filtered.get(i + 2).copied().unwrap_or(c);
+        let length = (c[0] - b[0]).hypot(c[1] - b[1]);
+        // Past the ends, mirror the neighbour so the end segments curve like the rest.
+        let a = i.checked_sub(1).and_then(|h| filtered.get(h)).copied().unwrap_or([2.0 * b[0] - c[0], 2.0 * b[1] - c[1]]);
+        let d = filtered.get(i + 2).copied().unwrap_or([2.0 * c[0] - b[0], 2.0 * c[1] - b[1]]);
+        let steps = ((length / SPACING).ceil() as usize).clamp(1, budget);
         for k in 0..steps {
             let t = k as f64 / steps as f64;
-            result.push(std::array::from_fn(|j| {
-                0.5 * ((2.0 * b[j])
-                    + (-a[j] + c[j]) * t
-                    + (2.0 * a[j] - 5.0 * b[j] + 4.0 * c[j] - d[j]) * t * t
-                    + (-a[j] + 3.0 * b[j] - 3.0 * c[j] + d[j]) * t * t * t)
-            }));
+            result.push(centripetal(a, b, c, d, t));
             if let Some(&p) = pressure.get(i) {
                 forces.push(p + (pressure.get(i + 1).copied().unwrap_or(p) - p) * t as f32);
             }
@@ -471,6 +483,27 @@ fn smooth_stroke(points: &[[f64; 2]], pressure: &[f32]) -> (Vec<[f64; 2]>, Vec<f
         forces.push(last);
     }
     (result, forces)
+}
+
+/// The point at `t` (0..1) between `b` and `c` on the centripetal Catmull-Rom curve through
+/// `a, b, c, d` (Barry and Goldman's pyramid, knots spaced by the square root of the distance).
+/// Coincident samples fall back to the straight segment.
+fn centripetal(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2], t: f64) -> [f64; 2] {
+    let lerp = |p: [f64; 2], q: [f64; 2], u: f64| [p[0] + (q[0] - p[0]) * u, p[1] + (q[1] - p[1]) * u];
+    let knot = |p: [f64; 2], q: [f64; 2]| (q[0] - p[0]).hypot(q[1] - p[1]).sqrt();
+    let (k1, k2, k3) = (knot(a, b), knot(b, c), knot(c, d));
+    const EPS: f64 = 1e-6;
+    if k1 < EPS || k2 < EPS || k3 < EPS {
+        return lerp(b, c, t);
+    }
+    let (t0, t1) = (0.0, k1);
+    let (t2, t3) = (t1 + k2, t1 + k2 + k3);
+    let u = t1 + (t2 - t1) * t;
+    let mix = |p: [f64; 2], q: [f64; 2], from: f64, to: f64| lerp(p, q, (u - from) / (to - from));
+    let (a1, a2, a3) = (mix(a, b, t0, t1), mix(b, c, t1, t2), mix(c, d, t2, t3));
+    let (b1, b2) = (mix(a1, a2, t0, t2), mix(a2, a3, t1, t3));
+    let p = mix(b1, b2, t1, t2);
+    if p.iter().all(|v| v.is_finite()) { p } else { lerp(b, c, t) }
 }
 
 /// Smoothed inverse speed response: slow drawing is thick, fast drawing thin.
@@ -847,6 +880,31 @@ mod tests {
         let (back, report) = gridcraft_xlsx::read_xlsx(&gridcraft_xlsx::write_xlsx(wb).unwrap()).unwrap();
         assert!(report.warnings.is_empty(), "{:?}", report.warnings);
         assert_eq!(back.active().unwrap().shapes[0].ink, shape.ink);
+    }
+
+    #[test]
+    fn fast_zigzag_keeps_its_turns_and_never_loops() {
+        // A fast zigzag: few samples, far apart. The smoothed stroke reaches every turn (within
+        // the jitter bound) and stays between the turns' heights instead of curling past them.
+        let points: Vec<[f64; 2]> = (0..8).map(|i| [i as f64 * 40.0, if i % 2 == 0 { 0.0 } else { 300.0 }]).collect();
+        let (smooth, _) = smooth_stroke(&points, &[]);
+        for turn in &points {
+            let nearest = smooth.iter().map(|q| (q[0] - turn[0]).hypot(q[1] - turn[1])).fold(f64::INFINITY, f64::min);
+            assert!(nearest <= 2.0 * JITTER + 0.01, "turn {turn:?} pulled in by {nearest}");
+        }
+        assert!(smooth.iter().all(|q| q[1] > -2.0 * JITTER - 5.0 && q[1] < 300.0 + 2.0 * JITTER + 5.0), "no overshoot loops");
+        // Long segments are filled in, short ones aren't over-sampled, duplicates are harmless.
+        assert!(smooth.len() >= points.len() * 8);
+        let (dup, _) = smooth_stroke(&[[0.0, 0.0], [0.0, 0.0], [10.0, 0.0], [10.0, 0.0]], &[]);
+        assert!(dup.iter().all(|q| q.iter().all(|v| v.is_finite())));
+        // Hand jitter is still settled.
+        let wobble: Vec<[f64; 2]> = (0..20).map(|i| [i as f64, if i % 2 == 0 { 0.0 } else { 1.0 }]).collect();
+        let (calm, _) = smooth_stroke(&wobble, &[]);
+        let spread = |v: &[[f64; 2]]| {
+            v[2..v.len() - 2].iter().map(|q| q[1]).fold(f64::NEG_INFINITY, f64::max)
+                - v[2..v.len() - 2].iter().map(|q| q[1]).fold(f64::INFINITY, f64::min)
+        };
+        assert!(spread(&calm) < 0.75, "jitter settles: {}", spread(&calm));
     }
 
     #[test]
