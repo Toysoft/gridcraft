@@ -1,5 +1,6 @@
 //! Español (España): the formula words Spanish Excel shows (function names, booleans, errors,
-//! structured-reference specifiers) and its formula separators.
+//! structured-reference specifiers) and its array-constant separators. The list and decimal
+//! separators come from the region.
 //!
 //! Function names come from Microsoft Support's es-es Excel function pages (retrieved
 //! 2026-10-10; the pages are machine-translated): per page, a vote among the title, the meta
@@ -20,8 +21,6 @@ use super::Dialect;
 use gridcraft_core::CellError;
 
 pub(super) const DIALECT: Dialect = Dialect {
-    list: ';',
-    decimal: ',',
     array_column: '\\',
     array_row: ';',
     bool_true: "VERDADERO",

@@ -893,6 +893,7 @@ impl SheetApp {
         };
         let mut ed = editor::EditState::new(d.wb.active_sheet, at, text, replace, from_formula_bar);
         ed.locale = locale;
+        ed.separators = formula_locale::separators(locale, &d.wb);
         if replace && self.ui.autocomplete && !ed.is_formula() {
             ed.completion = editor::column_completion(sh, at, &ed.text);
         }
@@ -908,7 +909,7 @@ impl SheetApp {
             Some(full) if full.to_lowercase().starts_with(&ed.text.to_lowercase()) => full.clone(),
             _ => ed.text.clone(),
         };
-        let text = match self.session.active().map(|d| formula_locale::canonical(&text, ed.locale, &d.wb, ed.sheet, ed.cell)) {
+        let text = match self.session.active().map(|d| formula_locale::canonical(&text, ed.locale, ed.separators, &d.wb, ed.sheet, ed.cell)) {
             Some(Ok(text)) => text,
             Some(Err(error)) => {
                 self.message = Some(("GridCraft".into(), error.to_string()));

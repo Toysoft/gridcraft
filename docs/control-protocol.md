@@ -64,9 +64,10 @@ quoted in an error. The opened workbook has no save path, so Save asks where to 
 the password, and never replaces the encrypted original.
 `{command: "app.region", params: {region: "en-GB"}}` sets the regional format: the decimal and
 group separators, the date order and the month and day names that typed cell input is read with
-and cells are shown with. It never changes a stored value, formula or number format code, only
+and cells are shown with, and the separators of formulas typed in the cell editor and formula bar
+(`=SUM(1,5;2)` in de-DE). It never changes a stored value, formula or number format code, only
 how they are typed and displayed, so switching back shows the same dates in the old layout.
-Formula syntax (function names, argument separators) is not part of the region. `region` is a tag
+Commands keep canonical formula syntax (`=SUM(1.5,2)`) in every region. `region` is a tag
 from the list below, matched strictly (an unknown tag is an error that lists the valid ones):
 `en-US` (default), `en-GB`, `en-IN`, `es-ES`, `de-DE`, `fr-FR`, `it-IT`, `pt-BR`, `pt-PT`,
 `ru-RU`, `cs-CZ`, `ja-JP`, `ko-KR`, `zh-CN`, `zh-TW`. Without `region` the command only reports

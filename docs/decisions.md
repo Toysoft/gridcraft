@@ -3,16 +3,23 @@
 ## Formula localization uses the existing interface preference
 
 PR #98 builds on the persisted `UiState.language` introduced by #31 and extended by #104.
-Español, Deutsch, Português (Brasil), Русский and Français select their function table and
-separators; there is no competing locale setting. Formula syntax without a translation table
-(English, Japanese, Chinese, Korean, and for now Czech and Serbian) stays English. The editor
+Español, Deutsch, Português (Brasil), Русский and Français select their function table; there
+is no competing formula-language setting. Formula syntax without a translation table (English,
+Japanese, Chinese, Korean, and for now Czech and Serbian) keeps English names. The editor
 translates to canonical English before engine commands, and translates back only for display.
 API, clipboard and XLSX syntax remain stable. Existing names override aliases.
 
 Each formula language is data (`crates/formula/src/input/<language>.rs`: names, booleans,
-errors, table specifiers, separators) behind one `Dialect` table, so a language is added by a
-data file and one `FormulaLocale` variant, without new parsing code. Every entry carries its
-source; Microsoft's localized pages are machine-translated, so names need two agreeing signals.
+errors, table specifiers, preferred array separators) behind one `Dialect` table, so a language
+is added by a data file and one `FormulaLocale` variant, without new parsing code. Every entry
+carries its source; Microsoft's localized pages are machine-translated, so names need two
+agreeing signals.
+
+The argument and decimal separators come from the Regional format (`Region::list`,
+`Region::decimal`), not from the language: Excel takes them from the Windows regional settings,
+and English Excel with a Croatian region takes `=SUM(1;2)` (#447). Array separators combine both
+(`Separators::new`): the language's own, with `\` for a column separator that would be the
+region's decimal, which matches every combination measured (`docs/formula-input.md`).
 
 ## Preserve array evaluation when exporting formulas (#64)
 

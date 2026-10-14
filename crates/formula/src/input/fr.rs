@@ -1,5 +1,6 @@
 //! Français (France): the formula words French Excel shows (function names, booleans, errors,
-//! structured-reference specifiers) and its formula separators.
+//! structured-reference specifiers) and its array-constant separators. The list and decimal
+//! separators come from the region.
 //!
 //! Function names come from Microsoft Support's fr-fr Excel function pages (retrieved
 //! 2026-10-10; the pages are machine-translated): per page, a vote among the title, the meta
@@ -23,14 +24,12 @@
 //! - errors (except #SPILL!, #CALC!): https://support.microsoft.com/fr-fr/excel/functions/error-type-function (ERROR.TYPE table; #CHARGEMENT_DONNEES is error number 8) | https://www.morpheus-formation.fr/blog/excel/types-erreurs/
 //! - errors.#SPILL!: https://support.microsoft.com/fr-fr/excel/dynamic-array-formulas-and-spilled-array-behavior | https://www.morpheus-formation.fr/blog/excel/erreur-propagation-excel/ | https://ledojo.club/apprendre-excel/lexique/erreur-propagation
 //! - errors.#CALC!: https://support.microsoft.com/fr-fr/excel/how-to-correct-a-calc-error | https://www.morpheus-formation.fr/blog/excel/types-erreurs/
-//! - array columns: https://support.microsoft.com/fr-fr/excel/use-array-constants-in-array-formulas (={1.2.3.4;5.6.7.8;9.10.11.12})
+//! - array columns: https://support.microsoft.com/fr-fr/excel/use-array-constants-in-array-formulas (={1.2.3.4;5.6.7.8;9.10.11.12}) | https://stackoverflow.com/a/79066445 (French Excel 2016: `.` with a French region, `\` with an English one)
 
 use super::Dialect;
 use gridcraft_core::CellError;
 
 pub(super) const DIALECT: Dialect = Dialect {
-    list: ';',
-    decimal: ',',
     array_column: '.',
     array_row: ';',
     bool_true: "VRAI",

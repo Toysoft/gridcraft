@@ -19,8 +19,11 @@ pub const REF_COLORS: [Color32; 8] = [
 #[derive(Clone, Debug)]
 pub struct EditState {
     pub sheet: usize,
-    /// Syntax of this edit, captured when it starts (prevents a language switch reinterpreting it).
+    /// Syntax of this edit, captured when it starts (prevents a language or region switch
+    /// reinterpreting it): the words come from the interface language, the separators from the
+    /// region.
     pub locale: gridcraft_engine::formula::FormulaLocale,
+    pub separators: gridcraft_engine::formula::Separators,
     pub cell: CellRef,
     pub text: String,
     /// Started by typing (Enter mode: arrows commit) rather than F2 (Edit mode: arrows move the caret).
@@ -49,6 +52,7 @@ impl EditState {
         EditState {
             sheet,
             locale: Default::default(),
+            separators: Default::default(),
             cell,
             text,
             enter_mode,
@@ -182,7 +186,7 @@ impl EditState {
                     }
                     depth -= 1;
                 }
-                c if c == self.locale.list_separator() && depth == 0 => arg += 1,
+                c if c == self.separators.list && depth == 0 => arg += 1,
                 _ => {}
             }
         }
@@ -196,11 +200,16 @@ fn is_name_char(c: char) -> bool {
 }
 
 /// References in formula text with their byte spans and colour index (same reference text ⇒
-/// same colour), for colouring the editor and outlining ranges on the grid.
-pub fn formula_refs(text: &str) -> Vec<(usize, usize, RangeRef, Option<String>, usize)> {
+/// same colour), for colouring the editor and outlining ranges on the grid. `text` is in the
+/// edit's syntax (`{1\2}` with a Portuguese region).
+pub fn formula_refs(
+    text: &str,
+    locale: gridcraft_engine::formula::FormulaLocale,
+    separators: gridcraft_engine::formula::Separators,
+) -> Vec<(usize, usize, RangeRef, Option<String>, usize)> {
     let body = text.strip_prefix('=').or_else(|| text.strip_prefix('+')).unwrap_or(text);
     let offset = text.len() - body.len();
-    let Ok(toks) = gridcraft_engine::formula::lexer::tokenize(body) else { return vec![] };
+    let Ok(toks) = gridcraft_engine::formula::lexer::tokenize_locale(body, locale, separators) else { return vec![] };
     let mut out: Vec<(usize, usize, RangeRef, Option<String>, usize)> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
     let mut i = 0;
@@ -334,12 +343,13 @@ mod tests {
         assert_eq!(e.text, "=ZÄHLENWENN(");
         let mut e = EditState::new(0, CellRef::new(0, 0), "=ЕСЛИ(A1>0;сумм(B1;".into(), true, false);
         e.locale = gridcraft_engine::formula::FormulaLocale::Ru;
+        e.separators = gridcraft_engine::formula::Separators::new(e.locale, gridcraft_engine::core::region::lookup("ru-RU"));
         assert_eq!(e.current_function(), Some(("СУММ".into(), 1)));
     }
 
     #[test]
     fn ref_spans() {
-        let r = formula_refs("=A1+B2:C3*a1+Sheet2!D4");
+        let r = formula_refs("=A1+B2:C3*a1+Sheet2!D4", Default::default(), Default::default());
         assert_eq!(r.len(), 4);
         assert_eq!(r[0].4, r[2].4); // A1 and a1 share a colour
         assert_eq!(r[1].2.a1(), "B2:C3");

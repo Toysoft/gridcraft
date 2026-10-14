@@ -1,11 +1,13 @@
 //! Localized aliases accepted at user-entry boundaries; file syntax stays English.
 //!
 //! Each formula language is a [`Dialect`]: function names, booleans, error literals and
-//! structured-reference specifiers as that language's Excel spells them, and its separators.
-//! Functions a language doesn't list keep their English name, and English names are accepted in
-//! every language.
+//! structured-reference specifiers as that language's Excel spells them, and the array-constant
+//! separators it prefers. Functions a language doesn't list keep their English name, and English
+//! names are accepted in every language. The list and decimal separators come from the region:
+//! Excel takes the words from its interface language and those separators from the regional
+//! settings ([`Separators::new`]).
 
-use gridcraft_core::CellError;
+use gridcraft_core::{CellError, Region};
 
 use crate::{Expr, ParseError, parser};
 
@@ -15,7 +17,7 @@ mod fr;
 mod pt;
 mod ru;
 
-/// Formula-entry syntax selected by the interface language. Interface languages without a
+/// Formula-entry words selected by the interface language. Interface languages without a
 /// formula table (Japanese, Chinese and Korean Excel use English names; Czech and Serbian have no
 /// table yet) use [`FormulaLocale::En`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -29,10 +31,8 @@ pub enum FormulaLocale {
     Fr,
 }
 
-/// One formula language's words and separators.
+/// One formula language's words, and the array-constant separators its Excel prefers.
 pub(crate) struct Dialect {
-    list: char,
-    decimal: char,
     array_column: char,
     array_row: char,
     bool_true: &'static str,
@@ -44,6 +44,41 @@ pub(crate) struct Dialect {
     /// `(canonical, local)` for the functions spelled differently from English, sorted by the
     /// canonical name.
     functions: &'static [(&'static str, &'static str)],
+}
+
+/// The separators of formula text typed and shown in the UI: between arguments, in numbers, and
+/// between the columns and rows of array constants. See [`Separators::new`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Separators {
+    pub list: char,
+    pub decimal: char,
+    pub array_column: char,
+    pub array_row: char,
+}
+
+impl Separators {
+    /// Canonical syntax: `=SUM(1.5,{1,2;3,4})`.
+    pub const EN_US: Self = Self { list: ',', decimal: '.', array_column: ',', array_row: ';' };
+
+    /// The separators Excel uses with this formula language and regional format. The list and
+    /// decimal separators are the region's, whatever the language (English Excel with a Croatian
+    /// region takes `=SUM(1;2)`). Array constants use the language's own separators (`{1,2}`,
+    /// `{1.2}` in French and German, `{1\2}` in Spanish and Portuguese, `{1;2:3;4}` in Russian),
+    /// except that a column separator that is the region's decimal becomes `\`. That reproduces
+    /// every combination measured in Excel (Stack Overflow 57120417: English Excel with fr, de,
+    /// it, ru, cs, es and pt regions uses `\`; French Excel 2016 uses `.` with a French region and
+    /// `\` with an English one; French Excel 2013 used `.` in France, storytold/gridcraft#191).
+    pub fn new(locale: FormulaLocale, region: &Region) -> Self {
+        let (column, row) = locale.dialect().map_or((',', ';'), |d| (d.array_column, d.array_row));
+        let array_column = if column == region.decimal { '\\' } else { column };
+        Self { list: region.list, decimal: region.decimal, array_column, array_row: row }
+    }
+}
+
+impl Default for Separators {
+    fn default() -> Self {
+        Self::EN_US
+    }
 }
 
 /// Structured-reference specifiers in canonical syntax.
@@ -63,17 +98,8 @@ impl FormulaLocale {
         }
     }
 
-    pub fn list_separator(self) -> char {
-        self.dialect().map_or(',', |d| d.list)
-    }
-    pub fn decimal_separator(self) -> char {
-        self.dialect().map_or('.', |d| d.decimal)
-    }
-    pub fn array_column_separator(self) -> char {
-        self.dialect().map_or(',', |d| d.array_column)
-    }
-    pub fn array_row_separator(self) -> char {
-        self.dialect().map_or(';', |d| d.array_row)
+    fn table_items(self) -> &'static [&'static str; 5] {
+        self.dialect().map_or(&TABLE_ITEMS, |d| &d.table_items)
     }
 
     /// The local name of a canonical function name (itself when the language keeps English).
@@ -132,19 +158,20 @@ impl FormulaLocale {
 
     /// Converts the inside of a local structured reference (`[...]` without its outer brackets)
     /// to canonical syntax: specifiers in English, `,` between bracketed items.
-    pub(crate) fn struct_to_canonical(self, inner: &str) -> String {
-        match self.dialect() {
-            Some(d) => translate_struct(inner, &d.table_items, &TABLE_ITEMS, d.list, ','),
-            None => inner.to_string(),
+    pub(crate) fn struct_to_canonical(self, inner: &str, list: char) -> String {
+        if self == Self::En && list == ',' {
+            return inner.to_string();
         }
+        translate_struct(inner, self.table_items(), &TABLE_ITEMS, list, ',')
     }
 
-    /// Converts the inside of a canonical structured reference to this language.
-    pub(crate) fn struct_to_local(self, inner: &str) -> String {
-        match self.dialect() {
-            Some(d) => translate_struct(inner, &TABLE_ITEMS, &d.table_items, ',', d.list),
-            None => inner.to_string(),
+    /// Converts the inside of a canonical structured reference to this language and list
+    /// separator.
+    pub(crate) fn struct_to_local(self, inner: &str, list: char) -> String {
+        if self == Self::En && list == ',' {
+            return inner.to_string();
         }
+        translate_struct(inner, &TABLE_ITEMS, self.table_items(), ',', list)
     }
 }
 
@@ -214,8 +241,8 @@ fn translate_struct(inner: &str, from: &[&'static str; 5], to: &[&'static str; 5
 
 /// Parses UI input using the selected function table and separators. Existing names and
 /// LET/LAMBDA bindings take precedence over aliases. File and API syntax uses [`crate::parse`].
-pub fn parse_input(src: &str, locale: FormulaLocale, known_name: impl Fn(&str) -> bool) -> Result<Expr, ParseError> {
-    let mut expr = parser::parse_syntax(src, locale)?;
+pub fn parse_input(src: &str, locale: FormulaLocale, separators: Separators, known_name: impl Fn(&str) -> bool) -> Result<Expr, ParseError> {
+    let mut expr = parser::parse_syntax(src, locale, separators)?;
     if locale != FormulaLocale::En {
         normalize(&mut expr, locale, &known_name, &mut Vec::new(), 0, false)?;
     }
@@ -224,7 +251,7 @@ pub fn parse_input(src: &str, locale: FormulaLocale, known_name: impl Fn(&str) -
 
 /// Prints canonical expressions for editing. Name collisions retain the canonical spelling
 /// so displaying then committing a formula never changes a defined-name reference.
-pub fn print_input(expr: &Expr, locale: FormulaLocale, known_name: impl Fn(&str) -> bool) -> Result<String, ParseError> {
+pub fn print_input(expr: &Expr, locale: FormulaLocale, separators: Separators, known_name: impl Fn(&str) -> bool) -> Result<String, ParseError> {
     // Check before cloning/printing: a flat operator chain can produce a deep AST even
     // though the parser itself did not recurse deeply.
     let mut pending = vec![(expr, 0usize)];
@@ -247,11 +274,13 @@ pub fn print_input(expr: &Expr, locale: FormulaLocale, known_name: impl Fn(&str)
             _ => {}
         }
     }
-    if locale == FormulaLocale::En {
+    if locale == FormulaLocale::En && separators == Separators::EN_US {
         return Ok(crate::print(expr));
     }
     let mut expr = expr.clone();
-    normalize(&mut expr, locale, &known_name, &mut Vec::new(), 0, true)?;
+    if locale != FormulaLocale::En {
+        normalize(&mut expr, locale, &known_name, &mut Vec::new(), 0, true)?;
+    }
     let canonical = crate::print(&expr);
     let tokens = crate::lexer::tokenize(&canonical).map_err(|e| ParseError { msg: e.msg, pos: e.pos })?;
     let mut out = String::new();
@@ -268,13 +297,13 @@ pub fn print_input(expr: &Expr, locale: FormulaLocale, known_name: impl Fn(&str)
                 array_depth = array_depth.saturating_sub(1);
                 out.push_str(text);
             }
-            Tok::Number(_) => out.push_str(&text.replace('.', &locale.decimal_separator().to_string())),
-            Tok::Comma => out.push(if array_depth > 0 { locale.array_column_separator() } else { locale.list_separator() }),
-            Tok::Semicolon if array_depth > 0 => out.push(locale.array_row_separator()),
+            Tok::Number(_) => out.push_str(&text.replace('.', &separators.decimal.to_string())),
+            Tok::Comma => out.push(if array_depth > 0 { separators.array_column } else { separators.list }),
+            Tok::Semicolon if array_depth > 0 => out.push(separators.array_row),
             Tok::Error(e) => out.push_str(locale.error_name(e)),
             Tok::Struct(inner) => {
                 out.push('[');
-                out.push_str(&locale.struct_to_local(&inner));
+                out.push_str(&locale.struct_to_local(&inner, separators.list));
                 out.push(']');
             }
             _ => out.push_str(text),

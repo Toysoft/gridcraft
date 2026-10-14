@@ -1,7 +1,11 @@
-use gridcraft_formula::{FormulaLocale, parse, parse_input, print, print_input};
+use gridcraft_formula::{FormulaLocale, Separators, parse, parse_input, print, print_input};
+
+fn es_es() -> Separators {
+    Separators::new(FormulaLocale::Es, gridcraft_core::region::lookup("es-ES"))
+}
 
 fn input(src: &str) -> String {
-    print(&parse_input(src, FormulaLocale::Es, |_| false).unwrap())
+    print(&parse_input(src, FormulaLocale::Es, es_es(), |_| false).unwrap())
 }
 
 #[test]
@@ -40,21 +44,21 @@ fn spanish_input_preserves_reference_and_array_syntax() {
         assert_eq!(input(src), expected, "{src}");
     }
     for bad in [r"SUMA({1;2\3})", "{SUMA(A1)}", "{FALSO;}"] {
-        assert!(parse_input(bad, FormulaLocale::Es, |_| false).is_err(), "{bad}");
+        assert!(parse_input(bad, FormulaLocale::Es, es_es(), |_| false).is_err(), "{bad}");
     }
     assert_eq!(print(&parse("SUMA(1,2)+FALSO").unwrap()), "SUMA(1,2)+FALSO");
     assert!(parse("SUM(1;2)").is_err());
     assert!(parse("{VERDADERO}").is_err());
     // Pratt parsing can produce a deep left-hand AST without deep parser recursion.
     let long_chain = "FALSO+".repeat(300) + "VERDADERO";
-    assert!(parse_input(&long_chain, FormulaLocale::Es, |_| false).is_err());
-    assert!(print_input(&parse(&long_chain).unwrap(), FormulaLocale::Es, |_| false).is_err());
+    assert!(parse_input(&long_chain, FormulaLocale::Es, es_es(), |_| false).is_err());
+    assert!(print_input(&parse(&long_chain).unwrap(), FormulaLocale::Es, es_es(), |_| false).is_err());
 }
 
 #[test]
 fn spanish_input_preserves_defined_and_local_names() {
     let known = |name: &str| ["SUMA", "FALSO"].iter().any(|n| n.eq_ignore_ascii_case(name));
-    let expr = parse_input("SUMA(2;3)+FALSO+SI(VERDADERO;4;5)", FormulaLocale::Es, known).unwrap();
+    let expr = parse_input("SUMA(2;3)+FALSO+SI(VERDADERO;4;5)", FormulaLocale::Es, es_es(), known).unwrap();
     assert_eq!(print(&expr), "SUMA(2,3)+FALSO+IF(TRUE,4,5)");
     for (src, expected) in [
         ("LET(FALSO;7;FALSO)", "LET(FALSO,7,FALSO)"),
@@ -71,30 +75,30 @@ fn spanish_input_preserves_defined_and_local_names() {
 }
 
 #[test]
-fn locale_controls_decimal_list_array_separators_and_display() {
-    let es = FormulaLocale::Es;
-    let en = FormulaLocale::En;
-    let expr = parse_input("SI(VERDADERO;SUMA(1,5;2,25);0)", es, |_| false).unwrap();
+fn region_controls_decimal_list_array_separators_and_display() {
+    let (es, en) = (FormulaLocale::Es, FormulaLocale::En);
+    let (es_es, en_us) = (es_es(), Separators::EN_US);
+    let expr = parse_input("SI(VERDADERO;SUMA(1,5;2,25);0)", es, es_es, |_| false).unwrap();
     assert_eq!(print(&expr), "IF(TRUE,SUM(1.5,2.25),0)");
-    assert_eq!(print_input(&expr, es, |_| false).unwrap(), "SI(VERDADERO;SUMA(1,5;2,25);0)");
-    assert_eq!(print_input(&expr, en, |_| false).unwrap(), print(&expr));
-    assert!(parse_input("SUM(1;2)", en, |_| false).is_err());
-    assert_eq!(print(&parse_input("SUMA(1,2)+FALSO", en, |_| false).unwrap()), "SUMA(1,2)+FALSO");
-    assert!(parse_input("SUMA(1.5;2)", es, |_| false).is_err());
+    assert_eq!(print_input(&expr, es, es_es, |_| false).unwrap(), "SI(VERDADERO;SUMA(1,5;2,25);0)");
+    assert_eq!(print_input(&expr, en, en_us, |_| false).unwrap(), print(&expr));
+    assert!(parse_input("SUM(1;2)", en, en_us, |_| false).is_err());
+    assert_eq!(print(&parse_input("SUMA(1,2)+FALSO", en, en_us, |_| false).unwrap()), "SUMA(1,2)+FALSO");
+    assert!(parse_input("SUMA(1.5;2)", es, es_es, |_| false).is_err());
     let expr = parse("SUM({1.5,2.25;3,4})+SUM((A1:A3,C1:C3))").unwrap();
-    let shown = print_input(&expr, es, |_| false).unwrap();
-    assert_eq!(print(&parse_input(&shown, es, |_| false).unwrap()), print(&expr));
+    let shown = print_input(&expr, es, es_es, |_| false).unwrap();
+    assert_eq!(print(&parse_input(&shown, es, es_es, |_| false).unwrap()), print(&expr));
     let expr = parse("LET(SUMA,LAMBDA(x,x+1),SUM(SUMA(2),FALSE))").unwrap();
-    let shown = print_input(&expr, es, |n| n == "FALSO").unwrap();
+    let shown = print_input(&expr, es, es_es, |n| n == "FALSO").unwrap();
     assert_eq!(shown, "LET(SUMA;LAMBDA(x;x+1);SUM(SUMA(2);FALSE))");
-    assert_eq!(print(&parse_input(&shown, es, |n| n == "FALSO").unwrap()), print(&expr));
+    assert_eq!(print(&parse_input(&shown, es, es_es, |n| n == "FALSO").unwrap()), print(&expr));
 }
 
 #[test]
 fn spanish_display_round_trips_text_containing_separators() {
     let es = FormulaLocale::Es;
     let expr = parse(r#"IF(A1="a,b;c",CONCAT("1.5",",",";"),SUM(0.25,A1:A3 B2))"#).unwrap();
-    let shown = print_input(&expr, es, |_| false).unwrap();
+    let shown = print_input(&expr, es, es_es(), |_| false).unwrap();
     assert_eq!(shown, r#"SI(A1="a,b;c";CONCAT("1.5";",";";");SUMA(0,25;A1:A3 B2))"#);
-    assert_eq!(print(&parse_input(&shown, es, |_| false).unwrap()), print(&expr));
+    assert_eq!(print(&parse_input(&shown, es, es_es(), |_| false).unwrap()), print(&expr));
 }

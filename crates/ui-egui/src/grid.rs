@@ -1619,7 +1619,7 @@ pub(crate) fn paint_selection(
     if let Some(ed) = &app.editor
         && ed.is_formula()
     {
-        for (_, _, r, sheet, idx) in crate::editor::formula_refs(&ed.text) {
+        for (_, _, r, sheet, idx) in crate::editor::formula_refs(&ed.text, ed.locale, ed.separators) {
             if sheet.as_deref().is_some_and(|s| !s.eq_ignore_ascii_case(&sh.name)) {
                 continue;
             }

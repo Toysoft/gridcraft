@@ -1,5 +1,6 @@
 //! Deutsch (Deutschland): the formula words German Excel shows (function names, booleans, errors,
-//! structured-reference specifiers) and its formula separators.
+//! structured-reference specifiers) and its array-constant separators. The list and decimal
+//! separators come from the region.
 //!
 //! Function names come from Microsoft Support's de-de Excel function pages (retrieved
 //! 2026-10-10; the pages are machine-translated): per page, a vote among the title, the meta
@@ -13,13 +14,12 @@
 //! - errors.#WERT!..#NV,#DATEN_ABRUFEN: https://support.microsoft.com/de-de/excel/functions/error-type-function (ERROR.TYPE table) | https://support.microsoft.com/de-de/excel/functions/cubemember-function ("#DATEN_ABRUFEN…")
 //! - errors.#SPILL!: https://support.microsoft.com/de-de/excel/how-to-correct-a-spill-error (title "#ÜBERLAUF!-Fehler")
 //! - errors.#CALC!: https://support.microsoft.com/de-de/excel/functions/lambda-function ("#KALK!-Fehlermeldung") | https://excelhero.de/funktionen/excel-filter-funktion/ | https://www.tabellenexperte.de/die-neue-filter-funktion-mit-jokersuche/ | https://www.tippscout.de/excel-daten-filtern-ganz-einfach.html
+//! - array columns: https://www.hermann-baum.de/excel/tutorial/matrixformeln/ ({20.40.70; 10.30.0}, "durch einen Punkt getrennt") | https://openbook.rheinwerk-verlag.de/excel_2007/excel2007_04_005.htm ({23.26.65;16.10.45})
 
 use super::Dialect;
 use gridcraft_core::CellError;
 
 pub(super) const DIALECT: Dialect = Dialect {
-    list: ';',
-    decimal: ',',
     array_column: '.',
     array_row: ';',
     bool_true: "WAHR",

@@ -94,9 +94,10 @@ and German (266–268 labels each, ~12% of ~2,200 strings; merged 10-10 in #31, 
 added 10-11), the
 interface follows the system language, and CJK, Thai and Hebrew text falls back to system fonts
 (#38). Dialogs, menus and messages are English. Formulas follow the interface language in
-Spanish, German, Brazilian Portuguese, Russian and French (function names, booleans, errors, table
-specifiers and separators at the editor; files keep English: [formula-input.md](docs/formula-input.md));
-numbers, dates and times follow a Regional format setting (15 regions; File › Options, `app.region`).
+Spanish, German, Brazilian Portuguese, Russian and French (function names, booleans, errors and
+table specifiers at the editor; files keep English: [formula-input.md](docs/formula-input.md));
+numbers, dates, times and formula separators follow a Regional format setting (15 regions;
+File › Options, `app.region`).
 PR #163 (German formulas and numbers) is open. Detail:
 [localization-parity.md](docs/localization-parity.md).
 
@@ -136,6 +137,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
+| 2026-10-14 | Formula separators follow the Regional format, as in Excel, not the interface language: `=SUM(1;2)` with English names in de-DE, `=SOMME(1,2)` with French names in en-US; array separators keep the language's own, with `\` between columns where that would be the region's decimal |
 | 2026-10-13 | Formulas in French: 405 local function names, `VRAI`/`FAUX`, French errors and table specifiers, `;` arguments and `.` array columns; separators and some names checked in French Excel 2013 and 2024 (#191) |
 | 2026-10-12 | Rows auto-fit oversized fonts: opening a file and whole-row/column formatting grow non-custom rows to their tallest font (#833) |
 | 2026-10-12 | Number formats: parsing a format code is linear in its length (long runs of `[`, `,` or `/` no longer take quadratic time), and an unclosed `[` is a literal when splitting sections as well as when tokenizing (#810) |

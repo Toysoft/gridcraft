@@ -1,17 +1,38 @@
 //! German, Brazilian Portuguese, Russian, French and the full Spanish table: entry and display
-//! syntax.
-use gridcraft_core::CellError;
-use gridcraft_formula::FormulaLocale::{self, De, Es, Fr, PtBr, Ru};
-use gridcraft_formula::{parse, parse_input, print, print_input};
+//! syntax. The words come from the language, the separators from the region.
+use gridcraft_core::{CellError, region};
+use gridcraft_formula::FormulaLocale::{self, De, En, Es, Fr, PtBr, Ru};
+use gridcraft_formula::{Separators, parse, parse_input, print, print_input};
 
 const LOCALIZED: [FormulaLocale; 5] = [Es, De, PtBr, Ru, Fr];
 
+/// The separators of the language in the region where it is spoken (German in de-DE).
+fn home(locale: FormulaLocale) -> Separators {
+    let tag = match locale {
+        En => "en-US",
+        Es => "es-ES",
+        De => "de-DE",
+        PtBr => "pt-BR",
+        Ru => "ru-RU",
+        Fr => "fr-FR",
+    };
+    Separators::new(locale, region::lookup(tag))
+}
+
 fn canonical(src: &str, locale: FormulaLocale) -> String {
-    print(&parse_input(src, locale, |_| false).unwrap_or_else(|e| panic!("{locale:?} `{src}`: {e}")))
+    canonical_in(src, locale, home(locale))
+}
+
+fn canonical_in(src: &str, locale: FormulaLocale, separators: Separators) -> String {
+    print(&parse_input(src, locale, separators, |_| false).unwrap_or_else(|e| panic!("{locale:?} {separators:?} `{src}`: {e}")))
 }
 
 fn shown(canonical: &str, locale: FormulaLocale) -> String {
-    print_input(&parse(canonical).unwrap(), locale, |_| false).unwrap()
+    shown_in(canonical, locale, home(locale))
+}
+
+fn shown_in(canonical: &str, locale: FormulaLocale, separators: Separators) -> String {
+    print_input(&parse(canonical).unwrap(), locale, separators, |_| false).unwrap()
 }
 
 #[test]
@@ -44,7 +65,7 @@ fn each_language_spells_formulas_like_its_excel() {
 }
 
 #[test]
-fn every_language_round_trips_canonical_formulas() {
+fn every_language_round_trips_canonical_formulas_in_every_region() {
     for formula in [
         "SUM(1.5,-2.25,A1:B2 B2:C3)",
         r#"IF(AND(TRUE,NOT(FALSE)),"a,b;c",#DIV/0!)"#,
@@ -56,13 +77,46 @@ fn every_language_round_trips_canonical_formulas() {
         "SUM(1:3)+ROWS($2:$2)",
         "CEILING.MATH(2.5)+T.TEST(A1:A3,B1:B3,2,1)",
         "BYROW(A1:B2,SUM)+GROUPBY(A1:A3,B1:B3,AVERAGE)",
+        "SUM({1.5,2;3,4.25})+INDEX({TRUE,FALSE},1)",
     ] {
         let expected = print(&parse(formula).unwrap());
         for locale in FormulaLocale::ALL {
-            let local = shown(formula, locale);
-            assert_eq!(canonical(&local, locale), expected, "{locale:?}: {formula} shown as {local}");
+            for r in region::all() {
+                let separators = Separators::new(locale, r);
+                let local = shown_in(formula, locale, separators);
+                assert_eq!(canonical_in(&local, locale, separators), expected, "{locale:?} in {}: {formula} shown as {local}", r.tag);
+            }
         }
     }
+}
+
+#[test]
+fn the_words_follow_the_language_and_the_separators_follow_the_region() {
+    let sep = |locale, tag| Separators::new(locale, region::lookup(tag));
+    // The same formula in the four combinations measured on Stack Overflow 57120417 (answer
+    // 79066445: French Excel 2016 and English Excel 365, each with a French and an English region).
+    let index = "INDEX({1,2;3,4.1},2,2)";
+    for (locale, tag, local) in [
+        (Fr, "fr-FR", "INDEX({1.2;3.4,1};2;2)"),
+        (Fr, "en-US", "INDEX({1\\2;3\\4.1},2,2)"),
+        (En, "fr-FR", "INDEX({1\\2;3\\4,1};2;2)"),
+        (En, "en-US", "INDEX({1,2;3,4.1},2,2)"),
+    ] {
+        assert_eq!(shown_in(index, locale, sep(locale, tag)), local, "{locale:?} in {tag}");
+        assert_eq!(canonical_in(local, locale, sep(locale, tag)), index, "{locale:?} in {tag}");
+    }
+    // English Excel with a decimal-comma region takes `;` between arguments (measured with hr-HR
+    // on #447) and `\` between array columns (de-de, it-it, ru-ru, cs-cz… in the same thread).
+    let (en_de, en_it) = (sep(En, "de-DE"), sep(En, "it-IT"));
+    assert_eq!(canonical_in("SUM(1,5;2)+SUM({1\\2;3,5\\4})", En, en_de), "SUM(1.5,2)+SUM({1,2;3.5,4})");
+    assert_eq!(shown_in("Table1[[#Headers],[a]]", En, en_de), "Table1[[#Headers];[a]]");
+    assert!(parse_input("SUM(1.5,2)", En, en_de, |_| false).is_err());
+    assert_eq!(shown_in("SUM({1.5,2;3,4})", En, en_it), "SUM({1,5\\2;3\\4})");
+    // German words with a US region: US separators, and `\` where the German `.` would be the
+    // decimal.
+    let de_us = sep(De, "en-US");
+    assert_eq!(canonical_in("SUMME(1.5,WAHR)+SUMME({1\\2;3.5\\4})", De, de_us), "SUM(1.5,TRUE)+SUM({1,2;3.5,4})");
+    assert!(parse_input("SUMME(1;2)", De, de_us, |_| false).is_err());
 }
 
 #[test]
@@ -78,17 +132,17 @@ fn english_names_and_any_letter_case_are_accepted() {
     // French TRIM is MIRR, and the English TRIM is SUPPRESPACE.
     assert_eq!(canonical("TRIM(A1:A3;0,1;0,1)&SUPPRESPACE(B1)", Fr), "MIRR(A1:A3,0.1,0.1)&TRIM(B1)");
     assert_eq!(shown("TRIM(MIRR(A1:A3,0.1,0.1))", Fr), "SUPPRESPACE(TRIM(A1:A3;0,1;0,1))");
-    // English separators are not the language's syntax.
-    assert!(parse_input("SUMME(1.5;2)", De, |_| false).is_err());
-    assert!(parse_input("SUM(1,2)", Ru, |_| false).is_ok_and(|e| print(&e) == "SUM(1.2)"));
+    // The region's separators, not English ones.
+    assert!(parse_input("SUMME(1.5;2)", De, home(De), |_| false).is_err());
+    assert!(parse_input("SUM(1,2)", Ru, home(Ru), |_| false).is_ok_and(|e| print(&e) == "SUM(1.2)"));
 }
 
 #[test]
 fn names_shadow_local_function_names_in_any_script() {
     assert_eq!(canonical("LET(zählenwenn;LAMBDA(x;x*2);ZÄHLENWENN(3))", De), "LET(zählenwenn,LAMBDA(x,x*2),ZÄHLENWENN(3))");
     let known = |name: &str| name == "СУММ";
-    assert_eq!(print(&parse_input("СУММ(1)", Ru, known).unwrap()), "СУММ(1)");
-    assert_eq!(print_input(&parse("SUM(1)").unwrap(), Ru, known).unwrap(), "SUM(1)");
+    assert_eq!(print(&parse_input("СУММ(1)", Ru, home(Ru), known).unwrap()), "СУММ(1)");
+    assert_eq!(print_input(&parse("SUM(1)").unwrap(), Ru, home(Ru), known).unwrap(), "SUM(1)");
 }
 
 #[test]
@@ -99,8 +153,8 @@ fn functions_passed_by_name_are_spelled_in_the_language() {
     assert_eq!(shown("_xlfn.GROUPBY(A2:A9,B2:B9,_xleta.SUM)", PtBr), "AGRUPARPOR(A2:A9;B2:B9;SOMA)");
     // A defined name with the local spelling is still the name.
     let known = |name: &str| name == "SUMME";
-    assert_eq!(print(&parse_input("NACHZEILE(A1:B3;SUMME)", De, known).unwrap()), "BYROW(A1:B3,SUMME)");
-    assert_eq!(print_input(&parse("BYROW(A1:B3,SUM)").unwrap(), De, known).unwrap(), "NACHZEILE(A1:B3;SUM)");
+    assert_eq!(print(&parse_input("NACHZEILE(A1:B3;SUMME)", De, home(De), known).unwrap()), "BYROW(A1:B3,SUMME)");
+    assert_eq!(print_input(&parse("BYROW(A1:B3,SUM)").unwrap(), De, home(De), known).unwrap(), "NACHZEILE(A1:B3;SUM)");
 }
 
 #[test]
@@ -141,10 +195,10 @@ fn malformed_localized_input_is_an_error() {
         (PtBr, "{SOMA(1)}"),
         (Es, "#¡VALOR"),
     ] {
-        assert!(parse_input(bad, locale, |_| false).is_err(), "{locale:?}: {bad}");
+        assert!(parse_input(bad, locale, home(locale), |_| false).is_err(), "{locale:?}: {bad}");
     }
     for locale in LOCALIZED {
         let chain = format!("{}+", locale.boolean_name(true)).repeat(300) + "1";
-        assert!(parse_input(&chain, locale, |_| false).is_err(), "{locale:?}");
+        assert!(parse_input(&chain, locale, home(locale), |_| false).is_err(), "{locale:?}");
     }
 }

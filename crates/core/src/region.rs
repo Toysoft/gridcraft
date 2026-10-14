@@ -1,10 +1,11 @@
-//! Regional formats: how a region writes numbers, dates, times and money.
+//! Regional formats: how a region writes numbers, dates, times, money and formula separators.
 //!
 //! Excel takes these from the operating system's regional settings; they are independent of the
-//! interface language and of the formula language. A [`Region`] changes what people *type* into
-//! a cell (`1.234,56`, `25/09/2026`) and what cells *show* (separators, month and day names,
-//! AM/PM, the system short and long dates). It never changes what is stored: values are numbers,
-//! and the number format codes saved in a file stay in their canonical en-US spelling.
+//! interface language. A [`Region`] changes what people *type* into a cell (`1.234,56`,
+//! `25/09/2026`, `=SUM(1,5;2)`) and what cells and the formula bar *show* (separators, month and
+//! day names, AM/PM, the system short and long dates). It never changes what is stored: values
+//! are numbers, formulas are stored in canonical en-US syntax, and the number format codes saved
+//! in a file stay in their canonical en-US spelling.
 //!
 //! [`EN_US`] is the default and reproduces GridCraft's original behaviour exactly.
 //!
@@ -22,6 +23,13 @@
 //! - Month names for `mmm` are CLDR's abbreviated names (so en-GB has `Sept`).
 //! - French and Portuguese (Portugal) group digits with U+00A0 (Windows), not CLDR's U+202F.
 //!   Parsing accepts every space-like grouping character in those regions.
+//! - The formula list separator (between arguments) is Windows' list separator, which Excel uses
+//!   whatever the interface language, as is the decimal: English Excel with a Croatian region
+//!   accepts `=SUM(1;2)` and `=1,5*1,5` (storytold/gridcraft#447), French Excel 2024 used `,` and
+//!   `.` on a machine whose French Excel 2013 used `;` and `,` (storytold/gridcraft#191). Values:
+//!   Windows `sList` (Wine's NLS data) and Microsoft Support's localized function examples
+//!   (`=SUMA(A2:A10; C2:C10)`, `=SUM(A2:A10, C2:C10)`). Array-constant separators depend on the
+//!   formula language too; see `gridcraft_formula::Separators`.
 //!
 //! Regions this module doesn't list (`de-CH`, `es-MX`, `en-CA`…) resolve to the main region of
 //! their language through [`lookup`]; their own conventions (a Swiss apostrophe, a Mexican
@@ -55,6 +63,8 @@ pub struct Region {
     pub lcid: u16,
     pub decimal: char,
     pub group: char,
+    /// The separator between function arguments in formulas (Windows' list separator).
+    pub list: char,
     pub grouping: Grouping,
     pub date_order: DateOrder,
     pub date_sep: char,
@@ -101,6 +111,7 @@ pub static EN_US: Region = Region {
     decimal: '.',
     group: ',',
     grouping: Grouping::Thousands,
+    list: ',',
     date_order: DateOrder::Mdy,
     date_sep: '/',
     time_sep: ':',
@@ -127,6 +138,7 @@ static EN_GB: Region = Region {
     decimal: '.',
     group: ',',
     grouping: Grouping::Thousands,
+    list: ',',
     date_order: DateOrder::Dmy,
     date_sep: '/',
     time_sep: ':',
@@ -153,6 +165,7 @@ static EN_IN: Region = Region {
     decimal: '.',
     group: ',',
     grouping: Grouping::Indian,
+    list: ',',
     date_order: DateOrder::Dmy,
     date_sep: '/',
     time_sep: ':',
@@ -179,6 +192,7 @@ static ES_ES: Region = Region {
     decimal: ',',
     group: '.',
     grouping: Grouping::Thousands,
+    list: ';',
     date_order: DateOrder::Dmy,
     date_sep: '/',
     time_sep: ':',
@@ -205,6 +219,7 @@ static DE_DE: Region = Region {
     decimal: ',',
     group: '.',
     grouping: Grouping::Thousands,
+    list: ';',
     date_order: DateOrder::Dmy,
     date_sep: '.',
     time_sep: ':',
@@ -231,6 +246,7 @@ static FR_FR: Region = Region {
     decimal: ',',
     group: '\u{a0}',
     grouping: Grouping::Thousands,
+    list: ';',
     date_order: DateOrder::Dmy,
     date_sep: '/',
     time_sep: ':',
@@ -257,6 +273,7 @@ static IT_IT: Region = Region {
     decimal: ',',
     group: '.',
     grouping: Grouping::Thousands,
+    list: ';',
     date_order: DateOrder::Dmy,
     date_sep: '/',
     time_sep: ':',
@@ -283,6 +300,7 @@ static PT_BR: Region = Region {
     decimal: ',',
     group: '.',
     grouping: Grouping::Thousands,
+    list: ';',
     date_order: DateOrder::Dmy,
     date_sep: '/',
     time_sep: ':',
@@ -309,6 +327,7 @@ static PT_PT: Region = Region {
     decimal: ',',
     group: '\u{a0}',
     grouping: Grouping::Thousands,
+    list: ';',
     date_order: DateOrder::Dmy,
     date_sep: '/',
     time_sep: ':',
@@ -335,6 +354,7 @@ static RU_RU: Region = Region {
     decimal: ',',
     group: '\u{a0}',
     grouping: Grouping::Thousands,
+    list: ';',
     date_order: DateOrder::Dmy,
     date_sep: '.',
     time_sep: ':',
@@ -361,6 +381,7 @@ static CS_CZ: Region = Region {
     decimal: ',',
     group: '\u{a0}',
     grouping: Grouping::Thousands,
+    list: ';',
     date_order: DateOrder::Dmy,
     date_sep: '.',
     time_sep: ':',
@@ -387,6 +408,7 @@ static JA_JP: Region = Region {
     decimal: '.',
     group: ',',
     grouping: Grouping::Thousands,
+    list: ',',
     date_order: DateOrder::Ymd,
     date_sep: '/',
     time_sep: ':',
@@ -413,6 +435,7 @@ static KO_KR: Region = Region {
     decimal: '.',
     group: ',',
     grouping: Grouping::Thousands,
+    list: ',',
     date_order: DateOrder::Ymd,
     date_sep: '-',
     time_sep: ':',
@@ -439,6 +462,7 @@ static ZH_CN: Region = Region {
     decimal: '.',
     group: ',',
     grouping: Grouping::Thousands,
+    list: ',',
     date_order: DateOrder::Ymd,
     date_sep: '/',
     time_sep: ':',
@@ -465,6 +489,7 @@ static ZH_TW: Region = Region {
     decimal: '.',
     group: ',',
     grouping: Grouping::Thousands,
+    list: ',',
     date_order: DateOrder::Ymd,
     date_sep: '/',
     time_sep: ':',
