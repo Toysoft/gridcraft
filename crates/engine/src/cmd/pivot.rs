@@ -1987,6 +1987,51 @@ mod tests {
     fn pivot_chart(s: &Session) -> gridcraft_model::Chart {
         s.doc().unwrap().wb.active().unwrap().charts.last().unwrap().clone()
     }
+    /// The PivotChart's series names as Excel writes them: each series' column from `skip` rows
+    /// below the report's top row (Excel starts at the top row, the "Column Labels" caption) down
+    /// to the row above the data.
+    fn header_refs(s: &Session, skip: u32) -> Vec<String> {
+        let sh = s.doc().unwrap().wb.active().unwrap();
+        let top = sh.pivots[0].anchor.row + skip + 1;
+        let q = crate::pivot::quote_sheet(&sh.name);
+        pivot_chart(s)
+            .series
+            .iter()
+            .map(|x| {
+                // The series' column and first data row, from its values reference: `Sheet!$C$7:$C$9`.
+                let rest = x.values.split_once("!$").unwrap().1;
+                let col: String = rest.chars().take_while(char::is_ascii_alphabetic).collect();
+                let row: u32 = rest[col.len() + 1..].chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap();
+                format!("{q}!${col}${top}:${col}${}", row - 1)
+            })
+            .collect()
+    }
+    /// Names the PivotChart's series by `refs` (as a PivotChart read from a file is) and types
+    /// `formats` on their data labels.
+    fn name_series(s: &mut Session, refs: &[String], formats: &[Option<String>]) {
+        let d = s.doc_mut().unwrap();
+        let si = d.wb.active_sheet;
+        let ch = std::sync::Arc::make_mut(&mut d.wb).sheet_mut(si).unwrap().charts.last_mut().unwrap();
+        assert_eq!(ch.series.len(), refs.len());
+        for ((x, r), f) in ch.series.iter_mut().zip(refs).zip(formats) {
+            x.name = Some(r.clone());
+            x.label_number_format.clone_from(f);
+        }
+    }
+    fn chart_labels(s: &Session) -> Vec<Option<String>> {
+        pivot_chart(s).series.iter().map(|x| x.label_number_format.clone()).collect()
+    }
+    fn set_text(s: &mut Session, cells: &[(&str, &str)]) {
+        let d = s.doc_mut().unwrap();
+        let si = d.wb.active_sheet;
+        let sh = std::sync::Arc::make_mut(&mut d.wb).sheet_mut(si).unwrap();
+        for (a, t) in cells {
+            let c = CellRef::parse(a).unwrap();
+            let mut cell = sh.cells.get(c).cloned().unwrap_or_default();
+            cell.value = Value::text(*t);
+            sh.set_cell(c, cell);
+        }
+    }
     fn plotted(s: &Session) -> Vec<Vec<Option<f64>>> {
         let d = s.doc().unwrap();
         let data = gridcraft_chart::resolve(&d.wb, d.wb.active_sheet, &pivot_chart(s));
@@ -2064,61 +2109,127 @@ mod tests {
         assert_eq!(labels(&s), typed[1..]);
         s.execute("pivot.filter", json!({"field": "Product", "selected": null})).unwrap();
         assert_eq!(labels(&s), typed);
-        // A PivotChart read from a file names its series by the report's header cells; those
-        // are read before the refresh moves the headers.
-        {
-            let d = s.doc_mut().unwrap();
-            let si = d.wb.active_sheet;
-            let sh = std::sync::Arc::make_mut(&mut d.wb).sheet_mut(si).unwrap();
-            let area = sh.pivots[0].last_range.unwrap();
-            let header = |item: &str| sh.cells.iter_range(area).find(|(_, c)| c.value.as_text() == Some(item)).map(|(r, _)| r).unwrap();
-            let refs: Vec<String> = ["Apples", "Pears", "Plums"]
-                .iter()
-                .map(|i| header(i))
-                .map(|c| format!("{}!${}${}", crate::pivot::quote_sheet(&sh.name), gridcraft_core::col_to_letters(c.col), c.row + 1))
-                .collect();
-            for (x, r) in sh.charts.last_mut().unwrap().series.iter_mut().zip(refs) {
-                x.name = Some(r);
-            }
-        }
+        // A PivotChart read from a file names its series by the report's header cells, from
+        // the report's top row as Excel writes them (`$C$3:$C$4`: the "Column Labels" caption,
+        // then the product); those are read before the refresh moves the headers.
+        assert_eq!(header_refs(&s, 0), ["Sheet2!$B$3:$B$4", "Sheet2!$C$3:$C$4", "Sheet2!$D$3:$D$4"]);
+        assert_eq!(text(&s, "B3"), "Column Labels");
+        let refs = header_refs(&s, 0);
+        name_series(&mut s, &refs, &typed);
         s.execute("pivot.filter", json!({"field": "Product", "selected": ["Pears", "Plums"]})).unwrap();
         assert_eq!(labels(&s), typed[1..]);
         // With two value fields each series has two items, product and value, so a series read
-        // from a file names its header cells in both rows. Excel writes the product only above
-        // the first of its two columns.
+        // from a file names its header cells in three rows: caption, product, value. Excel
+        // writes the product only above the first of its two columns.
         s.execute("pivot.filter", json!({"field": "Product", "selected": null})).unwrap();
         s.execute("pivot.addField", json!({"field": "Units", "area": "values"})).unwrap();
         let typed: Vec<Option<String>> = (0..6).map(|i| Some(format!("0.{}", "0".repeat(i)))).collect();
-        {
-            let d = s.doc_mut().unwrap();
-            let si = d.wb.active_sheet;
-            let sh = std::sync::Arc::make_mut(&mut d.wb).sheet_mut(si).unwrap();
-            let area = sh.pivots[0].last_range.unwrap();
-            let row_of = |item: &str| sh.cells.iter_range(area).find(|(_, c)| c.value.as_text() == Some(item)).map(|(r, _)| r.row).unwrap();
-            let (top, bottom) = (row_of("Apples"), row_of("Sum of Sales"));
-            assert_eq!(bottom, top + 1);
-            let q = crate::pivot::quote_sheet(&sh.name);
-            let chart = sh.charts.last().unwrap().clone();
-            assert_eq!(chart.series.len(), 6);
-            let mut renamed = Vec::new();
-            for x in &chart.series {
-                // The series' column, from its values reference: `Sheet!$C$7:$C$9`.
-                let col: String = x.values.rsplit_once("!$").unwrap().1.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
-                let c = gridcraft_core::letters_to_col(&col).unwrap();
-                // Excel leaves the product blank above a product's second column.
-                if sh.cells.get(CellRef::new(top, c)).is_some_and(|cell| cell.value.as_text().is_some()) && renamed.len() % 2 == 1 {
-                    sh.take_cells(gridcraft_core::RangeRef::new(CellRef::new(top, c), CellRef::new(top, c)));
-                }
-                renamed.push(format!("{q}!${col}${}:${col}${}", top + 1, bottom + 1));
-            }
-            let ch = sh.charts.last_mut().unwrap();
-            for ((x, r), f) in ch.series.iter_mut().zip(renamed).zip(&typed) {
-                x.name = Some(r);
-                x.label_number_format.clone_from(f);
-            }
-        }
+        let refs = header_refs(&s, 0);
+        assert_eq!(refs[1], "Sheet2!$C$3:$C$5");
+        assert_eq!((text(&s, "C4"), text(&s, "C5")), (String::new(), "Sum of Units".to_string()));
+        name_series(&mut s, &refs, &typed);
         s.execute("pivot.filter", json!({"field": "Product", "selected": ["Pears", "Plums"]})).unwrap();
         assert_eq!(labels(&s), typed[2..]);
+    }
+
+    #[test]
+    fn pivot_chart_label_formats_read_collapsed_excel_headers() {
+        // The shape of an Excel PivotChart over collapsed column fields (forum-mso-de-104083.xlsx
+        // in LibreOffice's test files): each series is named `$B$3:$B$6`, the colHeaderCaption
+        // ("Datum"), the outer item, then blank rows for the collapsed inner fields; the last
+        // header row has the rowHeaderCaption ("KW") in the label column.
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Date"], "columns": ["Product", "Region"], "values": ["Sales"]})).unwrap();
+        s.execute("pivot.collapse", json!({"field": "Product", "items": ["Apples", "Pears", "Plums"]})).unwrap();
+        s.execute("insert.pivotChart", json!({"pivot": "PivotTable1"})).unwrap();
+        let names: Vec<_> = pivot_chart(&s).series.iter().map(|x| x.name.clone().unwrap()).collect();
+        assert_eq!(names, ["\"Apples\"", "\"Pears\"", "\"Plums\""]);
+        let refs = header_refs(&s, 0);
+        assert_eq!(refs, ["Sheet2!$B$3:$B$5", "Sheet2!$C$3:$C$5", "Sheet2!$D$3:$D$5"]);
+        set_text(&mut s, &[("B3", "Datum"), ("A5", "KW")]);
+        assert_eq!([text(&s, "B4"), text(&s, "B5"), text(&s, "C5")], ["Apples", "", ""]);
+        let fmt = vec![Some("#,##0.0".to_string()); 3];
+        name_series(&mut s, &refs, &fmt);
+        s.execute("pivot.refresh", json!({})).unwrap();
+        assert_eq!(chart_labels(&s), fmt);
+    }
+
+    #[test]
+    fn pivot_chart_label_formats_keep_column_items_in_order() {
+        let mut s = Session::new();
+        s.new_workbook();
+        let rows =
+            json!([["Name", "Plan", "Done", "Hours"], ["A", "No", "No", 1], ["B", "No", "Yes", 2], ["C", "Yes", "No", 3], ["D", "Yes", "Yes", 4]]);
+        s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+        s.execute("selection.set", json!({"range": "A1"})).unwrap();
+        s.execute("insert.pivotTable", json!({"rows": ["Name"], "columns": ["Plan", "Done"], "values": ["Hours"]})).unwrap();
+        s.execute("insert.pivotChart", json!({"pivot": "PivotTable1"})).unwrap();
+        let names: Vec<_> = pivot_chart(&s).series.iter().map(|x| x.name.clone().unwrap()).collect();
+        assert_eq!(names, ["\"No - No\"", "\"No - Yes\"", "\"Yes - No\"", "\"Yes - Yes\""]);
+        // "No - Yes" and "Yes - No" are different series with the same labels; only the first
+        // has a format. Named by the item rows, then by Excel's caption-row form.
+        let pct = Some("0.0%".to_string());
+        let typed = [None, pct.clone(), None, None];
+        for skip in [1, 0] {
+            let refs = header_refs(&s, skip);
+            name_series(&mut s, &refs, &typed);
+            s.execute("pivot.refresh", json!({})).unwrap();
+            assert_eq!(chart_labels(&s), typed, "names from {skip} rows below the top");
+        }
+        // A filter that drops "No - Yes" remembers its format; "Yes - No" doesn't take it.
+        let refs = header_refs(&s, 1);
+        name_series(&mut s, &refs, &typed);
+        s.execute("pivot.filter", json!({"field": "Plan", "selected": ["Yes"]})).unwrap();
+        assert_eq!(chart_labels(&s), [None, None]);
+        s.execute("pivot.filter", json!({"field": "Plan", "selected": null})).unwrap();
+        assert_eq!(chart_labels(&s), typed);
+    }
+
+    #[test]
+    fn pivot_chart_label_formats_match_values_above_column_items() {
+        // Excel can show Σ Values above the column items; its series then name [value, product]
+        // where GridCraft has [product, value].
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Product"], "values": ["Sales", "Units"]})).unwrap();
+        s.execute("insert.pivotChart", json!({"pivot": "PivotTable1"})).unwrap();
+        let refs = header_refs(&s, 0);
+        assert_eq!(refs.len(), 6);
+        let mut cells = Vec::new();
+        for (i, col) in ["B", "C", "D", "E", "F", "G"].iter().enumerate() {
+            cells.push((format!("{col}4"), ["Sum of Sales", "Sum of Units"][i % 2]));
+            cells.push((format!("{col}5"), ["Apples", "Pears", "Plums"][i / 2]));
+        }
+        set_text(&mut s, &cells.iter().map(|(a, t)| (a.as_str(), *t)).collect::<Vec<_>>());
+        let typed: Vec<Option<String>> = (0..6).map(|i| Some(format!("0.{}", "0".repeat(i)))).collect();
+        name_series(&mut s, &refs, &typed);
+        s.execute("pivot.refresh", json!({})).unwrap();
+        assert_eq!(chart_labels(&s), typed);
+    }
+
+    #[test]
+    fn pivot_chart_label_formats_fall_back_to_position_for_unknown_names() {
+        // Header cells whose captions aren't GridCraft's item labels (items renamed in the file):
+        // no series' items match, so a refresh that keeps the series count keeps the formats by
+        // position; one that changes the series drops them rather than shift them.
+        let typed = ["0;;;", "0.0", "#,##0"].map(|f| Some(f.to_string()));
+        let opened = || {
+            let mut s = sales();
+            s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Product"], "values": ["Sales"]})).unwrap();
+            s.execute("insert.pivotChart", json!({"pivot": "PivotTable1"})).unwrap();
+            let refs = header_refs(&s, 0);
+            set_text(&mut s, &[("B4", "Äpfel"), ("C4", "Birnen"), ("D4", "Pflaumen")]);
+            name_series(&mut s, &refs, &typed);
+            s
+        };
+        let mut s = opened();
+        s.execute("pivot.refresh", json!({})).unwrap();
+        assert_eq!(chart_labels(&s), typed);
+        // Remembered under the rebuilt items from then on.
+        s.execute("pivot.filter", json!({"field": "Product", "selected": ["Pears", "Plums"]})).unwrap();
+        assert_eq!(chart_labels(&s), typed[1..]);
+        let mut s = opened();
+        s.execute("pivot.filter", json!({"field": "Product", "selected": ["Pears", "Plums"]})).unwrap();
+        assert_eq!(chart_labels(&s), [None, None]);
     }
 
     #[test]
