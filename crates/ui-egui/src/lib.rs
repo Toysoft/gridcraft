@@ -318,9 +318,10 @@ impl SheetApp {
         Self::setup_context_for_language(ctx, dark, i18n::Language::En);
     }
 
-    /// Names new workbooks and sheets in the interface language (see `Session::set_language`).
+    /// Names new workbooks and sheets in the interface language (see `Session::set_default_names`).
     fn sync_naming_language(&mut self) {
-        self.session.set_language(self.ui.language.code());
+        let l = self.ui.language;
+        self.session.set_default_names(l.tr("new workbook|Book"), l.tr("new workbook|Sheet"));
     }
 
     /// Sets up fonts and visuals for a specific persisted interface language.

@@ -3284,12 +3284,12 @@ fn paste_special_validation_moves_relative_references() {
 }
 
 #[test]
-fn new_workbooks_and_sheets_are_named_in_the_interface_language() {
+fn new_workbooks_and_sheets_take_the_interface_default_names() {
     let mut s = Session::new();
     s.new_workbook();
     assert_eq!(s.doc().unwrap().title, "Book1");
     // The untouched start-up workbook is renamed when the interface turns out to be Georgian.
-    s.set_language("ka");
+    s.set_default_names("წიგნი", "ფურცელი");
     assert_eq!(s.documents().len(), 1);
     assert_eq!(s.doc().unwrap().title, "წიგნი1");
     assert_eq!(s.doc().unwrap().wb.sheets[0].name, "ფურცელი1");
@@ -3297,7 +3297,7 @@ fn new_workbooks_and_sheets_are_named_in_the_interface_language() {
     assert!(s.doc().unwrap().wb.sheet_index("ფურცელი2").is_some());
     // A workbook with content keeps its names on a language switch.
     s.execute("cell.set", json!({"cell": "A1", "input": "1"})).unwrap();
-    s.set_language("en");
+    s.set_default_names("Book", "Sheet");
     assert_eq!(s.doc().unwrap().title, "წიგნი1");
     s.new_workbook();
     assert_eq!(s.doc().unwrap().title, "Book1");

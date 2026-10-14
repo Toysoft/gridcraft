@@ -949,6 +949,8 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "€ Euro" => "€ ევრო",
         "Tab|Insert" => "ჩასმა",
         "AutoSave" => "ავტოშენახვა",
+        "new workbook|Book" => "წიგნი",
+        "new workbook|Sheet" => "ფურცელი",
         "Insert\nSlicer" => "სრეზის\nჩასმა",
         "Pen\nBlack" => "შავი\nკალამი",
         "Pen\nBlue" => "ლურჯი\nკალამი",
