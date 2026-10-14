@@ -11,6 +11,8 @@ use crate::{Result, Session, UiRequest};
 
 /// Most selected cells whose values a plugin command receives.
 const MAX_CONTEXT_CELLS: u64 = 100_000;
+/// Most defined names a plugin command receives (real models can carry tens of thousands).
+const MAX_CONTEXT_NAMES: usize = 10_000;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -146,7 +148,9 @@ fn recalc_users(s: &mut Session, names: &[String]) {
 }
 
 /// What a plugin command sees of the workbook: its title, the active sheet, the selection and,
-/// for a selection up to 100,000 cells, its values (rows of values, as functions get them).
+/// for a selection up to 100,000 cells, its values (rows of values, as functions get them) and
+/// formulas (rows of formula text, `null` where a cell has none); plus every sheet (index, name,
+/// visibility, used range) and up to 10,000 defined names (name, scope, hidden, refersTo).
 fn context(s: &Session) -> Json {
     let Some(d) = s.active() else { return json!({}) };
     let sel = &d.selection;
@@ -170,6 +174,50 @@ fn context(s: &Session) -> Json {
             })
             .collect();
         ctx["values"] = Json::Array(rows);
+        // Formula text (`=A1*2`) in the same shape, `null` for cells without one, so plugins can
+        // tell inputs from calculations (colour coding, auditing).
+        let formulas: Vec<Json> = (range.start.row..=range.end.row)
+            .map(|r| {
+                Json::Array(
+                    (range.start.col..=range.end.col)
+                        .map(|c| {
+                            sh.cell(gridcraft_core::CellRef::new(r, c))
+                                .and_then(|cell| cell.formula.as_ref())
+                                .map_or(Json::Null, |f| Json::String(format!("={}", f.text)))
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+        ctx["formulas"] = Json::Array(formulas);
+    }
+    // The workbook's shape, as `document.inspect` reports it, so a plugin can act beyond the
+    // selection (unhide every sheet, list sheets, clean up names, trim used ranges).
+    let wb = &d.wb;
+    ctx["activeSheet"] = json!(wb.active_sheet);
+    ctx["sheets"] = Json::Array(
+        wb.sheets
+            .iter()
+            .enumerate()
+            .map(|(i, sh)| {
+                json!({
+                    "index": i,
+                    "name": sh.name,
+                    "visibility": format!("{:?}", sh.visibility),
+                    "usedRange": sh.used_range().map(|r| r.a1()),
+                })
+            })
+            .collect(),
+    );
+    ctx["names"] = Json::Array(
+        wb.names
+            .iter()
+            .take(MAX_CONTEXT_NAMES)
+            .map(|n| json!({"name": n.name, "scope": n.scope, "hidden": n.hidden, "refersTo": format!("={}", n.formula)}))
+            .collect(),
+    );
+    if wb.names.len() > MAX_CONTEXT_NAMES {
+        ctx["namesTruncated"] = json!(true);
     }
     ctx
 }
@@ -179,7 +227,37 @@ fn run(s: &mut Session, p: &Json) -> Result<Json> {
     let plugin = str_param(p, "plugin").ok_or_else(|| bad(ID, "missing `plugin`"))?;
     let command = str_param(p, "command").ok_or_else(|| bad(ID, "missing `command`"))?;
     let params = p.get("params").cloned().unwrap_or_else(|| json!({}));
-    let reply = gridcraft_plugin::run_command(plugin, command, params, context(s)).map_err(|e| bad(ID, e))?;
+    // The plugin may read and write the workbook while it works (`host/sync`, protocol 1.1); that
+    // and its answer's commands are one step (below).
+    let before_host = s.active().map(|d| (d.uid, d.wb.clone(), d.selection.clone(), d.undo.len()));
+    let journal_at = s.journal.len();
+    let ctx = context(s);
+    let reply = gridcraft_plugin::run_command_with(plugin, command, params, ctx, &mut |m, p| super::developer::host_call(s, plugin, m, p));
+    s.journal.truncate(journal_at);
+    if let Some((uid, wb, sel, undo_len)) = before_host
+        && let Some(d) = s.docs.iter_mut().find(|d| d.uid == uid)
+    {
+        d.undo.truncate(undo_len);
+        if reply.is_err() {
+            d.wb = wb;
+            d.selection = sel;
+            d.calc.rebuild(&d.wb);
+        }
+    }
+    let reply = reply.map_err(|e| bad(ID, e))?;
+    // An Office add-in's command opens its task pane or calls its function: nothing runs here.
+    if let Some(office) = reply.office {
+        let title = gridcraft_plugin::get(plugin).map(|p| p.manifest.name.clone()).unwrap_or_default();
+        s.ui_requests.push(match &office {
+            gridcraft_plugin::office::OfficeCommand::ShowTaskpane { url, taskpane_id } => {
+                UiRequest::OfficePane { plugin: plugin.to_string(), title, url: url.clone(), pane: taskpane_id.clone() }
+            }
+            gridcraft_plugin::office::OfficeCommand::ExecuteFunction { function, url } => {
+                UiRequest::OfficeFunction { plugin: plugin.to_string(), url: url.clone(), function: function.clone() }
+            }
+        });
+        return Ok(json!({"ran": 0, "office": office}));
+    }
     if let Some((id, _)) = reply.commands.iter().find(|(id, _)| id.starts_with("plugins.")) {
         return Err(bad(ID, format!("a plugin command can't run `{id}`")));
     }
