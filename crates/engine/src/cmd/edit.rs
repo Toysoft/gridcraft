@@ -1297,9 +1297,10 @@ fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
             } else {
                 gridcraft_formula::adjust::Edit::MoveToSheet { from: src, to_sheet: dest_name, to_row: at.row, to_col: at.col }
             };
-            let (forgotten, moved) = rewrite_all_formulas(&mut cx.wb, &src_sheet_name, &e);
+            let (forgotten, moved, changed) = rewrite_all_formulas(&mut cx.wb, &src_sheet_name, &e);
             cx.changed.extend(forgotten);
             cx.moved_names.extend(moved);
+            cx.changed_names.extend(changed);
             cx.structural = true;
         }
         let end = at.offset_clamped((tiles_r * h) as i64 - 1, (tiles_c * w) as i64 - 1);
@@ -1314,7 +1315,7 @@ fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
 
 /// Whether a structural edit made a formula read other cells than it did, not the same cells
 /// moved: a reference became `#REF!`, or a range grew or shrank.
-fn reads_differently(old: &gridcraft_formula::Expr, new: &gridcraft_formula::Expr) -> bool {
+pub(crate) fn reads_differently(old: &gridcraft_formula::Expr, new: &gridcraft_formula::Expr) -> bool {
     fn reads(e: &gridcraft_formula::Expr) -> Vec<Option<(u32, u32)>> {
         use gridcraft_formula::Expr;
         let mut out = Vec::new();
@@ -1337,13 +1338,13 @@ pub(crate) fn forget_value(cell: &mut Cell) {
 }
 
 /// Applies a reference adjustment to every cell formula and defined name in the workbook.
-/// Returns the formulas that now read other cells (their values are cleared, see
-/// [`forget_value`]), and the names whose references only moved (lowercase).
+/// Returns formulas whose values were cleared, names whose references only moved, and names whose
+/// references changed (lowercase).
 pub(crate) fn rewrite_all_formulas(
     wb: &mut gridcraft_model::Workbook,
     target: &str,
     e: &gridcraft_formula::adjust::Edit,
-) -> (Vec<(usize, CellRef)>, Vec<String>) {
+) -> (Vec<(usize, CellRef)>, Vec<String>, Vec<String>) {
     use gridcraft_formula::adjust::Edit;
     let mut forgotten = Vec::new();
     // Rows and columns inserted or deleted on the target sheet move its legacy array ranges too
@@ -1380,18 +1381,23 @@ pub(crate) fn rewrite_all_formulas(
         }
     }
     let mut moved = Vec::new();
+    let mut changed = Vec::new();
     for n in wb.names.iter_mut() {
         if let Ok(expr) = gridcraft_formula::parse(&n.formula) {
             // Names are workbook-level: unqualified refs don't occur; qualified ones adjust.
             let new = gridcraft_formula::adjust::adjust(expr.clone(), "\u{0}", target, e);
             let text = gridcraft_formula::print(&new);
-            if text != n.formula && !reads_differently(&expr, &new) {
-                moved.push(n.name.to_lowercase());
+            if text != n.formula {
+                if reads_differently(&expr, &new) {
+                    changed.push(n.name.to_lowercase());
+                } else {
+                    moved.push(n.name.to_lowercase());
+                }
             }
             n.formula = text;
         }
     }
-    (forgotten, moved)
+    (forgotten, moved, changed)
 }
 
 // ---------------------------------------------------------------- clear

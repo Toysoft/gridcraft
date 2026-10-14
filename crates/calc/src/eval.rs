@@ -2044,6 +2044,9 @@ fn collect_dynamic_reads(wb: &Workbook, sheet: usize, e: &Expr, out: &mut Dynami
     let mut known = true;
     let tables = |out: &mut DynamicReads, si: usize, ti: usize| {
         if let Some(t) = wb.sheet(si).and_then(|s| s.tables.get(ti)) {
+            if !out.names.iter().any(|n| n.eq_ignore_ascii_case(&t.name)) {
+                out.names.push(t.name.clone());
+            }
             out.areas.push(Area { sheet: si, range: t.range });
         }
     };
@@ -2088,7 +2091,11 @@ fn collect_dynamic_reads(wb: &Workbook, sheet: usize, e: &Expr, out: &mut Dynami
                 tables(out, si, ti);
             }
         }
-        Expr::Call(n, _) if matches!(n.as_str(), "INDIRECT" | "OFFSET" | "CELL" | "INFO") => known = false,
+        Expr::Call(n, _)
+            if matches!(n.as_str(), "INDIRECT" | "OFFSET" | "CELL" | "INFO" | "NOW" | "TODAY" | "RAND" | "RANDBETWEEN" | "RANDARRAY") =>
+        {
+            known = false
+        }
         Expr::Call(n, args) if resizes_sum_range(n, args.len()) => {
             if !matches!(args.first(), Some(Expr::Ref(_))) && matches!(args.get(2), Some(Expr::Ref(_))) {
                 known = false;

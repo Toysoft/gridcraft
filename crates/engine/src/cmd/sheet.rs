@@ -213,13 +213,43 @@ fn shift_sheet_features(sh: &mut Sheet, axis: Axis, at: u32, count: u32, insert:
     }
 }
 
+/// Whether a formula's 3-D references cover a different set of sheets after a structural edit.
+fn spans_changed(e: &gridcraft_formula::Expr, before: &[String], after: &[String]) -> bool {
+    let members = |order: &[String], a: &str, b: &str| {
+        let (Some(i), Some(j)) = (order.iter().position(|x| x.eq_ignore_ascii_case(a)), order.iter().position(|x| x.eq_ignore_ascii_case(b))) else {
+            return Vec::new();
+        };
+        order[i.min(j)..=i.max(j)].iter().map(|x| x.to_ascii_lowercase()).collect::<Vec<_>>()
+    };
+    let mut changed = false;
+    e.walk(&mut |x| {
+        if let gridcraft_formula::Expr::Ref(r) = x
+            && let gridcraft_formula::SheetSel::Span(a, b) = &r.sheet
+        {
+            changed |= members(before, a, b) != members(after, a, b);
+        }
+    });
+    changed
+}
+
 /// Rewrites every formula reference (and chart series) for a structural edit on `target`.
 /// Formulas that now read other cells count as changed, and names whose references only moved
 /// don't (see `edit::rewrite_all_formulas`).
 fn rewrite(cx: &mut Ctx, target: &str, e: &Edit) {
-    let (forgotten, moved) = super::edit::rewrite_all_formulas(&mut cx.wb, target, e);
+    // A single command can apply several edits (multi-area delete, column move). Keep formulas
+    // forgotten by an earlier step at their final positions so their readers are seeded there.
+    let old = std::mem::take(&mut cx.changed);
+    cx.changed = old
+        .into_iter()
+        .filter_map(|(si, c)| {
+            let host = cx.wb.sheet(si).map(|s| s.name.as_str())?;
+            if host.eq_ignore_ascii_case(target) { map_range(RangeRef::cell(c), e).map(|r| (si, r.start)) } else { Some((si, c)) }
+        })
+        .collect();
+    let (forgotten, moved, changed) = super::edit::rewrite_all_formulas(&mut cx.wb, target, e);
     cx.changed.extend(forgotten);
     cx.moved_names.extend(moved);
+    cx.changed_names.extend(changed);
     let wb = &mut cx.wb;
     for si in 0..wb.sheets.len() {
         let host = wb.sheets.get(si).map(|s| s.name.clone()).unwrap_or_default();
@@ -730,6 +760,7 @@ fn delete_sheet(s: &mut Session, p: &Json) -> Result<Json> {
     let d = s.doc_mut()?;
     edit_doc(d, |cx| {
         cx.wb.sheets.remove(i);
+        let new_order: Vec<String> = cx.wb.sheets.iter().map(|s| s.name.clone()).collect();
         for si in 0..cx.wb.sheets.len() {
             let keys: Vec<(CellRef, Arc<gridcraft_model::Formula>)> =
                 cx.wb.sheets.get(si).map(|s| s.cells.iter().filter_map(|(c, x)| x.formula.clone().map(|f| (c, f))).collect()).unwrap_or_default();
@@ -738,8 +769,9 @@ fn delete_sheet(s: &mut Session, p: &Json) -> Result<Json> {
                 if let Some(e) = f.expr_arc() {
                     let ne = gridcraft_formula::adjust::delete_sheet((*e).clone(), &name, &order);
                     if let Some(cell) = sh.cells.get_mut(c) {
-                        // A reference into the deleted sheet reads something else now.
-                        if ne != *e {
+                        // A reference into the deleted sheet, or a 3-D span losing an interior
+                        // sheet, reads something else now even when its text is unchanged.
+                        if ne != *e || spans_changed(&e, &order, &new_order) {
                             super::edit::forget_value(cell);
                             cx.changed.push((si, c));
                         }
@@ -833,6 +865,7 @@ fn move_sheet(s: &mut Session, p: &Json) -> Result<Json> {
     let i = target_sheet(s, p)?;
     let copy = bool_param(p, "copy").unwrap_or(false);
     let to = p.get("to").and_then(Json::as_u64).map(|v| v as usize).ok_or_else(|| bad("sheet.move", "missing `to`"))?;
+    let old_order: Vec<String> = s.doc()?.wb.sheets.iter().map(|sh| sh.name.clone()).collect();
     edit(s, |cx| {
         let n = cx.wb.sheets.len();
         let Some(src) = cx.wb.sheets.get(i).cloned() else { return Err(bad("sheet.move", "no such sheet")) };
@@ -889,6 +922,21 @@ fn move_sheet(s: &mut Session, p: &Json) -> Result<Json> {
                         x if at <= x && x < i => x + 1,
                         x => x,
                     };
+                }
+            }
+        }
+        let new_order: Vec<String> = cx.wb.sheets.iter().map(|sh| sh.name.clone()).collect();
+        for si in 0..cx.wb.sheets.len() {
+            let keys: Vec<(CellRef, Arc<gridcraft_model::Formula>)> =
+                cx.wb.sheets.get(si).map(|sh| sh.cells.iter().filter_map(|(c, x)| x.formula.clone().map(|f| (c, f))).collect()).unwrap_or_default();
+            let Some(sh) = cx.wb.sheet_mut(si) else { continue };
+            for (c, f) in keys {
+                if let Some(e) = f.expr_arc()
+                    && spans_changed(&e, &old_order, &new_order)
+                    && let Some(cell) = sh.cells.get_mut(c)
+                {
+                    super::edit::forget_value(cell);
+                    cx.changed.push((si, c));
                 }
             }
         }

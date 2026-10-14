@@ -317,6 +317,8 @@ pub struct Ctx<'a> {
     /// Names (lowercase) whose references a structural edit only moved, so they read what they
     /// did (see `edit::rewrite_all_formulas`).
     pub moved_names: Vec<String>,
+    /// Names whose references changed during any structural rewrite.
+    pub changed_names: Vec<String>,
 }
 
 pub(crate) fn edit<R>(s: &mut Session, f: impl FnOnce(&mut Ctx) -> Result<R>) -> Result<R> {
@@ -328,15 +330,14 @@ pub(crate) fn edit<R>(s: &mut Session, f: impl FnOnce(&mut Ctx) -> Result<R>) ->
     })
 }
 
-/// The defined names (lowercase) an edit added, removed or redefined, other than those whose
-/// references it only `moved`. Only needed, and only computed, for a workbook with links: a
-/// formula over a linked name that can't be calculated keeps its saved value unless what it
-/// reads changes.
+/// The defined names and table names an edit added, removed or changed. A formula over a linked
+/// name or table that cannot be calculated keeps its saved value unless what it reads changes.
 fn changed_names(old: &Workbook, new: &Workbook, moved: &[String]) -> Vec<String> {
-    if new.external_books.is_empty() || old.names == new.names {
+    if new.external_books.is_empty() {
         return Vec::new();
     }
-    // By name, whatever the scope: deleting a sheet renumbers the scopes after it.
+    // Defined names are compared by name, whatever the scope: deleting a sheet renumbers the
+    // scopes after it.
     fn group(wb: &Workbook) -> std::collections::HashMap<String, Vec<&str>> {
         let mut m: std::collections::HashMap<String, Vec<&str>> = std::collections::HashMap::new();
         for n in &wb.names {
@@ -349,8 +350,31 @@ fn changed_names(old: &Workbook, new: &Workbook, moved: &[String]) -> Vec<String
     let moved: std::collections::HashSet<&str> = moved.iter().map(String::as_str).collect();
     let mut out: Vec<String> =
         before.keys().chain(after.keys()).filter(|k| before.get(*k) != after.get(*k) && !moved.contains(k.as_str())).cloned().collect();
-    out.sort_unstable();
-    out.dedup();
+
+    // Table structured references are tracked as dynamic reads. A table's range, name, header /
+    // totals geometry, or column names changing changes what such a formula reads. Compare the
+    // stable table id so a rename is paired with the same table; missing ids cover delete/convert.
+    fn tables(wb: &Workbook) -> std::collections::HashMap<u32, (&str, gridcraft_core::RangeRef, bool, bool, Vec<&str>)> {
+        wb.sheets
+            .iter()
+            .flat_map(|sh| sh.tables.iter())
+            .map(|t| (t.id, (t.name.as_str(), t.range, t.header_row, t.totals_row, t.columns.iter().map(|c| c.name.as_str()).collect())))
+            .collect()
+    }
+    let (before, after) = (tables(old), tables(new));
+    for id in before.keys().chain(after.keys()) {
+        if before.get(id) == after.get(id) {
+            continue;
+        }
+        if let Some((name, ..)) = before.get(id) {
+            out.push((*name).to_string());
+        }
+        if let Some((name, ..)) = after.get(id) {
+            out.push((*name).to_string());
+        }
+    }
+    out.sort_unstable_by_key(|x| x.to_lowercase());
+    out.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
     out
 }
 
@@ -368,9 +392,10 @@ pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>)
         fit_rows: Vec::new(),
         protection_checked: false,
         moved_names: Vec::new(),
+        changed_names: Vec::new(),
     };
     let r = f(&mut ctx)?;
-    let Ctx { mut wb, changed, structural, mut fit_rows, protection_checked, moved_names, .. } = ctx;
+    let Ctx { mut wb, changed, structural, mut fit_rows, protection_checked, moved_names, changed_names: rewrite_changed_names, .. } = ctx;
     if !protection_checked {
         check_protection(&d.wb, &wb, &d.unlocked_ranges)?;
     }
@@ -384,7 +409,10 @@ pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>)
         eprintln!("commit: edit {:?}, {} changed", t0.elapsed(), changed.len());
     }
     if structural {
-        let names = changed_names(&d.wb, &wb, &moved_names);
+        let mut names = changed_names(&d.wb, &wb, &moved_names);
+        names.extend(rewrite_changed_names);
+        names.sort_unstable();
+        names.dedup();
         d.calc.recalc_all_after_edit(&mut wb, &changed, &names);
     } else if !changed.is_empty() {
         d.calc.cells_changed(&mut wb, &changed);
