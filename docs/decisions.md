@@ -76,6 +76,13 @@ shows it as written; and since CSV export writes displayed values, the saved fil
 It is one of the conversions "Enable all" sets, so unchecking that keeps everything as written. As
 with every automatic format, a cell that already has a format keeps it.
 
+Paste also reads the clipboard's HTML, where a spreadsheet records the number behind a cell
+(`x:num`, `sdval`; #257). That number doesn't override the options: a field they keep as text
+(`0042`, `990000000000000019`) stays text even when the source recorded it as a number, which for
+a long code may already have lost digits. The HTML still supplies the number for text the options
+don't cover, like pasted currency (`Rp10,000.00`). JSON numbers in `range.setValues` are different:
+they're numbers the caller typed, not text, so the options don't apply to them.
+
 ## Ctrl+wheel zoom steps along its own ladder, not Excel's 15-point steps
 
 A Ctrl+wheel notch moves the zoom to the next step on `grid::WHEEL_ZOOM_LADDER`: 10, 12, 15, 18,
