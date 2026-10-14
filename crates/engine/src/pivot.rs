@@ -48,23 +48,39 @@ impl Source {
         self.headers.iter().position(|h| h.eq_ignore_ascii_case(name))
     }
     /// Per record: the column's cell is a number whose own format is a date (Excel caches such
-    /// a number as `<d>` and sorts it after errors). Looks up each distinct style once.
+    /// a number as `<d>` and sorts it after errors), and no cell of the column holds that number
+    /// with a non-date format: a number in any General cell is a number item, whatever the row
+    /// order or report filter. Looks up each distinct style once.
     pub fn date_cells(&self, wb: &Workbook, col: usize) -> Vec<bool> {
         let (Some(sh), Ok(off)) = (wb.sheet(self.sheet), u32::try_from(col)) else {
             return vec![false; self.rows.len()];
         };
         let c = self.range.start.col + off;
         let mut memo: HashMap<StyleId, bool> = HashMap::new();
-        self.rows
+        let mut general: HashSet<u64> = HashSet::new();
+        let mut dates: Vec<bool> = self
+            .rows
             .iter()
             .zip(&self.record_rows)
             .map(|(rec, &row)| {
-                rec.get(col).is_some_and(Value::is_number)
-                    && *memo
-                        .entry(sh.style_id(CellRef::new(row, c)))
-                        .or_insert_with_key(|id| crate::display::number_format(wb.styles.get(*id).num_fmt.as_str()).is_date())
+                let Some(Value::Number(n)) = rec.get(col) else { return false };
+                let date = *memo
+                    .entry(sh.style_id(CellRef::new(row, c)))
+                    .or_insert_with_key(|id| crate::display::number_format(wb.styles.get(*id).num_fmt.as_str()).is_date());
+                if !date {
+                    general.insert(n.to_bits());
+                }
+                date
             })
-            .collect()
+            .collect();
+        if !general.is_empty() {
+            for (d, rec) in dates.iter_mut().zip(&self.rows) {
+                if *d && let Some(Value::Number(n)) = rec.get(col) {
+                    *d = !general.contains(&n.to_bits());
+                }
+            }
+        }
+        dates
     }
 }
 
@@ -299,15 +315,8 @@ fn make_item(wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str, date: b
 impl FieldItems {
     fn intern(&mut self, wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str, date: bool, first: usize) -> u32 {
         let (key, item) = make_item(wb, v, group, fmt, date, first);
-        if let Some(&i) = self.index.get(&key) {
-            // A number in any General cell sorts as a number, whichever of its cells comes first.
-            if !date
-                && let Some(it) = self.items.get_mut(i as usize)
-                && it.class == 4
-            {
-                it.class = 0;
-            }
-            return i;
+        if let Some(i) = self.index.get(&key) {
+            return *i;
         }
         let i = self.items.len() as u32;
         self.items.push(item);

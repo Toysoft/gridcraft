@@ -2210,6 +2210,35 @@ mod tests {
     }
 
     #[test]
+    fn a_general_cell_filtered_out_still_makes_its_number_sort_as_a_number() {
+        // 3/15/2023 is 45000: the General 45000 in row 3 makes that item a number, as in Excel's
+        // cache, even when the report filter leaves only the date cell.
+        let order = |filter: bool| -> Vec<String> {
+            let mut s = Session::new();
+            s.new_workbook();
+            for (cell, input) in [("A1", "K"), ("B1", "V"), ("C1", "R"), ("A2", "3/15/2023"), ("A3", "45000"), ("A4", "ABC")] {
+                s.execute("cell.set", json!({"cell": cell, "input": input})).unwrap();
+            }
+            for (row, r) in [(2, "a"), (3, "b"), (4, "a")] {
+                s.execute("cell.set", json!({"cell": format!("B{row}"), "input": "1"})).unwrap();
+                s.execute("cell.set", json!({"cell": format!("C{row}"), "input": r})).unwrap();
+            }
+            s.execute("selection.set", json!({"range": "A1"})).unwrap();
+            s.execute("insert.pivotTable", json!({"rows": ["K"], "values": ["V"], "filters": ["R"]})).unwrap();
+            s.execute("pivot.sort", json!({"field": "K", "order": "asc"})).unwrap();
+            if filter {
+                s.execute("pivot.filter", json!({"field": "R", "selected": ["a"]})).unwrap();
+            }
+            let wb = &s.doc().unwrap().wb;
+            let si = wb.active_sheet;
+            let out = crate::pivot::compute(wb, wb.sheet(si).unwrap().pivots.last().unwrap(), si).unwrap();
+            out.grid.iter().filter_map(|r| r.first().map(|c| c.value.display())).filter(|l| l == "45000" || l == "ABC").collect()
+        };
+        assert_eq!(order(false), ["45000", "ABC"]);
+        assert_eq!(order(true), ["45000", "ABC"]);
+    }
+
+    #[test]
     fn dates_sort_after_logicals_and_errors() {
         // Excel's ascending item order: numbers, text, logicals, errors, dates, blanks.
         let mut s = sales();
