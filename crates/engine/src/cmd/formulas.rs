@@ -47,6 +47,24 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             create_from_selection
         ),
+        cmd!(
+            "formulas.useTableNames",
+            "Use Table Names",
+            [],
+            Some("Shift+F4"),
+            "{range?} → {changed} (rewrites the A1 references of the formulas in the range that name part of a table: `C2:C9` → `Table1[Qty]`, the formula's own row → `Table1[@Qty]`, a cell of another row → the keyed `Table1[Qty,\"Widget\"]`, by the table's first column)",
+            has_doc,
+            use_table_names
+        ),
+        cmd!(
+            query "formulas.tableNames",
+            "Table Names in a Formula",
+            [],
+            None,
+            "{formula: \"=SUM(C2:C9)\", cell?} → {formula, changed} (the formula as formulas.useTableNames would write it in that cell; nothing is changed)",
+            has_doc,
+            table_names
+        ),
         cmd!(query "formulas.tracePrecedents", "Trace Precedents", ["Formulas", "Formula Auditing"], None, "{cell?} → ranges", has_doc, trace_precedents),
         cmd!(query "formulas.traceDependents", "Trace Dependents", ["Formulas", "Formula Auditing"], None, "{cell?} → cells", has_doc, trace_dependents),
         cmd!(noundo "formulas.removeArrows", "Remove Arrows", ["Formulas", "Formula Auditing"], None, "{}", has_doc, |_, _| ok()),
@@ -466,6 +484,45 @@ fn trace_precedents(s: &mut Session, p: &Json) -> Result<Json> {
     let areas = d.calc.graph.precedents_of((d.wb.active_sheet, at));
     let v: Vec<Json> = areas.iter().map(|a| json!({"sheet": d.wb.sheet(a.sheet).map(|s| s.name.clone()), "range": a.range.a1()})).collect();
     Ok(Json::Array(v))
+}
+
+fn use_table_names(s: &mut Session, p: &Json) -> Result<Json> {
+    let sheet = target_sheet(s, p)?;
+    let ranges = target_ranges(s, p)?;
+    edit(s, |cx| {
+        let formulas: Vec<(CellRef, std::sync::Arc<Formula>)> = cx
+            .wb
+            .sheet(sheet)
+            .map(|sh| {
+                sh.cells
+                    .iter()
+                    .filter(|(c, _)| ranges.iter().any(|r| r.contains(*c)))
+                    .filter_map(|(c, x)| x.formula.clone().map(|f| (c, f)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut changed = 0;
+        for (c, f) in formulas {
+            let Some(e) = f.expr().and_then(|e| crate::table_refs::use_table_names(&cx.wb, sheet, c, e)) else { continue };
+            if let Some(cell) = cx.sheet_mut(sheet)?.cells.get_mut(c) {
+                cell.formula = Some(std::sync::Arc::new(Formula { array: f.array, ..Formula::from_expr(e) }));
+                cx.touch(sheet, c);
+                changed += 1;
+            }
+        }
+        Ok(json!({"changed": changed}))
+    })
+}
+
+fn table_names(s: &mut Session, p: &Json) -> Result<Json> {
+    let d = s.doc()?;
+    let f = str_param(p, "formula").ok_or_else(|| bad("formulas.tableNames", "missing `formula`"))?;
+    let at = cell_param(s, p, "cell")?.unwrap_or(d.selection.active);
+    let text = if f.starts_with('=') { f.to_string() } else { format!("={f}") };
+    Ok(match crate::table_refs::use_table_names_in_text(&d.wb, d.wb.active_sheet, at, &text) {
+        Some(named) => json!({"formula": named, "changed": true}),
+        None => json!({"formula": text, "changed": false}),
+    })
 }
 
 fn trace_dependents(s: &mut Session, p: &Json) -> Result<Json> {

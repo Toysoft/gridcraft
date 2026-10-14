@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (horizontal scrollbar in the sheet tab bar, #840) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (Shift+F4 writes A1 references by table name) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Interaction, controls and feel, against Excel. Part of [target-app-parity.md](target-app-parity.md).
 **UI/UX fidelity: ~55% ready, 50–80 h** (estimated). Ribbon command coverage is measured
@@ -48,7 +48,7 @@ this logic, with one undo step.
 | Fill handle: drag to fill series, double-click to fill down, right-drag menu | fill done (Ctrl+drag swaps copy and series); right-drag menu missing |
 | Drag-move and drag-copy cells (border drag, Ctrl/Option, Shift to insert) | done (M3) |
 | In-cell editing, Enter/Tab movement, Alt/Option+Enter line breaks | done |
-| Point mode (click/drag/arrow references), reference colouring, F4 | done |
+| Point mode (click/drag/arrow references), reference colouring, F4 | done; F4 on a table reference anchors its column (`Table1[$Qty]`, a GridCraft extension) |
 | AutoComplete in columns, function autocomplete and argument tips | done; cell helpers clip to the worksheet and hide when the editor scrolls out (#200) |
 | Header resize and double-click AutoFit | done (#42, #88 for header dividers) |
 | Outline symbols for grouped rows / columns (band beside the headers, brackets, − / +, level buttons 1…n+1) | done (#373): clicks run `data.hideDetail` / `data.showDetail` / `data.showLevels`, frozen panes and right-to-left sheets included; summary rows/columns are always below/right (the "Summary rows below detail" setting isn't modelled), no "Show outline symbols" option yet, and a block of cells still groups rows without the Rows / Columns dialog |
@@ -122,6 +122,7 @@ otherwise. Number-format and border keys match the physical key (Ctrl+Shift+4, w
 | Shift+F2, Ctrl+Shift+F2 | Shift+F2, Cmd+Shift+F2 | note, threaded comment | **added** |
 | Shift+F3, Ctrl+F3, Ctrl+Shift+F3 | Shift+F3, Cmd+F3 (Define Name), Cmd+Shift+F3 | Insert Function, Name Manager, Create from Selection | **added** |
 | F5, Shift+F5 (Mac), F7, Shift+F9, Ctrl+Alt+F9, F12, Ctrl+F4 | same | Go To, Find, Spelling, calculate sheet / all, Save As, close | **added** |
+| Shift+F4 (not Excel's: there it is Find Next) | same | Use Table Names: A1 references into tables become table names (`C2:C9` → `Table1[Qty]`, another row's cell → `Table1[Qty,"Widget"]`), in the formula being edited or the selected cells | **added** (GridCraft extension) |
 | Shift+F10, Alt+Shift+F10, Ctrl+F1 | Shift+F10, Cmd+Option+R | context menu, Error Checking, ribbon | **added** |
 | F1, F3, F4 (repeat), F6 / Shift+F6, F8 / Shift+F8, F11, End mode | same | help, Paste Name, Repeat, pane cycling, extend/add mode, chart sheet | missing (no such feature yet) |
 | Ctrl+6, Ctrl+8, Ctrl+Q, Ctrl+Shift+A, Ctrl+A after a function name, Ctrl+Shift+U, Ctrl+Alt+P | same | objects, outline symbols, Quick Analysis, argument names, Function Arguments, formula bar height, tooltips | missing |
@@ -161,6 +162,7 @@ scrollbar bugs 2–4 · pixel/feel pass against observed Excel 7–12.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Shift+F4 rewrites A1 references into tables as table names, while editing a formula or on the selected cells (`formulas.useTableNames`) |
 | 2026-10-12 | minor | The File view's recent list tells when each workbook was last changed, read off the UI thread |
 | 2026-10-13 | minor | Horizontal scrollbar in the sheet tab bar: drag, track click pages, frozen columns excluded from the page (#840) |
 | 2026-10-12 | minor | Ctrl+wheel zoom steps along a ladder of percentages about 20% apart that never skips 100%, gliding to each step with animations on, so a notch out undoes a notch in (it drifted: 100 → 122 → 101); Excel steps 15 points, see decisions.md |

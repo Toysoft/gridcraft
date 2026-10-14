@@ -37,6 +37,46 @@ pub fn shift_relative_wrapping(e: Expr, dr: i64, dc: i64) -> Expr {
 }
 
 /// Whether the formula has a relative (no `$`) row or column anywhere.
+/// Moves the columns of table references `dc` columns along their table, as Excel does when a
+/// formula is filled sideways (and not when it is copied): `Table1[Qty]` filled one cell to the
+/// right is `Table1[Price]`, and past the last column it starts again at the first. Anchored
+/// columns (`Table1[$Qty]`) stay. `columns` gives a table's column names in order (the table
+/// the formula is in for an empty name).
+pub fn shift_table_columns(e: Expr, dc: i64, columns: &dyn Fn(&str) -> Option<Vec<String>>) -> Expr {
+    if dc == 0 {
+        return e;
+    }
+    let moved = |table: &str, name: &str| -> Option<String> {
+        let names = columns(table)?;
+        let at = names.iter().position(|n| n.eq_ignore_ascii_case(name))? as i64;
+        names.get((at.checked_add(dc)?).rem_euclid(names.len() as i64) as usize).cloned()
+    };
+    e.map(&mut |x| match x {
+        Expr::Struct(mut s) if !s.col_abs => {
+            for end in [&mut s.col_start, &mut s.col_end].into_iter().flatten() {
+                if let Some(name) = moved(&s.table, end) {
+                    *end = name;
+                }
+            }
+            Expr::Struct(s)
+        }
+        Expr::Keyed(mut k) => {
+            if !k.column_abs
+                && let Some(name) = moved(&k.table, &k.column)
+            {
+                k.column = name;
+            }
+            for c in k.conditions.iter_mut().filter(|c| !c.column_abs) {
+                if let Some(name) = c.column.as_deref().and_then(|n| moved(&k.table, n)) {
+                    c.column = Some(name);
+                }
+            }
+            Expr::Keyed(k)
+        }
+        other => other,
+    })
+}
+
 pub fn has_relative_refs(e: &Expr) -> bool {
     e.references().iter().any(|r| match r.kind {
         RefKind::Cell(a) => !a.row_abs || !a.col_abs,

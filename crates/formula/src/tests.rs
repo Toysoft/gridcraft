@@ -366,3 +366,229 @@ fn prints_long_flat_chain_without_deep_recursion() {
     assert_eq!(text, vec!["1"; 20001].join("+"));
     assert_eq!(r1c1, text);
 }
+
+#[test]
+fn keyed_table_references() {
+    // Text → printed text; the key column is the table's first unless one is named.
+    for (src, printed) in [
+        ("Table1[Column2,\"RowID1\"]", "Table1[Column2,\"RowID1\"]"),
+        ("Table1[Column3,Column4=\"Value1\"]", "Table1[Column3,Column4=\"Value1\"]"),
+        ("Table1[ [Unit Price] , [Product Name] = A2 ]", "Table1[[Unit Price],[Product Name]=A2]"),
+        ("Table1[Price,[@Product]]", "Table1[Price,[@Product]]"),
+        ("Table1[Price,\"a]b,c\"]", "Table1[Price,\"a]b,c\"]"),
+        ("SUM(Table1[Price,\"a\"],Table1[Price,INDEX(A:A,2)])", "SUM(Table1[Price,\"a\"],Table1[Price,INDEX(A:A,2)])"),
+        // Before a `=`, only a plain word is a key column: a cell or an expression compares.
+        ("Table1[Price,A1=5]", "Table1[Price,(A1=5)]"),
+        ("Table1[Price,[A1]=5]", "Table1[Price,[A1]=5]"),
+        ("Table1[Price,Qty>=5]", "Table1[Price,Qty>=5]"),
+        ("Table1[Price,(Product=\"a\")]", "Table1[Price,(Product=\"a\")]"),
+        ("Table1[Price,Other[Code,Region=\"N\"]]", "Table1[Price,Other[Code,Region=\"N\"]]"),
+        ("[Price,\"a\"]", "[Price,\"a\"]"),
+    ] {
+        let e = parse(src).unwrap_or_else(|x| panic!("{src}: {x}"));
+        assert_eq!(print(&e), printed, "{src}");
+        assert_eq!(parse(printed).unwrap(), parse(&print(&parse(printed).unwrap())).unwrap(), "{src}");
+    }
+    let Expr::Keyed(k) = parse("Table1[[Unit Price],Product=A2&\"x\"]").unwrap() else { panic!() };
+    let [c] = k.conditions.as_slice() else { panic!() };
+    assert_eq!((k.table.as_str(), k.column.as_str(), c.column.as_deref(), c.op), ("Table1", "Unit Price", Some("Product"), BinOp::Eq));
+    assert_eq!(print(&c.value), "A2&\"x\"");
+    // Excel's own forms are untouched.
+    for src in ["Table1[[#Headers],[Qty]]", "Table1[[#This Row],Qty]", "Table1[[a,b]]", "Table1[@Qty]", "Table1[[#Headers],[5\" pipe]]"] {
+        assert!(matches!(parse(src), Ok(Expr::Struct(_))), "{src}");
+    }
+    // A quote in a column name is no text literal, whatever follows the reference.
+    for src in ["T[[x,\"y]]&\"k\"", "T[[#Headers],[x,\"y]]&\"k\"", "T[[#This Row],5\" x]&\"k\""] {
+        let Ok(Expr::Binary(_, a, _)) = parse(src) else { panic!("{src}") };
+        assert!(matches!(*a, Expr::Struct(_)), "{src}");
+    }
+    assert_eq!(rt("T[Price,[5\" pipe]=3]&\"k\""), "T[Price,[5\" pipe]=3]&\"k\"");
+    let Expr::Keyed(k) = parse("T[Price,[5\" pipe]=3]").unwrap() else { panic!() };
+    assert_eq!(k.conditions.first().and_then(|c| c.column.as_deref()), Some("5\" pipe"));
+    // A column name with a comma is written in double brackets, so it reads back as a column.
+    let comma = Expr::Struct(StructRef { table: "T".into(), specifiers: vec![], col_start: Some("a,b".into()), col_end: None, col_abs: false });
+    assert_eq!(print(&comma), "T[[a,b]]");
+    assert_eq!(parse("T[[a,b]]").unwrap(), comma);
+    for bad in ["Table1[Price,]", "Table1[Price,1+]", "Table1[Price,\"a\" \"b\"]"] {
+        assert!(parse(bad).is_err(), "{bad}");
+    }
+    // Nesting is bounded.
+    let deep = format!("{}1{}", "T[a,".repeat(5000), "]".repeat(5000));
+    assert!(parse(&deep).is_err());
+}
+
+#[test]
+fn keyed_references_lower_to_excel_lookups() {
+    for (src, lowered) in [
+        ("Table1[Column2,\"RowID1\"]", "INDEX(Table1[Column2],MATCH(\"RowID1\",INDEX(Table1[],0,1),0))"),
+        ("Table1[Column3,Column4=\"Value1\"]", "FILTER(Table1[Column3],Table1[Column4]=\"Value1\",NA())"),
+        ("Table1[[What?],A2]", "INDEX(Table1[What?],MATCH(A2,INDEX(Table1[],0,1),0))"),
+    ] {
+        let Expr::Keyed(k) = parse(src).unwrap() else { panic!("{src}") };
+        let low = k.lower();
+        assert_eq!(print(&low), lowered);
+        // The file text reads back as the keyed reference.
+        assert_eq!(parse(lowered).unwrap().map(&mut KeyedRef::raise), Expr::Keyed(k), "{src}");
+    }
+    // Lookups by key saved by earlier versions as VLOOKUP read back too.
+    for (old, keyed) in [
+        ("VLOOKUP(A2,Table1[],MATCH(\"What~?\",Table1[#Headers],0),FALSE)", "Table1[[What?],A2]"),
+        ("VLOOKUP(A2,Table1[],MATCH(\"Price\",Table1[#Headers],0),0)", "Table1[$Price,A2]"),
+    ] {
+        assert_eq!(parse(old).unwrap().map(&mut KeyedRef::raise), parse(keyed).unwrap(), "{old}");
+    }
+    // Lookups of any other shape stay as written.
+    for src in [
+        "INDEX(Table1[Qty],MATCH(A2,INDEX(Table1[],0,2),0))",
+        "INDEX(Table1[Qty],MATCH(A2,INDEX(Table2[],0,1),0))",
+        "INDEX(Table1[Qty],MATCH(A2,INDEX(Table1[],0,1),1))",
+        "INDEX(Table1[Qty],MATCH(A2,INDEX(Table1[#All],0,1),0))",
+        "VLOOKUP(A2,Table1[],2,FALSE)",
+        "VLOOKUP(A2,Table1[],MATCH(\"Qty\",Table1[#Headers],0),TRUE)",
+        "VLOOKUP(A2,Table1[],MATCH(\"Q*\",Table1[#Headers],0),FALSE)",
+        "VLOOKUP(A2,Table1[],MATCH(\"Qty\",Table2[#Headers],0),FALSE)",
+        "INDEX(Table1[Qty],MATCH(A2,Table1[Product],0),1)",
+        "FILTER(Table1[Qty],Table1[Product]=A2)",
+        "FILTER(Table1[Qty],(Table1[Product]=A2),NA())",
+        "FILTER(Table1[Qty],(Table1[Product]=A2)*Table1[Code]>1,NA())",
+        "FILTER(Table1[Qty],Table2[Product]=A2,NA())",
+        "FILTER(Table1[Qty],A2=Table1[Product],NA())",
+        "FILTER(Table1[Qty],Table1[Product]=(A2=1),1)",
+    ] {
+        let e = parse(src).unwrap();
+        assert_eq!(e.clone().map(&mut KeyedRef::raise), e, "{src}");
+    }
+}
+
+#[test]
+fn keyed_reference_keys_follow_copies_and_edits() {
+    let e = parse("Table1[Price,A2]").unwrap();
+    assert_eq!(print(&adjust::shift_relative(e, 1, 1)), "Table1[Price,B3]");
+}
+
+#[test]
+fn anchored_table_columns() {
+    for (src, printed) in [
+        ("Table1[$Qty]", "Table1[$Qty]"),
+        ("Table1[$[Unit Price]]", "Table1[$[Unit Price]]"),
+        ("Table1[@$Qty]", "Table1[@$Qty]"),
+        ("[@$[Unit Price]]", "[@$[Unit Price]]"),
+        ("Table1[[#Headers],$[Qty]]", "Table1[[#Headers],$[Qty]]"),
+        ("Table1[[#This Row],$Qty]", "Table1[@$Qty]"),
+        // Excel's idiom for the same thing, which is what files hold.
+        ("Table1[[Qty]:[Qty]]", "Table1[$Qty]"),
+        ("Table1[[#This Row],[Unit Price]:[Unit Price]]", "Table1[@$[Unit Price]]"),
+        ("Table1[[#Totals],[Qty]:[Qty]]", "Table1[[#Totals],$[Qty]]"),
+        // Keyed references anchor either column.
+        ("Table1[$Price,\"a\"]", "Table1[$Price,\"a\"]"),
+        ("Table1[$[Unit Price],$[Product Name]=A2]", "Table1[$[Unit Price],$[Product Name]=A2]"),
+        ("Table1[Price,$Product=A2]", "Table1[Price,$Product=A2]"),
+        // A column whose name starts with `$` is written in its own brackets.
+        ("Table1[[$ Amount]]", "Table1[[$ Amount]]"),
+        ("Table1[@[$Net]]", "Table1[@[$Net]]"),
+    ] {
+        let e = parse(src).unwrap_or_else(|x| panic!("{src}: {x}"));
+        assert_eq!(print(&e), printed, "{src}");
+        assert_eq!(parse(printed).unwrap(), e, "{src}");
+    }
+    let Expr::Struct(s) = parse("Table1[@$Qty]").unwrap() else { panic!() };
+    assert_eq!((s.col_start.as_deref(), s.col_end.as_deref(), s.col_abs), (Some("Qty"), None, true));
+    assert_eq!(printer::struct_ref_file(&s), "Table1[[#This Row],[Qty]:[Qty]]");
+    let Expr::Struct(s) = parse("Table1[[$ Amount]]").unwrap() else { panic!() };
+    assert_eq!((s.col_start.as_deref(), s.col_abs), (Some("$ Amount"), false));
+    for bad in ["Table1[$[Qty]:[Price]]", "Table1[[Qty]:$[Price]]", "Table1[$[#Headers]]", "Table1[[#Headers],$[#Data]]"] {
+        assert!(parse(bad).is_err(), "{bad}");
+    }
+    // In files, as lookups.
+    for (src, lowered) in [
+        ("Table1[$Price,A2]", "INDEX(Table1[$Price],MATCH(A2,INDEX(Table1[],0,1),0))"),
+        ("Table1[$Price,Code=A2]", "FILTER(Table1[$Price],Table1[Code]=A2,NA())"),
+        ("Table1[Price,$Code=A2]", "FILTER(Table1[Price],Table1[$Code]=A2,NA())"),
+    ] {
+        let Expr::Keyed(k) = parse(src).unwrap() else { panic!("{src}") };
+        assert_eq!(print(&k.lower()), lowered);
+        assert_eq!(parse(lowered).unwrap().map(&mut KeyedRef::raise), Expr::Keyed(k), "{src}");
+    }
+}
+
+#[test]
+fn table_columns_move_with_a_fill_sideways() {
+    let columns = |table: &str| (table == "T" || table.is_empty()).then(|| vec!["A".to_string(), "B".to_string(), "C".to_string()]);
+    let fill = |src: &str, dc: i64| print(&adjust::shift_table_columns(parse(src).unwrap(), dc, &columns));
+    assert_eq!(fill("T[A]+T[@B]+[@C]+T[[A]:[B]]", 1), "T[B]+T[@C]+[@A]+T[[B]:[C]]");
+    assert_eq!(fill("T[A]+T[[#Headers],[B]]", -1), "T[C]+T[[#Headers],[A]]");
+    assert_eq!(fill("T[$A]+T[@$B]+SUM(T[[#Totals],$[C]])", 2), "T[$A]+T[@$B]+SUM(T[[#Totals],$[C]])");
+    assert_eq!(fill("T[A,B=[@C]]+T[$A,$B=1]+T[A,$B=1]", 1), "T[B,C=[@A]]+T[$A,$B=1]+T[B,$B=1]");
+    // Nothing moves down a column, in another table, or for a column that isn't the table's.
+    assert_eq!(fill("T[A]", 0), "T[A]");
+    assert_eq!(fill("U[A]+T[Z]+T[]+T[#Headers]", 1), "U[A]+T[Z]+T[]+T[#Headers]");
+    // Any distance is some column of the table.
+    assert_eq!(fill("T[B]", i64::MAX), "T[B]");
+    assert_eq!(fill("T[B]", i64::MIN), "T[C]");
+}
+
+#[test]
+fn keyed_references_filter_by_conditions() {
+    for (src, printed, lowered) in [
+        ("T[Price,Stock>400]", "T[Price,Stock>400]", "FILTER(T[Price],T[Stock]>400,NA())"),
+        (
+            "T[Price, Stock >= 400 , [Product Name]<>\"Nut\", Qty<A2*2]",
+            "T[Price,Stock>=400,[Product Name]<>\"Nut\",Qty<A2*2]",
+            "FILTER(T[Price],(T[Stock]>=400)*(T[Product Name]<>\"Nut\")*(T[Qty]<A2*2),NA())",
+        ),
+        ("T[Price,Stock<=(A1>2)]", "T[Price,Stock<=(A1>2)]", "FILTER(T[Price],T[Stock]<=(A1>2),NA())"),
+        (
+            "T[Price,Code=\"a,b\",Stock>MAX(1,2)]",
+            "T[Price,Code=\"a,b\",Stock>MAX(1,2)]",
+            "FILTER(T[Price],(T[Code]=\"a,b\")*(T[Stock]>MAX(1,2)),NA())",
+        ),
+        ("T[$Price,$Stock>1,Qty<2]", "T[$Price,$Stock>1,Qty<2]", "FILTER(T[$Price],(T[$Stock]>1)*(T[Qty]<2),NA())"),
+        ("T[Price,Stock>U[Min,Kind=[@Kind]]]", "T[Price,Stock>U[Min,Kind=[@Kind]]]", "FILTER(T[Price],T[Stock]>U[Min,Kind=[@Kind]],NA())"),
+    ] {
+        let e = parse(src).unwrap_or_else(|x| panic!("{src}: {x}"));
+        assert_eq!(print(&e), printed, "{src}");
+        let Expr::Keyed(k) = &e else { panic!("{src}") };
+        assert_eq!(print(&k.lower()), lowered, "{src}");
+        assert_eq!(parse(lowered).unwrap().map(&mut KeyedRef::raise), e, "{src}");
+    }
+    let Expr::Keyed(k) = parse("T[Price,Stock>400,Name<>\"x\"]").unwrap() else { panic!() };
+    let ops: Vec<BinOp> = k.conditions.iter().map(|c| c.op).collect();
+    assert_eq!(ops, [BinOp::Gt, BinOp::Ne]);
+    assert!(k.key().is_none());
+    // A key (no column) only on its own; every condition needs a value.
+    for bad in ["T[Price,\"Nut\",Stock>1]", "T[Price,Stock>1,\"Nut\"]", "T[Price,Stock>]", "T[Price,Stock>1,]", "T[Price,Stock>1 2]"] {
+        assert!(parse(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn neighbouring_rows() {
+    for (src, printed, lowered) in [
+        ("Table1[Qty, [#Prev Row]]", "Table1[Qty,[#Prev Row]]", "OFFSET(Table1[@Qty],-1,0)"),
+        ("Table1[[Unit Price],[#next row]]", "Table1[[Unit Price],[#Next Row]]", "OFFSET(Table1[@[Unit Price]],1,0)"),
+        ("[$Qty,[#Prev Row]]", "[$Qty,[#Prev Row]]", "OFFSET([@$Qty],-1,0)"),
+        // Excel's order of item and column reads too.
+        ("Table1[[#Prev Row],[Qty]]", "Table1[Qty,[#Prev Row]]", "OFFSET(Table1[@Qty],-1,0)"),
+        ("Table1[[#Next Row],[A]:[C]]", "Table1[[#Next Row],[A]:[C]]", "OFFSET(Table1[[#This Row],[A]:[C]],1,0)"),
+        ("Table1[#Prev Row]", "Table1[#Prev Row]", "OFFSET(Table1[@],-1,0)"),
+    ] {
+        let e = parse(src).unwrap_or_else(|x| panic!("{src}: {x}"));
+        assert_eq!(print(&e), printed, "{src}");
+        assert_eq!(parse(printed).unwrap(), e, "{src}");
+        let low = lower_extensions(e.clone());
+        assert_eq!(print(&low), lowered, "{src}");
+        assert_eq!(parse(lowered).unwrap().map(&mut raise_extension), e, "{src}");
+    }
+    // `[#This Row]` after the column is `[@Qty]`.
+    assert_eq!(rt("Table1[Qty,[#This Row]]+[$Qty,[#this row]]"), "Table1[@Qty]+[@$Qty]");
+    // Not with other items, nor written as a key.
+    for bad in ["Table1[[#Headers],[#Prev Row],[Qty]]", "Table1[[#Prev Row],[#Next Row]]"] {
+        assert!(parse(bad).is_err(), "{bad}");
+    }
+    assert!(matches!(parse("Table1[Qty,\"#Prev Row\"]"), Ok(Expr::Keyed(_))));
+    // Other OFFSETs stay as written.
+    for src in ["OFFSET(Table1[@Qty],-2,0)", "OFFSET(Table1[@Qty],-1,1)", "OFFSET(Table1[Qty],-1,0)", "OFFSET(A1,-1,0)"] {
+        let e = parse(src).unwrap();
+        assert_eq!(e.clone().map(&mut raise_extension), e, "{src}");
+    }
+}

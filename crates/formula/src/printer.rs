@@ -108,10 +108,39 @@ fn write_struct_ref(s: &StructRef, at_shorthand: bool) -> String {
         StructItem::Headers => "#Headers",
         StructItem::Totals => "#Totals",
         StructItem::ThisRow => "#This Row",
+        StructItem::PrevRow => "#Prev Row",
+        StructItem::NextRow => "#Next Row",
     };
     let this_row = at_shorthand && s.specifiers == [StructItem::ThisRow];
     let mut out = s.table.clone();
-    let simple_col = |c: &str| !c.chars().any(|ch| matches!(ch, ' ' | '[' | ']' | '#' | '\'' | ',' | ':'));
+    let simple_col = |c: &str| !c.chars().any(|ch| matches!(ch, ' ' | '[' | ']' | '#' | '\'' | ',' | ':' | '$'));
+    // A neighbouring row of one column: `Table1[Qty,[#Prev Row]]`, column first.
+    if let (Some(c), None, Some(_)) = (&s.col_start, &s.col_end, s.row_offset()) {
+        let name = if crate::parser::bare_key_column(c) { c.clone() } else { format!("[{}]", esc(c)) };
+        let anchor = if s.col_abs { "$" } else { "" };
+        let _ = write!(out, "[{anchor}{name},[{}]]", s.specifiers.first().map(item).unwrap_or(""));
+        return out;
+    }
+    // An anchored column: `$Qty` on screen, and in files Excel's one-column range for it.
+    let anchored = match (&s.col_start, &s.col_end) {
+        (Some(c), None) if s.col_abs => Some(c),
+        _ => None,
+    };
+    if let Some(c) = anchored {
+        if !at_shorthand {
+            return write_struct_ref(&StructRef { col_end: Some(c.clone()), col_abs: false, ..s.clone() }, false);
+        }
+        let name = if simple_col(c) && !c.is_empty() { format!("${}", esc(c)) } else { format!("$[{}]", esc(c)) };
+        if s.specifiers.is_empty() {
+            let _ = write!(out, "[{name}]");
+        } else if this_row {
+            let _ = write!(out, "[@{name}]");
+        } else {
+            let items: Vec<String> = s.specifiers.iter().map(|i| format!("[{}]", item(i))).collect();
+            let _ = write!(out, "[{},$[{}]]", items.join(","), esc(c));
+        }
+        return out;
+    }
     match (&s.col_start, &s.col_end) {
         (None, None) if s.specifiers.is_empty() => out.push_str("[]"),
         (None, None) if this_row => out.push_str("[@]"),
@@ -119,8 +148,10 @@ fn write_struct_ref(s: &StructRef, at_shorthand: bool) -> String {
             let _ = write!(out, "[{}]", s.specifiers.first().map(item).unwrap_or(""));
         }
         (Some(c), None) if s.specifiers.is_empty() => {
-            // Excel writes a name with spaces at its edges in the double-bracket form.
-            if c.trim() == c {
+            // Excel writes a name with spaces at its edges in the double-bracket form. So is a
+            // name with a comma, which would otherwise read as a keyed reference.
+            // And one starting with `$`, which would read as an anchor.
+            if c.trim() == c && !c.contains(',') && !c.starts_with('$') {
                 let _ = write!(out, "[{}]", esc(c));
             } else {
                 let _ = write!(out, "[[{}]]", esc(c));
@@ -144,6 +175,34 @@ fn write_struct_ref(s: &StructRef, at_shorthand: bool) -> String {
         }
     }
     out
+}
+
+/// `Table1[Price,"Widget"]`, `Table1[[Unit Price],Stock>400,Product<>"Nut"]`.
+fn write_keyed(s: &mut String, k: &KeyedRef, r1c1: Option<CellRef>) {
+    let esc = |c: &str| c.replace('\'', "''").replace('[', "'[").replace(']', "']").replace('#', "'#");
+    let column = |c: &str, abs: bool| {
+        let name = if crate::parser::bare_key_column(c) { c.to_string() } else { format!("[{}]", esc(c)) };
+        if abs { format!("${name}") } else { name }
+    };
+    let _ = write!(s, "{}[{}", k.table, column(&k.column, k.column_abs));
+    for c in &k.conditions {
+        s.push(',');
+        match &c.column {
+            Some(name) => {
+                s.push_str(&column(name, c.column_abs));
+                s.push_str(c.op.symbol());
+                write_expr(s, &c.value, r1c1);
+            }
+            // A bare comparison would read back as a condition.
+            None if matches!(&c.value, Expr::Binary(op, ..) if op.precedence() <= BinOp::Eq.precedence()) => {
+                s.push('(');
+                write_expr(s, &c.value, r1c1);
+                s.push(')');
+            }
+            None => write_expr(s, &c.value, r1c1),
+        }
+    }
+    s.push(']');
 }
 
 fn number(n: f64) -> String {
@@ -203,6 +262,7 @@ fn write_expr(s: &mut String, e: &Expr, r1c1: Option<CellRef>) {
             _ => s.push_str(n),
         },
         Expr::Struct(st) => s.push_str(&struct_ref(st)),
+        Expr::Keyed(k) => write_keyed(s, k, r1c1),
         Expr::Unary(op, x) => match op {
             UnOp::Neg => {
                 s.push('-');

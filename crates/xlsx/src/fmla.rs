@@ -71,6 +71,9 @@ fn prefix_params(e: Expr, scope: &[String]) -> Expr {
 
 fn expr_to_file(e: Expr) -> String {
     let e = prefix_params(e, &[]);
+    // Excel has no keyed table references (`Table1[Price,"Widget"]`) nor `[#Prev Row]`: the
+    // file holds the lookup or OFFSET each stands for, which `from_file` reads back.
+    let e = gridcraft_formula::lower_extensions(e);
     let e = e.map(&mut |x| match x {
         Expr::Call(name, args) => match crate::tables::file_function_name(&name) {
             Some(n) => Expr::Call(n, args),
@@ -111,7 +114,7 @@ pub fn from_file(text: &str) -> String {
     match gridcraft_formula::parse(body) {
         Ok(e) => gridcraft_formula::print(&e.map(&mut |x| match x {
             Expr::Name(n) => Expr::Name(strip_param_prefix(n)),
-            Expr::Call(n, args) => Expr::Call(strip_param_prefix(n), args),
+            Expr::Call(n, args) => gridcraft_formula::raise_extension(Expr::Call(strip_param_prefix(n), args)),
             other => other,
         })),
         Err(_) => body.to_string(),
@@ -132,6 +135,26 @@ mod tests {
         let deleted = Formula::from_expr(Expr::Unary(gridcraft_formula::UnOp::Spill, Box::new(Expr::Error(gridcraft_core::CellError::Ref))));
         assert_eq!(deleted.text, "#REF!");
         assert_eq!(to_file(&deleted), "#REF!");
+    }
+
+    #[test]
+    fn keyed_table_references() {
+        for (model, file) in [
+            ("Table1[Price,\"Widget\"]", "INDEX(Table1[Price],MATCH(\"Widget\",INDEX(Table1[],0,1),0))"),
+            ("Table1[Price,Code=Table1[@Code]]", "_xlfn._xlws.FILTER(Table1[Price],Table1[Code]=Table1[[#This Row],[Code]],NA())"),
+            (
+                "SUM(Table1[Price,Other[Code,Region=A1]])",
+                "SUM(INDEX(Table1[Price],MATCH(_xlfn._xlws.FILTER(Other[Code],Other[Region]=A1,NA()),INDEX(Table1[],0,1),0)))",
+            ),
+            ("Table1[Price,Stock>=400,Kind<>\"x\"]", "_xlfn._xlws.FILTER(Table1[Price],(Table1[Stock]>=400)*(Table1[Kind]<>\"x\"),NA())"),
+        ] {
+            assert_eq!(to_file(&Formula::new(model)), file);
+            assert_eq!(from_file(file), model);
+        }
+        // The plain INDEX/MATCH and FILTER idioms stay as their authors wrote them.
+        for idiom in ["INDEX(Table1[Price],MATCH(A1,Table1[Code],0))", "FILTER(Table1[Price],Table1[Code]=A1)"] {
+            assert_eq!(from_file(idiom), idiom);
+        }
     }
 
     #[test]
