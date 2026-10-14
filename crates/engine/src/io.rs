@@ -231,10 +231,11 @@ pub fn source_dir(path: &str) -> Option<std::path::PathBuf> {
 /// Save As CSV/Text writes "the text and values as they are displayed in cells" with "all
 /// characters in each cell" (Microsoft Support, *Excel formatting and features that are not
 /// transferred to other file formats*): number formats applied, never column-width `#####`.
-/// One intentional difference: a number shown as General is not narrowed to the cell width but
-/// written as `&` converts it (15 significant digits) without an exponent, and an integer below
-/// 1e16 with every digit, so long identifiers survive a reopen and save
-/// (`gridcraft_numfmt::format_value_full`).
+/// One intentional difference: a number shown as General is not narrowed to the cell width and
+/// never gets an exponent (`gridcraft_numfmt::format_value_full`). Below 1E+15 it is written as
+/// `&` converts it (15 significant digits); from 1E+15 as the shortest digits that read back as
+/// the same value (every integer below 1e16 exactly, so long identifiers survive); small numbers
+/// that `&` writes in scientific notation as their 15 digits in full.
 fn csv(wb: &Workbook, sh: &Sheet, delimiter: u8) -> Result<Vec<u8>> {
     gridcraft_xlsx::write_csv(sh, delimiter, |c| crate::display::value_text(wb, sh, c)).map_err(|e| EngineError::Other(e.to_string()))
 }

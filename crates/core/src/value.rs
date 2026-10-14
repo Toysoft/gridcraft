@@ -351,8 +351,11 @@ pub fn sort_compare(a: &Value, b: &Value) -> Ordering {
 
 /// Number → text the way Excel converts in `&`, CONCAT and TEXTJOIN: at most 15 significant
 /// digits, rounded first; scientific from 1E+15, below 1E-9, and wherever the decimal would be
-/// longer than 21 characters (`0.` plus 19 decimals: `0.0000692361330972509` stays decimal,
-/// `1.28233995888454E-06` does not, as Excel caches them).
+/// longer than 21 characters, not counting the sign (`0.` plus 19 decimals). Excel-verified only
+/// for positive 15-digit mantissas: `0.0000692361330972509` stays decimal and
+/// `1.28233995888454E-06` does not, as Excel caches them. The limit for shorter mantissas from
+/// 1E-6 to 1E-9 (e.g. `0.0000099999999999999` decimal) and for negatives (sign excluded) are
+/// inferred.
 pub fn number_to_text(n: f64) -> String {
     if n == 0.0 || !n.is_finite() {
         return "0".into();
