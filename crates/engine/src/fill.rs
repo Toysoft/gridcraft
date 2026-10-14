@@ -98,6 +98,16 @@ pub fn fill(cx: &mut Ctx, sheet: usize, src: RangeRef, target: RangeRef, mode: F
                     if let Some(f) = &cell.formula {
                         if let Some(e) = f.expr() {
                             let shifted = gridcraft_formula::adjust::shift_relative(e, t.row as i64 - sc.row as i64, t.col as i64 - sc.col as i64);
+                            // Table columns move along with a fill sideways, unless anchored (`Table1[$Qty]`).
+                            let columns = |name: &str| {
+                                let table = if name.is_empty() {
+                                    sh.table_at(sc)
+                                } else {
+                                    cx.wb.table(name).and_then(|(si, ti)| cx.wb.sheet(si).and_then(|s| s.tables.get(ti)))
+                                };
+                                table.map(|t| t.columns.iter().map(|c| c.name.clone()).collect())
+                            };
+                            let shifted = gridcraft_formula::adjust::shift_table_columns(shifted, t.col as i64 - sc.col as i64, &columns);
                             cell.formula = Some(Arc::new(Formula::from_expr(shifted)));
                             cell.value = Value::Empty;
                         }

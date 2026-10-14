@@ -151,6 +151,7 @@ pub fn lookup(key: Key, physical: Option<Key>, m: Modifiers, mac: bool) -> Optio
         F3 if cmd => Shortcut::Dialog("nameManager", json!({})),
         F3 if plain && s => Shortcut::Dialog("insertFunction", json!({})),
         F4 if cmd && !s => run("file.close"),
+        F4 if plain && s => run("formulas.useTableNames"),
         F5 if plain && s => Shortcut::Dialog("find", json!({})),
         F5 if plain => Shortcut::Dialog("goTo", json!({})),
         F7 if plain && !s => Shortcut::Dialog("spelling", json!({})),

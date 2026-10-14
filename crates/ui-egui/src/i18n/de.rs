@@ -320,6 +320,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Options|Save" => "Speichern",
         "Show formula bar" => "Bearbeitungsleiste anzeigen",
         "Enable AutoComplete for cell values" => "AutoVervollständigen für Zellwerte aktivieren",
+        "Use table names in formulas" => "Tabellennamen in Formeln verwenden",
         "Save .xlsx workbooks automatically after every change" => ".xlsx-Arbeitsmappen nach jeder Änderung automatisch speichern",
         "Workbook calculation" => "Arbeitsmappenberechnung",
         "Enable iterative calculation" => "Iterative Berechnung aktivieren",

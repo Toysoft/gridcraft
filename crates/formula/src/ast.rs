@@ -5,6 +5,8 @@ use std::sync::Arc;
 use gridcraft_core::{CellError, CellRef, MAX_COLS, MAX_ROWS, RangeRef};
 use serde::{Deserialize, Serialize};
 
+pub use crate::table_ref::{ColumnSpan, Condition, RowSel, TableRef};
+
 /// One end of a reference, with `$` anchors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Anchor {
@@ -70,6 +72,11 @@ pub struct StructRef {
     pub specifiers: Vec<StructItem>,
     pub col_start: Option<String>,
     pub col_end: Option<String>,
+    /// `Table1[$Qty]`: the column stays when the formula is filled sideways, where an
+    /// unanchored one moves along with it. A GridCraft spelling of Excel's own idiom for that,
+    /// the one-column range `Table1[[Qty]:[Qty]]`, which is what files hold. Only for one column.
+    #[serde(default)]
+    pub col_abs: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -79,6 +86,11 @@ pub enum StructItem {
     Headers,
     Totals,
     ThisRow,
+    /// `Table1[#Prev Row][Qty]`: the row above the formula's (a GridCraft extension, written
+    /// to files as `OFFSET(Table1[[#This Row],[Qty]],-1,0)`).
+    PrevRow,
+    /// `Table1[#Next Row][Qty]`: the row below, `OFFSET(…,1,0)` in files.
+    NextRow,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -194,6 +206,8 @@ pub enum Expr {
     /// Defined name, table name or LET/LAMBDA parameter.
     Name(String),
     Struct(StructRef),
+    /// A GridCraft table reference beyond Excel's: rows by key or conditions, several columns.
+    Table(TableRef),
     Unary(UnOp, Box<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     /// Function call; the name is upper-case without `_xlfn.`.
@@ -212,6 +226,7 @@ impl Expr {
         match self {
             Expr::Array(rows) => rows.iter().flatten().for_each(|e| e.walk(f)),
             Expr::Unary(_, e) | Expr::Paren(e) => e.walk(f),
+            Expr::Table(t) => t.rows.values().into_iter().for_each(|e| e.walk(f)),
             Expr::Binary(_, a, b) => {
                 a.walk(f);
                 b.walk(f);
@@ -230,6 +245,7 @@ impl Expr {
             Expr::Array(rows) => Expr::Array(rows.into_iter().map(|r| r.into_iter().map(|e| e.map(f)).collect()).collect()),
             Expr::Unary(op, e) => Expr::Unary(op, Box::new(e.map(f))),
             Expr::Paren(e) => Expr::Paren(Box::new(e.map(f))),
+            Expr::Table(t) => Expr::Table(TableRef { rows: t.rows.map_values(f), ..t }),
             Expr::Binary(op, a, b) => Expr::Binary(op, Box::new(a.map(f)), Box::new(b.map(f))),
             Expr::Call(n, args) => Expr::Call(n, args.into_iter().map(|e| e.map(f)).collect()),
             Expr::Invoke(c, args) => Expr::Invoke(Box::new(c.map(f)), args.into_iter().map(|e| e.map(f)).collect()),

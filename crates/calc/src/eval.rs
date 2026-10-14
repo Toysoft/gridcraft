@@ -241,6 +241,8 @@ impl<'h> Evaluator<'h> {
             },
             Expr::Name(n) => self.name(n),
             Expr::Struct(s) => self.structured(s),
+            // A GridCraft table reference is the Excel formula files hold for it.
+            Expr::Table(t) => self.eval(&t.lower()),
             Expr::Unary(op, x) => self.unary(*op, x),
             Expr::Binary(op, a, b) => self.binary(*op, a, b),
             Expr::Call(name, args) => self.call(name, args),
@@ -301,6 +303,10 @@ impl<'h> Evaluator<'h> {
     }
 
     fn structured(&mut self, s: &StructRef) -> Ev {
+        // `[#Prev Row]` / `[#Next Row]` are the OFFSET files hold for them.
+        if let Some(lowered) = s.lower() {
+            return self.eval(&lowered);
+        }
         let wb = self.host.workbook();
         let found = if s.table.is_empty() {
             wb.sheet(self.sheet).and_then(|sh| sh.tables.iter().position(|t| t.range.contains(self.at)).map(|ti| (self.sheet, ti)))
@@ -1768,7 +1774,7 @@ pub fn precedents(wb: &Workbook, sheet: usize, e: &Expr) -> (Vec<Area>, bool) {
         {
             dynamic = true
         }
-        Expr::Name(_) | Expr::Struct(_) => dynamic = true,
+        Expr::Name(_) | Expr::Struct(_) | Expr::Table(_) => dynamic = true,
         Expr::Call(n, _) if gridcraft_functions::lookup(n).is_none() && !is_special(n) => dynamic = true,
         // A range ending in a function's result (`A1:INDEX(B1:B9,n)`) covers the cells between
         // the references inside it, not only those references.

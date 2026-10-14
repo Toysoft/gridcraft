@@ -219,36 +219,69 @@ pub(crate) fn sync_headers(cx: &mut crate::cmd::Ctx) {
     if renames.is_empty() {
         return;
     }
-    // Structured references follow the new names.
+    // Structured references follow the new names, in cells and in defined names.
     for i in 0..cx.wb.sheets.len() {
         let formulas: Vec<(CellRef, std::sync::Arc<Formula>)> =
             cx.wb.sheets.get(i).map(|s| s.cells.iter().filter_map(|(c, x)| x.formula.clone().map(|f| (c, f))).collect()).unwrap_or_default();
         for (c, f) in formulas {
             let Some(e) = f.expr() else { continue };
-            let mut hit = false;
-            let ne = e.map(&mut |x| match x {
-                gridcraft_formula::Expr::Struct(mut st) => {
-                    for (si, table, range, old, name) in &renames {
-                        let this = if st.table.is_empty() { i == *si && range.contains(c) } else { st.table.eq_ignore_ascii_case(table) };
-                        if this {
-                            for end in [&mut st.col_start, &mut st.col_end].into_iter().flatten() {
-                                if end.eq_ignore_ascii_case(old) {
-                                    *end = name.clone();
-                                    hit = true;
-                                }
-                            }
-                        }
-                    }
-                    gridcraft_formula::Expr::Struct(st)
-                }
-                o => o,
-            });
-            if hit && let Some(cell) = cx.wb.sheet_mut(i).and_then(|s| s.cells.get_mut(c)) {
-                cell.formula = Some(std::sync::Arc::new(Formula::from_expr(ne)));
+            if let Some(ne) = rename_columns(e, Some((i, c)), &renames)
+                && let Some(cell) = cx.wb.sheet_mut(i).and_then(|s| s.cells.get_mut(c))
+            {
+                cell.formula = Some(std::sync::Arc::new(Formula { array: f.array, ..Formula::from_expr(ne) }));
             }
         }
     }
+    for n in cx.wb.names.iter_mut() {
+        if let Some(ne) = gridcraft_formula::parse(n.formula.trim_start_matches('=')).ok().and_then(|e| rename_columns(e, None, &renames)) {
+            n.formula = gridcraft_formula::print(&ne);
+        }
+    }
     cx.structural = true;
+}
+
+/// `e` with the table columns of `renames` (sheet, table, range, old name, new name) renamed;
+/// `None` when it names none of them. `host` is the formula's cell, which a reference without
+/// a table name (`[@Qty]`) is inside; a defined name has none.
+fn rename_columns(
+    e: gridcraft_formula::Expr,
+    host: Option<(usize, CellRef)>,
+    renames: &[(usize, String, RangeRef, String, String)],
+) -> Option<gridcraft_formula::Expr> {
+    use gridcraft_formula::Expr;
+    let mut hit = false;
+    let mut rename = |table: &str, ends: Vec<&mut String>| {
+        for (si, name, range, old, new) in renames {
+            let this = if table.is_empty() { host.is_some_and(|(i, c)| i == *si && range.contains(c)) } else { table.eq_ignore_ascii_case(name) };
+            if this {
+                for end in ends.into_iter() {
+                    if end.eq_ignore_ascii_case(old) {
+                        *end = new.clone();
+                        hit = true;
+                    }
+                }
+                return;
+            }
+        }
+    };
+    let ne = e.map(&mut |x| match x {
+        Expr::Struct(mut st) => {
+            let table = st.table.clone();
+            rename(&table, [&mut st.col_start, &mut st.col_end].into_iter().flatten().collect());
+            Expr::Struct(st)
+        }
+        Expr::Table(mut t) => {
+            let table = t.table.clone();
+            let mut ends: Vec<&mut String> = t.columns.iter_mut().flat_map(|s| std::iter::once(&mut s.first).chain(s.last.as_mut())).collect();
+            if let gridcraft_formula::RowSel::Filter(conditions) = &mut t.rows {
+                ends.extend(conditions.iter_mut().map(|c| &mut c.column));
+            }
+            rename(&table, ends);
+            Expr::Table(t)
+        }
+        o => o,
+    });
+    hit.then_some(ne)
 }
 
 #[cfg(test)]

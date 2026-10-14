@@ -70,7 +70,10 @@ impl Scan<'_> {
                 } else {
                     self.wb.table(&r.table).and_then(|(si, ti)| self.wb.sheet(si).and_then(|s| s.tables.get(ti)))
                 };
-                let one_row = r.specifiers.iter().any(|s| matches!(s, StructItem::ThisRow | StructItem::Headers | StructItem::Totals));
+                let one_row = r
+                    .specifiers
+                    .iter()
+                    .any(|s| matches!(s, StructItem::ThisRow | StructItem::PrevRow | StructItem::NextRow | StructItem::Headers | StructItem::Totals));
                 let one_col = match (&r.col_start, &r.col_end) {
                     (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
                     (Some(_), None) => true,
@@ -79,6 +82,15 @@ impl Scan<'_> {
                 Shape { array: !(one_row && one_col), affected: false }
             }
             Expr::Paren(x) => self.expr(x, sheet, array_context, depth + 1),
+            // A lookup by key of one column is written as a lookup of one cell per key; any
+            // other GridCraft table reference as the formula it stands for.
+            Expr::Table(t) => match t.single_key() {
+                Some(key) => {
+                    let key = self.expr(key, sheet, array_context, depth + 1);
+                    Shape { array: key.array, affected: key.affected || (key.array && !array_context) }
+                }
+                None => self.expr(&t.lower(), sheet, array_context, depth + 1),
+            },
             Expr::Unary(op, x) => {
                 let child = self.expr(x, sheet, array_context, depth + 1);
                 match op {

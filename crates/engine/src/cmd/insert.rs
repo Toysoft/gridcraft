@@ -489,24 +489,41 @@ fn table_rename(s: &mut Session, p: &Json) -> Result<Json> {
             t.name = name.clone();
         }
         // Structured references follow the rename.
+        // A bare name that is also a defined name resolves to the defined name, so it is not the table.
+        let rename = |e: gridcraft_formula::Expr, shadowed: bool| {
+            e.map(&mut |x| match x {
+                gridcraft_formula::Expr::Struct(mut st) if st.table.eq_ignore_ascii_case(&old) => {
+                    st.table = name.clone();
+                    gridcraft_formula::Expr::Struct(st)
+                }
+                gridcraft_formula::Expr::Table(mut t) if t.table.eq_ignore_ascii_case(&old) => {
+                    t.table = name.clone();
+                    gridcraft_formula::Expr::Table(t)
+                }
+                gridcraft_formula::Expr::Name(n) if !shadowed && n.eq_ignore_ascii_case(&old) => gridcraft_formula::Expr::Name(name.clone()),
+                o => o,
+            })
+        };
         for i in 0..cx.wb.sheets.len() {
             let keys: Vec<(CellRef, std::sync::Arc<Formula>)> =
                 cx.wb.sheets.get(i).map(|s| s.cells.iter().filter_map(|(c, x)| x.formula.clone().map(|f| (c, f))).collect()).unwrap_or_default();
-            // A bare name that is also a defined name resolves to the defined name, so it is not the table.
             let shadowed = cx.wb.name(&old, i).is_some();
             let Some(sh) = cx.wb.sheet_mut(i) else { continue };
             for (c, f) in keys {
                 let Some(e) = f.expr() else { continue };
-                let ne = e.map(&mut |x| match x {
-                    gridcraft_formula::Expr::Struct(mut st) if st.table.eq_ignore_ascii_case(&old) => {
-                        st.table = name.clone();
-                        gridcraft_formula::Expr::Struct(st)
-                    }
-                    gridcraft_formula::Expr::Name(n) if !shadowed && n.eq_ignore_ascii_case(&old) => gridcraft_formula::Expr::Name(name.clone()),
-                    o => o,
-                });
+                let ne = rename(e, shadowed);
                 if let Some(cell) = sh.cells.get_mut(c) {
-                    cell.formula = Some(std::sync::Arc::new(Formula::from_expr(ne)));
+                    cell.formula = Some(std::sync::Arc::new(Formula { array: f.array, ..Formula::from_expr(ne) }));
+                }
+            }
+        }
+        // Defined names too (`Total` = `SUM(Sales[Amount])`).
+        let shadowed: Vec<bool> = cx.wb.names.iter().map(|n| cx.wb.name(&old, n.scope.unwrap_or(0)).is_some()).collect();
+        for (n, shadowed) in cx.wb.names.iter_mut().zip(shadowed) {
+            if let Ok(e) = gridcraft_formula::parse(n.formula.trim_start_matches('=')) {
+                let text = gridcraft_formula::print(&rename(e, shadowed));
+                if text != n.formula.trim_start_matches('=') {
+                    n.formula = text;
                 }
             }
         }

@@ -1,6 +1,6 @@
 # Function parity: worksheet functions and formulas
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (USDOLLAR added as a compatibility function; MIRR, COUNTIF and INDIRECT edge cases match Excel 365) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-14 · **Change:** minor (table reference extensions: filters, neighbouring rows, INDEX storage for keys) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Excel's worksheet functions, category by category, against GridCraft's function library. Part of
 [target-app-parity.md](target-app-parity.md); gaps feed [gaps.md](gaps.md).
@@ -74,6 +74,7 @@ PIVOTBY, REGEXTEST…) are all present.
 | A1 and R1C1 references, absolute/relative/mixed, F4 cycling | done |
 | 3-D references (`Sheet1:Sheet3!A1`) | done; endpoint-deletion bug (#140) |
 | Structured references (`Table1[Col]`, `[#Totals]`, `@`; the unbracketed `[[#This Row],Col]` some writers emit) | done |
+| Table reference extensions (not in Excel): `Table[rows][columns]`, rows by key `Products["Bolt"][Price]` or conditions `Products[Stock>400, Product<>"Nut"][Price]`, `#Prev Row` / `#Next Row`, lists and spans of columns `[Price, Stock]`, `[Product:Price]`, `[]` for every column, anchored columns `[$Qty]` | done, see [table-reference-extensions.md](table-reference-extensions.md): each is stored as the Excel formula it stands for (INDEX/MATCH, FILTER, OFFSET, HSTACK, `Table1[[Qty]:[Qty]]`) and read back from exactly that shape; Excel computes the same values and renames them with the table and its columns (checked in Excel 16.113.4). Filling sideways moves unanchored table columns, wrapping at the end, as Excel does. Shift+F4 (`formulas.useTableNames`) rewrites A1 references into tables as table names; F4 toggles `$` on table columns; the editor suggests table names, columns, row items and values |
 | Defined names (workbook and sheet scope), Create from Selection | done |
 | Dynamic arrays, spill, `#SPILL!`, spill operator `A1#` | done; stale-spill bugs (#133, #139; PRs #148, #157) |
 | Implicit intersection `@`, legacy CSE array formulas | done; legacy array range fill (PR #156) |
@@ -108,6 +109,12 @@ workbooks; results checked in as data, not Excel files) and fixing what it finds
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Table reference extensions take the form `Table[rows][columns]` (rows: items, a key or conditions; columns: names, lists, spans, `[]`), returning several columns as arrays (HSTACK in files); the column-first form of the day before is gone |
+| 2026-10-14 | minor | `[#Prev Row]` / `[#Next Row]` after a column (`[Total,[#Prev Row]]`), stored as `OFFSET(…,±1,0)`; Shift+F4 writes the cell above or below the formula's that way; the table reference extensions are described in table-reference-extensions.md |
+| 2026-10-14 | minor | Lookups by key are stored as `INDEX(Table1[Price],MATCH(key,INDEX(Table1[],0,1),0))` instead of a VLOOKUP naming the column in a text, so Excel renames them with the table and its columns; they no longer need a header row; old VLOOKUP files read back |
+| 2026-10-14 | minor | Keyed table references filter: `Table1[Price,Stock>400,Product<>"Nut"]` takes any number of conditions with `=`, `<>`, `<`, `>`, `<=`, `>=` and returns every match (stored as FILTER); a condition on a named column now filters instead of taking the first match; checked against Excel. Renaming a table or a table column now also updates defined names that refer to it (only cell formulas followed before) |
+| 2026-10-13 | minor | Table columns move along the table when a formula is filled sideways (Excel's behaviour; they stayed before), and `$` anchors one (`Table1[$Qty]`, F4), stored as the one-column range `Table1[[Qty]:[Qty]]`; the editor suggests table names, columns and keys |
+| 2026-10-13 | minor | Keyed table references: `Table1[Price,"Widget"]` (first column is the key) and `Table1[Price,Product=A2]`, evaluated and saved as the equivalent VLOOKUP / INDEX-MATCH and read back from it; `formulas.useTableNames` / `formulas.tableNames` and Shift+F4 rewrite A1 references into tables as table names |
 | 2026-10-12 | minor | USDOLLAR added as a Compatibility function (not on Microsoft's list, so the counts don't change); MIRR with no positive flow is -1, COUNTIF's bare `"<="` / `">="` skip empty strings, INDIRECT with `a1` = FALSE gives `#REF!` for A1-style text (#738) |
 | 2026-10-11 | minor | TEXT / number formats fixed against Excel-cached results: fraction literals and zero fractions, `0` denominators zero padded, `?` pads the thousands separator, booleans use the text section (226 mismatches → 0 in 352 TEXT cells) |
 | 2026-10-11 | minor | Iterative calculation: circular references iterate up to Maximum Iterations / Maximum Change when enabled |

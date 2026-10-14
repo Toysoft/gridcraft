@@ -1619,10 +1619,9 @@ pub(crate) fn paint_selection(
     if let Some(ed) = &app.editor
         && ed.is_formula()
     {
-        for (_, _, r, sheet, idx) in crate::editor::formula_refs(&ed.text) {
-            if sheet.as_deref().is_some_and(|s| !s.eq_ignore_ascii_case(&sh.name)) {
-                continue;
-            }
+        let refs = app.session.active().map(|d| (crate::editor::colored_refs(&ed.text, &d.wb, ed.sheet, ed.cell), d.wb.active_sheet));
+        let (refs, shown) = refs.unwrap_or_default();
+        for (r, idx) in refs.iter().flat_map(|c| c.areas.iter().filter(|a| a.0 == shown).map(move |a| (a.1, c.color))) {
             if !range_in_pane(r, rows, cols) {
                 continue;
             }
@@ -2064,15 +2063,12 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
             return;
         }
         // Point mode while editing a formula: clicking inserts a reference.
+        let table_names = app.ui.table_names;
         if let Some(ed) = app.editor.as_mut()
             && ed.can_point()
         {
-            let sheet_name = (ed.sheet != wb.active_sheet).then(|| sh.name.clone());
-            let r = match sheet_name {
-                Some(n) => format!("{}!{}", gridcraft_engine::formula::quote_sheet(&n), c.a1()),
-                None => c.a1(),
-            };
-            ed.insert_ref(&r);
+            let (r, named) = point_text(table_names, wb, ed, RangeRef::cell(c));
+            ed.insert_point(&r, RangeRef::cell(c), named);
             ed.request_focus = true;
             ed.point_cell = Some(c);
             app.grid.drag = Drag::Select;
@@ -2335,7 +2331,7 @@ fn point_header(app: &mut SheetApp, wb: &Workbook, sh: &Sheet, range: RangeRef) 
     let Some(ed) = app.editor.as_mut().filter(|ed| ed.can_point()) else { return false };
     let r = range.a1();
     let r = if ed.sheet != wb.active_sheet { format!("{}!{r}", gridcraft_engine::formula::quote_sheet(&sh.name)) } else { r };
-    ed.insert_ref(&r);
+    ed.insert_point(&r, range, false);
     ed.request_focus = true;
     true
 }
@@ -2345,14 +2341,14 @@ fn select_to_pointer(app: &mut SheetApp, geo: &Geo, sh: &Sheet, wb: &Workbook, p
         geo.row_at(sh, p.y.clamp(geo.cells.top() + 1.0, geo.cells.bottom() - 1.0)),
         geo.col_at(sh, p.x.clamp(geo.cells.left() + 1.0, geo.cells.right() - 1.0)),
     );
+    let table_names = app.ui.table_names;
     if let Some(ed) = app.editor.as_mut()
         && ed.point.is_some()
     {
         if let Some(start) = ed.point_cell {
             let range = RangeRef::new(start, cell);
-            let text = if range.is_single() { range.start.a1() } else { range.a1() };
-            let text = if ed.sheet != wb.active_sheet { format!("{}!{text}", gridcraft_engine::formula::quote_sheet(&sh.name)) } else { text };
-            ed.insert_ref(&text);
+            let (text, named) = point_text(table_names, wb, ed, range);
+            ed.insert_point(&text, range, named);
             ed.point_cell = Some(start);
         }
     } else if let Some(d) = app.session.active() {
@@ -2929,10 +2925,10 @@ pub fn point_move(app: &mut SheetApp, ed: &mut EditState, dr: i64, dc: i64, exte
     let Some(d) = app.session.active() else { return };
     let from = ed.point_cell.unwrap_or(ed.cell);
     let to = from.offset_clamped(dr, dc);
-    let text = if extend {
+    let range = if extend {
         // The anchor is the corner opposite the moving end: the written range is normalized, so
         // after extending up or left its first cell is the moving end, not the anchor.
-        let pointed = ed.point.and_then(|(s, e)| ed.text.get(s..e)).and_then(RangeRef::parse);
+        let pointed = ed.point_range.or_else(|| ed.point.and_then(|(s, e)| ed.text.get(s..e)).and_then(RangeRef::parse));
         let anchor = pointed
             .map(|r| {
                 CellRef::new(
@@ -2941,14 +2937,37 @@ pub fn point_move(app: &mut SheetApp, ed: &mut EditState, dr: i64, dc: i64, exte
                 )
             })
             .unwrap_or(from);
-        RangeRef::new(anchor, to).a1()
+        RangeRef::new(anchor, to)
     } else {
-        to.a1()
+        RangeRef::cell(to)
     };
-    let _ = d;
-    ed.insert_ref(&text);
+    let (text, named) = point_text(app.ui.table_names, &d.wb, ed, range);
+    ed.insert_point(&text, range, named);
     ed.point_cell = Some(to);
     app.grid.ensure_visible = true;
+}
+
+/// What point mode writes for `range` on the sheet shown, and whether the reference goes by
+/// table name (kept while arrows or a drag carry it on): its
+/// address, or with Use table names in formulas the table reference when it is a part of a
+/// table (`Products[Stock]`, `[@Qty]`, `[#Prev Row][Total]`, `Products["Bolt"][Price]`). A
+/// reference carried on from one written as an address stays an address, so arrowing from a
+/// cell outside a table into it is a way to point at its cells by address.
+fn point_text(table_names: bool, wb: &Workbook, ed: &EditState, range: RangeRef) -> (String, bool) {
+    let a1 = if range.is_single() { range.start.a1() } else { range.a1() };
+    let a1 = match wb.sheet(wb.active_sheet) {
+        Some(sh) if ed.sheet != wb.active_sheet => format!("{}!{a1}", gridcraft_engine::formula::quote_sheet(&sh.name)),
+        _ => a1,
+    };
+    // A reference carried on keeps the way it started: by name, or as an address.
+    let carried = ed.continues_point();
+    let by_name = table_names && (!carried || ed.point_named);
+    let named = by_name.then(|| gridcraft_engine::table_refs::use_table_names_in_text(wb, ed.sheet, ed.cell, &format!("={a1}"))).flatten();
+    let mode = if carried { ed.point_named } else { named.is_some() };
+    match named {
+        Some(named) => (named.strip_prefix('=').unwrap_or(&named).to_string(), mode),
+        None => (a1, mode),
+    }
 }
 
 /// The dropdown arrow beside a cell with an in-cell list validation.

@@ -251,13 +251,22 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
                 action = Some((dr, dc, false, false));
             }
         }
-        // F4 cycles $ anchors of the reference before the caret.
-        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::F4)) {
+        // Shift+F4 writes the references into tables by table name (before F4, which also
+        // matches with Shift held).
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, Key::F4)) {
+            use_table_names(app, &mut ed);
+        }
+        // F4 cycles $ anchors of the reference before the caret: a table column (`Table1[$Qty]`)
+        // or a cell address.
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::F4)) && !ed.cycle_table_anchor(app.session.active().map(|d| &*d.wb)) {
             cycle_anchor(&mut ed);
         }
     }
     // The text widget.
-    let refs = formula_refs(&ed.text);
+    let refs: Vec<(usize, usize, usize)> = match app.session.active() {
+        Some(d) => crate::editor::colored_refs(&ed.text, &d.wb, ed.sheet, ed.cell).into_iter().map(|r| (r.start, r.end, r.color)).collect(),
+        None => formula_refs(&ed.text).into_iter().map(|r| (r.0, r.1, r.4)).collect(),
+    };
     let text_color = Tokens::get(ui.ctx()).text;
     let cell_text_color = if id == egui::Id::new("gridcraft.cell_editor") { Color32::BLACK } else { text_color };
     let font2 = font.clone();
@@ -265,7 +274,7 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
         let s = buf.as_str();
         let mut job = egui::text::LayoutJob::default();
         let mut pos = 0usize;
-        let mut spans: Vec<(usize, usize, usize)> = refs.iter().filter(|r| r.1 <= s.len()).map(|r| (r.0, r.1, r.4)).collect();
+        let mut spans: Vec<(usize, usize, usize)> = refs.iter().filter(|r| r.1 <= s.len()).copied().collect();
         spans.sort();
         for (a, b, idx) in spans {
             if a < pos || !s.is_char_boundary(a) || !s.is_char_boundary(b) {
@@ -326,6 +335,9 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
             })
             .collect();
         ed.update_autocomplete(&names);
+        if let Some(d) = app.session.active() {
+            ed.suggest_table_parts(&d.wb);
+        }
         app.session.mode = if ed.can_point() {
             gridcraft_engine::Mode::Point
         } else if ed.enter_mode {
@@ -357,20 +369,27 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
             egui::Frame::popup(ui.style()).inner_margin(4.0).show(ui, |ui| {
                 if !ed.autocomplete.is_empty() {
                     let mut pick = None;
+                    // Table names, columns and keys are listed plainly; only functions are described.
+                    let is_function = |i: usize| !matches!(ed.completions.get(i), Some(crate::editor::Completion::Insert { .. }));
                     for (i, n) in ed.autocomplete.iter().enumerate() {
                         let sel = i == ed.ac_index;
-                        let r = ui.add(
-                            egui::Button::selectable(sel, egui::RichText::new(format!("ƒ  {n}")).font(theme::ui_font(12.5)))
-                                .min_size(vec2(220.0, 20.0)),
-                        );
+                        let functions = is_function(i);
+                        let label = if functions { format!("ƒ  {n}") } else { n.clone() };
+                        let r =
+                            ui.add(egui::Button::selectable(sel, egui::RichText::new(label).font(theme::ui_font(12.5))).min_size(vec2(220.0, 20.0)));
                         if r.clicked() {
                             pick = Some(i);
                         }
-                        if sel && let Some(desc) = crate::formula_locale::description(n, ed.locale) {
+                        if functions
+                            && sel
+                            && let Some(desc) = crate::formula_locale::description(n, ed.locale)
+                        {
                             r.on_hover_text(desc);
                         }
                     }
-                    if let Some(desc) = ed.autocomplete.get(ed.ac_index).and_then(|n| crate::formula_locale::description(n, ed.locale)) {
+                    if is_function(ed.ac_index)
+                        && let Some(desc) = ed.autocomplete.get(ed.ac_index).and_then(|n| crate::formula_locale::description(n, ed.locale))
+                    {
                         ui.separator();
                         ui.add(egui::Label::new(egui::RichText::new(desc).small()).wrap());
                     }
@@ -415,6 +434,20 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
     } else if let Some((dr, dc, array, fill)) = action {
         app.commit_edit(dr, dc, array, fill);
     }
+}
+
+/// `=SUM(C2:C9)` → `=SUM(Table1[Qty])` in the formula being edited (`formulas.useTableNames`
+/// for the text in the editor). A formula that doesn't parse yet is left alone.
+fn use_table_names(app: &SheetApp, ed: &mut crate::editor::EditState) {
+    let Some(d) = app.session.active() else { return };
+    let Ok(canonical) = crate::formula_locale::canonical(&ed.text, ed.locale, &d.wb, ed.sheet, ed.cell) else { return };
+    let Some(named) = gridcraft_engine::table_refs::use_table_names_in_text(&d.wb, ed.sheet, ed.cell, &canonical) else { return };
+    ed.text = crate::formula_locale::display(&named, ed.locale, &d.wb, ed.sheet);
+    ed.caret = ed.text.chars().count();
+    ed.point = None;
+    ed.caret_to_end = true;
+    ed.request_focus = true;
+    ed.sync_caret = true;
 }
 
 fn cycle_anchor(ed: &mut crate::editor::EditState) {

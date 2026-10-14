@@ -60,6 +60,10 @@ pub struct UiState {
     /// Enable AutoComplete for cell values (File ▸ Options ▸ Editing): typed text is completed
     /// from the one matching entry in the same column.
     pub autocomplete: bool,
+    /// Use table names in formulas (File ▸ Options ▸ Editing, Excel's Options ▸ Formulas): point
+    /// mode writes a cell or range of a table as a table reference (`Products[Stock]`,
+    /// `[@Qty]`, `Products["Bolt"][Price]`) instead of its address.
+    pub table_names: bool,
     pub recent: Vec<String>,
     /// One-shot keytip request for a ribbon control: set when a keytip action resolves to
     /// [`keytips::Action::Control`], consumed (and cleared) by the control's render site.
@@ -103,6 +107,7 @@ impl Default for UiState {
             status_bar: true,
             animations: true,
             autocomplete: true,
+            table_names: true,
             recent: vec![],
             keytip_invoke: None,
             language: i18n::Language::En,
@@ -607,6 +612,10 @@ impl SheetApp {
             "options.autoComplete" => {
                 self.ui.autocomplete = p.get("on").and_then(Json::as_bool).unwrap_or(!self.ui.autocomplete);
                 Ok(json!({"on": self.ui.autocomplete}))
+            }
+            "options.tableNames" => {
+                self.ui.table_names = p.get("on").and_then(Json::as_bool).unwrap_or(!self.ui.table_names);
+                Ok(json!({"on": self.ui.table_names}))
             }
             "view.interfaceScale" => {
                 // `{"percent": 125}` or `{"percent": "auto"}`; out-of-range values are clamped.

@@ -398,6 +398,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Options|Save" => "Opcije|Sačuvaj",
         "Show formula bar" => "Prikaži traku formule",
         "Enable AutoComplete for cell values" => "Omogući automatsko dovršavanje vrednosti ćelija",
+        "Use table names in formulas" => "Koristi imena tabela u formulama",
         "Save .xlsx workbooks automatically after every change" => "Automatski sačuvaj .xlsx radne sveske posle svake izmene",
         "Workbook calculation" => "Izračunavanje radne sveske",
         "Enable iterative calculation" => "Omogući iterativno izračunavanje",
