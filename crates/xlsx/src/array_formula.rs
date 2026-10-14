@@ -46,6 +46,12 @@ impl Scan<'_> {
         }
         self.remaining -= 1;
         match e {
+            // A range into a linked workbook (`[1]Data!$B:$B`) doesn't make a formula dynamic: these
+            // come from Excel's own files, where a legacy cell is read with implicit intersection,
+            // and were written back unchanged before they calculated. One that spills is still
+            // written as a dynamic array, through its spill range. (No sheet of this workbook
+            // starts with `[`.)
+            Expr::Ref(r) if matches!(&r.sheet, SheetSel::Named(s) | SheetSel::Span(s, _) if s.starts_with('[')) => Shape::default(),
             Expr::Ref(r) => Shape { array: !r.range().is_single() || matches!(r.sheet, SheetSel::Span(_, _)), affected: false },
             Expr::Array(rows) => Shape { array: rows.len() > 1 || rows.first().is_some_and(|r| r.len() > 1), affected: false },
             Expr::Name(n) => {

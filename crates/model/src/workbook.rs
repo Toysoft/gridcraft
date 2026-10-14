@@ -89,14 +89,14 @@ pub struct DocProps {
 /// (`<externalLink>` `sheetDataSet`). `[n]` in a formula is the workbook's `external_books[n - 1]`.
 /// GridCraft doesn't open linked files: references into them read these values, as Excel does
 /// while the source is closed.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ExternalBook {
     pub sheets: Vec<ExternalSheet>,
     /// The linked workbook's defined names (`[1]!Rates`, `[1]Sheet1!Rates`).
     pub names: Vec<ExternalName>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ExternalSheet {
     pub name: String,
     /// Cached cells, sorted by position (row, then column).
@@ -106,7 +106,7 @@ pub struct ExternalSheet {
     pub refresh_error: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ExternalName {
     pub name: String,
     /// Index into the book's `sheets` of the sheet the name is scoped to; `None` = workbook scope.
@@ -187,8 +187,10 @@ pub struct Workbook {
     pub source_dir: Option<std::path::PathBuf>,
     /// Linked workbooks' cached values, in `<externalReferences>` order (`[1]` is the first).
     /// Read from the file; the link parts themselves are kept for saving in `preserved`. Shared,
-    /// as sheets are: edits and undo history clone the workbook, never this cache.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// as sheets are: edits and undo history clone the workbook, never this cache. Not in JSON,
+    /// like the link parts: a workbook without them has no links, so a typed `[1]` is refused
+    /// rather than saved into a file that has no link for it.
+    #[serde(skip)]
     pub external_books: Arc<Vec<ExternalBook>>,
 }
 
@@ -227,13 +229,7 @@ impl Workbook {
     pub fn sheet_mut(&mut self, i: usize) -> Option<&mut Sheet> {
         self.sheets.get_mut(i).map(Arc::make_mut)
     }
-    /// The position of the sheet named `name`. `[0]Sheet1` is this workbook's `Sheet1`, as in Excel
-    /// (a sheet name can't contain `[`).
     pub fn sheet_index(&self, name: &str) -> Option<usize> {
-        let name = match name.strip_prefix('[').and_then(|s| s.split_once(']')) {
-            Some((book, sheet)) if !book.is_empty() && book.bytes().all(|b| b == b'0') => sheet,
-            _ => name,
-        };
         self.sheets.iter().position(|s| s.name.eq_ignore_ascii_case(name))
     }
     pub fn active(&self) -> Option<&Sheet> {

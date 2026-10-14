@@ -149,7 +149,7 @@ pub(crate) fn input_to_cell(input: &str, sheet: usize, at: CellRef, wb: &mut gri
             parsed = gridcraft_formula::parse(&text);
         }
         let expr = parsed.map_err(|e| EngineError::Other(format!("There's a problem with this formula: {e}")))?;
-        let expr = check_linked_books(expr, wb.external_books.len())?;
+        check_linked_books(&expr, wb.external_books.len())?;
         let expr = wb.name_call_case(expr);
         check_arg_counts(&expr)?;
         let mut cell = Cell::formula(Formula::from_expr(expr));
@@ -219,7 +219,8 @@ fn sheets_named(e: &gridcraft_formula::Expr) -> Vec<(&str, bool)> {
             SheetSel::Span(a, b) => vec![(a.as_str(), false), (b.as_str(), true)],
             SheetSel::Current => vec![],
         },
-        Expr::Name(n) => n.rsplit_once('!').map(|(s, _)| vec![(s, false)]).unwrap_or_default(),
+        // `[1]Data!#REF!` (a deleted reference into a linked workbook) is carried as a name.
+        Expr::Name(n) => n.strip_suffix("!#REF!").or_else(|| n.rsplit_once('!').map(|(s, _)| s)).map(|s| vec![(s, false)]).unwrap_or_default(),
         _ => vec![],
     }
 }
@@ -244,47 +245,51 @@ fn first_bad_book(expr: &gridcraft_formula::Expr, links: usize) -> Option<String
     bad
 }
 
+/// A cell reference after a bare workbook index (`[1]!A1`, `SUM([1]!A1:B2)`, `[0]!A1`), as written.
+/// Only a defined name can follow `[n]!`: the reference would be to a sheet called `[1]`, which no
+/// sheet can be.
+fn first_book_only_ref(expr: &gridcraft_formula::Expr) -> Option<String> {
+    use gridcraft_formula::{Expr, SheetSel};
+    let book_only = |s: &str| matches!(sheet_book(s), Ok(Some(_))) && s.ends_with(']');
+    let mut bad = None;
+    expr.walk(&mut |e| {
+        let sheet = match e {
+            Expr::Ref(r) => match &r.sheet {
+                SheetSel::Named(a) => Some(a.as_str()),
+                _ => None,
+            },
+            // `[1]!#REF!`: an error, not a name.
+            Expr::Name(n) => n.strip_suffix("!#REF!"),
+            _ => None,
+        };
+        if bad.is_none()
+            && let Some(s) = sheet.filter(|s| book_only(s))
+        {
+            bad = Some(s.to_string());
+        }
+    });
+    bad
+}
+
 /// Typed references into other workbooks. `[n]` must name one of the workbook's `links` external
 /// links (`[1]` is the first): Excel refuses any other index on entry, and a file saved with one
-/// can't be opened. `[0]` is this workbook, as in Excel: `[0]Sheet1!A1` is entered as `Sheet1!A1`.
-pub(crate) fn check_linked_books(expr: gridcraft_formula::Expr, links: usize) -> Result<gridcraft_formula::Expr> {
-    use gridcraft_formula::{Expr, SheetSel};
-    if let Some(book) = first_bad_book(&expr, links) {
+/// can't be opened. `[0]` is this workbook, as in Excel (the parser enters `[0]Sheet1!A1` as
+/// `Sheet1!A1`). Only a defined name can follow a bare `[n]!`.
+pub(crate) fn check_linked_books(expr: &gridcraft_formula::Expr, links: usize) -> Result<()> {
+    if let Some(book) = first_bad_book(expr, links) {
         return Err(EngineError::Other(format!("There's a problem with this formula: {book} isn't a linked workbook.")));
     }
-    let own = |s: &str| match sheet_book(s) {
-        Ok(Some(0)) => s.split_once(']').map(|(_, rest)| rest.to_string()).filter(|rest| !rest.is_empty()),
-        _ => None,
-    };
-    Ok(expr.map(&mut |e| match e {
-        Expr::Ref(mut r) => {
-            r.sheet = match r.sheet {
-                SheetSel::Named(a) => SheetSel::Named(own(&a).unwrap_or(a)),
-                SheetSel::Span(a, b) => SheetSel::Span(own(&a).unwrap_or(a), b),
-                s => s,
-            };
-            Expr::Ref(r)
-        }
-        // `[0]!Rates` is the workbook's `Rates`, `[0]Sheet1!Rates` its `Sheet1!Rates`.
-        Expr::Name(n) => {
-            let local = match n.rsplit_once('!') {
-                Some((s, name)) if sheet_book(s) == Ok(Some(0)) => match s.split_once(']').map_or("", |(_, sheet)| sheet) {
-                    "" => Some(name.to_string()),
-                    sheet => Some(format!("{sheet}!{name}")),
-                },
-                _ => None,
-            };
-            Expr::Name(local.unwrap_or(n))
-        }
-        e => e,
-    }))
+    if let Some(book) = first_book_only_ref(expr) {
+        return Err(EngineError::Other(format!("There's a problem with this formula: only a defined name can follow {book}!.")));
+    }
+    Ok(())
 }
 
 /// Conditional formats and data validation can't refer to other workbooks: Excel refuses it in
 /// those dialogs. Text that isn't a formula is left to the caller.
 pub(crate) fn refuse_linked_books(text: &str) -> Result<()> {
     match gridcraft_formula::parse(text.trim_start_matches('=')) {
-        Ok(e) if first_bad_book(&e, 0).is_some() => {
+        Ok(e) if first_bad_book(&e, 0).is_some() || first_book_only_ref(&e).is_some() => {
             Err(EngineError::Other("There's a problem with this formula: references to other workbooks can't be used here.".into()))
         }
         _ => Ok(()),

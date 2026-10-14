@@ -286,8 +286,26 @@ fn typed_references_to_workbooks_that_are_not_linked_are_refused_on_entry() {
     wb.external_books = vec![link.clone()].into();
     refused(&mut s, "=[2]Sheet1!A1");
     refused(&mut s, "='[1]Jan:[1]Dec'!A1");
+    // Only a defined name can follow a bare `[n]!`: a cell reference there would be to a sheet
+    // called `[1]`.
+    for input in ["=[1]!A1", "=[1]!$B$2", "=SUM([1]!A1:B2)", "=[0]!A1", "=[1]!#REF!"] {
+        refused(&mut s, input);
+    }
+    assert!(s.execute("formulas.defineName", json!({"name": "BookOnly", "refersTo": "=[1]!A1"})).is_err());
+    assert!(s.execute("data.validation", json!({"range": "A1", "type": "custom", "formula1": "=[0]!A1>0"})).is_err());
+    // A data bar's formula thresholds are conditional-format formulas too.
+    let bar = |f: &str| json!({"range": "A1:A3", "rule": {"type": "dataBar", "min": {"type": "formula", "value": f}}});
+    assert!(s.execute("home.conditionalFormat", bar("[2]Sheet1!A1")).is_err());
+    assert!(s.execute("home.conditionalFormat", bar("[1]S!A1")).is_err());
+    assert!(s.doc().unwrap().wb.active().unwrap().cond_formats.is_empty());
+    s.execute("home.conditionalFormat", bar("MIN(A1:A3)")).unwrap();
     s.execute("cell.set", json!({"cell": "B1", "input": "=[1]S!$A$1"})).unwrap();
     assert_eq!(v(&s, "B1"), Value::Number(5.0));
+    // JSON doesn't carry the link parts, so it doesn't carry their values either: reopened, the
+    // workbook has no link, and a typed `[1]` is refused rather than saved without one.
+    let json_bytes = crate::io::save_bytes(&s.doc().unwrap().wb, "book.json").unwrap();
+    let (back, _) = crate::io::open_bytes("book.json", &json_bytes).unwrap();
+    assert!(back.external_books.is_empty());
     s.execute("formulas.defineName", json!({"name": "Linked", "refersTo": "=[1]Sheet1!A1"})).unwrap();
     // `[0]` is this workbook: entered as the plain reference, showing the local value.
     s.execute("cell.set", json!({"cell": "C1", "input": "7"})).unwrap();

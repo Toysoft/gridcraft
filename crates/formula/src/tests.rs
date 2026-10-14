@@ -116,6 +116,41 @@ fn names_of_linked_workbooks_print_as_excel_writes_them() {
 }
 
 #[test]
+fn book_only_references_print_back_without_quotes() {
+    // `[1]!A1` (only a defined name should follow `[1]!`, but files may hold it) must not become
+    // `'[1]'!A1`, a reference to a sheet called `[1]`.
+    for src in ["[1]!A1", "[1]!$B$2", "SUM([1]!A1:B2)", "[0]!A1"] {
+        assert_eq!(print(&parse(src).unwrap()), src);
+    }
+}
+
+#[test]
+fn deleted_references_into_linked_workbooks_keep_the_link() {
+    // Excel writes `[1]Data!#REF!` for a reference whose cells were deleted in the linked
+    // workbook; the link stays in the formula.
+    for src in ["[1]Data!#REF!+1", "SUM('[1]My Data'!#REF!)", "SUM([1]Jan:Dec!#REF!)"] {
+        assert_eq!(print(&parse(src).unwrap()), src);
+    }
+    assert_eq!(print(&parse("Data!#REF!+1").unwrap()), "#REF!+1");
+}
+
+#[test]
+fn workbook_zero_is_this_workbook() {
+    // `[0]` (MS-XLSX) is the workbook itself: read as a local reference, it follows its sheet.
+    for (src, local) in [
+        ("[0]Data!B2", "Data!B2"),
+        ("'[0]My Data'!B2", "'My Data'!B2"),
+        ("SUM([0]Jan:Dec!A1)", "SUM(Jan:Dec!A1)"),
+        ("[0]!Rate", "Rate"),
+        ("[0]Data!Rate", "Data!Rate"),
+        ("[00]Data!B2", "Data!B2"),
+    ] {
+        assert_eq!(parse(src).unwrap(), parse(local).unwrap(), "{src}");
+    }
+    assert_eq!(print(&rename_sheet(parse("[0]Data!B2*2").unwrap(), "Data", "Local")), "Local!B2*2");
+}
+
+#[test]
 fn renaming_or_deleting_a_sheet_leaves_linked_spans_alone() {
     // `[1]Jan:Dec` is a span of the linked workbook's sheets; this workbook's `Dec` isn't in it.
     let order = ["Jan".to_string(), "Dec".to_string()];

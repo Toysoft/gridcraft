@@ -141,11 +141,16 @@ fn references_into_linked_workbooks_read_the_saved_values() {
     t.set("A9", "=[2]Failed!A1");
     t.set("A10", "=SUM([2]Failed!A1:B1)");
     assert_eq!((t.get("A8"), t.num("A9"), t.get("A10")), (Value::Error(CellError::Ref), 9.0, Value::Error(CellError::Ref)));
-    // `[0]` is the workbook itself: its names, sheets and sheet ranges (as files may hold them).
-    t.set("D1", "=VLOOKUP(\"power\",[0]!Price,2,FALSE)");
-    assert_eq!(t.num("D1"), 61.0);
-    t.set("D2", "=[0]Sheet1!A1+SUM([0]Sheet1:Sheet1!A1)");
-    assert_eq!(t.num("D2"), 244.0);
+    // A reference Excel found deleted in a linked workbook is #REF!.
+    t.set("A14", "=[2]Rates!#REF!+1");
+    assert_eq!(t.get("A14"), Value::Error(CellError::Ref));
+    // A whole column, or more columns than a block can hold, reaches the same uncached cells.
+    t.set("A11", "=SUM([2]Failed!A:A)");
+    t.set("A12", "=SUM([2]Failed!A1:A2)");
+    t.set("A13", "=SUM([2]Failed!A:Z)");
+    for at in ["A11", "A12", "A13"] {
+        assert_eq!(t.get(at), Value::Error(CellError::Ref), "{at}");
+    }
     // The linked workbook's own names: workbook-scoped and sheet-scoped.
     t.set("B1", "=[2]!Gas*10");
     t.set("B2", "=[2]Rates!Rate+1");

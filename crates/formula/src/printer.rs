@@ -9,13 +9,13 @@ use crate::ast::*;
 /// Whether a sheet name needs quotes in a reference.
 pub fn needs_quotes(name: &str) -> bool {
     // A sheet in a linked workbook, `[1]Prices`: Excel quotes it only when the sheet name needs it.
-    if let Some((book, sheet)) = name.strip_prefix('[').and_then(|s| s.split_once(']'))
-        && !book.is_empty()
-        && book.bytes().all(|b| b.is_ascii_digit())
-    {
-        return sheet_needs_quotes(sheet);
+    // `[1]` alone (`[1]!Rate`, or `[1]!A1` read from a file) is never quoted: `'[1]'` would name a
+    // sheet called `[1]`.
+    match book_prefix(name) {
+        Some((_, "")) => false,
+        Some((_, sheet)) => sheet_needs_quotes(sheet),
+        None => sheet_needs_quotes(name),
     }
-    sheet_needs_quotes(name)
 }
 
 /// Whether a sheet name, without a linked workbook's `[n]`, needs quotes.
@@ -45,6 +45,16 @@ fn sheet_prefix(s: &SheetSel) -> String {
             if needs_quotes(a) || sheet_needs_quotes(b) { format!("'{}'!", joined.replace('\'', "''")) } else { format!("{joined}!") }
         }
     }
+}
+
+/// The sheet of a deleted reference into a linked workbook, carried as a name (`[1]Data!#REF!`,
+/// `[1]Jan:Dec!#REF!`).
+fn linked_ref_error(name: &str) -> Option<SheetSel> {
+    let sheet = name.strip_suffix("!#REF!").filter(|s| book_prefix(s).is_some())?;
+    Some(match sheet.split_once(':') {
+        Some((a, b)) => SheetSel::Span(a.to_string(), b.to_string()),
+        None => SheetSel::Named(sheet.to_string()),
+    })
 }
 
 fn anchor_a1(a: &Anchor) -> String {
@@ -206,6 +216,11 @@ fn write_expr(s: &mut String, e: &Expr, r1c1: Option<CellRef>) {
             Some(at) => s.push_str(&reference_r1c1(r, at)),
             None => s.push_str(&reference_a1(r)),
         },
+        // A reference Excel found deleted in a linked workbook, kept with its link (`[1]Data!#REF!`).
+        Expr::Name(n) if linked_ref_error(n).is_some() => {
+            s.push_str(&linked_ref_error(n).map(|sel| sheet_prefix(&sel)).unwrap_or_default());
+            s.push_str("#REF!");
+        }
         Expr::Name(n) => match n.rsplit_once('!') {
             // A sheet-qualified name is stored with the bare sheet name (`My Sheet!Total`): quote it so it parses back.
             // A linked workbook's own name (`[1]!Rate`, `[Source.xlsx]!Rate`) has no sheet to quote.

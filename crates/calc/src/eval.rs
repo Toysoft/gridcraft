@@ -211,10 +211,6 @@ impl<'h> Evaluator<'h> {
     /// A defined name of a linked workbook (`[1]!Rates`, `[1]Prices!Rates`): what it refers to in
     /// that workbook, read from the values saved with the link.
     fn external_name(&mut self, book: usize, sheet: &str, name: &str) -> Ev {
-        // `[0]!Name`: book 0 is the workbook itself.
-        if book == 0 {
-            return self.eval(&Expr::Name(if sheet.is_empty() { name.to_string() } else { format!("{sheet}!{name}") }));
-        }
         let wb = self.host.workbook();
         let Some(b) = book.checked_sub(1).and_then(|i| wb.external_books.get(i)) else { return err(CellError::Ref) };
         let Some(def) = b.name(name, (!sheet.is_empty()).then_some(sheet)) else { return err(CellError::Ref) };
@@ -281,12 +277,16 @@ impl<'h> Evaluator<'h> {
         if linked_parts(a.sheet).is_none() && self.host.workbook().sheet(a.sheet).is_none() {
             return a.range;
         }
+        // Past the cells a refresh-error sheet saved, everything is `#REF!`, not blank: keep one
+        // row and column past them, so `[1]Data!A:A` reads an uncached cell and agrees with
+        // `[1]Data!A1:A2`.
+        let past = u32::from(self.linked_sheet(a.sheet).is_some_and(|s| s.refresh_error));
         let used = self.host.used_range(a.sheet);
         let (mut r1, mut c1) = (a.range.end.row, a.range.end.col);
         match used {
             Some(u) => {
-                r1 = r1.min(u.end.row.max(a.range.start.row));
-                c1 = c1.min(u.end.col.max(a.range.start.col));
+                r1 = r1.min(u.end.row.saturating_add(past).max(a.range.start.row));
+                c1 = c1.min(u.end.col.saturating_add(past).max(a.range.start.col));
             }
             None => {
                 r1 = a.range.start.row;

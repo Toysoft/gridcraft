@@ -1350,8 +1350,9 @@ fn add_cf(s: &mut Session, p: &Json) -> Result<Json> {
         _ => preset_style(g("preset").as_deref().unwrap_or("lightRedFillDarkRedText")),
     });
     let kind = g("type").unwrap_or_else(|| "cellIs".into());
-    let value_kind = |v: Option<&Json>, default: CfValueKind| -> CfValueKind {
-        match v {
+    // A `formula` threshold can't refer to other workbooks either, as for the rules' formulas.
+    let value_kind = |v: Option<&Json>, default: CfValueKind| -> Result<CfValueKind> {
+        Ok(match v {
             Some(Json::Object(o)) => {
                 let t = o.get("type").and_then(Json::as_str).unwrap_or("num");
                 let val = o.get("value").and_then(Json::as_f64).unwrap_or(0.0);
@@ -1360,12 +1361,16 @@ fn add_cf(s: &mut Session, p: &Json) -> Result<Json> {
                     "max" => CfValueKind::Max,
                     "percent" => CfValueKind::Percent(val),
                     "percentile" => CfValueKind::Percentile(val),
-                    "formula" => CfValueKind::Formula(o.get("value").and_then(Json::as_str).unwrap_or("").into()),
+                    "formula" => {
+                        let f = o.get("value").and_then(Json::as_str).unwrap_or("");
+                        super::edit::refuse_linked_books(f)?;
+                        CfValueKind::Formula(f.into())
+                    }
                     _ => CfValueKind::Number(val),
                 }
             }
             _ => default,
-        }
+        })
     };
     let rule = match kind.as_str() {
         "cellIs" => {
@@ -1436,8 +1441,8 @@ fn add_cf(s: &mut Session, p: &Json) -> Result<Json> {
             CfRule::ColorScale { stops }
         }
         "dataBar" => CfRule::DataBar {
-            min: value_kind(rule.get("min"), CfValueKind::Min),
-            max: value_kind(rule.get("max"), CfValueKind::Max),
+            min: value_kind(rule.get("min"), CfValueKind::Min)?,
+            max: value_kind(rule.get("max"), CfValueKind::Max)?,
             color: super::format::color_param(rule.get("color")).unwrap_or(Color::rgb(0x63, 0x8E, 0xC6)),
             gradient: rule.get("gradient").and_then(Json::as_bool).unwrap_or(true),
             show_value: true,

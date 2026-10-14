@@ -281,10 +281,11 @@ fn define_name(s: &mut Session, p: &Json) -> Result<Json> {
         }
     };
     let parsed = gridcraft_formula::parse(&refers).map_err(|_| EngineError::Other("There's a problem with this formula.".into()))?;
-    let checked = super::edit::check_linked_books(parsed.clone(), d.wb.external_books.len())?;
-    // `[0]Sheet1!$C$1` is stored as `Sheet1!$C$1`, so it follows the sheet when it's renamed.
-    if checked != parsed {
-        refers = gridcraft_formula::print(&checked);
+    super::edit::check_linked_books(&parsed, d.wb.external_books.len())?;
+    // A workbook prefix is stored as the parser reads it: `[0]Sheet1!$C$1` as `Sheet1!$C$1`, so
+    // it follows the sheet when it's renamed.
+    if refers.contains('[') {
+        refers = gridcraft_formula::print(&parsed);
     }
     let comment = str_param(p, "comment").unwrap_or("").to_string();
     // Editing an existing name (Name Manager › Edit…): it must exist, and its new name must not
