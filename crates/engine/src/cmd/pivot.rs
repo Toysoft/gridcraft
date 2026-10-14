@@ -2233,6 +2233,37 @@ mod tests {
     }
 
     #[test]
+    fn pivot_chart_label_formats_follow_items_a_filter_swaps() {
+        // A filter that shows other items keeps the series count; names that show the pivot's
+        // own items (hidden ones included) are still matched by item, not by position, and a
+        // hidden item gets its format back when it returns.
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Product"], "values": ["Sales"]})).unwrap();
+        s.execute("insert.pivotChart", json!({"pivot": "PivotTable1"})).unwrap();
+        s.execute("pivot.filter", json!({"field": "Product", "selected": ["Apples"]})).unwrap();
+        let refs = header_refs(&s, 0);
+        assert_eq!(refs, ["Sheet2!$B$3:$B$4"]);
+        let fmt = Some("0.0".to_string());
+        name_series(&mut s, &refs, std::slice::from_ref(&fmt));
+        s.execute("pivot.filter", json!({"field": "Product", "selected": ["Pears"]})).unwrap();
+        assert_eq!(chart_labels(&s), [None]);
+        s.execute("pivot.filter", json!({"field": "Product", "selected": null})).unwrap();
+        assert_eq!(chart_labels(&s), [fmt, None, None]);
+        // East and West shown, then North and West: North takes neither format.
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Product"], "columns": ["Region"], "values": ["Sales"]})).unwrap();
+        s.execute("insert.pivotChart", json!({"pivot": "PivotTable1"})).unwrap();
+        s.execute("pivot.filter", json!({"field": "Region", "selected": ["East", "West"]})).unwrap();
+        let refs = header_refs(&s, 0);
+        let typed = ["0.0", "0.00"].map(|f| Some(f.to_string()));
+        name_series(&mut s, &refs, &typed);
+        s.execute("pivot.filter", json!({"field": "Region", "selected": ["North", "West"]})).unwrap();
+        assert_eq!(chart_labels(&s), [None, typed[1].clone()]);
+        s.execute("pivot.filter", json!({"field": "Region", "selected": null})).unwrap();
+        assert_eq!(chart_labels(&s), [typed[0].clone(), None, typed[1].clone()]);
+    }
+
+    #[test]
     fn pivot_chart_errors() {
         let mut s = sales();
         // No PivotTable yet.

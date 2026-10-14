@@ -1484,7 +1484,7 @@ pub fn refresh(wb: &mut Workbook, sheet: usize, idx: usize, replace: bool) -> Re
     // report.
     let sheet_name = wb.sheet(sheet).ok_or("There's no such sheet.")?.name.clone();
     let report = pt.last_range.map(|area| OldReport { area, top: pt.anchor.row });
-    let label_formats = chart_label_formats(wb, &sheet_name, &pt.name, sheet, report, out.chart_value_item);
+    let label_formats = chart_label_formats(wb, &pt, &sheet_name, sheet, report, out.chart_value_item);
     let shm = wb.sheet_mut(sheet).ok_or("There's no such sheet.")?;
     if let Some(old) = pt.last_range {
         shm.take_cells(old);
@@ -1684,9 +1684,24 @@ struct ChartFormats {
     /// an earlier refresh remembered for series it dropped.
     keyed: Vec<(Vec<String>, Option<String>)>,
     /// The current series' formats in order when every series is named by header cells (a
-    /// PivotChart read from a file): kept by position if none of those names matches a rebuilt
-    /// series, for headers whose captions aren't GridCraft's item labels.
+    /// PivotChart read from a file) and none of those names shows an item of the pivot's row or
+    /// column fields, hidden ones included, or a value field's name: kept by position if no name
+    /// matches a rebuilt series, for headers whose captions aren't GridCraft's item labels.
     by_position: Option<Vec<Option<String>>>,
+}
+
+/// Every label the pivot's series names can show: the items of its row and column fields,
+/// counting the ones a filter hides, and its value fields' names.
+fn pivot_labels(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> HashSet<String> {
+    let mut labels: HashSet<String> = pt.values.iter().map(|v| v.name.clone()).collect();
+    if let Ok(src) = read_source(wb, &pt.source, pivot_sheet) {
+        for f in pt.rows.iter().chain(&pt.columns) {
+            if let Some(c) = src.col(&f.source_col) {
+                labels.extend(distinct_labels(wb, &src, c, f.date_group, usize::MAX));
+            }
+        }
+    }
+    labels
 }
 
 /// The data label formats of every PivotChart of a PivotTable by series items (names that are
@@ -1695,13 +1710,14 @@ struct ChartFormats {
 /// filter that hides a leading item doesn't pass its format to the next series.
 fn chart_label_formats(
     wb: &Workbook,
+    pt: &PivotTable,
     sheet: &str,
-    pivot: &str,
     pivot_sheet: usize,
     report: Option<OldReport>,
     value_item: bool,
 ) -> Vec<ChartFormats> {
-    linked_charts(wb, sheet, pivot)
+    let mut labels: Option<HashSet<String>> = None;
+    linked_charts(wb, sheet, &pt.name)
         .map(|(si, ch)| {
             let names: Vec<Option<SeriesName>> = ch.series.iter().map(|s| s.name.as_deref().map(|n| parse_series_name(wb, si, n))).collect();
             // The report's first data column: the leftmost series' header column.
@@ -1725,10 +1741,12 @@ fn chart_label_formats(
                     (!items.is_empty()).then(|| (items, s.label_number_format.clone()))
                 })
                 .collect();
-            let by_position = names
-                .iter()
-                .all(|n| matches!(n, Some(SeriesName::Cells(..))))
-                .then(|| ch.series.iter().map(|s| s.label_number_format.clone()).collect());
+            // Names that show any of the pivot's labels are matched by item, never by position:
+            // a filter can swap the shown items and keep their count.
+            let file_names = names.iter().all(|n| matches!(n, Some(SeriesName::Cells(..))));
+            let by_position = (file_names
+                && !current.iter().any(|(k, _)| k.iter().any(|x| labels.get_or_insert_with(|| pivot_labels(wb, pt, pivot_sheet)).contains(x))))
+            .then(|| ch.series.iter().map(|s| s.label_number_format.clone()).collect());
             let dropped: Vec<(Vec<String>, Option<String>)> = ch
                 .pivot_label_formats
                 .iter()
@@ -1779,11 +1797,9 @@ fn rebind_charts(wb: &mut Workbook, sheet: &str, pivot: &str, origin: CellRef, o
             // the formats of series that are gone.
             let mut kept: Vec<(Vec<String>, String)> =
                 items.iter().zip(&ch.series).filter_map(|(k, s)| Some((k.to_vec(), s.label_number_format.clone()?))).collect();
-            if by_position.is_none() {
-                kept.extend(
-                    fmts.keyed.into_iter().filter_map(|(k, f)| Some((k, f?))).filter(|(k, _)| !items.iter().any(|i| same_items(k, i, value_item))),
-                );
-            }
+            kept.extend(
+                fmts.keyed.into_iter().filter_map(|(k, f)| Some((k, f?))).filter(|(k, _)| !items.iter().any(|i| same_items(k, i, value_item))),
+            );
             ch.pivot_label_formats = kept;
         }
     }
