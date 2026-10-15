@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (dates and times in CSV/text can stay text; previously minor: CSV/text open follows the Automatic Data Conversion options; trailing decimal zeros) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-14 · **Change:** trivial (formulas over Excel's 8,192 characters, and `%` or call chains past the nesting limit, are parse errors instead of stack overflows when a file is opened; previously minor: dates and times in CSV/text can stay text; CSV/text open follows the Automatic Data Conversion options; trailing decimal zeros) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -83,6 +83,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | trivial | Formula parser: text longer than Excel's 8,192 characters, and postfix chains (`1%%%…`, `f(1)(1)…`) past the 256-level nesting limit, are parse errors (the cell keeps its formula text and cached value) instead of trees deep enough to overflow the stack when a hostile file is opened, saved or dropped |
 | 2026-10-13 | minor | "Convert text that looks like a date or time to a date" (on by default): off, `2.6.70`, `3/4/2026` and `10:30` open as text and save back as written (#506) |
 | 2026-10-12 | minor | "Remove trailing zeros after the decimal separator" (on by default): off, `720.0` opens as 720 formatted `0.0` and saves back as `720.0` |
 | 2026-10-12 | minor | CSV/TSV/text open follows the Automatic Data Conversion options (leading zeros, long numbers, digits around E) |
