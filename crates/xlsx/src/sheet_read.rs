@@ -123,11 +123,18 @@ pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<Sheet, IoE
                 }
             }
             "pageSetup" => {
+                // Saved again even when every value is the default: without `paperSize` it is
+                // Letter (the ECMA-376 default), without the element the application's paper.
+                sheet.print.page_setup = true;
                 if e.attr("orientation") == Some("landscape") {
                     sheet.print.orientation = Orientation::Landscape;
                 }
-                if let Some(p) = e.attr_u32("paperSize").and_then(paper_name) {
-                    sheet.print.paper = p.to_string();
+                if let Some(id) = e.attr_u32("paperSize") {
+                    match paper_name(id) {
+                        Some(p) => sheet.print.paper = p.to_string(),
+                        // A size without a name here: laid out as Letter, saved as it was.
+                        None => sheet.print.paper_code = Some(id),
+                    }
                 }
                 if let Some(s) = e.attr_u32("scale") {
                     sheet.print.scale = s.clamp(10, 400) as u16;

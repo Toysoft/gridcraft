@@ -3282,3 +3282,102 @@ fn paste_special_validation_moves_relative_references() {
     assert!(!ok(&mut s, "C3", "5"), "the pasted rule checks C3, not A1");
     assert!(ok(&mut s, "C3", "20"));
 }
+
+/// The first sheet's XML in the active workbook saved as XLSX.
+fn saved_sheet_xml(s: &Session) -> String {
+    use std::io::Read;
+    let bytes = gridcraft_xlsx::write_xlsx(&s.doc().unwrap().wb).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut x = String::new();
+    zip.by_name("xl/worksheets/sheet1.xml").unwrap().read_to_string(&mut x).unwrap();
+    x
+}
+
+/// A sheet without page setup is saved without `<pageSetup>`: written without `paperSize` it
+/// would be Letter (the ECMA-376 default) instead of the application's default paper. Page Setup
+/// commands that set something give it one.
+#[test]
+fn page_setup_is_saved_once_a_page_setup_command_sets_it() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "data"})).unwrap();
+    assert!(!saved_sheet_xml(&s).contains("<pageSetup"), "a new sheet has no page setup");
+    let bytes = gridcraft_xlsx::write_xlsx(&s.doc().unwrap().wb).unwrap();
+    s.execute("file.open", json!({"name": "plain.xlsx", "base64": crate::io::base64_encode(&bytes)})).unwrap();
+    // Settings saved elsewhere, and choices that are already the default, add none.
+    for (id, params) in [
+        ("pageLayout.margins", json!({"preset": "wide"})),
+        ("pageLayout.pageSetup", json!({"margins": {"left": 1.5}})),
+        ("pageLayout.pageSetup", json!({"header": "&CReport", "gridlines": true})),
+        ("pageLayout.orientation", json!({"orientation": "portrait"})),
+        ("pageLayout.scaleToFit", json!({"scale": 100})),
+    ] {
+        s.execute(id, params.clone()).unwrap();
+        let x = saved_sheet_xml(&s);
+        assert!(!x.contains("<pageSetup"), "{id} {params}: {x}");
+    }
+    s.execute("pageLayout.orientation", json!({"orientation": "landscape"})).unwrap();
+    let x = saved_sheet_xml(&s);
+    assert!(x.contains("<pageSetup") && x.contains("orientation=\"landscape\""), "{x}");
+    s.execute("edit.undo", json!({})).unwrap();
+    assert!(!saved_sheet_xml(&s).contains("<pageSetup"), "undo takes it away again");
+    s.execute("pageLayout.scaleToFit", json!({"width": 1, "height": 0})).unwrap();
+    let x = saved_sheet_xml(&s);
+    assert!(x.contains("fitToWidth=\"1\" fitToHeight=\"0\""), "{x}");
+    s.execute("edit.undo", json!({})).unwrap();
+    // A paper choice is kept even when it is Letter (written without paperSize: Letter is the default).
+    s.execute("pageLayout.size", json!({"paper": "Letter"})).unwrap();
+    let x = saved_sheet_xml(&s);
+    assert!(x.contains("<pageSetup orientation=\"portrait\"/>"), "{x}");
+    s.execute("pageLayout.pageSetup", json!({"paper": "A4"})).unwrap();
+    let x = saved_sheet_xml(&s);
+    assert!(x.contains("paperSize=\"9\""), "{x}");
+}
+
+/// A paper size number GridCraft has no name for is saved back as it was, until a Page Setup
+/// command chooses a paper.
+#[test]
+fn choosing_a_paper_size_replaces_a_number_kept_from_the_file() {
+    let mut wb = gridcraft_model::Workbook::new();
+    let pr = &mut wb.sheet_mut(0).unwrap().print;
+    pr.paper_code = Some(70);
+    pr.page_setup = true;
+    let bytes = gridcraft_xlsx::write_xlsx(&wb).unwrap();
+    let mut s = Session::new();
+    s.execute("file.open", json!({"name": "odd paper.xlsx", "base64": crate::io::base64_encode(&bytes)})).unwrap();
+    assert!(saved_sheet_xml(&s).contains("paperSize=\"70\""), "kept through open and save");
+    s.execute("pageLayout.size", json!({"paper": "A4"})).unwrap();
+    let x = saved_sheet_xml(&s);
+    assert!(x.contains("paperSize=\"9\"") && !x.contains("paperSize=\"70\""), "{x}");
+    s.execute("edit.undo", json!({})).unwrap();
+    assert!(saved_sheet_xml(&s).contains("paperSize=\"70\""), "undo brings the kept number back");
+    s.execute("pageLayout.pageSetup", json!({"paper": "Legal"})).unwrap();
+    let x = saved_sheet_xml(&s);
+    assert!(x.contains("paperSize=\"5\"") && !x.contains("paperSize=\"70\""), "{x}");
+}
+
+/// Paper names the engine also accepts in other spellings (`11x17`, `A-4`) are kept under the
+/// name XLSX saves (Tabloid, A4) instead of falling back to Letter on save; unknown names are
+/// refused.
+#[test]
+fn paper_names_are_kept_under_the_names_xlsx_saves() {
+    let mut s = s();
+    let paper = |s: &Session| s.doc().unwrap().wb.active().unwrap().print.paper.clone();
+    for (id, name, kept, size) in [
+        ("pageLayout.pageSetup", "11x17", "Tabloid", Some("3")),
+        ("pageLayout.pageSetup", " a-4 ", "A4", Some("9")),
+        ("pageLayout.size", "b_5", "B5", Some("13")),
+        ("pageLayout.size", "US Letter", "Letter", None),
+    ] {
+        s.execute(id, json!({"paper": name})).unwrap();
+        assert_eq!(paper(&s), kept, "{id} {name}");
+        let x = saved_sheet_xml(&s);
+        match size {
+            Some(n) => assert!(x.contains(&format!("paperSize=\"{n}\"")), "{id} {name}: {x}"),
+            None => assert!(x.contains("<pageSetup") && !x.contains("paperSize"), "{id} {name}: {x}"),
+        }
+    }
+    for id in ["pageLayout.size", "pageLayout.pageSetup"] {
+        assert!(s.execute(id, json!({"paper": "Napkin"})).is_err(), "{id} refuses an unknown paper");
+    }
+    assert_eq!(paper(&s), "Letter", "a refused paper changes nothing");
+}

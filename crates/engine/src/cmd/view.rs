@@ -189,10 +189,11 @@ fn orientation(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 fn paper(s: &mut Session, p: &Json) -> Result<Json> {
-    let paper = str_param(p, "paper").unwrap_or("Letter").to_string();
+    let name = str_param(p, "paper").unwrap_or("Letter");
+    let paper = super::print::paper_name(name).ok_or_else(|| bad("pageLayout.size", format!("unknown paper size `{name}`")))?;
     edit(s, |cx| {
         let si = cx.sheet_index();
-        cx.sheet_mut(si)?.print.paper = paper.clone();
+        cx.sheet_mut(si)?.print.set_paper(paper);
         Ok(Json::Null)
     })
 }

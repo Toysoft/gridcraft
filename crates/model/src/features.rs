@@ -671,8 +671,20 @@ pub enum Orientation {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PrintSettings {
     pub orientation: Orientation,
-    /// Paper size name (`Letter`, `A4`, `Legal`…).
+    /// Paper size name (`Letter`, `A4`, `Legal`…). Set it with [`PrintSettings::set_paper`].
     pub paper: String,
+    /// The sheet has page setup of its own (XLSX `<pageSetup>`): the file had it, or a paper size
+    /// was chosen. `<pageSetup>` without `paperSize` is Letter (ECMA-376 gives `paperSize` the
+    /// default 1), while a sheet without `<pageSetup>` names no paper and is printed on the
+    /// application's default paper (seen in LibreOffice), so a sheet that never had page setup
+    /// is saved without it. Orientation, scale and Fit To are saved whenever they differ from
+    /// the defaults; only an explicit paper choice (Letter included) needs remembering here.
+    #[serde(default)]
+    pub page_setup: bool,
+    /// A paper size number from a file (XLSX `paperSize`) that has no name in GridCraft, kept so
+    /// saving writes it back. The sheet is laid out on `paper` meanwhile; choosing a paper clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper_code: Option<u32>,
     /// Margins in inches: left, right, top, bottom, header, footer.
     pub margins: [f32; 6],
     pub print_area: Option<RangeRef>,
@@ -742,6 +754,13 @@ impl HfPage {
 }
 
 impl PrintSettings {
+    /// Chooses the paper size by name. The choice is the sheet's own page setup, saved even when
+    /// it is the default Letter, and it replaces a paper size kept from the file by number.
+    pub fn set_paper(&mut self, name: impl Into<String>) {
+        self.paper = name.into();
+        self.paper_code = None;
+        self.page_setup = true;
+    }
     /// The pair used by page `number` (1-based, as `&P` prints it); `first` is the sheet's first page.
     pub fn hf_page(&self, first: bool, number: usize) -> HfPage {
         if self.different_first && first {
@@ -784,6 +803,8 @@ impl Default for PrintSettings {
         PrintSettings {
             orientation: Orientation::Portrait,
             paper: "Letter".into(),
+            page_setup: false,
+            paper_code: None,
             margins: [0.7, 0.7, 0.75, 0.75, 0.3, 0.3],
             print_area: None,
             title_rows: None,
@@ -1044,5 +1065,29 @@ impl Default for PivotTable {
             values_on_rows: false,
             values_position: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn choosing_a_paper_gives_the_sheet_its_own_page_setup() {
+        let mut p = PrintSettings::default();
+        assert!(!p.page_setup, "a new sheet has no page setup of its own");
+        p.paper_code = Some(70);
+        p.set_paper("Letter");
+        assert_eq!((p.paper.as_str(), p.paper_code, p.page_setup), ("Letter", None, true));
+    }
+
+    #[test]
+    fn print_settings_saved_before_page_setup_was_tracked_still_load() {
+        let mut old = serde_json::to_value(PrintSettings::default()).unwrap();
+        let fields = old.as_object_mut().unwrap();
+        assert!(fields.remove("page_setup").is_some());
+        assert!(!fields.contains_key("paper_code"), "no kept paper number, nothing written");
+        let p: PrintSettings = serde_json::from_value(old).unwrap();
+        assert_eq!(p, PrintSettings::default());
     }
 }

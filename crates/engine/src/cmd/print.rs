@@ -68,22 +68,29 @@ const DENSE_BLOCK: u64 = 60_000;
 
 /// Paper size in points (portrait) for a paper name; unknown names fall back to Letter.
 pub fn paper_size(name: &str) -> (f32, f32) {
-    known_paper(name).unwrap_or((612.0, 792.0))
+    known_paper(name).map_or((612.0, 792.0), |(_, size)| size)
 }
 
-fn known_paper(name: &str) -> Option<(f32, f32)> {
+/// The name a paper size is kept under (`A-4` → `A4`, `11x17` → `Tabloid`): the one XLSX saves
+/// as a `paperSize` number. `None` for a size GridCraft can't lay out.
+pub(crate) fn paper_name(name: &str) -> Option<&'static str> {
+    known_paper(name).map(|(kept, _)| kept)
+}
+
+/// A paper's kept name and portrait size in points; names match ignoring case, spaces, `-` and `_`.
+fn known_paper(name: &str) -> Option<(&'static str, (f32, f32))> {
     let n = name.trim().to_ascii_lowercase().replace([' ', '-', '_'], "");
     Some(match n.as_str() {
-        "letter" | "usletter" => (612.0, 792.0),
-        "legal" | "uslegal" => (612.0, 1008.0),
-        "a4" => (595.28, 841.89),
-        "a3" => (841.89, 1190.55),
-        "a5" => (419.53, 595.28),
-        "tabloid" | "11x17" => (792.0, 1224.0),
-        "ledger" => (1224.0, 792.0),
-        "executive" => (522.0, 756.0),
-        "b5" => (498.9, 708.66),
-        "b4" => (708.66, 1000.63),
+        "letter" | "usletter" => ("Letter", (612.0, 792.0)),
+        "legal" | "uslegal" => ("Legal", (612.0, 1008.0)),
+        "a4" => ("A4", (595.28, 841.89)),
+        "a3" => ("A3", (841.89, 1190.55)),
+        "a5" => ("A5", (419.53, 595.28)),
+        "tabloid" | "11x17" => ("Tabloid", (792.0, 1224.0)),
+        "ledger" => ("Ledger", (1224.0, 792.0)),
+        "executive" => ("Executive", (522.0, 756.0)),
+        "b5" => ("B5", (498.9, 708.66)),
+        "b4" => ("B4", (708.66, 1000.63)),
         _ => return None,
     })
 }
@@ -1594,10 +1601,7 @@ fn page_setup(s: &mut Session, p: &Json) -> Result<Json> {
     };
     let paper = match str_param(p, "paper") {
         None => None,
-        Some(name) => {
-            known_paper(name).ok_or_else(|| bad(CMD, format!("unknown paper size `{name}`")))?;
-            Some(name.trim().to_string())
-        }
+        Some(name) => Some(paper_name(name).ok_or_else(|| bad(CMD, format!("unknown paper size `{name}`")))?),
     };
     let margin_src = p.get("margins").filter(|m| m.is_object()).unwrap_or(p);
     let mut margins: [Option<f32>; 6] = [None; 6];
@@ -1681,8 +1685,8 @@ fn page_setup(s: &mut Session, p: &Json) -> Result<Json> {
         if let Some(o) = orientation {
             pr.orientation = o;
         }
-        if let Some(pp) = &paper {
-            pr.paper = pp.clone();
+        if let Some(pp) = paper {
+            pr.set_paper(pp);
         }
         for (i, m) in margins.iter().enumerate() {
             if let (Some(v), Some(slot)) = (m, pr.margins.get_mut(i)) {

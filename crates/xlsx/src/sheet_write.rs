@@ -432,23 +432,31 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
     let m = |i: usize| num(p.margins.get(i).copied().unwrap_or(0.75) as f64);
     let _ =
         write!(s, "<pageMargins left=\"{}\" right=\"{}\" top=\"{}\" bottom=\"{}\" header=\"{}\" footer=\"{}\"/>", m(0), m(1), m(2), m(3), m(4), m(5));
-    s.push_str("<pageSetup");
-    if let Some(id) = paper_id(&p.paper)
-        && id != 1
-    {
-        let _ = write!(s, " paperSize=\"{id}\"");
+    // `<pageSetup>` only for a sheet with page setup of its own or a value that isn't the
+    // default. Without `paperSize` it is Letter (the ECMA-376 default), while a sheet without it
+    // is printed on the application's default paper (seen in LibreOffice), so writing it for
+    // every sheet moved sheets from that paper (A4 in most locales) to Letter.
+    let paper = p.paper_code.or_else(|| paper_id(&p.paper)).filter(|&id| id != 1);
+    let scale = Some(p.scale).filter(|sc| *sc != 100 && (10..=400).contains(sc));
+    let landscape = p.orientation == Orientation::Landscape;
+    let printer_settings = kept.page_setup_id();
+    if p.page_setup || paper.is_some() || scale.is_some() || p.fit_to.is_some() || landscape || printer_settings.is_some() {
+        s.push_str("<pageSetup");
+        if let Some(id) = paper {
+            let _ = write!(s, " paperSize=\"{id}\"");
+        }
+        if let Some(sc) = scale {
+            let _ = write!(s, " scale=\"{sc}\"");
+        }
+        if let Some((w, h)) = p.fit_to {
+            let _ = write!(s, " fitToWidth=\"{w}\" fitToHeight=\"{h}\"");
+        }
+        let _ = write!(s, " orientation=\"{}\"", if landscape { "landscape" } else { "portrait" });
+        if let Some(id) = printer_settings {
+            let _ = write!(s, " r:id=\"{id}\"");
+        }
+        s.push_str("/>");
     }
-    if p.scale != 100 && (10..=400).contains(&p.scale) {
-        let _ = write!(s, " scale=\"{}\"", p.scale);
-    }
-    if let Some((w, h)) = p.fit_to {
-        let _ = write!(s, " fitToWidth=\"{w}\" fitToHeight=\"{h}\"");
-    }
-    let _ = write!(s, " orientation=\"{}\"", if p.orientation == Orientation::Landscape { "landscape" } else { "portrait" });
-    if let Some(id) = kept.page_setup_id() {
-        let _ = write!(s, " r:id=\"{id}\"");
-    }
-    s.push_str("/>");
     if p.has_header_footer() || p.different_first || p.different_odd_even || !p.hf_scale_with_doc || !p.hf_align_with_margins {
         s.push_str("<headerFooter");
         for (attr, on, default) in [
