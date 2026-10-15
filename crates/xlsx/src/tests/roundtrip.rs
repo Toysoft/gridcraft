@@ -20,7 +20,14 @@ fn rr(a: &str) -> RangeRef {
 fn sample() -> Workbook {
     let mut wb = Workbook::new();
     wb.date_system = DateSystem::D1904;
-    wb.calc = CalcSettings { mode: CalcMode::Manual, iterative: true, max_iterations: 42, max_change: 0.5, precision_as_displayed: true };
+    wb.calc = CalcSettings {
+        mode: CalcMode::Manual,
+        iterative: true,
+        max_iterations: 42,
+        max_change: 0.5,
+        precision_as_displayed: true,
+        full_calc_on_load: false,
+    };
     wb.protected_structure = true;
     wb.structure_password = Some(gridcraft_model::PasswordHash::new_sha512("s3cret", b"0123456789abcdef"));
     wb.props = DocProps {
@@ -460,7 +467,8 @@ fn full_roundtrip() {
     assert!(rep.warnings.iter().all(|w| !w.contains("skipped") || w.contains("chart")), "{:?}", rep.warnings);
 
     assert_eq!(back.date_system, wb.date_system);
-    assert_eq!(back.calc, wb.calc);
+    // NOW() in F4 has no result to cache, so the file asks to be calculated in full when opened.
+    assert_eq!(back.calc, CalcSettings { full_calc_on_load: true, ..wb.calc.clone() });
     assert!(back.protected_structure);
     assert_eq!(back.structure_password, wb.structure_password);
     assert!(back.structure_password.as_ref().unwrap().verify("s3cret").unwrap());
@@ -676,6 +684,20 @@ fn iterative_calculation_settings_roundtrip() {
         let calc = read_xlsx(&bytes).unwrap().0.calc;
         assert!(calc.iterative, "{attrs}");
         assert_eq!((calc.max_iterations, calc.max_change), (count, change), "{attrs}");
+    }
+}
+
+/// `fullCalcOnLoad` says the cached results are out of date. It is read, and written back while
+/// it is set, so results that were never calculated again stay marked.
+#[test]
+fn full_calc_on_load_is_read_and_kept() {
+    for (attrs, set) in [("", false), (r#"fullCalcOnLoad="1""#, true), (r#"fullCalcOnLoad="true""#, true), (r#"fullCalcOnLoad="0""#, false)] {
+        let (wb, _) = read_xlsx(&super::minimal("<sheetData/>", &[], "", &format!("<calcPr {attrs}/>"))).unwrap();
+        assert_eq!(wb.calc.full_calc_on_load, set, "{attrs}");
+        let bytes = write_xlsx(&wb).unwrap();
+        let book = Package::open(&bytes).unwrap().read_xml("xl/workbook.xml").unwrap().unwrap();
+        assert_eq!(book.child("calcPr").unwrap().attr("fullCalcOnLoad"), set.then_some("1"), "{attrs}");
+        assert_eq!(read_xlsx(&bytes).unwrap().0.calc.full_calc_on_load, set, "{attrs}");
     }
 }
 

@@ -61,11 +61,13 @@ pub(crate) struct Budget {
     text: usize,
     records: usize,
     max_records: usize,
+    /// Cells covered by array ranges that keep their cached results ([`crate::claim_array_range`]).
+    array_cells: u64,
 }
 
 impl Default for Budget {
     fn default() -> Self {
-        Budget { cells: 0, text: 0, records: 0, max_records: MAX_RECORDS }
+        Budget { cells: 0, text: 0, records: 0, max_records: MAX_RECORDS, array_cells: 0 }
     }
 }
 
@@ -184,9 +186,12 @@ pub(crate) fn read_xls_with(bytes: &[u8], mut budget: Budget) -> Result<(Workboo
         };
         sheet.visibility = bs.visibility;
         // Every worksheet repeats the workbook's calculation settings; Excel applies the first.
+        // Results any sheet left out of date (Uncalced) or incomplete need a full calculation.
+        let stale = calc.full_calc_on_load;
         if wb.sheets.is_empty() {
             wb.calc = calc;
         }
+        wb.calc.full_calc_on_load |= stale;
         model_index.push(Some(wb.sheets.len()));
         wb.sheets.push(Arc::new(sheet));
     }
@@ -542,15 +547,24 @@ fn worksheet(
             st.unsupported("a shared formula that is missing from the file");
         }
     }
-    // The other cells of a legacy array formula hold only cached results: dropped, as when an
-    // .xlsx is read, so that the formula fills its range on recalculation. If the formula itself
-    // couldn't be imported, they keep their values.
+    // The other cells of a legacy array formula hold only cached results: not cell contents, as
+    // when an .xlsx is read, so that the formula fills its range on recalculation, but values it
+    // spilled, which a workbook opened without being calculated shows (dropped when the range can't
+    // keep them). If the formula itself couldn't be imported, they keep their values.
     for p in &pending {
-        let filled = st.sheet.cell(p.anchor).and_then(|c| c.formula.as_ref()).and_then(|f| f.array).is_some_and(|r| r.contains(p.pos));
-        if p.pos != p.anchor && filled {
-            let style = st.sheet.style_id(p.pos);
-            st.sheet.cells.set(p.pos, Cell { value: Value::Empty, formula: None, style });
+        let filled = st.sheet.cell(p.anchor).and_then(|c| c.formula.as_ref()).and_then(|f| f.array).filter(|r| r.contains(p.pos));
+        let Some(range) = filled.filter(|_| p.pos != p.anchor) else { continue };
+        let cached = st.sheet.cell(p.pos).map(|c| c.value.clone()).filter(|v| !v.is_empty());
+        if st.sheet.spill_ranges.contains_key(&p.anchor) || crate::claim_array_range(&mut budget.array_cells, p.anchor, range) {
+            st.sheet.spill_ranges.insert(p.anchor, range);
+            if let Some(v) = cached {
+                st.sheet.spill.insert(p.pos, v);
+            }
+        } else if cached.is_some() {
+            st.calc.full_calc_on_load = true;
         }
+        let style = st.sheet.style_id(p.pos);
+        st.sheet.cells.set(p.pos, Cell { value: Value::Empty, formula: None, style });
     }
     if st.dropped > 0 {
         report.warn(format!("{} cells outside the grid were skipped.", st.dropped));
@@ -662,6 +676,8 @@ fn sheet_record(rec: &Record<'_>, st: &mut SheetState<'_>, budget: &mut Budget, 
                 _ => CalcMode::Automatic,
             }
         }
+        // Uncalced: the formulas weren't calculated before the file was saved.
+        0x005E => st.calc.full_calc_on_load = true,
         0x000C => st.calc.set_max_iterations(u32::from(c.u16()?)),
         0x0011 => st.calc.iterative = c.u16()? == 1,
         0x0010 => st.calc.set_max_change(c.f64()?),

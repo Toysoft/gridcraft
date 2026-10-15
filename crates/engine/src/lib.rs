@@ -118,9 +118,22 @@ static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::ne
 const UNDO_LIMIT: usize = 100;
 
 impl DocState {
-    pub fn new(mut wb: Workbook, path: Option<String>, title: String) -> DocState {
+    pub fn new(wb: Workbook, path: Option<String>, title: String) -> DocState {
+        DocState::with_recalc(wb, path, title, true)
+    }
+
+    /// A document whose formulas are calculated again (`recalculate`), or that shows the results
+    /// stored with the workbook, as `file.open {recalculate: false}` opens it. A formula stored
+    /// without a result is then blank until it is calculated. The dependency graph is built either
+    /// way, so later edits recalculate as in any document: in automatic mode, what depends on the
+    /// edit and the formulas recalculated after every edit (volatile functions, names…).
+    pub fn with_recalc(mut wb: Workbook, path: Option<String>, title: String, recalculate: bool) -> DocState {
         let mut calc = Calc::new();
-        calc.recalc_all(&mut wb);
+        if recalculate {
+            calc.recalc_all(&mut wb);
+        } else {
+            calc.rebuild(&wb);
+        }
         let wb = Arc::new(wb);
         let sel = Selection::at(wb.active().map(|s| s.view_active).unwrap_or_default());
         DocState {

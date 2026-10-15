@@ -346,7 +346,8 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
     if wb.calc.precision_as_displayed {
         w.push_str(" fullPrecision=\"0\"");
     }
-    if out.needs_calc {
+    // A formula without a cached result, or results not calculated since a file asked for it.
+    if out.needs_calc || wb.calc.full_calc_on_load {
         w.push_str(" fullCalcOnLoad=\"1\"");
     }
     w.push_str("/>");

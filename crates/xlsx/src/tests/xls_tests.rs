@@ -330,12 +330,15 @@ fn reads_values_formulas_formats_and_layout() {
         // Shared formula: relative offsets resolve per cell.
         assert_eq!(ftext(&wb, "B5").as_deref(), Some("A5*10"));
         assert_eq!(ftext(&wb, "B6").as_deref(), Some("A6*10"));
-        // Array formula: the anchor holds it; the other cell's cached result is dropped so that
-        // the formula fills the range on recalculation (as when an .xlsx is read, #156).
+        // Array formula: the anchor holds it; the other cell's cached result is kept as a value
+        // the formula spilled, not as the cell's content, so that the formula fills the range on
+        // recalculation (as when an .xlsx is read, #156).
         let c5 = wb.sheets[0].cell(CellRef::parse("C5").unwrap()).unwrap().formula.clone().unwrap();
         assert_eq!((c5.text.as_str(), c5.array), ("A5:A6*2", Some(RangeRef::parse("C5:C6").unwrap())));
         assert_eq!(ftext(&wb, "C6"), None);
-        assert_eq!(v(&wb, 0, "C6"), Value::Empty);
+        assert!(wb.sheets[0].cell(CellRef::parse("C6").unwrap()).is_none());
+        assert_eq!(v(&wb, 0, "C6"), Value::Number(4.0));
+        assert_eq!(wb.sheets[0].spill_ranges.get(&CellRef::parse("C5").unwrap()), RangeRef::parse("C5:C6").as_ref());
         // Number formats, merges, sizes, names, print area; embedded chart records ignored.
         let sh = &wb.sheets[0];
         assert_eq!(wb.styles.get(sh.style_id(CellRef::parse("A4").unwrap())).num_fmt.as_str(), "yyyy-mm-dd");
@@ -557,6 +560,40 @@ fn reads_iterative_calculation_settings() {
     // Without the records: Excel's defaults, iteration off.
     let (wb, _) = read_xls(&compound("Workbook", &sample(false))).unwrap();
     assert_eq!(wb.calc, gridcraft_model::CalcSettings::default());
+}
+
+/// One worksheet per workbook: `sheet` is its substream's records between BOF and EOF.
+fn one_sheet(sheet: &[u8]) -> Vec<u8> {
+    let sheet = cat(&[&bof(0x0010), sheet, &eof()]);
+    let boundsheet = |pos: u32| rec(0x0085, &cat(&[&pos.to_le_bytes(), &[0, 0, 1, 0], b"A"]));
+    let globals = |pos: u32| cat(&[&bof(0x0005), &boundsheet(pos), &eof()]);
+    let pos = globals(0).len() as u32;
+    compound("Workbook", &cat(&[&globals(pos), &sheet]))
+}
+
+/// Uncalced: the formulas weren't calculated before the file was saved, so their cached results
+/// are out of date and the workbook asks to be calculated in full when it is opened.
+#[test]
+fn uncalced_marks_the_results_out_of_date() {
+    let (wb, _) = read_xls(&one_sheet(&rec(0x005E, &u16s(&[0])))).unwrap();
+    assert!(wb.calc.full_calc_on_load);
+    let (wb, _) = read_xls(&one_sheet(&[])).unwrap();
+    assert!(!wb.calc.full_calc_on_load);
+}
+
+/// A legacy array whose range is larger than a saved file caches for one range keeps none of its
+/// cached results (a save would cut them short): they are dropped, and the workbook asks to be
+/// calculated in full when it is opened.
+#[test]
+fn array_results_past_the_cached_range_size_are_dropped_and_marked() {
+    // {=A1:A2*2} entered over C1:IV65536 (16 million cells), C2 caching 4.
+    let tokens = cat(&[&[0x65], &u16s(&[0, 1, 0xC000, 0xC000]), &ptg_int(2), &[0x05]]);
+    let array = rec(0x0221, &cat(&[&u16s(&[0, 65535]), &[2, 255], &[0; 6], &(tokens.len() as u16).to_le_bytes(), &tokens]));
+    let (wb, _) = read_xls(&one_sheet(&cat(&[&formula(0, 2, num(2.0), &exp(0, 2)), &array, &formula(1, 2, num(4.0), &exp(0, 2))]))).unwrap();
+    assert_eq!(ftext(&wb, "C1").as_deref(), Some("A1:A2*2"));
+    assert_eq!(v(&wb, 0, "C2"), Value::Empty);
+    assert!(wb.sheets[0].spill_ranges.is_empty());
+    assert!(wb.calc.full_calc_on_load);
 }
 
 #[test]

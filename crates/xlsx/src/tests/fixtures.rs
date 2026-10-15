@@ -35,11 +35,18 @@ fn shared_formulas_and_value_types() {
     assert_eq!(s.value(at("D4")), Value::Number(45292.5));
     let a5 = s.cell(at("A5")).unwrap().formula.clone().unwrap();
     assert_eq!(a5.array, Some(RangeRef::parse("A5:B6").unwrap()));
-    assert!(s.cell(at("B5")).is_none() && s.cell(at("A6")).is_none(), "a legacy array's cached values are dropped too");
+    // The values cached in an array formula's range are its results, not the cells' contents: they
+    // are kept as the values it spilled, which a recalculation lays out again (#156).
+    assert!(s.cell(at("B5")).is_none() && s.cell(at("A6")).is_none(), "a legacy array's cached values aren't cell contents");
+    assert_eq!((s.value(at("B5")), s.value(at("A6")), s.value(at("B6"))), (Value::Number(6.0), Value::Number(4.0), Value::Empty));
+    assert_eq!(s.spill_ranges.get(&at("A5")), Some(&RangeRef::parse("A5:B6").unwrap()));
     let c5 = s.cell(at("C5")).unwrap().formula.clone().unwrap();
     assert_eq!(c5.array, None, "dynamic arrays are not legacy CSE arrays");
     assert_eq!(c5.text, "SEQUENCE(3)");
-    assert!(s.cell(at("C6")).is_none(), "spilled cached values are dropped so the formula can spill");
+    assert!(s.cell(at("C6")).is_none(), "spilled cached values aren't cell contents, so the formula can spill");
+    assert_eq!(s.value(at("C6")), Value::Number(2.0));
+    assert_eq!(s.spill_ranges.get(&at("C5")), Some(&RangeRef::parse("C5:C7").unwrap()));
+    assert!(!wb.calc.full_calc_on_load, "every cached array result was kept");
     // Rows/cells without r continue from the previous position.
     assert_eq!(s.value(at("A7")), Value::Number(9.0));
     assert_eq!(s.value(at("B7")), Value::Number(10.0));

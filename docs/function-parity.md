@@ -1,6 +1,6 @@
 # Function parity: worksheet functions and formulas
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (USDOLLAR added as a compatibility function; MIRR, COUNTIF and INDIRECT edge cases match Excel 365) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-15 · **Change:** minor (workbooks can open with their stored results instead of recalculating; manual calculation mode is kept on open) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Excel's worksheet functions, category by category, against GridCraft's function library. Part of
 [target-app-parity.md](target-app-parity.md); gaps feed [gaps.md](gaps.md).
@@ -79,7 +79,8 @@ PIVOTBY, REGEXTEST…) are all present.
 | Implicit intersection `@`, legacy CSE array formulas | done; legacy array range fill (PR #156) |
 | Trim references `A1:.E10` (trailing), `A1.:E10` (leading), `A1.:.E10` (both), also on whole rows/columns (`A:.A`) | done; evaluated as `TRIMRANGE(range, code, code)`, adjusted on insert/delete; files store `_xlfn.TRIMRANGE(range,code,code)` (Excel's own file spelling unconfirmed in public docs), `_xlfn._TRO_ALL/_TRO_LEADING/_TRO_TRAILING(...)` read too |
 | LET, LAMBDA, named LAMBDAs, ISOMITTED, MAP/REDUCE/SCAN/BYROW/BYCOL/MAKEARRAY | done |
-| Iterative calculation for circular references | done: with Enable Iterative Calculation on (`formulas.calculationOptions` `{iterative, maxIterations, maxChange}`, saved as `<calcPr iterate iterateCount iterateDelta>`), loops are evaluated again from their previous values (blank = 0) until no cell on a loop changes by Maximum Change or Maximum Iterations is reached; off, cycles give `#CIRC!`. Differences: no Options dialog yet (command only); GridCraft recalculates on open, so a loop that never settles (`=A1+1`) advances again each time the file is opened |
+| Iterative calculation for circular references | done: with Enable Iterative Calculation on (`formulas.calculationOptions` `{iterative, maxIterations, maxChange}`, saved as `<calcPr iterate iterateCount iterateDelta>`), loops are evaluated again from their previous values (blank = 0) until no cell on a loop changes by Maximum Change or Maximum Iterations is reached; off, cycles give `#CIRC!`. Differences: no Options dialog yet (command only); GridCraft recalculates on open (unless the workbook opens with its stored results, see the next row), so a loop that never settles (`=A1+1`) advances again each time the file is opened |
+| Calculation on open, manual calculation | partial (GridCraft's own rules, not compared with Excel): opening a workbook calculates its formulas again, except one saved in manual calculation mode that doesn't ask to be calculated on load (`fullCalcOnLoad`, `.xls` `Uncalced`, or cached array results it couldn't keep), which shows the results stored in it, as `file.open {recalculate: false}` does for any workbook (`recalculate: true` always calculates). A formula stored without a result is blank until calculated. `fullCalcOnLoad` is written back until the workbook is calculated in full. Afterwards, in automatic mode, an edit also recalculates volatile functions and formulas with names (defined names, `LET`/`LAMBDA` variables), table references, `INDIRECT`/`OFFSET` or unknown functions, as after any edit; in manual mode an edit calculates the formulas it enters (an array formula can recalculate more), but structural edits (inserting or deleting rows, columns, cells or sheets, sorting, filtering, hiding, row heights, grouping) recalculate everything whatever the mode. F9 (`formulas.calculateNow`) calculates everything |
 | 15-significant-digit comparison semantics | **missing** (#57: `=0.1+0.2=0.3` is FALSE) |
 | External workbook references (`[Book.xlsx]Sheet1!A1`) | parsed; links dropped on open, no update |
 | Localized function names and `;` separators | **missing** (#45); en-US only |
@@ -108,6 +109,7 @@ workbooks; results checked in as data, not Excel files) and fixing what it finds
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Calculation on open: `file.open {recalculate: false}` opens a workbook with its stored results (array results included); a workbook saved in manual calculation mode opens that way unless it asks for a full calculation on load (`fullCalcOnLoad`, `.xls` `Uncalced`, or array results that couldn't be kept); structural edits still recalculate everything in manual mode |
 | 2026-10-12 | minor | USDOLLAR added as a Compatibility function (not on Microsoft's list, so the counts don't change); MIRR with no positive flow is -1, COUNTIF's bare `"<="` / `">="` skip empty strings, INDIRECT with `a1` = FALSE gives `#REF!` for A1-style text (#738) |
 | 2026-10-11 | minor | TEXT / number formats fixed against Excel-cached results: fraction literals and zero fractions, `0` denominators zero padded, `?` pads the thousands separator, booleans use the text section (226 mismatches → 0 in 352 TEXT cells) |
 | 2026-10-11 | minor | Iterative calculation: circular references iterate up to Maximum Iterations / Maximum Change when enabled |

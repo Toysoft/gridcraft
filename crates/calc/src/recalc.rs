@@ -809,9 +809,12 @@ impl Calc {
         self.graph.settle();
     }
 
-    /// Recalculates every formula (F9 / Ctrl+Alt+F9, and after loading).
+    /// Recalculates every formula (F9 / Ctrl+Alt+F9, and when a workbook opens unless it shows the
+    /// results stored with it). Every result is current afterwards, so the workbook no longer asks
+    /// to be calculated in full on load.
     pub fn recalc_all(&mut self, wb: &mut Workbook) {
         self.rebuild(wb);
+        wb.calc.full_calc_on_load = false;
         // Spills are laid out again from the formulas where they are now (a structural edit moves
         // or deletes the formulas, not the values they spilled).
         for i in 0..wb.sheets.len() {

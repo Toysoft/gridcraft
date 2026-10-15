@@ -8,7 +8,15 @@ use crate::DocState;
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(noundo "file.new", "New Workbook", ["File"], Some("Cmd+N"), "{sample?: \"budget\"|\"sales\"|\"grades\"}", always, new_workbook),
-        cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path} | {name, base64}, plus {password} for a password-protected workbook (xlsx, xlsm, xls import, xlsb and ods data import, csv, tsv, txt, json)", always, open),
+        cmd!(
+            noundo "file.open",
+            "Open…",
+            ["File"],
+            Some("Cmd+O"),
+            "{path} | {name, base64}, plus {password} for a password-protected workbook (xlsx, xlsm, xls import, xlsb and ods data import, csv, tsv, txt, json), and {recalculate?: bool}: false shows the results stored in the file instead of calculating the formulas again (a formula stored without one is blank until calculated); by default they are calculated again unless the workbook was saved in manual calculation mode and doesn't ask to be calculated on load → {index, title, sheets, warnings, recalculated}; a path already open is switched to as it is → {index, alreadyOpen, recalculateIgnored?}",
+            always,
+            open
+        ),
         cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} (xlsx by default; .csv/.tsv/.json/.html/.pdf by extension)", has_doc, save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} (.xlsx, .csv, .tsv, .json, .html, or .pdf: a PDF of the active sheet)", has_doc, save_as),
         cmd!(query "file.saveBytes", "Encode Workbook", [], None, "{format?: xlsx|csv|tsv|json|html} → {base64}", has_doc, save_bytes),
@@ -42,13 +50,23 @@ fn new_workbook(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 fn open(s: &mut Session, p: &Json) -> Result<Json> {
+    // Checked before anything opens: a value that isn't true or false must not pick either quietly.
+    let recalculate = match p.get("recalculate") {
+        None | Some(Json::Null) => None,
+        Some(Json::Bool(b)) => Some(*b),
+        Some(v) => return Err(bad("file.open", format!("`recalculate` must be true or false, not {v}"))),
+    };
     let (name, bytes) = if let Some(b) = str_param(p, "base64") {
         (str_param(p, "name").unwrap_or("Book.xlsx").to_string(), crate::io::base64_decode(b).ok_or_else(|| bad("file.open", "invalid base64"))?)
     } else if let Some(path) = str_param(p, "path") {
-        // Already open? Switch to it.
+        // Already open? Switch to it, as it is: `recalculate` doesn't apply.
         if let Some(i) = s.documents().iter().position(|d| d.path.as_deref() == Some(path)) {
             s.set_active(i);
-            return Ok(json!({"index": i, "alreadyOpen": true}));
+            let mut r = json!({"index": i, "alreadyOpen": true});
+            if recalculate.is_some() {
+                r["recalculateIgnored"] = json!(true);
+            }
+            return Ok(r);
         }
         (path.to_string(), crate::io::read_file(path)?)
     } else {
@@ -76,7 +94,10 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
     {
         s.close_document(0);
     }
-    let mut doc = DocState::new(wb, path, title);
+    // Formulas are calculated again unless the caller asks for the results stored in the file, or
+    // the workbook was saved in manual calculation mode and doesn't ask to be calculated on load.
+    let recalculate = recalculate.unwrap_or(wb.calc.mode != gridcraft_model::CalcMode::Manual || wb.calc.full_calc_on_load);
+    let mut doc = DocState::with_recalc(wb, path, title, recalculate);
     if crate::io::FileKind::from_path(&name).is_none() && gridcraft_xlsx::sniff(&bytes) == gridcraft_xlsx::Format::Xlsx {
         doc.content_kind = Some(crate::io::FileKind::Xlsx);
     }
@@ -91,9 +112,13 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
         s.ui_requests.push(crate::UiRequest::Message(message));
     }
     let d = s.doc()?;
-    Ok(
-        json!({"index": i, "title": d.display_title(), "sheets": d.wb.sheets.iter().map(|s| s.name.clone()).collect::<Vec<_>>(), "warnings": warnings}),
-    )
+    Ok(json!({
+        "index": i,
+        "title": d.display_title(),
+        "sheets": d.wb.sheets.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
+        "warnings": warnings,
+        "recalculated": recalculate,
+    }))
 }
 
 fn save(s: &mut Session, p: &Json) -> Result<Json> {

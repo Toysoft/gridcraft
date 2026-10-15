@@ -212,6 +212,66 @@ fn an_overlong_number_format_code_does_not_stop_the_open() {
     assert_eq!(wb.styles.get(cell.style).num_fmt.as_str(), code);
 }
 
+/// A file names an array formula's range for free, and later edits and saves walk the ranges that
+/// keep their cached results. A range that doesn't start at its formula, that is larger than a saved
+/// file caches for one range (`MAX_CACHED_RANGE_CELLS`, so a save can't cut it short), or that would
+/// take the workbook's arrays past `MAX_CACHED_ARRAY_CELLS`, keeps none: its cached values are
+/// dropped, the formula fills it when calculated, and the workbook asks to be calculated in full
+/// when opened, as its results are no longer complete.
+#[test]
+fn array_ranges_keep_cached_results_only_within_bounds() {
+    use gridcraft_core::{CellRef, RangeRef, Value};
+    let at = |a: &str| CellRef::parse(a).unwrap();
+    let column = |rows: usize| {
+        format!(
+            r#"<sheetData><row r="1"><c r="A1"><f t="array" ref="A1:A{rows}">1</f><v>1</v></c></row><row r="2"><c r="A2"><v>2</v></c></row></sheetData>"#
+        )
+    };
+    for (body, cell, kept) in [
+        (
+            r#"<sheetData><row r="1"><c r="A1"><f t="array" ref="A1:XFD1048576">1</f><v>1</v></c><c r="B1"><v>2</v></c></row></sheetData>"#
+                .to_string(),
+            "B1",
+            false,
+        ),
+        (
+            r#"<sheetData><row r="2"><c r="B2"><f t="array" ref="A1:C3">1</f><v>1</v></c><c r="C2"><v>2</v></c></row></sheetData>"#.to_string(),
+            "C2",
+            false,
+        ),
+        (column(crate::MAX_CACHED_RANGE_CELLS + 1), "A2", false),
+        (column(crate::MAX_CACHED_RANGE_CELLS), "A2", true),
+    ] {
+        let (wb, _) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
+        let s = wb.sheet(0).unwrap();
+        assert_eq!(s.spill_ranges.len(), kept as usize, "{body}");
+        assert_eq!(s.value(at(cell)), if kept { Value::Number(2.0) } else { Value::Empty }, "{body}");
+        assert_eq!(wb.calc.full_calc_on_load, !kept, "{body}");
+        if !kept {
+            read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
+        }
+    }
+    // Columns of arrays as large as one range may be, each with a cached value in row 2: the last
+    // one is past the workbook's budget.
+    let per = crate::MAX_CACHED_RANGE_CELLS as u32;
+    let n = (crate::MAX_CACHED_ARRAY_CELLS / u64::from(per)) as u32 + 1;
+    let (mut anchors, mut values) = (String::new(), String::new());
+    for col in 0..n {
+        let range = RangeRef::new(CellRef::new(0, col), CellRef::new(per - 1, col));
+        anchors += &format!(r#"<c r="{}"><f t="array" ref="{}">1</f><v>1</v></c>"#, range.start.a1(), range.a1());
+        values += &format!(r#"<c r="{}"><v>7</v></c>"#, CellRef::new(1, col).a1());
+    }
+    let body = format!(r#"<sheetData><row r="1">{anchors}</row><row r="2">{values}</row></sheetData>"#);
+    let (wb, _) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
+    let s = wb.sheet(0).unwrap();
+    assert_eq!(s.spill_ranges.len(), n as usize - 1);
+    let row2 = (0..n).map(|col| s.value(CellRef::new(1, col))).collect::<Vec<_>>();
+    let mut expected = vec![Value::Number(7.0); n as usize - 1];
+    expected.push(Value::Empty);
+    assert_eq!(row2, expected);
+    assert!(wb.calc.full_calc_on_load);
+}
+
 #[test]
 fn hyperlinks_past_the_cell_cap_are_reported() {
     // A styles part, so the only possible warning is the hyperlink one.

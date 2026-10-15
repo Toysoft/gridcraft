@@ -63,6 +63,28 @@ password returns "The password is incorrect." The password is left out of the jo
 quoted in an error. The opened workbook has no save path, so Save asks where to save it, without
 the password, and never replaces the encrypted original.
 
+`{command: "file.open", params: {path: "Report.xlsx", recalculate: false}}` opens a workbook with
+the results stored in it instead of calculating its formulas again, so a `TODAY()` keeps the date
+it was saved with. A formula stored without a result is blank until it is calculated. Without
+`recalculate`, formulas are calculated again unless the workbook was saved in manual calculation
+mode and doesn't ask to be calculated on load; an `.xlsx` with `fullCalcOnLoad`, an `.xls` saved
+uncalculated (`Uncalced`), and a workbook whose cached array results GridCraft couldn't keep (a
+range over 1 million cells, or past 4 million in all) do ask. `recalculate: true` always
+calculates. The result's `recalculated` says which happened. A path that is already open is
+switched to as it is: the result has `alreadyOpen`, and `recalculateIgnored` when `recalculate` was
+given.
+
+The stored results last until something calculates. In automatic mode an edit recalculates the
+formulas that depend on it and, as after every edit, the formulas GridCraft always recalculates and
+what depends on them: volatile functions (`TODAY()`, `NOW()`, `RAND()`…), `INDIRECT`, `OFFSET`, and
+formulas that use names (defined names, `LET` and `LAMBDA` variables), table references or
+functions it doesn't know. So the first edit can change those from their stored results, even when
+it is unrelated to them. In manual calculation mode an edit calculates the formulas it enters
+(entering an array formula can recalculate more). Edits that change the sheet's structure, such as
+inserting or deleting rows, columns, cells or sheets, sorting, filtering, grouping, hiding rows or
+columns or changing row heights, recalculate the whole workbook in either mode.
+`formulas.calculateNow` (F9) calculates everything.
+
 For a headless equivalent (no window), use `gridcraft-cli mcp` or `gridcraft-cli run`;
 see [`mcp.md`](mcp.md) and [`cli.md`](cli.md).
 
