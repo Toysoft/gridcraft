@@ -660,7 +660,8 @@ mod tests {
         assert_eq!(Language::Es.tr("Report Layout|Outline"), "Esquema");
         assert_eq!(Language::Ko.tr("Cell Styles|Normal"), "표준");
         assert_eq!(Language::Ko.tr("Format Chart|Size"), "크기");
-        assert_eq!(Language::Ko.tr("Size"), "용지 크기");
+        assert_eq!(Language::Ko.tr("Size"), "크기");
+        assert_eq!(Language::Ko.tr("Paper Size"), "용지 크기");
     }
 
     #[test]
