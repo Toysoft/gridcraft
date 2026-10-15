@@ -112,7 +112,13 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
     let mut wb = Workbook::new();
     wb.sheets.clear();
 
-    // Styles and theme. Cell checkboxes live in the feature property bags, which styles refer to.
+    // Theme, then styles: a font that follows the theme takes the theme font's face. Cell
+    // checkboxes live in the feature property bags, which styles refer to.
+    if let Some(r) = find_rel(&wb_rels, "theme").cloned()
+        && let Some(x) = cx.optional_xml(&r.target)?
+    {
+        wb.theme = crate::theme::read_theme(&x);
+    }
     let mut checkboxes = Vec::new();
     if let Some(r) = find_rel(&wb_rels, "FeaturePropertyBag").cloned()
         && let Some(x) = cx.optional_xml(&r.target)?
@@ -121,7 +127,10 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
     }
     if let Some(r) = find_rel(&wb_rels, "styles").cloned() {
         if let Some(x) = cx.optional_xml(&r.target)? {
-            let StylesIn { xfs, dxfs, palette, named, num_fmts } = read_styles(&x, &checkboxes);
+            let StylesIn { mut xfs, dxfs, palette, mut named, num_fmts } = read_styles(&x, &checkboxes);
+            for st in xfs.iter_mut().chain(named.iter_mut().map(|(_, st)| st)) {
+                st.font.resolve_theme(&wb.theme);
+            }
             cx.num_fmts = num_fmts;
             // Cell format 0 is the Normal style: its font is what every unformatted cell shows.
             if let Some(normal) = xfs.first() {
@@ -134,11 +143,6 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         }
     } else {
         cx.warn("no styles part");
-    }
-    if let Some(r) = find_rel(&wb_rels, "theme").cloned()
-        && let Some(x) = cx.optional_xml(&r.target)?
-    {
-        wb.theme = crate::theme::read_theme(&x);
     }
     // Shared strings, streamed item by item.
     if let Some(r) = find_rel(&wb_rels, "sharedStrings").cloned() {
@@ -261,7 +265,9 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
             };
             let text = d.text.trim();
             let lname = name.to_ascii_lowercase();
-            if lname == "_xlnm._filterdatabase" {
+            // A sheet's AutoFilter writes its own `_FilterDatabase`; keep the name only where
+            // there is no AutoFilter (Advanced Filter, a filter Excel left behind).
+            if lname == "_xlnm._filterdatabase" && scope.and_then(|si| wb.sheet(si)).is_some_and(|sh| sh.autofilter.is_some()) {
                 continue;
             }
             if lname.starts_with("_xlchart.") {

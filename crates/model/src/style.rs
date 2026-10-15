@@ -151,6 +151,16 @@ pub enum VertAlign {
     Subscript,
 }
 
+/// The theme font a cell font follows (XLSX `<scheme>`): its face is the theme's body (minor) or
+/// heading (major) font instead of the name it carries.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FontScheme {
+    #[default]
+    None,
+    Minor,
+    Major,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Font {
     pub name: String,
@@ -161,6 +171,20 @@ pub struct Font {
     pub strike: bool,
     pub color: Color,
     pub vert: VertAlign,
+    /// Theme font this font follows. For theme fonts, `name` caches the resolved face and can
+    /// become stale after copying styles between workbooks. The scheme remains authoritative.
+    #[serde(default)]
+    pub scheme: FontScheme,
+}
+
+impl Font {
+    pub fn resolve_theme(&mut self, theme: &Theme) {
+        match self.scheme {
+            FontScheme::Minor if !theme.minor_font.is_empty() => self.name.clone_from(&theme.minor_font),
+            FontScheme::Major if !theme.major_font.is_empty() => self.name.clone_from(&theme.major_font),
+            _ => {}
+        }
+    }
 }
 
 impl Eq for Font {}
@@ -168,7 +192,7 @@ impl Hash for Font {
     fn hash<H: Hasher>(&self, h: &mut H) {
         self.name.hash(h);
         self.size.to_bits().hash(h);
-        (self.bold, self.italic, self.underline, self.strike, self.color, self.vert).hash(h);
+        (self.bold, self.italic, self.underline, self.strike, self.color, self.vert, self.scheme).hash(h);
     }
 }
 
@@ -183,6 +207,8 @@ impl Default for Font {
             strike: false,
             color: Color::Auto,
             vert: VertAlign::Baseline,
+            // The default face is the default theme's body font, which it follows (Excel's Normal).
+            scheme: FontScheme::Minor,
         }
     }
 }
@@ -413,6 +439,12 @@ impl StyleTable {
     pub fn iter(&self) -> impl Iterator<Item = (StyleId, &Style)> {
         self.styles.iter().enumerate().map(|(i, s)| (StyleId(i as u32), s))
     }
+    pub fn resolve_theme_fonts(&mut self, theme: &Theme) {
+        for style in &mut self.styles {
+            style.font.resolve_theme(theme);
+        }
+        self.rebuild_index();
+    }
     pub fn rebuild_index(&mut self) {
         self.index = self.styles.iter().enumerate().map(|(i, s)| (s.clone(), StyleId(i as u32))).collect();
     }
@@ -423,6 +455,18 @@ static DEFAULT_STYLE: std::sync::LazyLock<Style> = std::sync::LazyLock::new(Styl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn font_scheme_json_preserves_explicit_and_theme_fonts() {
+        for scheme in [FontScheme::None, FontScheme::Minor, FontScheme::Major] {
+            let font = Font { scheme, ..Font::default() };
+            let mut value = serde_json::to_value(&font).unwrap();
+            assert_eq!(value["scheme"], serde_json::to_value(scheme).unwrap());
+            assert_eq!(serde_json::from_value::<Font>(value.clone()).unwrap(), font);
+            value.as_object_mut().unwrap().remove("scheme");
+            assert_eq!(serde_json::from_value::<Font>(value).unwrap().scheme, FontScheme::None);
+        }
+    }
 
     #[test]
     fn interning() {

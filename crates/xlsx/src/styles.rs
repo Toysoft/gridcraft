@@ -6,7 +6,8 @@ use std::fmt::Write as _;
 
 use gridcraft_model::style::Protection;
 use gridcraft_model::{
-    Alignment, BorderLine, BorderStyle, Borders, Color, Fill, Font, HAlign, NumFmt, PatternType, Style, Underline, VAlign, VertAlign, Workbook,
+    Alignment, BorderLine, BorderStyle, Borders, Color, Fill, Font, FontScheme, HAlign, NumFmt, PatternType, Style, Theme, Underline, VAlign,
+    VertAlign, Workbook,
 };
 
 use crate::tables::{INDEXED, builtin_format, builtin_id};
@@ -77,6 +78,11 @@ pub fn read_font(e: &El, palette: &[u32]) -> Font {
             _ => Underline::Single,
         };
     }
+    f.scheme = match e.child_val("scheme") {
+        Some("minor") => FontScheme::Minor,
+        Some("major") => FontScheme::Major,
+        _ => FontScheme::None,
+    };
     if let Some(v) = e.child_val("vertAlign") {
         f.vert = match v {
             "superscript" => VertAlign::Superscript,
@@ -351,7 +357,7 @@ pub fn read_styles(root: &El, checkboxes: &[bool]) -> StylesIn {
                     if let Some(f) = x.child("font") {
                         let f = read_font(f, &palette);
                         // Differential fonts rarely name a face; keep the default face and size.
-                        s.font = Font { name: s.font.name.clone(), size: s.font.size, ..f };
+                        s.font = Font { name: s.font.name.clone(), size: s.font.size, scheme: s.font.scheme, ..f };
                     }
                     if let Some(n) = x.child("numFmt") {
                         if let Some(code) = n.attr("formatCode") {
@@ -396,8 +402,7 @@ pub fn color_attrs(c: &Color) -> String {
     }
 }
 
-/// `minor`: the font follows the theme's body font (`<scheme val="minor"/>`).
-fn font_xml(f: &Font, dxf: bool, minor: bool) -> String {
+fn font_xml(f: &Font, dxf: bool, theme: &Theme) -> String {
     let mut s = String::from("<font>");
     if f.bold {
         s.push_str("<b/>");
@@ -429,9 +434,16 @@ fn font_xml(f: &Font, dxf: bool, minor: bool) -> String {
         s.push_str("<color theme=\"1\"/>");
     }
     if !dxf {
-        let _ = write!(s, "<name val=\"{}\"/><family val=\"2\"/>", esc_attr(&f.name));
-        if minor {
-            s.push_str("<scheme val=\"minor\"/>");
+        let name = match f.scheme {
+            FontScheme::Minor => &theme.minor_font,
+            FontScheme::Major => &theme.major_font,
+            FontScheme::None => &f.name,
+        };
+        let _ = write!(s, "<name val=\"{}\"/><family val=\"2\"/>", esc_attr(name));
+        match f.scheme {
+            FontScheme::None => {}
+            FontScheme::Minor => s.push_str("<scheme val=\"minor\"/>"),
+            FontScheme::Major => s.push_str("<scheme val=\"major\"/>"),
         }
     }
     s.push_str("</font>");
@@ -671,7 +683,7 @@ pub fn write_styles(wb: &Workbook, dxfs: &[Style], extra_fmts: &[String]) -> (St
             || d.font.color != Color::Auto
             || d.font.vert != VertAlign::Baseline
         {
-            dx.push_str(&font_xml(&d.font, true, false));
+            dx.push_str(&font_xml(&d.font, true, &wb.theme));
         }
         if d.num_fmt != def.num_fmt {
             let id = nf.id(d.num_fmt.as_str());
@@ -703,9 +715,8 @@ pub fn write_styles(wb: &Workbook, dxfs: &[Style], extra_fmts: &[String]) -> (St
         s.push_str("</numFmts>");
     }
     let _ = write!(s, "<fonts count=\"{}\">", fonts.len());
-    for (i, f) in fonts.iter().enumerate() {
-        // A Normal font in the theme's body face follows the theme, as Excel writes it (#805).
-        s.push_str(&font_xml(f, false, i == 0 && f.name == wb.theme.minor_font));
+    for f in &fonts {
+        s.push_str(&font_xml(f, false, &wb.theme));
     }
     let _ = write!(s, "</fonts><fills count=\"{}\">", fills.len());
     for f in &fills {

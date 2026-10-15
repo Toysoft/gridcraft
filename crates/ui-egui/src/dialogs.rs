@@ -1628,7 +1628,9 @@ fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: 
         "Font" => {
             egui::ComboBox::from_label(lang.tr("Font")).selected_text(st.font.name.clone()).show_ui(ui, |ui| {
                 for f in crate::fonts::families() {
-                    ui.selectable_value(&mut st.font.name, f.clone(), f.clone());
+                    if ui.selectable_value(&mut st.font.name, f.clone(), f.clone()).clicked() {
+                        st.font.scheme = gridcraft_engine::model::FontScheme::None;
+                    }
                 }
             });
             ui.add(egui::Slider::new(&mut st.font.size, 6.0..=72.0).text(lang.tr("Size")));
@@ -1891,7 +1893,8 @@ fn find(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog) {
 }
 
 fn go_to(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool) {
-    let names: Vec<String> = app.session.active().map(|doc| doc.wb.names.iter().map(|n| n.name.clone()).collect()).unwrap_or_default();
+    let names: Vec<String> =
+        app.session.active().map(|doc| doc.wb.names.iter().filter(|n| !n.hidden).map(|n| n.name.clone()).collect()).unwrap_or_default();
     for n in names {
         if ui.selectable_label(false, &n).clicked() {
             d.values.insert("reference".into(), json!(n));
