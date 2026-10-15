@@ -56,14 +56,32 @@ pub fn system_font_dirs() -> Vec<PathBuf> {
                 dirs.push(PathBuf::from(l).join("Microsoft\\Windows\\Fonts"));
             }
         } else {
-            dirs.extend(["/usr/share/fonts", "/usr/local/share/fonts", "/usr/share/fonts/TTF"].map(Into::into));
-            if let Some(h) = &home {
-                dirs.push(h.join(".fonts"));
-                dirs.push(h.join(".local/share/fonts"));
-            }
+            let data_home = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from);
+            dirs.extend(unix_font_dirs(home.as_deref(), data_home.as_deref()));
         }
         dirs
     }
+}
+
+/// The font folders on Linux and the BSDs: the system's, the user's (`$XDG_DATA_HOME/fonts` too,
+/// when that is set to another absolute path than `~/.local/share`), and the folders a Flatpak
+/// sandbox mounts the host's fonts at. Inside the sandbox `/usr/share/fonts` is the runtime's, so
+/// without the `/run/host` folders no font installed on the machine is found (#1069). A folder
+/// that doesn't exist costs the scan nothing.
+#[cfg(not(target_arch = "wasm32"))]
+fn unix_font_dirs(home: Option<&std::path::Path>, data_home: Option<&std::path::Path>) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = ["/usr/share/fonts", "/usr/local/share/fonts", "/usr/share/fonts/TTF"].map(Into::into).to_vec();
+    dirs.extend(["/run/host/fonts", "/run/host/local-fonts", "/run/host/user-fonts"].map(PathBuf::from));
+    if let Some(h) = home {
+        dirs.push(h.join(".fonts"));
+        dirs.push(h.join(".local/share/fonts"));
+    }
+    if let Some(fonts) = data_home.filter(|d| d.is_absolute()).map(|d| d.join("fonts"))
+        && !dirs.contains(&fonts)
+    {
+        dirs.push(fonts);
+    }
+    dirs
 }
 
 /// Weight implied by a style name (`"Bold"` → 700, `"Light"` → 300).
@@ -367,6 +385,68 @@ mod tests {
         assert!(file_faces(b"ttcf\x00\x01\x00\x00\xff\xff\xff\xff").is_empty());
         assert!(file_faces(b"not a font at all").is_empty());
         assert!(file_faces(&[]).is_empty());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn unix_font_dirs_include_the_flatpak_host_and_xdg_folders() {
+        use std::path::Path;
+        let dirs = unix_font_dirs(Some(Path::new("/home/u")), Some(Path::new("/data")));
+        // Outside a sandbox these are the fonts; inside one, /usr/share/fonts is the runtime's and
+        // the host's fonts are under /run/host (#1069).
+        for wanted in [
+            "/usr/share/fonts",
+            "/usr/local/share/fonts",
+            "/run/host/fonts",
+            "/run/host/local-fonts",
+            "/run/host/user-fonts",
+            "/home/u/.fonts",
+            "/home/u/.local/share/fonts",
+            "/data/fonts",
+        ] {
+            assert!(dirs.contains(&PathBuf::from(wanted)), "{wanted} is scanned: {dirs:?}");
+        }
+        // The default XDG data home is ~/.local/share: listed once.
+        let default = unix_font_dirs(Some(Path::new("/home/u")), Some(Path::new("/home/u/.local/share")));
+        assert_eq!(default.iter().filter(|d| d.as_path() == Path::new("/home/u/.local/share/fonts")).count(), 1);
+        // A relative XDG_DATA_HOME is invalid and ignored; no home and no data home still scans.
+        assert!(!unix_font_dirs(None, Some(Path::new("relative"))).contains(&PathBuf::from("relative/fonts")));
+        assert!(unix_font_dirs(None, None).contains(&PathBuf::from("/run/host/fonts")));
+    }
+
+    #[cfg(not(any(target_arch = "wasm32", target_os = "macos", windows)))]
+    #[test]
+    fn system_font_dirs_lists_the_flatpak_host_folders() {
+        // The scan asks `system_font_dirs`: a folder that is only in `unix_font_dirs` is never read.
+        let dirs = system_font_dirs();
+        for wanted in ["/run/host/fonts", "/run/host/local-fonts", "/run/host/user-fonts"] {
+            assert!(dirs.contains(&PathBuf::from(wanted)), "{wanted} is scanned: {dirs:?}");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn system_font_dirs_reads_xdg_data_home() {
+        // The environment can't be changed in-process (no unsafe code), so the test runs itself
+        // again as a child with XDG_DATA_HOME set. The value names the parent's process id: that
+        // is how the child knows it is the child, whatever else the environment holds.
+        const CHECKED: &str = "the child checked $XDG_DATA_HOME/fonts";
+        let as_child = format!("/gridcraft-test-data/{}", std::os::unix::process::parent_id());
+        if std::env::var_os("XDG_DATA_HOME").is_some_and(|d| d == as_child.as_str()) {
+            let dirs = system_font_dirs();
+            assert!(dirs.contains(&PathBuf::from(&as_child).join("fonts")), "$XDG_DATA_HOME/fonts is scanned: {dirs:?}");
+            println!("{CHECKED}");
+            return;
+        }
+        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args(["--exact", "fonts::tests::system_font_dirs_reads_xdg_data_home", "--nocapture"])
+            .env("XDG_DATA_HOME", format!("/gridcraft-test-data/{}", std::process::id()))
+            .output()
+            .expect("run the test binary");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        // The child's own line, not only exit 0: asked for a test name that no longer exists, the
+        // child would run nothing and still succeed.
+        assert!(out.status.success() && stdout.contains(CHECKED), "child run: {stdout}");
     }
 
     #[cfg(not(target_arch = "wasm32"))]
