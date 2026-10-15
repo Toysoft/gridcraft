@@ -150,7 +150,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         .open
         .iter()
         .enumerate()
-        .filter(|(_, p)| !gridcraft_engine::plugin::get(&p.plugin).is_some_and(|q| q.enabled()))
+        .filter(|(_, p)| !gridcraft_engine::plugin::get(&p.plugin).is_some_and(|q| q.active()))
         .map(|(i, _)| i)
         .collect();
     for i in gone.into_iter().rev() {

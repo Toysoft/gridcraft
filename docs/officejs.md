@@ -1,6 +1,6 @@
 # Office add-ins (Office.js)
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (first version: Office add-in manifests as plugins, the `office.sync` bridge, task panes, GridCraft's own Office.js) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (an add-in whose `<Requirements>` this Office.js doesn't meet is blocked, with the reason; previously major: first version: Office add-in manifests as plugins, the `office.sync` bridge, task panes, GridCraft's own Office.js) · **Target:** Microsoft Excel (Microsoft 365)
 
 GridCraft runs **Office add-ins**, the web add-ins built with the Office JavaScript API
 (`Office.js`), on top of its own add-ins ([plugins.md](plugins.md)). An Office add-in is
@@ -48,10 +48,24 @@ page becomes one `office.sync` command against the workbook.
 Icons from the manifest aren't shown yet (the buttons get GridCraft's script icon). The unified
 JSON manifest isn't read yet.
 
+**Requirements.** The manifest's `<Requirements>` are checked when the add-in loads, against the
+requirement sets and methods GridCraft's Office.js reports (below; one table,
+`gridcraft_plugin::office::API_SETS` and `API_METHODS`, which `isSetSupported` answers from too).
+`<Sets>` lists `<Set Name="ExcelApi" MinVersion="1.3"/>`; a set without `MinVersion` takes the
+`<Sets DefaultMinVersion="…">` (else 1.1). `<Methods>` lists `<Method Name="Document.getSelectedDataAsync"/>`.
+An unmet one makes the add-in **blocked**, as a plugin whose requirements aren't met is
+([plugins.md](plugins.md#requirements-manifest-13)): it stays listed in File › Options › Add-ins
+with the reason ("Needs ExcelApi 1.9; GridCraft supports up to 1.4", "Needs WordApi 1.1, which
+GridCraft doesn't support"), and its buttons and menu items are absent, instead of failing at its
+first call. `plugins.list` reports it as `state: "blocked"` with `blockedBy` (kind `feature`).
+
 ## What the API covers
 
-Requirement sets reported as supported: **ExcelApi 1.1–1.4** for the objects below; anything else
-answers `NotImplemented`, so add-ins that check `isSetSupported` turn the feature off.
+Requirement sets reported as supported: **ExcelApi 1.1–1.4** for the objects below, and Settings,
+Selection, TextCoercion and MatrixCoercion 1.1; methods: `Document.getSelectedDataAsync`,
+`Document.setSelectedDataAsync`, `Settings.get`, `set`, `remove`, `saveAsync`. Anything else
+answers `NotImplemented`, so add-ins that check `isSetSupported` turn the feature off; add-ins that
+require more in their manifest are blocked (above).
 
 | Object | Properties and methods |
 |---|---|
@@ -113,4 +127,5 @@ web-extension parts of the XLSX package, [MS-OWEXML]) comes next.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | `<Requirements>` (`Sets` with `MinVersion`/`DefaultMinVersion`, `Methods`) checked against the supported sets and methods: an unmet one blocks the add-in with the reason |
 | 2026-10-14 | major | Created: Office add-in manifests as plugins, task panes in the system web view, GridCraft's Office.js, the `office.sync` bridge (ExcelApi 1.1–1.4 subset, common API selection and settings) |

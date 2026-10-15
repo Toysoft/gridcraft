@@ -29,7 +29,7 @@ pub struct Item {
 /// The tabs plugins add (names not among the built-in tabs), in load order.
 pub fn extra_tabs() -> Vec<String> {
     let mut tabs: Vec<String> = Vec::new();
-    for p in plugin::list().into_iter().filter(|p| p.enabled()) {
+    for p in plugin::list().into_iter().filter(|p| p.active()) {
         for g in &p.manifest.ui.ribbon {
             let built_in = plugin::RIBBON_TABS.contains(&g.tab.as_str()) || (g.tab == "Developer" && crate::developer_ui::visible());
             if !built_in && !tabs.contains(&g.tab) {
@@ -43,7 +43,7 @@ pub fn extra_tabs() -> Vec<String> {
 /// The plugin groups on `tab`: (group name, buttons).
 pub fn groups(tab: &str) -> Vec<(String, Vec<Item>)> {
     let mut out = Vec::new();
-    for p in plugin::list().into_iter().filter(|p| p.enabled()) {
+    for p in plugin::list().into_iter().filter(|p| p.active()) {
         let m = &p.manifest;
         for g in m.ui.ribbon.iter().filter(|g| g.tab == tab) {
             let buttons = g
@@ -71,7 +71,7 @@ pub fn groups(tab: &str) -> Vec<(String, Vec<Item>)> {
 /// The plugin items for a right-click menu.
 pub fn menu_items(kind: MenuKind) -> Vec<Item> {
     let mut out = Vec::new();
-    for p in plugin::list().into_iter().filter(|p| p.enabled()) {
+    for p in plugin::list().into_iter().filter(|p| p.active()) {
         let m = &p.manifest;
         for item in m.ui.menus.iter().filter(|i| i.menu == kind) {
             let decl = m.command(&item.command);
@@ -541,15 +541,48 @@ pub fn icon_named(name: &str) -> Option<Icon> {
 // ---------------------------------------------------------------- managing plugins
 
 /// Installing a plugin from GitHub: the address typed, the confirmation step, and the download,
-/// which runs on its own thread so the window keeps painting.
+/// which runs on its own thread so the window keeps painting. Also the questions requirements
+/// between add-ins raise (manifest 1.3): installing the add-ins an add-in needs, updating one
+/// to a version an add-in that needs it doesn't accept, and turning off one others need.
 #[derive(Default)]
 pub struct Install {
     pub url: String,
     /// The repository waiting for the user's go-ahead (`owner/name`).
     pub confirming: Option<String>,
-    pending: Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
+    pending: Option<std::sync::mpsc::Receiver<Result<Done, String>>>,
     /// The last install's outcome: `Ok(message)` or `Err(error)`.
     pub outcome: Option<Result<String, String>>,
+    /// A download whose version an installed add-in that needs it doesn't accept: what to say.
+    pub confirm_update: Option<(plugin::install::Fetched, String)>,
+    /// The add-ins an add-in needs, offered for installing ("Install it too?").
+    pub offer: Option<Offer>,
+    /// Turning off or unloading an add-in others need: asking first.
+    pub confirm_off: Option<ConfirmOff>,
+}
+
+/// The missing add-ins of `plugin` offered for installing, each with whether it's ticked
+/// (required ones are, optional ones aren't).
+pub struct Offer {
+    pub plugin: String,
+    pub name: String,
+    pub items: Vec<(plugin::requires::Missing, bool)>,
+}
+
+/// Turning off (or unloading) `id`, which `dependents` need.
+pub struct ConfirmOff {
+    pub id: String,
+    pub unload: bool,
+    pub dependents: Vec<String>,
+}
+
+/// What a download thread hands back.
+enum Done {
+    /// Downloaded; the add-ins that need it don't accept its version (the messages).
+    Conflicts(Box<plugin::install::Fetched>, Vec<String>),
+    /// Unpacked into this folder (from this release).
+    Unpacked(std::path::PathBuf),
+    /// Required add-ins: per add-in, its folder and release, or why it failed.
+    Requirements(Vec<(String, Result<(std::path::PathBuf, Option<String>), String>)>),
 }
 
 impl Install {
@@ -558,20 +591,14 @@ impl Install {
     }
 }
 
-/// Starts downloading the plugin at `url` (after the user confirmed).
-pub fn start_install(app: &mut SheetApp, url: &str) {
-    let url = url.trim().to_string();
+/// Runs `job` on a thread; its outcome is picked up by [`poll_install`].
+fn spawn(app: &mut SheetApp, job: impl FnOnce() -> Result<Done, String> + Send + 'static) {
     let st = &mut app.plugin_install;
-    st.confirming = None;
-    let Some(root) = plugin::install::install_dir() else {
-        st.outcome = Some(Err("There's no plugins folder to install into (preferences are turned off).".into()));
-        return;
-    };
     #[cfg(not(target_arch = "wasm32"))]
     {
         let (tx, rx) = std::sync::mpsc::channel();
         let spawned = std::thread::Builder::new().name("plugin-install".into()).spawn(move || {
-            let _ = tx.send(plugin::install::from_github(&url, &root));
+            let _ = tx.send(job());
         });
         match spawned {
             Ok(_) => {
@@ -583,9 +610,87 @@ pub fn start_install(app: &mut SheetApp, url: &str) {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (url, root);
+        drop(job);
         st.outcome = Some(Err("Plugins need the desktop app.".into()));
     }
+}
+
+/// Starts downloading the plugin at `url` (after the user confirmed).
+pub fn start_install(app: &mut SheetApp, url: &str) {
+    let url = url.trim().to_string();
+    app.plugin_install.confirming = None;
+    let Some(root) = plugin::install::install_dir() else {
+        app.plugin_install.outcome = Some(Err("There's no plugins folder to install into (preferences are turned off).".into()));
+        return;
+    };
+    spawn(app, move || {
+        let fetched = plugin::install::fetch(&url, None)?;
+        let conflicts = plugin::conflicts(&fetched.manifest);
+        if !conflicts.is_empty() {
+            return Ok(Done::Conflicts(Box::new(fetched), conflicts.into_iter().map(|c| c.message).collect()));
+        }
+        fetched.unpack(&root).map(Done::Unpacked)
+    });
+}
+
+/// Installs the ticked add-ins of the offer: for each, the newest release in its range.
+pub fn install_offer(app: &mut SheetApp) {
+    let Some(offer) = app.plugin_install.offer.take() else { return };
+    let Some(root) = plugin::install::install_dir() else {
+        app.plugin_install.outcome = Some(Err("There's no plugins folder to install into (preferences are turned off).".into()));
+        return;
+    };
+    let wanted: Vec<plugin::requires::Missing> = offer.items.into_iter().filter(|(_, on)| *on).map(|(m, _)| m).collect();
+    if wanted.is_empty() {
+        return;
+    }
+    spawn(app, move || {
+        let done = wanted
+            .into_iter()
+            .map(|m| {
+                let r = (|| -> Result<(std::path::PathBuf, Option<String>), String> {
+                    let github = m.github.as_deref().ok_or_else(|| format!("{} has no GitHub repository to install from", m.name))?;
+                    let range = plugin::version::Range::parse(&m.version)?;
+                    let fetched = plugin::install::fetch(github, Some(&range))?;
+                    if fetched.manifest.id != m.id {
+                        return Err(format!("github.com/{github} holds {}, not {}", fetched.manifest.id, m.id));
+                    }
+                    let fits = plugin::version::Version::parse(&fetched.manifest.version).map(|v| range.matches(&v)).unwrap_or(range.is_any());
+                    if !fits {
+                        return Err(format!("{} {} from github.com/{github} isn't in {range}", m.name, fetched.manifest.version));
+                    }
+                    if let Some(c) = plugin::conflicts(&fetched.manifest).first() {
+                        return Err(c.message.clone());
+                    }
+                    Ok((fetched.unpack(&root)?, fetched.release.clone()))
+                })();
+                (m.id, r)
+            })
+            .collect();
+        Ok(Done::Requirements(done))
+    });
+}
+
+/// Offers the missing or out-of-range add-ins `id` needs that name a GitHub repository; does
+/// nothing when there are none.
+pub fn offer_missing(app: &mut SheetApp, id: &str) {
+    let items: Vec<(plugin::requires::Missing, bool)> =
+        plugin::missing(id).into_iter().filter(|m| m.github.is_some()).map(|m| (m.clone(), !m.optional)).collect();
+    if items.is_empty() {
+        return;
+    }
+    let name = plugin::get(id).map(|p| p.manifest.name.clone()).unwrap_or_else(|| id.to_string());
+    app.plugin_install.offer = Some(Offer { plugin: id.to_string(), name, items });
+}
+
+/// Whether `id` is blocked by required add-ins that Install Missing can install.
+pub fn can_install_missing(id: &str) -> bool {
+    plugin::missing(id).iter().any(|m| !m.optional && m.github.is_some())
+}
+
+/// Loads a plugin unpacked by a download thread (its version was checked, or the user agreed).
+fn load_unpacked(app: &mut SheetApp, dir: &std::path::Path) -> Result<Json, String> {
+    app.run("plugins.load", json!({"path": dir, "force": true}))
 }
 
 /// Picks up a finished download and loads the plugin (every frame; nothing to do most of them).
@@ -600,19 +705,61 @@ pub fn poll_install(app: &mut SheetApp, ctx: &egui::Context) {
         Err(std::sync::mpsc::TryRecvError::Disconnected) => Err("the download stopped unexpectedly".into()),
     };
     app.plugin_install.pending = None;
-    let outcome = result.and_then(|dir| app.run("plugins.load", json!({"path": dir}))).map(|info| {
-        let name = info.get("name").and_then(Json::as_str).unwrap_or("The plugin");
-        let version = info.get("version").and_then(Json::as_str).unwrap_or("");
-        format!("Installed {name} {version}").trim_end().to_string()
-    });
-    if outcome.is_ok() {
-        app.plugin_install.url.clear();
+    match result {
+        Err(e) => app.plugin_install.outcome = Some(Err(e)),
+        Ok(Done::Conflicts(fetched, why)) => {
+            let text = format!("{}. Install {} {} anyway?", why.join("; "), fetched.manifest.name, fetched.manifest.version);
+            app.plugin_install.confirm_update = Some((*fetched, text));
+        }
+        Ok(Done::Unpacked(dir)) => {
+            let outcome = load_unpacked(app, &dir).map(|info| {
+                let name = info.get("name").and_then(Json::as_str).unwrap_or("The plugin");
+                let version = info.get("version").and_then(Json::as_str).unwrap_or("");
+                (info.get("id").and_then(Json::as_str).unwrap_or("").to_string(), format!("Installed {name} {version}").trim_end().to_string())
+            });
+            if let Ok((id, _)) = &outcome {
+                app.plugin_install.url.clear();
+                let id = id.clone();
+                offer_missing(app, &id);
+            }
+            app.plugin_install.outcome = Some(outcome.map(|(_, m)| m));
+        }
+        Ok(Done::Requirements(list)) => {
+            let (mut done, mut failed, mut ids) = (Vec::new(), Vec::new(), Vec::new());
+            for (id, r) in list {
+                match r.and_then(|(dir, release)| load_unpacked(app, &dir).map(|info| (info, release))) {
+                    Ok((info, release)) => {
+                        let name = info.get("name").and_then(Json::as_str).unwrap_or(&id).to_string();
+                        let version = info.get("version").and_then(Json::as_str).unwrap_or("").to_string();
+                        done.push(match release {
+                            Some(tag) => format!("{name} {version} (release {tag})"),
+                            None => format!("{name} {version}").trim_end().to_string(),
+                        });
+                        ids.push(id);
+                    }
+                    Err(e) => failed.push(e),
+                }
+            }
+            // What the new ones need in turn.
+            for id in ids {
+                if app.plugin_install.offer.is_none() {
+                    offer_missing(app, &id);
+                }
+            }
+            app.plugin_install.outcome = Some(if failed.is_empty() {
+                Ok(format!("Installed {}", done.join(", ")))
+            } else if done.is_empty() {
+                Err(failed.join("; "))
+            } else {
+                Err(format!("Installed {}; {}", done.join(", "), failed.join("; ")))
+            });
+        }
     }
-    app.plugin_install.outcome = Some(outcome);
 }
 
 /// "Install from GitHub": an address field, a confirmation naming the repository, progress and
-/// the outcome.
+/// the outcome; then the questions an install can raise (an update the add-ins that need it
+/// don't accept; the add-ins it needs).
 pub fn install_row(app: &mut SheetApp, ui: &mut Ui) {
     let lang = app.ui.language;
     ui.horizontal(|ui| {
@@ -650,6 +797,27 @@ pub fn install_row(app: &mut SheetApp, ui: &mut Ui) {
             });
         });
     }
+    if let Some((_, text)) = &app.plugin_install.confirm_update {
+        let text = text.clone();
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.add(egui::Label::new(text).wrap());
+            ui.weak(lang.tr("The add-ins that need the installed version are blocked until it suits them again."));
+            ui.horizontal(|ui| {
+                if ui.button(lang.tr("Install Anyway")).clicked()
+                    && let Some((fetched, _)) = app.plugin_install.confirm_update.take()
+                {
+                    match plugin::install::install_dir() {
+                        Some(root) => spawn(app, move || fetched.unpack(&root).map(Done::Unpacked)),
+                        None => app.plugin_install.outcome = Some(Err("There's no plugins folder to install into.".into())),
+                    }
+                }
+                if ui.button(lang.tr("Cancel")).clicked() {
+                    app.plugin_install.confirm_update = None;
+                }
+            });
+        });
+    }
+    offer_frame(app, ui);
     match &app.plugin_install.outcome {
         Some(Ok(m)) => {
             ui.label(egui::RichText::new(m).color(crate::theme::Tokens::get(ui.ctx()).accent));
@@ -661,9 +829,77 @@ pub fn install_row(app: &mut SheetApp, ui: &mut Ui) {
     }
 }
 
+/// "Reports needs craft-vba ^0.1.4 (Runs the report macros). Install it too?", one tick box per
+/// add-in (optional ones unticked), and Install / Not Now.
+fn offer_frame(app: &mut SheetApp, ui: &mut Ui) {
+    let lang = app.ui.language;
+    let busy = app.plugin_install.busy();
+    let Some(offer) = app.plugin_install.offer.as_mut() else { return };
+    let mut install = false;
+    let mut dismiss = false;
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        for (m, on) in offer.items.iter_mut() {
+            let why = if m.why.trim().is_empty() { String::new() } else { format!(" ({})", m.why.trim()) };
+            let what = match &m.installed {
+                Some(v) => format!("{} {}{why}; {} {v} {}", m.name, m.version, lang.tr("version"), lang.tr("is installed")),
+                None => format!("{} {}{why}", m.name, m.version),
+            };
+            let text = if m.optional {
+                format!("{} {} {what}. {}", offer.name, lang.tr("can use"), lang.tr("Install it too?"))
+            } else {
+                format!("{} {} {what}. {}", offer.name, lang.tr("needs"), lang.tr("Install it too?"))
+            };
+            ui.checkbox(on, text);
+            if let Some(g) = &m.github {
+                ui.indent(("offer", &m.id), |ui| {
+                    ui.weak(format!("github.com/{g} · {}", lang.tr("the newest release in range")));
+                });
+            }
+        }
+        ui.weak(lang.tr("Add-ins are programs that run with your permissions. Install them only if you trust their authors."));
+        ui.horizontal(|ui| {
+            install = ui.add_enabled(!busy && offer.items.iter().any(|(_, on)| *on), egui::Button::new(lang.tr("Install Selected"))).clicked();
+            dismiss = ui.button(lang.tr("Not Now")).clicked();
+        });
+    });
+    if install {
+        install_offer(app);
+    } else if dismiss {
+        app.plugin_install.offer = None;
+    }
+}
+
+/// Turns `id` off (or unloads it), and first the add-ins that need it when the user agreed.
+fn turn_off(app: &mut SheetApp, id: &str, unload: bool, dependents: &[String]) {
+    // The ones furthest up the chain first.
+    for d in dependents.iter().rev() {
+        app.run_or_alert("plugins.setEnabled", json!({"id": d, "enabled": false}));
+    }
+    if unload {
+        app.run_or_alert("plugins.unload", json!({"id": id}));
+    } else {
+        app.run_or_alert("plugins.setEnabled", json!({"id": id, "enabled": false}));
+    }
+}
+
+/// Deactivate or Unload: asks first when other add-ins need it.
+fn ask_turn_off(app: &mut SheetApp, id: &str, unload: bool) {
+    let dependents = plugin::dependents(id);
+    if dependents.is_empty() {
+        turn_off(app, id, unload, &[]);
+    } else {
+        app.plugin_install.confirm_off = Some(ConfirmOff { id: id.to_string(), unload, dependents });
+    }
+}
+
+fn names(ids: &[String]) -> Vec<String> {
+    ids.iter().map(|d| plugin::get(d).map(|p| p.manifest.name.clone()).unwrap_or_else(|| d.clone())).collect()
+}
+
 /// One plugin as a full-width card: name and version, then status, author, id and where it came
 /// from, the description across the width, and Documentation / Activate or Deactivate / Unload on
-/// the right.
+/// the right. A blocked plugin says why, with Install Missing when that can help; turning off one
+/// that others need asks first.
 pub fn plugin_card(app: &mut SheetApp, ui: &mut Ui, p: &plugin::Plugin, unload: bool) {
     let lang = app.ui.language;
     let m = &p.manifest;
@@ -676,6 +912,7 @@ pub fn plugin_card(app: &mut SheetApp, ui: &mut Ui, p: &plugin::Plugin, unload: 
                 let status = p.status();
                 let mut about = vec![match status.as_str() {
                     "off" => lang.tr("Inactive").to_string(),
+                    s if s.starts_with("blocked") => lang.tr("Blocked").to_string(),
                     s if s.starts_with("failed") => s.to_string(),
                     _ => lang.tr("Active").to_string(),
                 }];
@@ -690,18 +927,53 @@ pub fn plugin_card(app: &mut SheetApp, ui: &mut Ui, p: &plugin::Plugin, unload: 
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if unload && ui.button(lang.tr("Unload")).on_hover_text(lang.tr("Until the next start")).clicked() {
-                    app.run_or_alert("plugins.unload", json!({"id": m.id}));
+                    ask_turn_off(app, &m.id, true);
                 }
                 if ui.button(lang.tr(if on { "Deactivate" } else { "Activate" })).clicked() {
-                    app.run_or_alert("plugins.setEnabled", json!({"id": m.id, "enabled": !on}));
+                    if on {
+                        ask_turn_off(app, &m.id, false);
+                    } else {
+                        app.run_or_alert("plugins.setEnabled", json!({"id": m.id, "enabled": true}));
+                    }
+                }
+                if on
+                    && p.is_blocked()
+                    && can_install_missing(&m.id)
+                    && ui.add_enabled(!app.plugin_install.busy(), egui::Button::new(lang.tr("Install Missing"))).clicked()
+                {
+                    offer_missing(app, &m.id);
                 }
                 if !m.homepage.trim().is_empty() && ui.link(lang.tr("Documentation")).on_hover_text(m.homepage.trim()).clicked() {
                     app.run_or_alert("plugins.openHomepage", json!({"id": m.id}));
                 }
             });
         });
+        if on {
+            for b in p.blocked_by() {
+                ui.add(egui::Label::new(egui::RichText::new(&b.message).color(ui.visuals().warn_fg_color)).wrap());
+            }
+        }
         if !m.description.is_empty() {
             ui.add(egui::Label::new(&m.description).wrap());
+        }
+        let asking = app.plugin_install.confirm_off.as_ref().filter(|c| c.id == m.id).map(|c| (c.unload, c.dependents.clone()));
+        if let Some((unloading, dependents)) = asking {
+            let who = names(&dependents).join(", ");
+            let verb = if dependents.len() == 1 { lang.tr("needs") } else { lang.tr("need") };
+            let question = if dependents.len() == 1 { lang.tr("Turn both off?") } else { lang.tr("Turn them all off?") };
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.add(egui::Label::new(format!("{who} {verb} {}. {question}", m.name)).wrap());
+                ui.horizontal(|ui| {
+                    let label = if dependents.len() == 1 { "Turn Both Off" } else { "Turn All Off" };
+                    if ui.button(lang.tr(label)).clicked() {
+                        app.plugin_install.confirm_off = None;
+                        turn_off(app, &m.id, unloading, &dependents);
+                    }
+                    if ui.button(lang.tr("Cancel")).clicked() {
+                        app.plugin_install.confirm_off = None;
+                    }
+                });
+            });
         }
     });
 }

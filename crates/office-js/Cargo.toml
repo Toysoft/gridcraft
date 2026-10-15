@@ -19,6 +19,11 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# Checks that the plugin host reads the same requirement sets (no runtime dependency: the task
+# pane's wasm stays small).
+gridcraft-plugin = { workspace = true }
+
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
 gridcraft-engine = { workspace = true }
