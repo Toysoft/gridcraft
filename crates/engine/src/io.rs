@@ -76,27 +76,19 @@ pub fn open_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>
     Ok((wb, warnings))
 }
 
-/// Excel auto-fits rows to their tallest font when opening a file: rows without a user-set
-/// height grow to fit their content. Rows the file made taller keep their height — our
-/// line-height estimate can differ from Excel's, and shrinking files that already look
-/// right would be a visible regression. Custom-height rows are left alone entirely.
+/// Rows a file saved no height for are fitted to their content when it opens: they grow to
+/// their tallest font (#833). A row the file saved a height for keeps the height the file
+/// saved, whatever our estimate of its content says (the estimate is approximate, and fitting
+/// those rows changed files that were only opened and saved). Custom-height rows are never
+/// fitted.
 fn fit_imported_rows(wb: &mut Workbook) {
     for si in 0..wb.sheets.len() {
         let Some(sh) = wb.sheet(si) else { continue };
         let mut rows: Vec<u32> = sh.cells.iter().map(|(c, _)| c.row).collect();
         rows.sort_unstable();
         rows.dedup();
-        for row in rows {
-            let before = wb.sheet(si).and_then(|sh| sh.rows.get(&row)).and_then(|i| i.size);
-            crate::cmd::auto_row_height(wb, si, row);
-            let Some(before) = before else { continue };
-            let after = wb.sheet(si).and_then(|sh| sh.rows.get(&row)).and_then(|i| i.size);
-            if after.is_none_or(|a| before > a + 0.5)
-                && let Some(sh) = wb.sheet_mut(si)
-            {
-                sh.rows.entry(row).or_default().size = Some(before);
-            }
-        }
+        rows.retain(|r| sh.rows.get(r).is_none_or(|i| i.size.is_none()));
+        crate::cmd::auto_row_heights(wb, si, &rows, crate::cmd::RowFit::AutoFit);
     }
 }
 
