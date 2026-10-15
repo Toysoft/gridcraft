@@ -1033,6 +1033,10 @@ fn node_of(p: &Plugin) -> requires::Node {
 /// plugins lose their functions (and their process stops), unblocked ones get them back. Runs
 /// whenever plugins arrive, leave or turn on or off, and when one fails for good.
 pub fn refresh() -> requires::Resolution {
+    // One resolution at a time, from snapshot to applying it: two threads refreshing at once would
+    // otherwise let the older snapshot win.
+    static REFRESHING: Mutex<()> = Mutex::new(());
+    let _one = lock(&REFRESHING);
     let plugins = list();
     let nodes: Vec<requires::Node> = plugins.iter().map(|p| node_of(p)).collect();
     let r = requires::resolve(&nodes, &host_info());
