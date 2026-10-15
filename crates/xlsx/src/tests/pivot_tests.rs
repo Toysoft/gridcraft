@@ -125,7 +125,7 @@ fn workbook() -> Workbook {
         source: "SalesTbl".into(),
         anchor: at("K4"),
         rows: vec![
-            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Years, sort: PivotSort::None, collapsed_items: vec!["2024".into()] },
+            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Years, sort: PivotSort::Asc, collapsed_items: vec!["2024".into()] },
             PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Months, sort: PivotSort::Asc, collapsed_items: vec![] },
         ],
         columns: vec![PivotField { sort: PivotSort::Desc, ..field("Product") }],
@@ -589,4 +589,137 @@ fn data_on_rows_with_one_value_field_reads_without_warning() {
     assert_eq!(pt.values_position, None);
     let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
     assert!(back.sheet(0).unwrap().pivots[0].values_on_rows);
+}
+
+/// A one-sheet-of-data workbook with a pivot on "Report": `columns` are the source columns
+/// (header, values), `pt` the pivot built on `Data!A1:<last>`.
+fn small_pivot(columns: &[(&str, Vec<Value>)], pt: impl FnOnce(&mut PivotTable)) -> HashMap<String, String> {
+    let mut wb = Workbook::new();
+    let data = wb.sheet_mut(0).unwrap();
+    data.name = "Data".into();
+    let mut rows = 0;
+    for (c, (h, vals)) in columns.iter().enumerate() {
+        data.cells.set(CellRef::new(0, c as u32), Cell::value(Value::text(*h)));
+        for (r, v) in vals.iter().enumerate() {
+            if *v != Value::Empty {
+                data.cells.set(CellRef::new(r as u32 + 1, c as u32), Cell::value(v.clone()));
+            }
+        }
+        rows = rows.max(vals.len());
+    }
+    let last = format!("{}{}", gridcraft_core::col_to_letters(columns.len() as u32 - 1), rows + 1);
+    let mut table = PivotTable { id: 1, name: "PT".into(), source: format!("Data!$A$1:{last}"), anchor: at("A3"), ..PivotTable::default() };
+    pt(&mut table);
+    let mut report = Sheet::new("Report");
+    report.pivots = vec![table];
+    wb.sheets.push(Arc::new(report));
+    unzip(&write_xlsx(&wb).unwrap()).into_iter().map(|(k, v)| (k, String::from_utf8_lossy(&v).into_owned())).collect()
+}
+
+fn shared_items_tag(cache: &str, field: &str) -> String {
+    let start = cache.find(&format!("<cacheField name=\"{field}\"")).unwrap();
+    let rest = &cache[start..];
+    let s = rest.find("<sharedItems").unwrap();
+    rest[s..s + rest[s..].find('>').unwrap() + 1].to_string()
+}
+
+/// #1447: booleans and errors count as strings in Excel's cache flags; a `containsString="0"`
+/// next to them makes Excel refuse the file.
+#[test]
+fn cache_flags_count_booleans_and_errors_as_strings() {
+    use gridcraft_core::CellError;
+    let t = Value::Bool(true);
+    let f = Value::Bool(false);
+    let e = Value::Error(CellError::Div0);
+    let n = |x: f64| Value::number(x);
+    let cols = [
+        ("Name", vec![Value::text("a"), Value::text("b"), Value::text("a"), Value::text("b"), Value::text("a"), Value::text("b")]),
+        ("BoolOnly", vec![t.clone(), f.clone(), t.clone(), f.clone(), t.clone(), f.clone()]),
+        ("NumBool", vec![n(1.0), t.clone(), n(2.5), f.clone(), n(1.0), t.clone()]),
+        ("ErrOnly", vec![e.clone(); 6]),
+        ("NumErr", vec![n(1.0), e.clone(), n(3.0), e.clone(), n(1.0), e.clone()]),
+        ("TextBool", vec![Value::text("x"), t.clone(), Value::text("y"), f.clone(), Value::text("x"), t.clone()]),
+        ("BoolBlank", vec![t.clone(), Value::Empty, f.clone(), Value::Empty, t.clone(), f.clone()]),
+        ("Sales", vec![n(1.0), n(2.0), n(3.0), n(4.0), n(5.0), n(6.0)]),
+    ];
+    let parts = small_pivot(&cols, |p| {
+        p.rows = vec![field("Name")];
+        p.values = vec![PivotValue { source_col: "Sales".into(), name: "Sum of Sales".into(), ..PivotValue::default() }];
+    });
+    let cache = &parts["xl/pivotCache/pivotCacheDefinition1.xml"];
+    for (field, want) in [
+        ("BoolOnly", "<sharedItems count=\"2\">"),
+        ("NumBool", "<sharedItems containsMixedTypes=\"1\" containsNumber=\"1\" minValue=\"1\" maxValue=\"2.5\" count=\"4\">"),
+        ("ErrOnly", "<sharedItems count=\"1\">"),
+        ("NumErr", "<sharedItems containsMixedTypes=\"1\" containsNumber=\"1\" containsInteger=\"1\" minValue=\"1\" maxValue=\"3\" count=\"3\">"),
+        ("TextBool", "<sharedItems count=\"4\">"),
+        ("BoolBlank", "<sharedItems containsBlank=\"1\" count=\"3\">"),
+    ] {
+        let got = shared_items_tag(cache, field);
+        // Compare the flags only: the item count is written for itemized fields.
+        let flags = |s: &str| s.split(" count=").next().unwrap().trim_end_matches('>').to_string();
+        assert_eq!(flags(&got), flags(want), "{field}: {got}");
+    }
+}
+
+/// #1447: a date group with a blank date keeps `containsSemiMixedTypes` off the flags.
+#[test]
+fn date_group_flags_with_and_without_a_blank() {
+    let dates = |blank: bool| {
+        let mut d = vec![Value::number(date(2023, 1, 15)), Value::number(date(2023, 2, 1)), Value::number(date(2023, 8, 1))];
+        if blank {
+            d.push(Value::Empty);
+        }
+        d
+    };
+    for blank in [false, true] {
+        let d = dates(blank);
+        let sales: Vec<Value> = (0..d.len()).map(|i| Value::number(i as f64 + 1.0)).collect();
+        let parts = small_pivot(&[("Date", d), ("Sales", sales)], |p| {
+            p.rows = vec![PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Days, ..PivotField::default() }];
+            p.values = vec![PivotValue { source_col: "Sales".into(), name: "Sum of Sales".into(), ..PivotValue::default() }];
+        });
+        let tag = shared_items_tag(&parts["xl/pivotCache/pivotCacheDefinition1.xml"], "Date");
+        assert_eq!(tag.contains("containsSemiMixedTypes=\"0\""), !blank, "{tag}");
+        assert!(tag.contains("containsNonDate=\"0\" containsDate=\"1\" containsString=\"0\""), "{tag}");
+        assert_eq!(tag.contains("containsBlank=\"1\""), blank, "{tag}");
+        // Excel applies sortType to the day labels as text, so a date group isn't written with it.
+        assert!(!parts["xl/pivotTables/pivotTable1.xml"].contains("sortType=\"ascending\""));
+    }
+}
+
+/// #1447: two value fields and no column field: Excel 365 adds a `Values` row unless told not to.
+#[test]
+fn two_value_fields_without_columns_hide_the_values_row() {
+    let cols = [
+        ("Region", vec![Value::text("East"), Value::text("West"), Value::text("East")]),
+        ("Sales", vec![Value::number(10.0), Value::number(20.0), Value::number(5.0)]),
+        ("Qty", vec![Value::number(1.0), Value::number(2.0), Value::number(3.0)]),
+    ];
+    let value = |c: &str| PivotValue { source_col: c.into(), name: format!("Sum of {c}"), ..PivotValue::default() };
+    let two = small_pivot(&cols, |p| {
+        p.rows = vec![field("Region")];
+        p.values = vec![value("Sales"), value("Qty")];
+    });
+    let t = &two["xl/pivotTables/pivotTable1.xml"];
+    assert!(t.contains("firstHeaderRow=\"0\" firstDataRow=\"1\""), "{t}");
+    assert!(t.contains("<x14:pivotTableDefinition hideValuesRow=\"1\"/>"), "{t}");
+    let one = small_pivot(&cols, |p| {
+        p.rows = vec![field("Region")];
+        p.values = vec![value("Sales")];
+    });
+    let t = &one["xl/pivotTables/pivotTable1.xml"];
+    assert!(t.contains("firstHeaderRow=\"1\""), "{t}");
+    assert!(!t.contains("hideValuesRow"), "{t}");
+}
+
+/// #1447: `pageField@item` indexes the pivot field's `<items>`, whose `x` is the shared item.
+#[test]
+fn single_item_report_filter_is_read_through_the_field_items() {
+    let cache = r#"<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cacheSource type="worksheet"><worksheetSource ref="A1:C5"/></cacheSource><cacheFields count="3"><cacheField name="Region"><sharedItems count="3"><s v="North"/><s v="East"/><s v="West"/></sharedItems></cacheField><cacheField name="Sales"><sharedItems/></cacheField><cacheField name="Qty"><sharedItems containsSemiMixedTypes="0" containsString="0" containsNumber="1" containsInteger="1" minValue="1" maxValue="3" count="3"><n v="3"/><n v="1"/><n v="2"/></sharedItems></cacheField></cacheFields></pivotCacheDefinition>"#;
+    let table = r#"<pivotTableDefinition name="P" cacheId="1"><location ref="A3:B6" firstHeaderRow="1" firstDataRow="1" firstDataCol="1" rowPageCount="1" colPageCount="1"/><pivotFields count="3"><pivotField axis="axisRow" showAll="0"><items count="4"><item x="0"/><item x="1"/><item x="2"/><item t="default"/></items></pivotField><pivotField dataField="1" showAll="0"/><pivotField axis="axisPage" showAll="0"><items count="4"><item x="1"/><item x="2"/><item x="0"/><item t="default"/></items></pivotField></pivotFields><rowFields count="1"><field x="0"/></rowFields><pageFields count="1"><pageField fld="2" item="2"/></pageFields><dataFields count="1"><dataField name="Sum of Sales" fld="1"/></dataFields></pivotTableDefinition>"#;
+    let (wb, _) = read_xlsx(&with_pivot(table, Some(cache))).unwrap();
+    let pt = &wb.sheet(0).unwrap().pivots[0];
+    let filter = pt.filters.iter().find(|f| f.source_col == "Qty").expect("Qty report filter");
+    assert_eq!(filter.selected.as_deref(), Some(&["3".to_string()][..]), "item 2 of the field's items is shared item 0, the value 3");
 }
