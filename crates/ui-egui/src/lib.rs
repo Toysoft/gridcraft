@@ -538,7 +538,7 @@ impl SheetApp {
         if e.contains("is not available right now") {
             self.toast = Some((e, now_ms()));
         } else {
-            self.message = Some(("GridCraft".into(), clean_error(&e)));
+            self.message = Some(("GridCraft".into(), clean_error_for(self.ui.language, &e)));
         }
     }
 
@@ -1241,6 +1241,11 @@ pub fn clean_error(e: &str) -> String {
         return rest.to_string();
     }
     e.to_string()
+}
+
+/// Cleans an engine error and translates its message for the current interface language.
+pub fn clean_error_for(language: i18n::Language, e: &str) -> String {
+    language.tr(&clean_error(e)).to_string()
 }
 
 #[allow(clippy::disallowed_methods)] // the clock is read only off wasm
