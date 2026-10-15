@@ -1,11 +1,19 @@
 //! A host adds fonts while the app runs (`app.font.add`): the web build has no system fonts, so
 //! this is how CJK text gets glyphs there. The added fonts are process-wide, so this file keeps
-//! its own process.
+//! its own process, and its tests take turns: a font one test adds makes every running app
+//! rebuild its fonts at its next frame, which would land in the middle of another test.
 
 use gridcraft_engine::Session;
 use gridcraft_ui_egui::control::{self, Outcome};
 use gridcraft_ui_egui::{Services, SheetApp};
 use serde_json::{Value as Json, json};
+
+static TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Held for a whole test, so no other test here adds a font meanwhile.
+fn turn() -> std::sync::MutexGuard<'static, ()> {
+    TURN.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 fn harness() -> egui_kittest::Harness<'static, SheetApp> {
     let mut session = Session::new();
@@ -32,6 +40,7 @@ fn add(h: &mut egui_kittest::Harness<'static, SheetApp>, params: Json) -> Json {
 
 #[test]
 fn an_added_font_joins_every_family_of_the_running_app() {
+    let _turn = turn();
     let mut h = harness();
     let ubuntu = gridcraft_engine::io::base64_encode(epaint_default_fonts::UBUNTU_LIGHT);
     let reply = add(&mut h, json!({"name": "Ubuntu Light", "base64": ubuntu}));
@@ -61,6 +70,7 @@ fn an_added_font_joins_every_family_of_the_running_app() {
 
 #[test]
 fn a_bad_font_is_refused_and_the_app_keeps_drawing() {
+    let _turn = turn();
     let mut h = harness();
     let ubuntu = gridcraft_engine::io::base64_encode(epaint_default_fonts::UBUNTU_LIGHT);
     for params in [
