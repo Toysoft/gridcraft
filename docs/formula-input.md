@@ -55,7 +55,9 @@ every combination measured in Excel:
 | English | United States | `=INDEX({1,2;3,4.1},2,2)` |
 
 English Excel uses `\` between array columns with every decimal-comma region (Stack Overflow
-57120417, which also measured the French rows). Czech, Japanese, Chinese and Korean formulas use
+57120417, which also measured the French rows). French Excel 2024 with the Windows regional
+format "English (Europe)" (`.` decimal, system separators on) takes `=CENTILE.EXCLURE(A1:A6,0.5)`
+and `=RECHERCHEX(3,A1:A6,A1:A6)` (#443). Czech, Japanese, Chinese and Korean formulas use
 English names with their region's separators (`=SUM(1,5;{1\2;3\4})` in cs-CZ).
 
 ## Where it applies
