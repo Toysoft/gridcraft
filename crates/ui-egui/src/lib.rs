@@ -28,6 +28,7 @@ pub mod paper_view;
 pub mod pivot_pane;
 pub mod printing;
 pub mod ribbon;
+pub mod rtl;
 pub mod selection_glide;
 pub mod tabs;
 pub mod text_box;
@@ -240,9 +241,9 @@ pub struct SheetApp {
     /// Set while a font-set change is pending activation: skip this frame's paint, like the
     /// startup `fonts_ready` gate (egui applies new definitions at the next pass).
     fonts_rebind: bool,
-    /// Han face order the installed fonts were built with; a language switch rebuilds the fonts
-    /// only when it changes this (see `theme::HanOrder`).
-    fonts_han: Option<theme::HanOrder>,
+    /// What the installed fonts were built for; a language switch rebuilds the fonts only when it
+    /// changes this (see `theme::FontPlan`).
+    fonts_han: Option<theme::FontPlan>,
     effective_dark: bool,
     /// The desktop's light/dark choice, watched while the app runs (Linux has no winit answer).
     desktop_theme: desktop_theme::DesktopTheme,
@@ -631,7 +632,10 @@ impl SheetApp {
                         self.ui.language = l;
                         Ok(json!({"language": l}))
                     }
-                    None => Err(format!("unknown language {code:?} (use \"en\", \"es\", \"zh\", \"ja\", \"ko\", \"ru\", \"pt\" or \"cs\")")),
+                    None => {
+                        let codes: Vec<String> = i18n::Language::ALL.iter().map(|l| format!("{:?}", l.code())).collect();
+                        Err(format!("unknown language {code:?} (use {})", codes.join(", ")))
+                    }
                 }
             }
             "app.language.english" => {
@@ -993,7 +997,7 @@ impl SheetApp {
         // A keytip control request lives one frame: the ribbon consumes it during `ui`, and
         // anything that never reached a control (collapsed ribbon, tab switch) is dropped.
         self.ui.keytip_invoke = None;
-        if self.fonts_han.is_some_and(|han| han != theme::HanOrder::of(self.ui.language)) {
+        if self.fonts_han.is_some_and(|plan| plan != theme::FontPlan::of(self.ui.language)) {
             self.fonts_ready = false;
             self.fonts_set = false;
         }
@@ -1007,7 +1011,7 @@ impl SheetApp {
                 // The rebuilt set has no workbook fonts yet: bind them again once it is active.
                 self.fonts_bound.clear();
                 self.fonts_seen = (0, 0);
-                self.fonts_han = Some(theme::HanOrder::of(self.ui.language));
+                self.fonts_han = Some(theme::FontPlan::of(self.ui.language));
                 ctx.request_repaint();
             }
         } else if self.fonts_rebind {

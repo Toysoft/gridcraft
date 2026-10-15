@@ -6,9 +6,14 @@
 //!
 //! CJK fonts stay system-provided: [`crate::theme`] appends available CJK faces to every family so
 //! Japanese, Chinese and Korean labels and workbook text can render without bundling font files.
+//!
+//! Arabic is the right-to-left language: its catalog is written in normal typing order and put into
+//! display order when it first loads ([`display`]), because egui lays words out left to right; the
+//! window is mirrored for it by [`crate::rtl`].
 
 use serde::{Deserialize, Serialize};
 
+mod ar;
 mod cs;
 mod de;
 mod es;
@@ -18,6 +23,11 @@ mod pt;
 mod ru;
 mod sr;
 mod zh;
+
+pub(crate) mod display;
+
+#[cfg(test)]
+mod audit;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -35,10 +45,12 @@ pub enum Language {
     Cs,
     Fr,
     Sr,
+    Ar,
 }
 
 impl Language {
-    pub const ALL: [Self; 11] = [Self::En, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::PtBr, Self::De, Self::Cs, Self::Fr, Self::Sr];
+    pub const ALL: [Self; 12] =
+        [Self::En, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::PtBr, Self::De, Self::Cs, Self::Fr, Self::Sr, Self::Ar];
 
     /// The language's own name, shown in the switcher.
     pub fn name(self) -> &'static str {
@@ -54,6 +66,7 @@ impl Language {
             Self::Cs => "Čeština",
             Self::Fr => "Français",
             Self::Sr => "Srpski",
+            Self::Ar => "العربية",
         }
     }
 
@@ -71,6 +84,7 @@ impl Language {
             Self::Cs => "cs",
             Self::Fr => "fr",
             Self::Sr => "sr",
+            Self::Ar => "ar",
         }
     }
 
@@ -91,6 +105,7 @@ impl Language {
             "cs" => Some(Self::Cs),
             "fr" => Some(Self::Fr),
             "sr" => Some(Self::Sr),
+            "ar" => Some(Self::Ar),
             _ => None,
         }
     }
@@ -112,6 +127,29 @@ impl Language {
         if self == Self::Es { gridcraft_engine::formula::FormulaLocale::Es } else { gridcraft_engine::formula::FormulaLocale::En }
     }
 
+    /// The translation in typing order, for matching what the user types against labels (the
+    /// command search). Only Arabic differs from [`Self::tr`]: that is stored in display order.
+    pub fn tr_logical(self, text: &str) -> &str {
+        match self {
+            Self::Ar => ar::logical(text).unwrap_or_else(|| self.tr(text)),
+            _ => self.tr(text),
+        }
+    }
+
+    /// [`Self::tr`], with each `{name}` placeholder replaced by the matching value in `args`.
+    pub fn tr_with(self, text: &str, args: &[(&str, &str)]) -> String {
+        let mut out = self.tr(text).to_string();
+        for (name, value) in args {
+            out = out.replace(&format!("{{{name}}}"), value);
+        }
+        out
+    }
+
+    /// Is the language written right to left? The window is mirrored for it ([`crate::rtl`]).
+    pub const fn rtl(self) -> bool {
+        matches!(self, Self::Ar)
+    }
+
     /// Translates an interface label; untranslated labels fall back to English.
     ///
     /// A label that needs two translations (Home's text "Orientation" vs Page Layout's print
@@ -129,7 +167,12 @@ impl Language {
             Self::Cs => cs::translate(text),
             Self::Fr => fr::translate(text),
             Self::Sr => sr::translate(text),
+            Self::Ar => ar::translate(text),
         };
+        #[cfg(test)]
+        if self == Self::Ar && translated.is_none() {
+            audit::note_missing(text);
+        }
         translated.unwrap_or_else(|| text.rsplit_once('|').map_or(text, |(_, label)| label))
     }
 }
@@ -166,6 +209,17 @@ fn lang_key() -> egui::Id {
 /// The language the current frame is drawing in. `En` when unset.
 pub fn current(ctx: &egui::Context) -> Language {
     ctx.data(|d| d.get_temp(lang_key())).unwrap_or_default()
+}
+
+/// Translates `text` for the language of the frame being drawn, for widgets that only have a `Ui`.
+pub fn tr<'a>(ui: &egui::Ui, text: &'a str) -> &'a str {
+    current(ui.ctx()).tr(text)
+}
+
+/// Translates `text` and fills in its `{name}` placeholders from `args`. Interface text is
+/// count-neutral (`Cells found: {count}`), so one template serves every number.
+pub fn trf(ui: &egui::Ui, text: &str, args: &[(&str, &str)]) -> String {
+    current(ui.ctx()).tr_with(text, args)
 }
 
 /// Sets the language for the current frame; call once per frame before anything is drawn.
@@ -611,6 +665,7 @@ mod tests {
             assert!(cs::translate(english).is_some_and(|text| !text.is_empty()), "missing Czech: {english}");
             assert!(fr::translate(english).is_some_and(|text| !text.is_empty()), "missing French: {english}");
             assert!(sr::translate(english).is_some_and(|text| !text.is_empty()), "missing Serbian: {english}");
+            assert!(ar::translate(english).is_some_and(|text| !text.is_empty()), "missing Arabic: {english}");
         }
         assert_eq!(Language::Ja.tr("Data"), "データ");
         assert_eq!(Language::Zh.tr("Data"), "数据");
@@ -644,6 +699,11 @@ mod tests {
         assert_eq!(Language::Sr.tr("Sheet1!A1"), "Sheet1!A1");
         assert_eq!(Language::Sr.tr("Page Layout|Orientation"), "Orijentacija");
         assert_eq!(Language::Sr.tr("Orientation"), "Orijentacija");
+        // Arabic is written in typing order and shown in display order (words reversed for egui).
+        assert_eq!(Language::Ar.tr("Data"), "البيانات");
+        assert_eq!(Language::Ar.tr("Freeze Panes"), "الأجزاء تجميد");
+        assert_eq!(Language::Ar.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Ar.tr("Page Layout|Orientation"), "الصفحة اتجاه");
         assert_eq!(Language::parse("xx"), None);
     }
 
@@ -685,6 +745,19 @@ mod tests {
         assert_eq!(Language::from_tag("sr-Latn-RS"), Some(Language::Sr));
         assert_eq!(Language::from_tag("sr-RS"), Some(Language::Sr));
         assert_eq!(Language::parse("sr"), Some(Language::Sr));
+        assert_eq!(Language::from_tag("ar"), Some(Language::Ar));
+        assert_eq!(Language::from_tag("ar-SA"), Some(Language::Ar));
+        assert_eq!(Language::from_tag("ar_EG"), Some(Language::Ar));
+        assert_eq!(Language::from_tag("AR-ae"), Some(Language::Ar));
+        assert_eq!(Language::from_tag("ar_EG.UTF-8"), Some(Language::Ar));
+        assert_eq!(Language::parse("ar"), Some(Language::Ar));
+    }
+
+    #[test]
+    fn only_arabic_is_right_to_left() {
+        for l in Language::ALL {
+            assert_eq!(l.rtl(), l == Language::Ar, "{l:?}");
+        }
     }
 
     #[test]

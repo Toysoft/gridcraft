@@ -204,6 +204,12 @@ pub(crate) fn font_parses(bytes: &[u8], index: u32) -> bool {
     skrifa::FontRef::from_index(bytes, index).is_ok_and(|font| font.charmap().has_map())
 }
 
+/// Does the face draw Arabic letters (checked on alef)?
+pub(crate) fn covers_arabic(bytes: &[u8], index: u32) -> bool {
+    use skrifa::MetadataProvider;
+    skrifa::FontRef::from_index(bytes, index).is_ok_and(|font| font.charmap().map('\u{0627}').is_some())
+}
+
 /// Loads the first candidate that exists and parses. A file that exists but can't be parsed is
 /// skipped with a warning and the next candidate is tried.
 #[cfg(not(target_arch = "wasm32"))]
@@ -377,6 +383,22 @@ impl HanOrder {
     }
 }
 
+/// What a font set is built for: a language switch rebuilds the fonts only when this changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FontPlan {
+    /// Which Han face leads the fallback chain.
+    pub han: HanOrder,
+    /// The interface language is right to left: the interface faces must not carry Arabic, so the
+    /// Arabic face is a run of its own (see [`font_definitions_with`]).
+    pub rtl: bool,
+}
+
+impl FontPlan {
+    pub fn of(language: crate::i18n::Language) -> Self {
+        Self { han: HanOrder::of(language), rtl: language.rtl() }
+    }
+}
+
 /// Builds the font set with the Han fallback faces ordered for the interface language.
 pub fn font_definitions_for_language(language: crate::i18n::Language) -> FontDefinitions {
     font_definitions_with(language, &[])
@@ -385,7 +407,15 @@ pub fn font_definitions_for_language(language: crate::i18n::Language) -> FontDef
 /// [`font_definitions_for_language`] that also binds the workbook fonts in `used` that are
 /// installed, so cells set in them render with them; the rest fall back to the roles. The bound
 /// families are recorded in [`crate::fonts`] so [`cell_family`] only names a family egui has.
+///
+/// For a right-to-left interface language the Latin interface face may not carry Arabic itself.
+/// egui shapes one run per font face, in the direction of its first strong character, so an
+/// interface face that covers Arabic (Segoe UI, San Francisco) would take whole labels, spaces
+/// and all, as one run, and word order and Latin words inside Arabic text would come out wrong
+/// (and Arabic after a Latin word backwards). With a Latin-only face first, a label splits into
+/// one run per word at the spaces, which is what [`crate::i18n::display`] puts into display order.
 pub fn font_definitions_with(language: crate::i18n::Language, used: &[String]) -> FontDefinitions {
+    let split_arabic = language.rtl();
     let mut fonts = FontDefinitions::default();
     let base_prop: Vec<String> = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     let base_mono: Vec<String> = fonts.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
@@ -397,7 +427,8 @@ pub fn font_definitions_with(language: crate::i18n::Language, used: &[String]) -
         let paths = candidates(role);
         let refs: Vec<(&str, u32)> = paths.iter().map(|(p, i)| (p.as_str(), *i)).collect();
         let mut chain: Vec<String> = Vec::new();
-        if let Some(fd) = try_load(&refs) {
+        let interface_face = role == UI || role == UI_BOLD;
+        if let Some(fd) = try_load(&refs).filter(|fd| !(split_arabic && interface_face && covers_arabic(&fd.font, fd.index))) {
             let key = format!("sys-{role}");
             fonts.font_data.insert(key.clone(), Arc::new(fd));
             chain.push(key);
@@ -407,6 +438,15 @@ pub fn font_definitions_with(language: crate::i18n::Language, used: &[String]) -
             chain.push(format!("sys-{CELL}"));
         }
         chain.extend(if role == MONO { base_mono.clone() } else { base_prop.clone() });
+        if split_arabic && role == UI_BOLD {
+            // Bold labels: the Arabic comes in bold, behind the Latin face.
+            let paths = arabic_bold();
+            let refs: Vec<(&str, u32)> = paths.iter().map(|(p, i)| (p.as_str(), *i)).collect();
+            if let Some(fd) = try_load(&refs) {
+                fonts.font_data.insert("sys-arabic-bold".into(), Arc::new(fd));
+                chain.push("sys-arabic-bold".into());
+            }
+        }
         chain.extend(fallback.iter().cloned());
         chain.retain(|k| fonts.font_data.contains_key(k));
         fonts.families.insert(FontFamily::Name(role.into()), chain);
@@ -492,6 +532,7 @@ fn fallback_faces(han: HanOrder) -> Vec<(&'static str, Vec<(String, u32)>)> {
         ("sys-cjk-hangul", cjk_hangul()),
         ("sys-thai", thai()),
         ("sys-hebrew", hebrew()),
+        ("sys-arabic", arabic()),
         ("sys-symbols", symbols()),
         ("sys-symbols-2", symbols_more()),
     ]
@@ -594,6 +635,70 @@ fn thai() -> Vec<(String, u32)> {
         v.push((format!("{d}/garuda/Garuda.ttf"), 0));
     }
     v
+}
+
+/// Arabic faces. Windows has Segoe UI and Tahoma (both carry Arabic) plus Traditional Arabic and
+/// Arabic Typesetting; macOS has Geeza Pro and Al Nile; Linux usually has Noto Sans Arabic, Noto
+/// Naskh Arabic, DejaVu Sans or an Amiri or KACST face. [`load_fallback`] skips a file Hebrew or
+/// Thai already loaded (Tahoma covers all three).
+#[cfg(not(target_arch = "wasm32"))]
+fn arabic() -> Vec<(String, u32)> {
+    let mac_sys = "/System/Library/Fonts";
+    let mac_sup = "/System/Library/Fonts/Supplemental";
+    let win = std::env::var("WINDIR").map(|w| format!("{w}\\Fonts")).unwrap_or_else(|_| "C:\\Windows\\Fonts".into());
+    let lin = [
+        "/usr/share/fonts/truetype/noto",
+        "/usr/share/fonts/opentype/noto",
+        "/usr/share/fonts/noto",
+        "/usr/share/fonts/truetype",
+        "/usr/share/fonts",
+    ];
+    let mut v: Vec<(String, u32)> = Vec::new();
+    v.push((format!("{win}\\segoeui.ttf"), 0)); // Segoe UI
+    v.push((format!("{win}\\tahoma.ttf"), 0)); // Tahoma
+    v.push((format!("{win}\\trado.ttf"), 0)); // Traditional Arabic
+    v.push((format!("{win}\\arabtype.ttf"), 0)); // Arabic Typesetting
+    v.push((format!("{win}\\arial.ttf"), 0)); // Arial
+    v.push((format!("{mac_sys}/GeezaPro.ttc"), 0)); // Geeza Pro
+    v.push((format!("{mac_sup}/Al Nile.ttc"), 0));
+    v.push((format!("{mac_sup}/Baghdad.ttf"), 0));
+    v.push((format!("{mac_sup}/Damascus.ttf"), 0));
+    for d in lin {
+        v.push((format!("{d}/NotoSansArabic-Regular.ttf"), 0));
+        v.push((format!("{d}/NotoSansArabic[wdth,wght].ttf"), 0));
+        v.push((format!("{d}/NotoNaskhArabic-Regular.ttf"), 0));
+        v.push((format!("{d}/dejavu/DejaVuSans.ttf"), 0));
+        v.push((format!("{d}/amiri/Amiri-Regular.ttf"), 0));
+        v.push((format!("{d}/kacst/KacstBook.ttf"), 0));
+    }
+    v
+}
+
+/// Bold Arabic faces, for bold interface text: Segoe UI Bold and Tahoma Bold on Windows, Geeza Pro
+/// on macOS, Noto Sans Arabic or DejaVu Sans Bold on Linux.
+#[cfg(not(target_arch = "wasm32"))]
+fn arabic_bold() -> Vec<(String, u32)> {
+    let mac_sys = "/System/Library/Fonts";
+    let win = std::env::var("WINDIR").map(|w| format!("{w}\\Fonts")).unwrap_or_else(|_| "C:\\Windows\\Fonts".into());
+    let lin = [
+        "/usr/share/fonts/truetype/noto",
+        "/usr/share/fonts/opentype/noto",
+        "/usr/share/fonts/noto",
+        "/usr/share/fonts/truetype",
+        "/usr/share/fonts",
+    ];
+    let mut v: Vec<(String, u32)> =
+        vec![(format!("{win}\\segoeuib.ttf"), 0), (format!("{win}\\tahomabd.ttf"), 0), (format!("{mac_sys}/GeezaPro.ttc"), 1)];
+    for d in lin {
+        v.push((format!("{d}/NotoSansArabic-Bold.ttf"), 0));
+        v.push((format!("{d}/dejavu/DejaVuSans-Bold.ttf"), 0));
+    }
+    v
+}
+
+#[cfg(target_arch = "wasm32")]
+fn arabic_bold() -> Vec<(String, u32)> {
+    Vec::new()
 }
 
 /// Hebrew faces. Windows has David and FrankRuehl (and Tahoma/Courier New carry Hebrew); macOS has
@@ -815,15 +920,34 @@ mod tests {
         let keys = |han| fallback_faces(han).into_iter().map(|(k, _)| k).collect::<Vec<_>>();
         assert_eq!(
             keys(HanOrder::Japanese),
-            ["sys-cjk-han-ja", "sys-cjk-han-zh", "sys-cjk-hangul", "sys-thai", "sys-hebrew", "sys-symbols", "sys-symbols-2"]
+            ["sys-cjk-han-ja", "sys-cjk-han-zh", "sys-cjk-hangul", "sys-thai", "sys-hebrew", "sys-arabic", "sys-symbols", "sys-symbols-2"]
         );
         assert_eq!(
             keys(HanOrder::Chinese),
-            ["sys-cjk-han-zh", "sys-cjk-han-ja", "sys-cjk-hangul", "sys-thai", "sys-hebrew", "sys-symbols", "sys-symbols-2"]
+            ["sys-cjk-han-zh", "sys-cjk-han-ja", "sys-cjk-hangul", "sys-thai", "sys-hebrew", "sys-arabic", "sys-symbols", "sys-symbols-2"]
         );
         assert_eq!(HanOrder::of(Language::Ja), HanOrder::Japanese);
         for l in [Language::En, Language::Zh, Language::Ko, Language::Ru, Language::PtBr, Language::De, Language::Cs] {
             assert_eq!(HanOrder::of(l), HanOrder::Chinese, "{l:?} shares the default order (no font rebuild)");
+            assert_eq!(FontPlan::of(l), FontPlan::of(Language::En), "{l:?} needs no font rebuild from English");
+        }
+        // Arabic shares the Han order, but its interface faces differ: switching to it rebuilds.
+        assert_eq!(HanOrder::of(Language::Ar), HanOrder::Chinese);
+        assert_ne!(FontPlan::of(Language::Ar), FontPlan::of(Language::En));
+    }
+
+    #[test]
+    fn the_arabic_interface_gets_a_latin_face_that_has_no_arabic() {
+        // egui shapes one run per font face, so the face that draws a label's spaces and Latin words
+        // must not also draw its Arabic: the words of the label then come out as runs of their own.
+        use skrifa::MetadataProvider;
+        let has = |fd: &FontData, c: char| skrifa::FontRef::from_index(&fd.font, fd.index).is_ok_and(|f| f.charmap().map(c).is_some());
+        let fonts = font_definitions_for_language(Language::Ar);
+        for role in [UI, UI_BOLD] {
+            let chain = fonts.families.get(&FontFamily::Name(role.into())).cloned().unwrap_or_default();
+            let space_face = chain.iter().filter_map(|key| fonts.font_data.get(key).map(|fd| (key, fd))).find(|(_, fd)| has(fd, ' '));
+            let (key, fd) = space_face.expect("some face draws a space");
+            assert!(!has(fd, '\u{0627}'), "{role}: {key} draws spaces and Arabic, so a label would shape as one run");
         }
     }
 

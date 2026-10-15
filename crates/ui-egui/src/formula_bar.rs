@@ -16,49 +16,59 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
         .exact_size(h)
         .frame(egui::Frame::NONE.fill(t.window).inner_margin(egui::Margin { left: 8, right: 8, top: 3, bottom: 3 }))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                name_box(app, ui, &t);
-                ui.add_space(4.0);
-                let editing = app.editor.is_some();
-                let c = if editing { t.text } else { t.text_disabled };
-                if crate::widgets::icon_button(ui, Icon::Close, c, "Cancel", vec2(22.0, 22.0)).clicked() && editing {
-                    app.cancel_edit();
-                }
-                if crate::widgets::icon_button(ui, Icon::Check, c, "Enter", vec2(22.0, 22.0)).clicked() && editing {
-                    app.commit_edit(0, 0, false, false);
-                }
-                if crate::widgets::icon_button(ui, Icon::Fx, t.text, "Insert Function", vec2(26.0, 22.0)).clicked() {
-                    app.open_dialog("insertFunction", json!({}));
-                }
-                ui.add_space(4.0);
-                // The formula field.
-                let avail = ui.available_width() - 24.0;
-                let field = Rect::from_min_size(ui.cursor().min, vec2(avail, h - 6.0));
-                ui.painter().rect_filled(field, 4.0, t.input_bg);
-                ui.painter().rect_stroke(field, 4.0, Stroke::new(1.0, t.input_border), StrokeKind::Inside);
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(field.shrink2(vec2(6.0, 3.0))));
-                let id = egui::Id::new("gridcraft.formula_bar");
-                let editing_here = app.editor.as_ref().is_some_and(|e| e.from_formula_bar);
-                if app.editor.is_some() {
-                    editor_widget(app, &mut child, id, theme::ui_font(13.0), expanded, field.width() - 12.0);
-                } else {
-                    // Show the active cell's content; clicking starts editing in the bar.
-                    let text = active_input(app);
-                    let resp = child
-                        .add(egui::Label::new(egui::RichText::new(text).font(theme::ui_font(13.0)).color(t.text)).truncate().sense(Sense::click()));
-                    let click = child.interact(field, id.with("click"), Sense::click());
-                    if resp.clicked() || click.clicked() {
-                        app.begin_edit(None, true);
+            crate::rtl::root(ui, |ui| {
+                let rtl = crate::rtl::on(ui.ctx());
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    name_box(app, ui, &t);
+                    ui.add_space(4.0);
+                    let editing = app.editor.is_some();
+                    let c = if editing { t.text } else { t.text_disabled };
+                    if crate::widgets::icon_button(ui, Icon::Close, c, "Cancel", vec2(22.0, 22.0)).clicked() && editing {
+                        app.cancel_edit();
                     }
-                }
-                let _ = editing_here;
-                ui.allocate_space(vec2(avail, h - 6.0));
-                let chevron = if expanded { Icon::ChevronUp } else { Icon::Chevron };
-                if crate::widgets::icon_button(ui, chevron, t.text_dim, "Expand formula bar", vec2(20.0, 22.0)).clicked() {
-                    app.ui.formula_bar_expanded = !app.ui.formula_bar_expanded;
-                }
-            });
+                    if crate::widgets::icon_button(ui, Icon::Check, c, "Enter", vec2(22.0, 22.0)).clicked() && editing {
+                        app.commit_edit(0, 0, false, false);
+                    }
+                    if crate::widgets::icon_button(ui, Icon::Fx, t.text, "Insert Function", vec2(26.0, 22.0)).clicked() {
+                        app.open_dialog("insertFunction", json!({}));
+                    }
+                    ui.add_space(4.0);
+                    // The formula field.
+                    let avail = ui.available_width() - 24.0;
+                    let origin = if rtl { pos2(ui.available_rect_before_wrap().max.x - avail, ui.cursor().min.y) } else { ui.cursor().min };
+                    let field = Rect::from_min_size(origin, vec2(avail, h - 6.0));
+                    ui.painter().rect_filled(field, 4.0, t.input_bg);
+                    ui.painter().rect_stroke(field, 4.0, Stroke::new(1.0, t.input_border), StrokeKind::Inside);
+                    // What is typed here is a formula or the cell's text: it starts at the left, or at the
+                    // right on a right-to-left sheet, whatever the interface language.
+                    let sheet_rtl = app.session.active().and_then(|d| d.wb.active()).is_some_and(|s| s.right_to_left);
+                    let content =
+                        if sheet_rtl { egui::Layout::right_to_left(egui::Align::Center) } else { egui::Layout::left_to_right(egui::Align::Center) };
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(field.shrink2(vec2(6.0, 3.0))).layout(content));
+                    let id = egui::Id::new("gridcraft.formula_bar");
+                    let editing_here = app.editor.as_ref().is_some_and(|e| e.from_formula_bar);
+                    if app.editor.is_some() {
+                        editor_widget(app, &mut child, id, theme::ui_font(13.0), expanded, field.width() - 12.0);
+                    } else {
+                        // Show the active cell's content; clicking starts editing in the bar.
+                        let text = active_input(app);
+                        let resp = child.add(
+                            egui::Label::new(egui::RichText::new(text).font(theme::ui_font(13.0)).color(t.text)).truncate().sense(Sense::click()),
+                        );
+                        let click = child.interact(field, id.with("click"), Sense::click());
+                        if resp.clicked() || click.clicked() {
+                            app.begin_edit(None, true);
+                        }
+                    }
+                    let _ = editing_here;
+                    ui.allocate_space(vec2(avail, h - 6.0));
+                    let chevron = if expanded { Icon::ChevronUp } else { Icon::Chevron };
+                    if crate::widgets::icon_button(ui, chevron, t.text_dim, "Expand formula bar", vec2(20.0, 22.0)).clicked() {
+                        app.ui.formula_bar_expanded = !app.ui.formula_bar_expanded;
+                    }
+                });
+            })
         });
 }
 
@@ -67,7 +77,11 @@ fn active_input(app: &SheetApp) -> String {
     let Some(sh) = d.wb.active() else { return String::new() };
     let a = sh.merge_at(d.selection.active).map(|m| m.start).unwrap_or(d.selection.active);
     if let Some(picture) = sh.cell_pictures.get(&a) {
-        return if picture.alt.is_empty() { "Picture in cell".into() } else { format!("Picture: {}", picture.alt) };
+        return if picture.alt.is_empty() {
+            app.ui.language.tr("Picture in cell").into()
+        } else {
+            app.ui.language.tr_with("Picture: {alt}", &[("alt", &picture.alt)])
+        };
     }
     if let Some(c) = sh.cell(a) {
         if c.formula.is_some() && d.wb.styles.get(c.style).protection.hidden && sh.is_protected() {
@@ -99,10 +113,18 @@ fn name_box(app: &mut SheetApp, ui: &mut egui::Ui, t: &Tokens) {
     let id = egui::Id::new("gridcraft.name_box");
     let shown = app.name_box_text();
     let mut text = app.name_box.clone().unwrap_or(shown.clone());
-    let rect = Rect::from_min_size(ui.cursor().min, vec2(118.0, 24.0));
+    let rtl = crate::rtl::on(ui.ctx());
+    let origin = if rtl { pos2(ui.available_rect_before_wrap().max.x - 118.0, ui.cursor().min.y) } else { ui.cursor().min };
+    let rect = Rect::from_min_size(origin, vec2(118.0, 24.0));
     ui.painter().rect_filled(rect, 4.0, t.input_bg);
     ui.painter().rect_stroke(rect, 4.0, Stroke::new(1.0, t.input_border), StrokeKind::Inside);
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(rect.min + vec2(6.0, 3.0), vec2(96.0, 18.0))));
+    // A reference is typed left to right; the dropdown arrow is at the trailing end.
+    let text_left = if rtl { rect.min.x + 18.0 } else { rect.min.x + 6.0 };
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(Rect::from_min_size(pos2(text_left, rect.min.y + 3.0), vec2(96.0, 18.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
     let resp = child.add(TextEdit::singleline(&mut text).id(id).frame(egui::Frame::NONE).font(theme::ui_font(13.0)).desired_width(96.0));
     if resp.gained_focus() {
         app.name_box = Some(shown.clone());
@@ -138,12 +160,12 @@ fn name_box(app: &mut SheetApp, ui: &mut egui::Ui, t: &Tokens) {
     // Dropdown of names.
     let names: Vec<String> =
         app.session.active().map(|d| d.wb.names.iter().filter(|n| !n.hidden).map(|n| n.name.clone()).collect()).unwrap_or_default();
-    let mb = Rect::from_min_size(pos2(rect.right() - 16.0, rect.top() + 4.0), vec2(14.0, 16.0));
+    let mb = Rect::from_min_size(pos2(if rtl { rect.left() + 2.0 } else { rect.right() - 16.0 }, rect.top() + 4.0), vec2(14.0, 16.0));
     icons::paint(ui.painter(), mb, Icon::Chevron, t.text_dim);
     let r = ui.interact(mb, id.with("drop"), Sense::click());
-    egui::Popup::menu(&r).show(|ui| {
+    crate::rtl::menu(&r).show(|ui| {
         if names.is_empty() {
-            ui.label(egui::RichText::new("No names defined").italics());
+            ui.label(egui::RichText::new(crate::i18n::tr(ui, "No names defined")).italics());
         }
         for n in names {
             if ui.button(&n).clicked() {
