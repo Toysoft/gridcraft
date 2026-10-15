@@ -56,10 +56,11 @@ pub struct Sheet {
     /// Static pictures are sparse rich content. Ordinary cells carry no picture pointer.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty", with = "picture_map")]
     pub cell_pictures: BTreeMap<CellRef, Arc<CellPicture>>,
-    /// Values spilled by dynamic-array formulas (maintained by calc), keyed by cell.
+    /// Values spilled by array formulas (dynamic and legacy), keyed by cell: laid out by calc or,
+    /// until the workbook is calculated, the results a file cached in the formulas' ranges.
     #[serde(skip)]
     pub spill: BTreeMap<CellRef, Value>,
-    /// Anchor → spill range.
+    /// Anchor → spill range (calc's, or the range the file gave the formula).
     #[serde(skip)]
     pub spill_ranges: BTreeMap<CellRef, RangeRef>,
     pub cols: BTreeMap<u32, LineInfo>,

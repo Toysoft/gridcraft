@@ -684,6 +684,19 @@ fn legacy_array_formulas_fill_their_range() {
     assert_eq!(t.get("H1"), Value::Error(CellError::Num));
 }
 
+/// A full recalculation makes every stored result current, so the workbook no longer asks to be
+/// calculated in full when it is opened; recalculating what an edit touched doesn't.
+#[test]
+fn full_recalculation_clears_full_calc_on_load() {
+    let mut t = T::new();
+    t.wb.calc.full_calc_on_load = true;
+    t.set("A1", "=1+1");
+    assert!(t.wb.calc.full_calc_on_load);
+    t.calc.recalc_all(&mut t.wb);
+    assert!(!t.wb.calc.full_calc_on_load);
+    assert_eq!(t.num("A1"), 2.0);
+}
+
 #[test]
 fn text_function() {
     let mut t = T::new();

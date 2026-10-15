@@ -31,6 +31,12 @@ pub struct CalcSettings {
     pub max_change: f64,
     /// Use precision as displayed.
     pub precision_as_displayed: bool,
+    /// The stored formula results are out of date or incomplete, so the workbook needs to be
+    /// calculated in full when it is opened: its file asked for that (`<calcPr fullCalcOnLoad>`,
+    /// `.xls` `Uncalced`), or reading it dropped cached results it couldn't keep. A full
+    /// recalculation clears it; saving writes it back (`fullCalcOnLoad`) while it is set.
+    #[serde(default)]
+    pub full_calc_on_load: bool,
 }
 
 impl Default for CalcSettings {
@@ -41,6 +47,7 @@ impl Default for CalcSettings {
             max_iterations: Self::DEFAULT_ITERATIONS,
             max_change: Self::DEFAULT_CHANGE,
             precision_as_displayed: false,
+            full_calc_on_load: false,
         }
     }
 }
@@ -305,5 +312,13 @@ mod tests {
         assert!(wb.check_sheet_name("a/b", None).is_err());
         assert!(wb.check_sheet_name(&"x".repeat(32), None).is_err());
         assert!(wb.check_sheet_name("Budget 2026", None).is_ok());
+    }
+
+    /// Workbook JSON saved before `full_calc_on_load` existed still opens.
+    #[test]
+    fn calc_settings_without_full_calc_on_load() {
+        let json = r#"{"mode":"Manual","iterative":false,"max_iterations":100,"max_change":0.001,"precision_as_displayed":false}"#;
+        let calc: CalcSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(calc, CalcSettings { mode: CalcMode::Manual, ..CalcSettings::default() });
     }
 }

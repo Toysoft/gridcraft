@@ -16,6 +16,11 @@ Convert to `.xlsx` to save the imported workbook; XLSB output is not supported.
 values; source formatting and other workbook features are omitted. Import warnings go to stderr.
 Convert to `.xlsx` to save the imported workbook; ODS output is not supported.
 
+Files open as in the app: formulas are calculated again, except in a workbook saved in manual
+calculation mode that doesn't ask to be calculated on load (`fullCalcOnLoad`, or an `.xls` saved
+uncalculated), which keeps the results stored in it (`run --cmd formulas.calculateNow` calculates
+them).
+
 ```sh
 cargo install --path apps/gridcraft-cli     # or: cargo run -p gridcraft-cli -- <subcommand>
 ```

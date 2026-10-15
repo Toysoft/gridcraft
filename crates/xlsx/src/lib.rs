@@ -41,7 +41,7 @@ mod xml;
 #[cfg(test)]
 mod tests;
 
-use gridcraft_core::DateSystem;
+use gridcraft_core::{CellRef, DateSystem, RangeRef};
 use gridcraft_model::Workbook;
 
 pub use crypto::{DecryptError, check_encryption, decrypt};
@@ -62,6 +62,33 @@ pub enum IoError {
     Format(String),
     #[error("the file is too large: {0}")]
     TooLarge(String),
+}
+
+/// Cells that the ranges keeping array formulas' cached results may cover in one workbook (see
+/// [`claim_array_range`]). A file names a range for free, while later edits and saves walk the
+/// ranges that keep results.
+pub(crate) const MAX_CACHED_ARRAY_CELLS: u64 = 4_000_000;
+
+/// Most cells of one array formula's range whose results a saved file caches. The readers keep no
+/// larger range, so a workbook saved without being calculated again never has its cached results
+/// cut short.
+pub(crate) const MAX_CACHED_RANGE_CELLS: usize = 1_000_000;
+
+/// Whether the array formula at `anchor`, filling `range` as its file says, keeps the results
+/// cached in that range, as the values it spilled: a workbook opened without being calculated shows
+/// them, and a recalculation lays the range out again from the formula. The range has to start at
+/// the formula, hold at most [`MAX_CACHED_RANGE_CELLS`] and fit in [`MAX_CACHED_ARRAY_CELLS`]
+/// together with the ranges the workbook's earlier arrays kept (`claimed` cells, which this one is
+/// added to). Otherwise the cached values are dropped (and the workbook marked as needing a full
+/// calculation, its cached results being incomplete), and the formula fills its range when it is
+/// calculated.
+pub(crate) fn claim_array_range(claimed: &mut u64, anchor: CellRef, range: RangeRef) -> bool {
+    let total = claimed.saturating_add(range.count());
+    if range.start != anchor || range.is_single() || range.count() > MAX_CACHED_RANGE_CELLS as u64 || total > MAX_CACHED_ARRAY_CELLS {
+        return false;
+    }
+    *claimed = total;
+    true
 }
 
 /// What a lenient read skipped or repaired.

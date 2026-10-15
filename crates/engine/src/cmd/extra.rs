@@ -780,7 +780,10 @@ fn split(s: &mut Session, _: &Json) -> Result<Json> {
 
 fn new_window(s: &mut Session, _: &Json) -> Result<Json> {
     let d = s.doc()?.clone();
-    let mut copy = crate::DocState::new((*d.wb).clone(), d.path.clone(), format!("{}:2", d.display_title()));
+    // The same workbook with the same results: the copy isn't calculated again (the workbook may
+    // show the results stored in its file), and reports the circular references found so far.
+    let mut copy = crate::DocState::with_recalc((*d.wb).clone(), d.path.clone(), format!("{}:2", d.display_title()), false);
+    copy.calc.circular = d.calc.circular.clone();
     copy.selection = d.selection.clone();
     let i = s.add_document(copy);
     Ok(json!({"index": i}))

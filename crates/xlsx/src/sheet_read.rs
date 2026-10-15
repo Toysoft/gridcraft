@@ -30,9 +30,11 @@ struct Shared {
 struct RowState {
     next_row: u32,
     shared: HashMap<u32, Shared>,
-    /// Dynamic-array spill ranges and legacy array ranges: cached values inside them (other than
-    /// the anchor) are not stored, so the formula can fill them again.
-    dynamic: Vec<RangeRef>,
+    /// Dynamic-array spill ranges and legacy array ranges, as the file gives them, and whether each
+    /// keeps its cached results ([`crate::claim_array_range`]). The values cached inside them (other
+    /// than at the formula) are the formula's results, not cell contents, so that the formula can
+    /// fill its range again: kept as values it spilled, or else dropped.
+    dynamic: Vec<(RangeRef, bool)>,
     dropped: u64,
     rows: u64,
 }
@@ -450,12 +452,43 @@ fn read_cell(cx: &mut Ctx<'_>, sheet: &mut Sheet, st: &mut RowState, c: &El, pos
         return;
     }
     let dynamic = c.attr("cm").is_some();
-    let formula = c.child("f").and_then(|f| read_formula(cx, st, f, pos, dynamic));
-    let value = if formula.is_none() && st.dynamic.iter().any(|r| r.contains(pos) && r.start != pos) { Value::Empty } else { value };
+    let (formula, array) = match c.child("f").and_then(|f| read_formula(cx, st, f, pos, dynamic)) {
+        Some((f, array)) => (Some(f), array),
+        None => (None, None),
+    };
+    if let Some(range) = array.filter(|r| !r.is_single()) {
+        // The first array formula anchored here claims its range for the results cached in it.
+        let kept = !sheet.spill_ranges.contains_key(&pos) && crate::claim_array_range(&mut cx.array_cells, pos, range);
+        if kept {
+            sheet.spill_ranges.insert(pos, range);
+        }
+        st.dynamic.push((range, kept));
+    }
+    // A cell in an array formula's range without a formula of its own holds one of its results.
+    let (mut inside, mut kept) = (false, false);
+    if formula.is_none() {
+        for (r, k) in &st.dynamic {
+            if r.start != pos && r.contains(pos) {
+                inside = true;
+                kept |= *k;
+            }
+        }
+    }
+    let value = if inside {
+        if kept && !value.is_empty() {
+            sheet.spill.insert(pos, value);
+        } else if !value.is_empty() {
+            cx.dropped_array_results = true;
+        }
+        Value::Empty
+    } else {
+        value
+    };
     sheet.cells.set(pos, Cell { value, formula: formula.map(Arc::new), style });
 }
 
-fn read_formula(cx: &mut Ctx<'_>, st: &mut RowState, f: &El, pos: CellRef, dynamic: bool) -> Option<Formula> {
+/// The cell's formula and, for an array formula, the range the file gives it.
+fn read_formula(cx: &mut Ctx<'_>, st: &mut RowState, f: &El, pos: CellRef, dynamic: bool) -> Option<(Formula, Option<RangeRef>)> {
     let model = from_file(f.text.trim());
     let text = model.as_str();
     match f.attr("t").unwrap_or("normal") {
@@ -464,20 +497,21 @@ fn read_formula(cx: &mut Ctx<'_>, st: &mut RowState, f: &El, pos: CellRef, dynam
             if !text.is_empty() {
                 let expr = gridcraft_formula::parse(text).ok();
                 st.shared.insert(si, Shared { anchor: pos, expr, text: text.to_string() });
-                Some(Formula::new(text))
+                Some((Formula::new(text), None))
             } else {
                 let Some(sh) = st.shared.get(&si) else {
                     cx.warn("a shared formula refers to a missing master cell; kept the cached value");
                     return None;
                 };
-                Some(match &sh.expr {
+                let fm = match &sh.expr {
                     Some(e) => {
                         let dr = pos.row as i64 - sh.anchor.row as i64;
                         let dc = pos.col as i64 - sh.anchor.col as i64;
                         Formula::from_expr(gridcraft_formula::adjust::shift_relative(e.clone(), dr, dc))
                     }
                     None => Formula::new(&sh.text),
-                })
+                };
+                Some((fm, None))
             }
         }
         "array" => {
@@ -486,13 +520,10 @@ fn read_formula(cx: &mut Ctx<'_>, st: &mut RowState, f: &El, pos: CellRef, dynam
             }
             let mut fm = Formula::new(text);
             let range = f.attr("ref").and_then(RangeRef::parse).unwrap_or(RangeRef::cell(pos));
-            if !range.is_single() {
-                st.dynamic.push(range);
-            }
             if !dynamic {
                 fm.array = Some(range);
             }
-            Some(fm)
+            Some((fm, Some(range)))
         }
         "dataTable" => {
             cx.warn("what-if data tables are not supported; kept their values");
@@ -502,7 +533,7 @@ fn read_formula(cx: &mut Ctx<'_>, st: &mut RowState, f: &El, pos: CellRef, dynam
             if text.is_empty() {
                 None
             } else {
-                Some(Formula::new(text))
+                Some((Formula::new(text), None))
             }
         }
     }

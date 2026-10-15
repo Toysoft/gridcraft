@@ -30,6 +30,11 @@ pub struct Ctx<'a> {
     pub cell_pictures: Vec<Option<Arc<CellPicture>>>,
     /// x14 conditional-format ids of the current sheet's data bars, with the index of the rule in `cond_formats`.
     pub cf_ext_ids: Vec<(String, usize)>,
+    /// Cells covered so far by array ranges that keep their cached results ([`crate::claim_array_range`]).
+    pub array_cells: u64,
+    /// Results cached in an array formula's range were dropped: the workbook's cached results are
+    /// incomplete, so it needs a full calculation.
+    pub dropped_array_results: bool,
 }
 
 impl Ctx<'_> {
@@ -82,6 +87,8 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         num_fmts: Default::default(),
         cell_pictures: vec![],
         cf_ext_ids: vec![],
+        array_cells: 0,
+        dropped_array_results: false,
     };
     let root_rels = cx.pkg.rels("")?;
     let wb_part = find_rel(&root_rels, "officeDocument").map(|r| r.target.clone()).unwrap_or_else(|| "xl/workbook.xml".into());
@@ -189,6 +196,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
             wb.calc.set_max_change(d);
         }
         wb.calc.precision_as_displayed = !c.flag("fullPrecision", true);
+        wb.calc.full_calc_on_load = c.flag("fullCalcOnLoad", false);
     }
     if let Some(p) = wb_xml.child("workbookProtection") {
         wb.protected_structure = p.flag("lockStructure", false);
@@ -245,6 +253,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         cx.warn("the workbook has no worksheets; added an empty sheet");
         wb.sheets.push(Arc::new(Sheet::new("Sheet1")));
     }
+    wb.calc.full_calc_on_load |= cx.dropped_array_results;
     wb.active_sheet = file_to_model.get(active_tab).copied().flatten().unwrap_or(0);
 
     // Defined names. Chartex parts refer to their data through hidden `_xlchart.*` names.

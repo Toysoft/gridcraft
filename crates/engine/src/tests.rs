@@ -1625,6 +1625,187 @@ fn xlsx_roundtrip_through_engine() {
     assert_eq!(v(&s, "B3"), Value::Number(3.0));
 }
 
+/// A one-sheet `.xlsx` (base64) whose `<calcPr>` has the attributes `calc_pr` and whose
+/// `<sheetData>` is `rows`: formulas next to the results stored with them.
+fn stored_results_workbook(calc_pr: &str, rows: &str) -> String {
+    use std::io::{Cursor, Write};
+    const NS_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    let types = r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#.to_string();
+    let rels = format!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{NS_REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>"#
+    );
+    let book = format!(
+        r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="{NS_REL}"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets><calcPr {calc_pr}/></workbook>"#
+    );
+    let book_rels = format!(
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{NS_REL}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#
+    );
+    let sheet = format!(r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>{rows}</sheetData></worksheet>"#);
+    let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, data) in [
+        ("[Content_Types].xml", types),
+        ("_rels/.rels", rels),
+        ("xl/workbook.xml", book),
+        ("xl/_rels/workbook.xml.rels", book_rels),
+        ("xl/worksheets/sheet1.xml", sheet),
+    ] {
+        zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+        zip.write_all(data.as_bytes()).unwrap();
+    }
+    crate::io::base64_encode(&zip.finish().unwrap().into_inner())
+}
+
+/// A1 stores 5, although its formula gives 2.
+const STALE_A1: &str = r#"<row r="1"><c r="A1"><f>1+1</f><v>5</v></c></row>"#;
+
+/// Opens `book` with `recalculate` (left out when `None`); returns `file.open`'s `recalculated`.
+fn open_stored(s: &mut Session, book: &str, recalculate: Option<bool>) -> serde_json::Value {
+    let mut p = json!({"name": "stored.xlsx", "base64": book});
+    if let Some(r) = recalculate {
+        p["recalculate"] = json!(r);
+    }
+    s.execute("file.open", p).unwrap()["recalculated"].clone()
+}
+
+/// `file.open {recalculate: false}` shows the results stored in the file; by default, or with
+/// `recalculate: true`, every formula is calculated again.
+#[test]
+fn open_without_recalculating_shows_stored_results() {
+    let book = stored_results_workbook("", STALE_A1);
+    for (recalculate, expected, recalculated) in [(Some(false), 5.0, false), (None, 2.0, true), (Some(true), 2.0, true)] {
+        let mut s = s();
+        assert_eq!(open_stored(&mut s, &book, recalculate), json!(recalculated), "recalculate: {recalculate:?}");
+        assert_eq!(v(&s, "A1"), Value::Number(expected), "recalculate: {recalculate:?}");
+    }
+    // Calculate Now calculates it.
+    let mut s = s();
+    open_stored(&mut s, &book, Some(false));
+    s.execute("formulas.calculateNow", json!({})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::Number(2.0));
+    // Anything but true or false is refused, before the file is read.
+    let err = s.execute("file.open", json!({"name": "other.xlsx", "base64": book, "recalculate": "no"})).unwrap_err();
+    assert!(err.to_string().contains("recalculate"), "{err}");
+    assert_eq!(s.documents().len(), 1);
+}
+
+/// A workbook saved in manual calculation mode opens with its stored results, unless it asks to be
+/// calculated in full when opened (`fullCalcOnLoad`); `recalculate` decides over both.
+#[test]
+fn manual_calculation_workbooks_open_with_their_stored_results() {
+    for (calc_pr, recalculate, expected, recalculated) in [
+        (r#"calcMode="manual""#, None, 5.0, false),
+        (r#"calcMode="manual" fullCalcOnLoad="1""#, None, 2.0, true),
+        (r#"fullCalcOnLoad="1""#, None, 2.0, true),
+        (r#"calcMode="manual""#, Some(true), 2.0, true),
+        (r#"calcMode="manual" fullCalcOnLoad="1""#, Some(false), 5.0, false),
+    ] {
+        let mut s = s();
+        let book = stored_results_workbook(calc_pr, STALE_A1);
+        assert_eq!(open_stored(&mut s, &book, recalculate), json!(recalculated), "{calc_pr}, recalculate: {recalculate:?}");
+        assert_eq!(v(&s, "A1"), Value::Number(expected), "{calc_pr}, recalculate: {recalculate:?}");
+    }
+}
+
+/// Results the file marks as out of date (`fullCalcOnLoad`) and that were opened without being
+/// calculated stay marked when the workbook is saved, so opening the saved file calculates them.
+#[test]
+fn out_of_date_results_stay_marked_when_saved() {
+    let mut s = s();
+    open_stored(&mut s, &stored_results_workbook(r#"calcMode="manual" fullCalcOnLoad="1""#, STALE_A1), Some(false));
+    let saved = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap()["base64"].as_str().unwrap().to_string();
+    assert_eq!(open_stored(&mut s, &saved, None), json!(true));
+    assert_eq!(v(&s, "A1"), Value::Number(2.0));
+    // Calculated, they are current: saved again, the manual-mode workbook opens as it is.
+    let saved = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap()["base64"].as_str().unwrap().to_string();
+    assert_eq!(open_stored(&mut s, &saved, None), json!(false));
+    assert_eq!(v(&s, "A1"), Value::Number(2.0));
+}
+
+/// A second window on a workbook shows the same results: the copy isn't calculated again, so a
+/// workbook opened with its stored results keeps them there too, and a circular reference found in
+/// the first window is reported in the second.
+#[test]
+fn a_new_window_shows_the_same_results() {
+    let mut s = s();
+    open_stored(&mut s, &stored_results_workbook("", STALE_A1), Some(false));
+    s.execute("view.newWindow", json!({})).unwrap();
+    assert_eq!((s.documents().len(), s.active_index()), (2, 1));
+    assert_eq!(v(&s, "A1"), Value::Number(5.0));
+    s.execute("formulas.calculateNow", json!({})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::Number(2.0));
+    let mut s = self::s();
+    s.execute("cell.set", json!({"cell": "A1", "input": "=A1+1"})).unwrap();
+    assert!(!s.doc().unwrap().calc.circular.is_empty());
+    s.execute("view.newWindow", json!({})).unwrap();
+    assert!(!s.doc().unwrap().calc.circular.is_empty());
+}
+
+/// Opening a file that is already open switches to it: `recalculate` doesn't apply, and the result
+/// says so rather than reporting how the workbook was opened.
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn opening_an_open_file_again_ignores_recalculate_visibly() {
+    #[allow(clippy::disallowed_methods)] // native-only test: a unique temp dir name
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let dir = std::env::temp_dir().join(format!("gridcraft-reopen-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&dir).unwrap();
+    let path = dir.join("stored.xlsx");
+    std::fs::write(&path, crate::io::base64_decode(&stored_results_workbook("", STALE_A1)).unwrap()).unwrap();
+    let mut s = s();
+    let first = s.execute("file.open", json!({"path": path, "recalculate": false})).unwrap();
+    assert_eq!((first["recalculated"].clone(), first.get("recalculateIgnored")), (json!(false), None));
+    let again = s.execute("file.open", json!({"path": path, "recalculate": true})).unwrap();
+    assert_eq!((again["alreadyOpen"].clone(), again["recalculateIgnored"].clone()), (json!(true), json!(true)));
+    assert!(again.get("recalculated").is_none());
+    assert_eq!(v(&s, "A1"), Value::Number(5.0));
+    let plain = s.execute("file.open", json!({"path": path})).unwrap();
+    assert_eq!((plain["alreadyOpen"].clone(), plain.get("recalculateIgnored")), (json!(true), None));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// Opened with its stored results, a workbook still recalculates what depends on an edited cell;
+/// formulas that read nothing that changed keep their stored results.
+#[test]
+fn edits_recalculate_dependents_after_opening_with_stored_results() {
+    // B1 and C1 store out-of-date results for A1 = 10.
+    let rows = r#"<row r="1"><c r="A1"><v>10</v></c><c r="B1"><f>A1*2</f><v>99</v></c><c r="C1"><f>B1+1</f><v>50</v></c><c r="D1"><f>1+1</f><v>5</v></c></row>"#;
+    let mut s = s();
+    open_stored(&mut s, &stored_results_workbook("", rows), Some(false));
+    assert_eq!((v(&s, "B1"), v(&s, "C1"), v(&s, "D1")), (Value::Number(99.0), Value::Number(50.0), Value::Number(5.0)));
+    s.execute("cell.set", json!({"cell": "A1", "input": "3"})).unwrap();
+    assert_eq!((v(&s, "B1"), v(&s, "C1"), v(&s, "D1")), (Value::Number(6.0), Value::Number(7.0), Value::Number(5.0)));
+}
+
+/// The results an array formula stored over its range show when the workbook opens without
+/// recalculating, and the range still behaves as the formula's; calculated, the formula fills it
+/// again.
+#[test]
+fn array_results_show_when_opening_with_stored_results() {
+    // A legacy array {=A1:A3*2} over B1:B3 and a dynamic SEQUENCE(3) spilling over C1:C3, with
+    // stored results that differ from what they calculate.
+    let rows = r#"<row r="1"><c r="A1"><v>1</v></c><c r="B1"><f t="array" ref="B1:B3">A1:A3*2</f><v>20</v></c><c r="C1" cm="1"><f t="array" ref="C1:C3">_xlfn.SEQUENCE(3)</f><v>7</v></c></row>
+        <row r="2"><c r="A2"><v>2</v></c><c r="B2"><v>40</v></c><c r="C2"><v>8</v></c></row>
+        <row r="3"><c r="A3"><v>3</v></c><c r="B3"><v>60</v></c><c r="C3"><v>9</v></c></row>"#;
+    let book = stored_results_workbook("", rows);
+    let col = |s: &Session, c: char| (1..=3).map(|r| v(s, &format!("{c}{r}"))).collect::<Vec<_>>();
+    let n = |xs: [f64; 3]| xs.map(Value::Number).to_vec();
+    let mut s = s();
+    open_stored(&mut s, &book, Some(false));
+    assert_eq!((col(&s, 'B'), col(&s, 'C')), (n([20.0, 40.0, 60.0]), n([7.0, 8.0, 9.0])));
+    // Part of the legacy array can't be changed; typing into the spill blocks it.
+    let err = s.execute("cell.set", json!({"cell": "B2", "input": "1"})).unwrap_err();
+    assert!(err.to_string().contains("part of an array"), "{err}");
+    s.execute("cell.set", json!({"cell": "C2", "input": "x"})).unwrap();
+    assert_eq!((v(&s, "C1"), v(&s, "C3")), (Value::Error(gridcraft_core::CellError::Spill), Value::Empty));
+    // Editing a cell the legacy array reads calculates it over its range.
+    s.execute("cell.set", json!({"cell": "A1", "input": "5"})).unwrap();
+    assert_eq!(col(&s, 'B'), n([10.0, 4.0, 6.0]));
+    // Opened normally, both fill their ranges from their formulas.
+    let mut s = Session::new();
+    open_stored(&mut s, &book, None);
+    assert_eq!((col(&s, 'B'), col(&s, 'C')), (n([2.0, 4.0, 6.0]), n([1.0, 2.0, 3.0])));
+}
+
 fn ods_fixture() -> Vec<u8> {
     use std::io::{Cursor, Write};
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
