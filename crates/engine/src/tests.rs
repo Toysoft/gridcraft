@@ -1111,7 +1111,7 @@ fn open_keeps_custom_height_rows() {
     assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), 25.0, "custom-height rows are left alone on open");
 }
 
-#[test] // C — Review Focus 2 (Some→Some: the fit shrinks the row, the clamp keeps the taller height)
+#[test] // C — Review Focus 2 (the fit would shrink the row; rows the file saved a height for aren't fitted)
 fn open_never_shrinks_taller_auto_rows() {
     let mut s = Session::new();
     s.execute("file.open", json!({"name": "tall.xlsx", "base64": crate::io::base64_encode(&big_font_workbook(Some((60.0, false, false)), true))}))
@@ -1119,7 +1119,7 @@ fn open_never_shrinks_taller_auto_rows() {
     assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), 60.0, "open is grow-only: a 60px auto-height row keeps its height");
 }
 
-#[test] // C′ — Review Focus 2 (Some→None: a plain tall row's entry is removed by the fit, the clamp restores it)
+#[test] // C′ — Review Focus 2 (the fit would remove a plain tall row's entry; its saved height is kept)
 fn open_restores_height_of_plain_rows_the_fit_removed() {
     let mut s = Session::new();
     s.execute(
@@ -1130,7 +1130,7 @@ fn open_restores_height_of_plain_rows_the_fit_removed() {
     assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), 60.0, "a tall plain row keeps its height after the fit removes its entry");
 }
 
-#[test] // D — Review Focus 5
+#[test] // D — Review Focus 5 (the row keeps its saved height; D′ fits a hidden row saved without one)
 fn open_fitting_keeps_hidden_rows_hidden() {
     let mut s = Session::new();
     s.execute("file.open", json!({"name": "hidden.xlsx", "base64": crate::io::base64_encode(&big_font_workbook(Some((20.0, false, true)), true))}))
@@ -1148,6 +1148,102 @@ fn open_leaves_plain_workbooks_untouched() {
     let sh = s.doc().unwrap().wb.active().unwrap();
     assert!(sh.rows.get(&0).is_none_or(|i| i.size.is_none()), "11pt default rows get no height entry");
     assert!(sh.rows.values().all(|i| i.size.is_none()), "no row gains a height entry");
+}
+
+/// Fixture for heights saved in a file: row 5 (index 4) saved at `size` px without
+/// `customHeight` (`None` writes no `ht`), with A5:H5 merged and A5 holding wrapped text
+/// that fits the merged width in a few lines but needs hundreds in column A alone.
+fn merged_wrap_workbook(size: Option<f32>) -> Vec<u8> {
+    let mut wb = gridcraft_model::Workbook::new();
+    let wrap = wb.styles.derive(gridcraft_model::StyleId::DEFAULT, |s| s.align.wrap = true);
+    let sh = wb.sheet_mut(0).unwrap();
+    sh.set_value(CellRef::new(4, 0), Value::text("merged wrapped text ".repeat(30)));
+    sh.set_style(CellRef::new(4, 0), wrap);
+    sh.merges.push(gridcraft_core::RangeRef::parse("A5:H5").unwrap());
+    if let Some(size) = size {
+        sh.rows.entry(4).or_default().size = Some(size);
+    }
+    gridcraft_xlsx::write_xlsx(&wb).unwrap()
+}
+
+fn open_xlsx(bytes: &[u8]) -> Session {
+    let mut s = Session::new();
+    s.execute("file.open", json!({"name": "book.xlsx", "base64": crate::io::base64_encode(bytes)})).unwrap();
+    s
+}
+
+fn save_xlsx(s: &mut Session) -> Vec<u8> {
+    let r = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap();
+    crate::io::base64_decode(r["base64"].as_str().unwrap()).unwrap()
+}
+
+/// The height row `row` of an XLSX file's first sheet was saved with, in px.
+fn saved_row_size(bytes: &[u8], row: u32) -> Option<f32> {
+    gridcraft_xlsx::read_xlsx(bytes).unwrap().0.sheet(0).unwrap().rows.get(&row).and_then(|i| i.size)
+}
+
+#[test] // F — a height saved in the file survives open and save, whatever the row holds
+fn open_and_save_keep_a_saved_row_height() {
+    // 42.75pt (57px) over text merged across A5:H5 that column A alone would need 409.5pt for.
+    let mut s = open_xlsx(&merged_wrap_workbook(Some(57.0)));
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), 57.0, "the saved 42.75pt height is kept on open");
+    assert_eq!(saved_row_size(&save_xlsx(&mut s), 4), Some(57.0), "and saved as 42.75pt");
+}
+
+#[test] // G — a saved height equal to the sheet default is a saved height too
+fn open_and_save_keep_a_saved_default_height_over_a_big_font() {
+    // Row 5 saved at 15pt, the default, without customHeight, under a 20pt cell.
+    let mut s = open_xlsx(&big_font_workbook(Some((20.0, false, false)), true));
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), 20.0, "the saved 15pt height is kept on open");
+    assert_eq!(saved_row_size(&save_xlsx(&mut s), 4), Some(20.0), "and saved as 15pt");
+}
+
+#[test] // H — #833 still holds: a row saved with no height grows to its font, and stays so
+fn open_still_grows_rows_without_a_saved_height() {
+    let mut s = open_xlsx(&big_font_workbook(None, true));
+    let grown = s.doc().unwrap().wb.active().unwrap().row_height(4);
+    assert!(grown >= 30.0, "a 20pt cell grows its row on open, got {grown}");
+    let saved = save_xlsx(&mut s);
+    let size = saved_row_size(&saved, 4).unwrap_or_default();
+    assert!((size - grown).abs() < 0.01, "the fitted height is saved (to 0.01pt): {size} vs {grown}");
+    assert_eq!(open_xlsx(&saved).doc().unwrap().wb.active().unwrap().row_height(4), size, "and kept when the file is opened again");
+}
+
+#[test] // D′ — Review Focus 5 for a hidden row saved with no height (D's row keeps its saved one)
+fn open_fitting_keeps_hidden_rows_without_a_saved_height_hidden() {
+    let mut wb = gridcraft_model::Workbook::new();
+    let big = wb.styles.derive(gridcraft_model::StyleId::DEFAULT, |s| s.font.size = 20.0);
+    let sh = wb.sheet_mut(0).unwrap();
+    sh.set_value(CellRef::new(4, 0), Value::text("plain big bold"));
+    sh.set_style(CellRef::new(4, 0), big);
+    sh.rows.entry(4).or_default().hidden = true;
+    let s = open_xlsx(&gridcraft_xlsx::write_xlsx(&wb).unwrap());
+    let info = *s.doc().unwrap().wb.active().unwrap().rows.get(&4).unwrap();
+    assert!(info.size.is_some_and(|h| h >= 30.0), "the hidden row grows to its font, got {:?}", info.size);
+    assert!(info.hidden, "fitting a hidden row must not unhide it");
+}
+
+#[test] // I — merged cells don't size their row (Excel's AutoFit leaves them out too)
+fn merged_cells_do_not_grow_their_row() {
+    let long = "merged wrapped text ".repeat(30);
+    let mut s = s();
+    let default_h = s.doc().unwrap().wb.active().unwrap().row_height(4);
+    s.execute("home.wrapText", json!({"range": "A5", "on": true})).unwrap();
+    s.execute("home.mergeCells", json!({"range": "A5:H5"})).unwrap();
+    s.execute("cell.set", json!({"cell": "A5", "input": long.as_str()})).unwrap();
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), default_h, "editing the merged cell doesn't grow its row");
+    // The same text in a cell of its own still wraps and grows its row.
+    s.execute("home.wrapText", json!({"range": "A7", "on": true})).unwrap();
+    s.execute("cell.set", json!({"cell": "A7", "input": long.as_str()})).unwrap();
+    assert!(s.doc().unwrap().wb.active().unwrap().row_height(6) > default_h, "unmerged wrapped text still sizes its row");
+    // A bigger font elsewhere in the merged cell's row sizes it to that font only.
+    s.execute("cell.set", json!({"cell": "J5", "input": "big"})).unwrap();
+    s.execute("home.fontSize", json!({"range": "J5", "size": 20})).unwrap();
+    let h = s.doc().unwrap().wb.active().unwrap().row_height(4);
+    assert!((30.0..60.0).contains(&h), "the 20pt cell sizes the row, the merged text doesn't: {h}");
+    // Opening a file that saved no height for such a row doesn't grow it either.
+    let s = open_xlsx(&merged_wrap_workbook(None));
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), default_h, "merged text doesn't grow a row on open");
 }
 
 #[test]

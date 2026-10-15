@@ -577,3 +577,27 @@ fn user_defined_function_prefix_round_trips() {
         assert_eq!(cell.child("f").unwrap().text, f, "written {a}");
     }
 }
+
+/// Saved row heights come back as saved, one equal to the sheet default too, measured against
+/// the file's own default. Rows are read before `sheetFormatPr` is applied, so comparing with
+/// the default while reading them used the built-in 15pt: a 15pt row on a 14.25pt sheet came
+/// back 14.25pt, and on a 16.5pt sheet 16.5pt.
+#[test]
+fn saved_row_heights_are_kept() {
+    for (default, px) in [("14.25", 19.0), ("15", 20.0), ("16.5", 22.0)] {
+        let body = format!(
+            r#"<sheetFormatPr defaultRowHeight="{default}"/><sheetData><row r="1" ht="15"><c r="A1"><v>1</v></c></row><row r="2" ht="{default}"><c r="A2"><v>2</v></c></row><row r="3"><c r="A3"><v>3</v></c></row></sheetData>"#
+        );
+        let (wb, _) = read_xlsx(&minimal(&body, &[], "", "")).unwrap();
+        let s = wb.sheet(0).unwrap();
+        assert_eq!(s.default_row_height, px);
+        assert_eq!(s.rows.get(&0).and_then(|i| i.size), Some(20.0), "a 15pt row on a {default}pt sheet");
+        assert_eq!(s.rows.get(&1).and_then(|i| i.size), Some(px), "a saved height equal to the {default}pt default");
+        assert!(!s.rows.contains_key(&2), "a row saved with no height");
+        let bytes = crate::write_xlsx(&wb).unwrap();
+        let mut pkg = crate::package::Package::open(&bytes).unwrap();
+        let sheet = pkg.read_xml("xl/worksheets/sheet1.xml").unwrap().unwrap();
+        let heights: Vec<Option<&str>> = sheet.child("sheetData").unwrap().kids("row").map(|r| r.attr("ht")).collect();
+        assert_eq!(heights, [Some("15"), Some(default), None], "written back on a {default}pt sheet");
+    }
+}

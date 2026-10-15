@@ -356,8 +356,11 @@ pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>)
     }
     fit_rows.sort_unstable();
     fit_rows.dedup();
-    for (si, row) in fit_rows {
-        auto_row_height(&mut wb, si, row);
+    for sheet_rows in fit_rows.chunk_by(|a, b| a.0 == b.0) {
+        if let Some(&(si, _)) = sheet_rows.first() {
+            let rows: Vec<u32> = sheet_rows.iter().map(|&(_, row)| row).collect();
+            auto_row_heights(&mut wb, si, &rows);
+        }
     }
     if let Some(t0) = t0 {
         eprintln!("commit: + rows {:?}", t0.elapsed());
@@ -453,16 +456,43 @@ fn same_content(a: Option<&gridcraft_model::Cell>, b: Option<&gridcraft_model::C
     }
 }
 
-/// Recomputes an automatic row height from its content: the largest font, and wrapped or
-/// multi-line text. Rows with a user-set height keep it.
-pub fn auto_row_height(wb: &mut Workbook, si: usize, row: u32) {
+/// Recomputes the automatic heights of `rows` on sheet `si` from their content: the largest
+/// font, and wrapped or multi-line text. Rows with a user-set height keep it. Merged cells
+/// don't count: their text spans several columns or rows, which the line count doesn't
+/// measure, and Excel's AutoFit leaves merged cells out too (as AutoFit Column Width does).
+pub fn auto_row_heights(wb: &mut Workbook, si: usize, rows: &[u32]) {
+    let mut rows = rows.to_vec();
+    rows.sort_unstable();
+    rows.dedup();
+    let (Some(&first), Some(&last)) = (rows.first(), rows.last()) else { return };
+    // The merged areas over these rows, by first row: one sweep down the rows keeps those that
+    // cross the current one, however many areas the sheet has.
+    let mut merged: Vec<RangeRef> = wb
+        .sheet(si)
+        .map(|sh| sh.merges.iter().filter(|m| !m.is_single() && m.start.row <= last && m.end.row >= first).copied().collect())
+        .unwrap_or_default();
+    merged.sort_unstable_by_key(|m| m.start.row);
+    let mut pending = merged.into_iter().peekable();
+    let mut crossing: Vec<RangeRef> = Vec::new();
+    for row in rows {
+        while let Some(m) = pending.next_if(|m| m.start.row <= row) {
+            crossing.push(m);
+        }
+        crossing.retain(|m| m.end.row >= row);
+        auto_row_height(wb, si, row, &crossing);
+    }
+}
+
+/// One row of [`auto_row_heights`]; `merged` holds the merged areas crossing it.
+fn auto_row_height(wb: &mut Workbook, si: usize, row: u32, merged: &[RangeRef]) {
     let Some(sh) = wb.sheet(si) else { return };
     if sh.rows.get(&row).is_some_and(|i| i.custom) {
         return;
     }
     let default = sh.default_row_height;
+    let unmerged = |&(c, _): &(u32, &gridcraft_model::Cell)| !merged.iter().any(|m| m.start.col <= c && c <= m.end.col);
     // Fast path: rows of default-size, unwrapped, single-line content keep the default height.
-    let plain = sh.cells.row(row, 0, gridcraft_core::MAX_COLS - 1).all(|(_, cell)| {
+    let plain = sh.cells.row(row, 0, gridcraft_core::MAX_COLS - 1).filter(unmerged).all(|(_, cell)| {
         let st = wb.styles.get(cell.style);
         st.font.size <= gridcraft_model::DEFAULT_FONT_SIZE && !st.align.wrap && !cell.value.as_text().is_some_and(|t| t.contains('\n'))
     });
@@ -481,7 +511,7 @@ pub fn auto_row_height(wb: &mut Workbook, si: usize, row: u32) {
         return;
     }
     let mut need: f32 = default;
-    for (c, cell) in sh.cells.row(row, 0, gridcraft_core::MAX_COLS - 1) {
+    for (c, cell) in sh.cells.row(row, 0, gridcraft_core::MAX_COLS - 1).filter(unmerged) {
         let st = wb.styles.get(cell.style);
         let size = st.font.size;
         let line = (size * 1.8).round().max(default * size / gridcraft_model::DEFAULT_FONT_SIZE);

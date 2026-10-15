@@ -350,12 +350,12 @@ fn read_row(cx: &mut Ctx<'_>, sheet: &mut Sheet, st: &mut RowState, row: &El) {
     }
     st.next_row = r + 1;
     let mut info = LineInfo::default();
+    // Every height the file saved is kept, one equal to the default too: opening leaves saved
+    // heights alone, so saving writes them back as they were. (Rows stream in before
+    // `sheetFormatPr` is applied: the sheet's default isn't known yet here.)
     if let Some(ht) = row.attr_f64("ht") {
         info.custom = row.flag("customHeight", false);
-        // Automatic heights equal to the default are noise.
-        if info.custom || (pt_to_px(ht) - sheet.default_row_height).abs() > 0.5 {
-            info.size = Some(pt_to_px(ht));
-        }
+        info.size = Some(pt_to_px(ht));
     }
     info.hidden = row.flag("hidden", false);
     info.outline = row.attr_u32("outlineLevel").unwrap_or(0).min(7) as u8;
