@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~25 points of "ready for real work" and ~160–240 h away
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (rows auto-fit oversized fonts on open and whole-row/column formatting) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (docs audit against main: stale gap entries corrected, language and function counts re-measured) · **Target:** Microsoft Excel (Microsoft 365)
 
 GridCraft aims at full Microsoft Excel parity, and at being better in places: faster, open (XLSX
 is the native format), fully scriptable by agents (MCP, control channel, CLI), and on the web.
@@ -42,8 +42,8 @@ long `.xls` track, so about half parallelizes (≈30–50 wall-clock hours with 
 
 Why alpha: all six core workflows in the [alpha gate](docs/roadmap.md#alpha-gate) pass end to end on macOS with save and reopen, and the core workflow works end to end (open an XLSX, enter formulas and data, format, sort
 and filter, chart, pivot, print to PDF, save XLSX), but users still hit blocking gaps on real
-files: 100 MB workbooks don't open (#175), there's no `.xls` (#121), Arabic and Devanagari text
-isn't shaped (Chinese text still reported in #142), charts lose their type and options on round trip, and
+files: 100 MB workbooks don't open (#175), `.xls` opens only partly (#332), Arabic and Devanagari text
+isn't shaped (Chinese text still reported in #142), charts lose their options on round trip, and
 nobody has yet confirmed that Excel opens our output without a repair prompt across a real
 corpus. Beta needs those closed (see [beta gates](docs/roadmap.md#beta-gates)).
 
@@ -62,7 +62,7 @@ collaboration, mobile, AI).
 | File formats | ~50% | 80–120 | [file-format-parity.md](docs/file-format-parity.md) |
 | Performance | ~35% | 35–55 | [target-app-parity.md](docs/target-app-parity.md#performance) |
 | Stability | ~60% | 15–25 | [gaps.md](docs/gaps.md) |
-| Localization | ~10% (ribbon in 6 languages) | 100–165 | [localization-parity.md](docs/localization-parity.md) |
+| Localization | ~10% (ten languages besides English) | 100–165 | [localization-parity.md](docs/localization-parity.md) |
 | Hardware (multi-core calc, GPU, pen, multi-window) | ~40% | 25–40 | [hardware-parity.md](docs/hardware-parity.md) |
 | Platforms | ~80% (no iOS/Android; ahead on Linux, BSD, RISC-V) | 30–60 | [target-app-parity.md](docs/target-app-parity.md#platforms) |
 | Ecosystem / add-ins | ~10% (VBA out of scope; own scripts, MCP, CLI) | 25–40 | [target-app-parity.md](docs/target-app-parity.md#ecosystem-and-ai) |
@@ -74,7 +74,7 @@ collaboration, mobile, AI).
 | Area | Breadth | Ready | Hours | Doc |
 |---|---|---|---|---|
 | Formula language and calculation | ~92% | ~72% | 20–30 | [target-app-parity.md](docs/target-app-parity.md#feature-areas) |
-| Worksheet functions | 96.6% measured | ~82% | 16–26 | [function-parity.md](docs/function-parity.md) |
+| Worksheet functions | 98.1% measured | ~82% | 16–26 | [function-parity.md](docs/function-parity.md) |
 | Editing, navigation, clipboard, fill | ~90% | ~70% | 15–25 | [ui-parity.md](docs/ui-parity.md) |
 | Cell formatting, styles, conditional formatting | ~95% | ~80% | 8–14 | [target-app-parity.md](docs/target-app-parity.md#feature-areas) |
 | Sort, filter, tables, validation, outline | ~82% | ~70% | 10–16 | [target-app-parity.md](docs/target-app-parity.md#feature-areas) |
@@ -89,49 +89,51 @@ collaboration, mobile, AI).
 
 ## Languages
 
-The ribbon is translated into Japanese, Simplified Chinese, Korean, Brazilian Portuguese, Russian
-and German (266–268 labels each, ~12% of ~2,200 strings; merged 10-10 in #31, #104, #82, German
-added 10-11), the
-interface follows the system language, and CJK, Thai and Hebrew text falls back to system fonts
-(#38). Dialogs, menus and messages are English; formulas and number formats are en-US only.
-Localized German formulas and numbers are in PR #163. Detail: [localization-parity.md](docs/localization-parity.md).
+The interface has catalogs for ten languages besides English (Spanish, Simplified Chinese,
+Japanese, Korean, Russian, Brazilian Portuguese, German, Czech, French, Serbian; 393–398 entries
+each, Spanish 424, Czech 514, Portuguese 939, about 18% of ~2,200 strings for most; #31, #104, #82, #242, #271, #335, #413, #453), follows the system
+language, and CJK, Thai and Hebrew text falls back to system fonts (#38). Spanish function names
+and `;` separators work (#98); other formula languages and number formats are en-US only. German
+formulas and numbers (PR #163) were closed unmerged. Detail: [localization-parity.md](docs/localization-parity.md).
 
 | Language | Code | Status | UI strings |
 |---|---|---|---|
 | English | en | full (source language) | 100% |
-| Simplified Chinese | zh-Hans | menus only | ~12% |
-| Spanish | es | none | 0% |
+| Simplified Chinese | zh-Hans | menus only | ~17% |
+| Spanish | es | menus only; formulas in Spanish | ~17% |
 | Hindi | hi | none | 0% |
 | Arabic | ar | none (no RTL layout, no shaping) | 0% |
-| French | fr | none | 0% |
-| Portuguese | pt-BR | menus only | ~12% |
+| French | fr | menus only | ~17% |
+| Portuguese | pt-BR | menus only | ~17% |
 | Indonesian | id | none | 0% |
-| Japanese | ja | menus only | ~12% |
-| German | de | menus only | ~12% |
-| Korean | ko | menus only | ~12% |
+| Japanese | ja | menus only | ~17% |
+| German | de | menus only | ~17% |
+| Korean | ko | menus only | ~17% |
+| Czech | cs | menus only | ~17% |
 | Vietnamese | vi | none | 0% |
 
-Other shipped languages: 2 (Russian and German, menus only, ~12%).
+Other shipped languages: Russian (ru, menus only, ~17%).
 
 ## Upcoming
 
 Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 [docs/roadmap.md](docs/roadmap.md).
 
-1. **Land the open PR queue** (50 open PRs on 2026-10-10, many fixing listed gaps: recalc and spill
-   correctness, chart kind round-trip, CJK font fallback, macOS Finder open, German and Chinese
-   UI). Review and merge: 8–15 h.
+1. **Land the open PR queue** (231 open PRs on 2026-10-13, many fixing or extending listed gaps; the
+   10-10 recalc, chart-kind, font-fallback, Finder-open and German/Chinese UI items are merged).
+   Review and merge: 8–15 h (not re-estimated).
 2. **XLSX fidelity on a real-world corpus**, with Excel opening our output without repair: 25–35 h.
 3. **Large workbooks and recalc speed**: 100 MB XLSX, 1M rows, multi-threaded recalc: 40–60 h.
-4. **Charts depth**: kinds and options round-trip, axes, trendlines, error bars: 25–35 h.
+4. **Charts depth**: options round-trip, axes, error bars (kinds and trendlines are in): 25–35 h.
 5. **Text in every script** (CJK, Thai, Arabic, Devanagari) in cells and PDF: 12–20 h.
-6. **Legacy `.xls` import and password-protected workbooks**: 20–30 h.
+6. **Legacy `.xls` styles and objects, saving with a password** (`.xls` values and encrypted-file opening are in): 20–30 h.
 7. **Localization**: extend the catalog past the ribbon, then the twelve languages: 100–165 h.
 
 ## Progress log
 
 | Date | What landed |
 |---|---|
+| 2026-10-12 | Docs audit against main: gaps.md and the parity docs corrected for merged work (kinds round trip, chart resize, trendlines, table slicers, Solver and ToolPak, key tips, 9 UI languages, 513 / 523 functions); no code change |
 | 2026-10-12 | Rows auto-fit oversized fonts: opening a file and whole-row/column formatting grow non-custom rows to their tallest font (#833) |
 | 2026-10-12 | Number formats: parsing a format code is linear in its length (long runs of `[`, `,` or `/` no longer take quadratic time), and an unclosed `[` is a literal when splitting sections as well as when tokenizing (#810) |
 | 2026-10-12 | Number formats: a fraction denominator with 65,536 zeros no longer crashes; format codes are capped at 255 characters like Excel (longer codes display as General, `TEXT` gives `#VALUE!`) (#807) |
@@ -193,6 +195,8 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Docs audit re-verified after the 2026-10-12/13 merges: language counts (ten, Serbian added), merged PRs #786, #794 no longer listed as open; progress log unchanged |
+| 2026-10-12 | minor | Docs audit against main: worksheet functions row 98.1%, localization row (ten languages), "Why alpha" and Upcoming text updated for merged work; progress log row. Scores and hour ranges not re-derived |
 | 2026-10-12 | minor | Rows auto-fit oversized fonts on open and whole-row/column formatting (#833); progress log row |
 | 2026-10-12 | minor | Progress log: multi-area row/column delete (#758) |
 | 2026-10-12 | trivial | Progress log: XLSX chart sheets kept on save (#727) |
