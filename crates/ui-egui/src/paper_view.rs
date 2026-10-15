@@ -786,7 +786,9 @@ fn ruler_margins(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, pg: &PageGrid
         let value = if metric { format!("{:.2} cm", inches * 2.54) } else { format!("{inches:.2} in") };
         let text = format!("{}: {value}", app.ui.language.tr(edge.label()));
         egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), egui::Id::new("ruler_margin_tip"), egui::PopupAnchor::Pointer).show(|ui| {
-            ui.label(text);
+            crate::i18n::column(ui, |ui| {
+                ui.label(text);
+            });
         });
     };
     let cursor = |ui: &egui::Ui, edge: Edge| {
@@ -851,24 +853,26 @@ pub fn ribbon_tab(app: &mut SheetApp, ui: &mut egui::Ui) {
     // Header & Footer presets (shown with sample values, as the result will read).
     for (label, part) in [("Header", false), ("Footer", true)] {
         let r = big_button(ui, if part { Icon::Footer } else { Icon::Header }, label, label, true);
-        egui::Popup::menu(&r).show(|ui| {
-            let presets: [(String, &str); 7] = [
-                (tr(app, "(none)").to_string(), ""),
-                ("Page 1".into(), "&CPage &P"),
-                ("Page 1 of ?".into(), "&CPage &P of &N"),
-                (sheet_name.clone(), "&C&A"),
-                (file.clone(), "&C&F"),
-                (format!("{sheet_name}, Page 1"), "&C&A, Page &P"),
-                (format!("{file}, Page 1"), "&C&F, Page &P"),
-            ];
-            for (text, spec) in presets {
-                if ui.button(text).clicked() {
-                    let sheet = app.grid.hf_edit.as_ref().map(|e| e.sheet).unwrap_or(0);
-                    cancel(app);
-                    app.run_or_alert("pageLayout.headerFooter", json!({"sheet": sheet, hf_key(kind, part): spec}));
-                    ui.close();
+        crate::i18n::menu(&r).show(|ui| {
+            crate::i18n::column(ui, |ui| {
+                let presets: [(String, &str); 7] = [
+                    (tr(app, "(none)").to_string(), ""),
+                    ("Page 1".into(), "&CPage &P"),
+                    ("Page 1 of ?".into(), "&CPage &P of &N"),
+                    (sheet_name.clone(), "&C&A"),
+                    (file.clone(), "&C&F"),
+                    (format!("{sheet_name}, Page 1"), "&C&A, Page &P"),
+                    (format!("{file}, Page 1"), "&C&F, Page &P"),
+                ];
+                for (text, spec) in presets {
+                    if ui.button(text).clicked() {
+                        let sheet = app.grid.hf_edit.as_ref().map(|e| e.sheet).unwrap_or(0);
+                        cancel(app);
+                        app.run_or_alert("pageLayout.headerFooter", json!({"sheet": sheet, hf_key(kind, part): spec}));
+                        ui.close();
+                    }
                 }
-            }
+            });
         });
     }
     sep(ui);
@@ -898,7 +902,7 @@ pub fn ribbon_tab(app: &mut SheetApp, ui: &mut egui::Ui) {
         .active()
         .and_then(|d| d.wb.sheet(app.grid.hf_edit.as_ref().map_or(0, |e| e.sheet)).map(|s| (s.print.different_first, s.print.different_odd_even)))
         .unwrap_or_default();
-    ui.vertical(|ui| {
+    crate::i18n::column(ui, |ui| {
         let (mut f, mut o) = (first, odd_even);
         if ui.checkbox(&mut f, tr(app, "Different First Page")).changed() {
             set_option(app, "differentFirst", f);

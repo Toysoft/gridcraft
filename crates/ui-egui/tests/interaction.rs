@@ -722,8 +722,27 @@ fn column_autocomplete_folds_case_beyond_ascii() {
     // "ß" is two bytes, "ẞ" three: the proposed rest starts after the fifth character, not the sixth byte.
     text(&mut h, "straß");
     assert_eq!(completion(&h), ("straß".into(), Some("STRAẞENBAHN".into())));
-    let painted = h.output().shapes.iter().any(|c| matches!(&c.shape, egui::Shape::Text(t) if t.galley.job.text == "ENBAHN"));
-    assert!(painted, "the rest \"ENBAHN\" is drawn after the caret");
+    let suggestion = h
+        .output()
+        .shapes
+        .iter()
+        .find_map(|c| match &c.shape {
+            egui::Shape::Text(t) if t.galley.job.text == "STRAẞENBAHN" => {
+                let selected_left = t
+                    .galley
+                    .rows
+                    .iter()
+                    .flat_map(|row| &row.visuals.mesh.vertices)
+                    .filter(|v| v.color == egui::Color32::from_rgb(0x2E, 0x6F, 0xD8))
+                    .map(|v| v.pos.x)
+                    .reduce(f32::min)?;
+                Some((t, selected_left))
+            }
+            _ => None,
+        })
+        .expect("the full suggestion is painted with its suffix selected");
+    let boundary = suggestion.0.galley.pos_from_cursor(egui::text::CCursor::new(5)).center().x;
+    assert!((suggestion.1 - boundary).abs() < 1.5, "ENBAHN is selected after the fifth character");
 }
 
 #[test]

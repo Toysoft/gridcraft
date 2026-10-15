@@ -23,6 +23,8 @@ fn harness(width: f32, active: usize) -> Harness {
                 return;
             }
             app.grid.cells_rect = Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(ui.max_rect().width(), 80.0)));
+            let sheet = app.session.active().unwrap().wb.active().unwrap();
+            app.grid.geo = Some(gridcraft_ui_egui::grid::Geo::new(sheet, app.grid.cells_rect.unwrap(), app.view().scroll));
             gridcraft_ui_egui::tabs::sheet_tabs(app, ui);
         },
         SheetApp::new(s, Default::default()),
@@ -161,4 +163,75 @@ fn overflow_leaves_the_worksheet_scrollbar_reachable() {
         assert!(track.width() >= 100.0, "{width}: the scrollbar keeps a usable width: {track:?}");
         assert!(track.left() >= 0.0 && track.right() <= width + 0.5, "{width}: the scrollbar is offscreen: {track:?}");
     }
+}
+
+#[test]
+fn rtl_tabs_reveal_active_sheets_and_scrollbar_drags_towards_later_columns() {
+    let mut h = harness(1000.0, 0);
+    h.state_mut().run("view.rightToLeft", json!({"on": true})).unwrap();
+    h.run_steps(20);
+    assert_visible(&h, "Tab00");
+    let (first, _) = tab(&h, "Tab00").unwrap();
+    let (second, _) = tab(&h, "Tab01").unwrap();
+    assert!(first.center().x > second.center().x);
+    let bar = h
+        .output()
+        .shapes
+        .iter()
+        .find_map(|s| match &s.shape {
+            Shape::Rect(r) if r.rect.height() == 8.0 && s.clip_rect.intersects(r.rect) => Some(r.rect),
+            _ => None,
+        })
+        .unwrap();
+    let at = bar.center();
+    h.input_mut().events.extend([
+        Event::PointerMoved(at),
+        Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE },
+    ]);
+    h.step();
+    h.input_mut().events.push(Event::PointerMoved(at - vec2(12.0, 0.0)));
+    h.step();
+    assert!(h.state().view().scroll.x > 0.0);
+    h.input_mut().events.push(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    for active in [29, 0, 20] {
+        h.state_mut().run("sheet.activate", json!({"sheet": active})).unwrap();
+        h.run_steps(20);
+        assert_visible(&h, &format!("Tab{active:02}"));
+    }
+}
+
+#[test]
+fn a_short_tab_strip_leaves_a_wide_worksheet_scrollbar() {
+    let mut h = harness(1400.0, 0);
+    for sheet in 1..30 {
+        h.state_mut().run("sheet.hide", json!({"sheet":sheet})).unwrap();
+    }
+    for rtl in [false, true] {
+        h.state_mut().run("view.rightToLeft", json!({"on":rtl})).unwrap();
+        h.run_steps(20);
+        let thumb = h
+            .output()
+            .shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                Shape::Rect(r) if r.rect.height() == 8.0 && s.clip_rect.intersects(r.rect) => Some(r.rect),
+                _ => None,
+            })
+            .unwrap();
+        assert!(thumb.width() > 400.0, "a single worksheet must not squeeze the scrollbar: {thumb:?}");
+        assert_visible(&h, "Tab00");
+    }
+}
+
+#[test]
+fn a_short_rtl_tab_strip_aligns_against_its_right_edge() {
+    let mut h = harness(1000.0, 0);
+    for sheet in 1..30 {
+        h.state_mut().run("sheet.hide", json!({"sheet": sheet})).unwrap();
+    }
+    h.state_mut().run("view.rightToLeft", json!({"on": true})).unwrap();
+    h.run_steps(20);
+    let (text, clip) = tab(&h, "Tab00").unwrap();
+    assert!(clip.contains_rect(text));
+    assert!(text.center().x > clip.center().x);
 }

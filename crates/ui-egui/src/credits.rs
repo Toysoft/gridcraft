@@ -224,12 +224,14 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
         ui.separator();
         ui.label("Sort");
         egui::ComboBox::from_id_salt("credits_sort").selected_text(v.key.label().0).show_ui(ui, |ui| {
-            for k in SortKey::ALL {
-                if ui.selectable_label(v.key == k, k.label().0).clicked() {
-                    v.key = k;
-                    v.ascending = k.default_ascending();
+            crate::i18n::column(ui, |ui| {
+                for k in SortKey::ALL {
+                    if ui.selectable_label(v.key == k, k.label().0).clicked() {
+                        v.key = k;
+                        v.ascending = k.default_ascending();
+                    }
                 }
-            }
+            });
         });
         if ui.button(if v.ascending { "▲" } else { "▼" }).on_hover_text("Reverse the order").clicked() {
             v.ascending = !v.ascending;
@@ -265,7 +267,7 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
 }
 
 fn table(ui: &mut egui::Ui, list: &[&Contributor], v: &mut View) {
-    egui::Grid::new("credits_table").striped(true).num_columns(SortKey::ALL.len()).show(ui, |ui| {
+    crate::i18n::form(ui, egui::Grid::new("credits_table").striped(true).num_columns(SortKey::ALL.len()), |ui| {
         for k in SortKey::ALL {
             let arrow = if v.key == k { if v.ascending { " ▲" } else { " ▼" } } else { "" };
             if ui.button(RichText::new(format!("{}{arrow}", k.label().1)).strong()).on_hover_text(k.label().0).clicked() {
@@ -302,7 +304,7 @@ pub fn models_ui(ui: &mut egui::Ui) {
     }
     let assisted: u64 = MODELS.iter().map(|m| m.commits).max().unwrap_or(0).max(1);
     egui::ScrollArea::both().auto_shrink([false, false]).max_height(340.0).show(ui, |ui| {
-        egui::Grid::new("credits_models").striped(true).num_columns(6).show(ui, |ui| {
+        crate::i18n::form(ui, egui::Grid::new("credits_models").striped(true).num_columns(6), |ui| {
             for h in ["Company", "Model", "Version", "Commits", "% of all commits", "Lines +/−"] {
                 ui.label(RichText::new(h).strong());
             }

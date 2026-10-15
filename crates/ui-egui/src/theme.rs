@@ -491,6 +491,7 @@ fn fallback_faces(han: HanOrder) -> Vec<(&'static str, Vec<(String, u32)>)> {
         second,
         ("sys-cjk-hangul", cjk_hangul()),
         ("sys-thai", thai()),
+        ("sys-arabic", arabic()),
         ("sys-hebrew", hebrew()),
         ("sys-symbols", symbols()),
         ("sys-symbols-2", symbols_more()),
@@ -620,6 +621,31 @@ fn hebrew() -> Vec<(String, u32)> {
         v.push((format!("{d}/freefont/FreeSans.ttf"), 0));
     }
     v
+}
+
+/// System-provided Arabic faces, including glyphs and OpenType joining/mark tables. No font
+/// files are copied or bundled. The text shaper in epaint uses these tables when drawing.
+#[cfg(not(target_arch = "wasm32"))]
+fn arabic() -> Vec<(String, u32)> {
+    let win = std::env::var("WINDIR").map(|w| format!("{w}\\Fonts")).unwrap_or_else(|_| "C:\\Windows\\Fonts".into());
+    let mut paths = vec![
+        (format!("{win}\\segoeui.ttf"), 0),
+        (format!("{win}\\tahoma.ttf"), 0),
+        ("/System/Library/Fonts/Supplemental/Geeza Pro.ttc".into(), 0),
+        ("/System/Library/Fonts/GeezaPro.ttc".into(), 0),
+    ];
+    for dir in [
+        "/usr/share/fonts/truetype/noto",
+        "/usr/share/fonts/opentype/noto",
+        "/usr/share/fonts/noto",
+        "/usr/share/fonts/google-noto-sans-arabic-fonts",
+        "/usr/local/share/fonts",
+    ] {
+        paths.push((format!("{dir}/NotoSansArabic-Regular.ttf"), 0));
+        paths.push((format!("{dir}/NotoNaskhArabic-Regular.ttf"), 0));
+    }
+    paths.push(("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".into(), 0));
+    paths
 }
 
 /// Symbol faces behind the UI font. Interface fonts such as Noto Sans and Cantarell (and egui's
@@ -815,11 +841,11 @@ mod tests {
         let keys = |han| fallback_faces(han).into_iter().map(|(k, _)| k).collect::<Vec<_>>();
         assert_eq!(
             keys(HanOrder::Japanese),
-            ["sys-cjk-han-ja", "sys-cjk-han-zh", "sys-cjk-hangul", "sys-thai", "sys-hebrew", "sys-symbols", "sys-symbols-2"]
+            ["sys-cjk-han-ja", "sys-cjk-han-zh", "sys-cjk-hangul", "sys-thai", "sys-arabic", "sys-hebrew", "sys-symbols", "sys-symbols-2"]
         );
         assert_eq!(
             keys(HanOrder::Chinese),
-            ["sys-cjk-han-zh", "sys-cjk-han-ja", "sys-cjk-hangul", "sys-thai", "sys-hebrew", "sys-symbols", "sys-symbols-2"]
+            ["sys-cjk-han-zh", "sys-cjk-han-ja", "sys-cjk-hangul", "sys-thai", "sys-arabic", "sys-hebrew", "sys-symbols", "sys-symbols-2"]
         );
         assert_eq!(HanOrder::of(Language::Ja), HanOrder::Japanese);
         for l in [Language::En, Language::Zh, Language::Ko, Language::Ru, Language::PtBr, Language::De, Language::Cs] {
@@ -848,11 +874,12 @@ mod tests {
         // Real render check, per script: the proportional family (what cells and the UI use) must
         // resolve a sample string to a real glyph, not the tofu replacement char. Skips a script
         // whose face is absent (a minimal machine) and fails if a face is present but not wired in.
-        let cases: [(&str, Vec<(String, u32)>, &str); 7] = [
+        let cases: [(&str, Vec<(String, u32)>, &str); 8] = [
             ("sys-cjk-han-ja", cjk_han_japanese(), "カテゴリ"),
             ("sys-cjk-han-zh", cjk_han_simplified(), "页面布局 客户端配置"),
             ("sys-cjk-hangul", cjk_hangul(), "한글"),
             ("sys-thai", thai(), "ทดสอบ"),
+            ("sys-arabic", arabic(), "العربية"),
             ("sys-hebrew", hebrew(), "עברית"),
             ("ui", candidates(UI), "Русский"),
             // Czech interface labels: every Czech accented letter, in both cases.

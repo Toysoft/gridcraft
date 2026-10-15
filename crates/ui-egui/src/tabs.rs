@@ -37,16 +37,19 @@ fn activate_sheet(app: &mut SheetApp, i: usize) {
 
 pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
+    let sheet_rtl = app.session.active().and_then(|d| d.wb.active()).is_some_and(|s| s.right_to_left);
+    let rtl = app.ui.language.is_rtl() || sheet_rtl;
+    let layout = if rtl { egui::Layout::right_to_left(egui::Align::Center) } else { egui::Layout::left_to_right(egui::Align::Center) };
     egui::Panel::bottom("sheet_tabs").exact_size(32.0).frame(egui::Frame::NONE.fill(t.tab_bar)).show(ui, |ui| {
         let rect = ui.max_rect();
         ui.painter().line_segment([rect.left_top(), rect.right_top()], Stroke::new(1.0, t.ribbon_border));
-        ui.horizontal_centered(|ui| {
+        ui.with_layout(layout, |ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(8.0);
-            if crate::widgets::icon_button(ui, Icon::Left, t.text_dim, "Previous sheet", vec2(24.0, 24.0)).clicked() {
+            if crate::widgets::icon_button(ui, if rtl { Icon::Right } else { Icon::Left }, t.text_dim, "Previous sheet", vec2(24.0, 24.0)).clicked() {
                 app.run_or_alert("sheet.previous", json!({}));
             }
-            if crate::widgets::icon_button(ui, Icon::Right, t.text_dim, "Next sheet", vec2(24.0, 24.0)).clicked() {
+            if crate::widgets::icon_button(ui, if rtl { Icon::Left } else { Icon::Right }, t.text_dim, "Next sheet", vec2(24.0, 24.0)).clicked() {
                 app.run_or_alert("sheet.next", json!({}));
             }
             let all = crate::widgets::icon_button(ui, Icon::SheetList, t.text_dim, "All sheets", vec2(24.0, 24.0));
@@ -61,16 +64,28 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
             }
             ui.add_space(8.0);
             let Some(d) = app.session.active() else { return };
-            let sheets: Vec<(usize, String, Option<[u8; 3]>, bool)> =
+            let mut sheets: Vec<(usize, String, Option<[u8; 3]>, bool)> =
                 d.wb.sheets
                     .iter()
                     .enumerate()
                     .filter(|(_, s)| s.visibility == Visibility::Visible)
                     .map(|(i, s)| (i, s.name.clone(), s.tab_color.and_then(|c| c.resolve(&d.wb.theme)), i == d.wb.active_sheet))
                     .collect();
-            // Keep worksheet tabs in their own horizontally scrollable viewport. As in Excel, the
-            // tabs get 60% of the bar and the grid's horizontal scrollbar the rest.
-            let tabs_width = (ui.available_width() * 0.6).max(100.0);
+            // ScrollArea uses left-to-right physical offsets. Reverse the visual tab sequence
+            // inside it so revealing a tab and wheel browsing retain that coordinate system.
+            if rtl {
+                sheets.reverse();
+            }
+            // Keep worksheet tabs in their own horizontally scrollable
+            // viewport, leaving room for the New Sheet button and grid scrollbar.
+            let content_width: f32 = sheets
+                .iter()
+                .map(|(_, name, _, active)| {
+                    let font = if *active { theme::ui_bold(13.0) } else { theme::ui_font(13.0) };
+                    (ui.painter().layout_no_wrap(name.clone(), font, t.text).size().x + 32.0).max(72.0)
+                })
+                .sum();
+            let tabs_width = (ui.available_width() * 0.6).max(100.0).min(content_width.max(100.0));
             // Reveal the selected sheet after navigation or layout changes, but
             // allow browsing other tabs without snapping back on every frame.
             let reveal_key = egui::Id::new((d.uid, d.wb.active_sheet, &sheets, tabs_width.to_bits()));
@@ -102,6 +117,9 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                         }
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
+                            if rtl {
+                                ui.add_space((tabs_width - content_width).max(0.0));
+                            }
                             for (i, name, color, active) in sheets {
                                 let renaming = app.grid.renaming_tab == Some(i);
                                 let font = if active { theme::ui_bold(13.0) } else { theme::ui_font(13.0) };
@@ -146,7 +164,14 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                                         app.grid.renaming_tab = None;
                                     }
                                 } else {
-                                    ui.painter().text(r.center(), Align2::CENTER_CENTER, &name, font, if active { t.accent } else { t.text });
+                                    crate::i18n::paint(
+                                        ui.painter(),
+                                        r.center(),
+                                        Align2::CENTER_CENTER,
+                                        &name,
+                                        font,
+                                        if active { t.accent } else { t.text },
+                                    );
                                 }
                                 if resp.clicked() {
                                     activate_sheet(app, i);
@@ -160,52 +185,63 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                                     && let Some(p) = ui.input(|inp| inp.pointer.interact_pos())
                                 {
                                     let dx = p.x - r.center().x;
-                                    let steps = (dx / w).round() as i64;
+                                    let steps = (dx / w * if rtl { -1.0 } else { 1.0 }).round() as i64;
                                     if steps != 0 {
                                         let to = (i as i64 + steps).max(0) as usize;
                                         app.run_or_alert("sheet.move", json!({"sheet": i, "to": to}));
                                     }
                                 }
                                 resp.context_menu(|ui| {
-                                    ui.set_min_width(180.0);
-                                    if ui.button("Insert Sheet").clicked() {
-                                        app.run_or_alert("home.insertSheet", json!({"before": i}));
-                                    }
-                                    if ui.button("Delete").clicked() {
-                                        app.run_or_alert("home.deleteSheet", json!({"sheet": i}));
-                                    }
-                                    if ui.button("Rename").clicked() {
-                                        app.grid.renaming_tab = Some(i);
-                                        app.grid.rename_text = name.clone();
-                                    }
-                                    if ui.button("Move or Copy…").clicked() {
-                                        app.open_dialog("moveSheet", json!({"sheet": i}));
-                                    }
-                                    if ui.button("Duplicate").clicked() {
-                                        app.run_or_alert("sheet.move", json!({"sheet": i, "to": i + 1, "copy": true}));
-                                    }
-                                    ui.menu_button("Tab Color", |ui| {
-                                        let colors = app.session.active().map(|d| d.wb.theme.colors).unwrap_or_default();
-                                        if let Some(c) = crate::widgets::color_palette(ui, &colors, "No Color") {
-                                            app.run_or_alert("sheet.tabColor", json!({"sheet": i, "color": c}));
+                                    crate::i18n::column(ui, |ui| {
+                                        ui.set_min_width(180.0);
+                                        if ui.button(crate::i18n::current(ui.ctx()).tr("Insert Sheet")).clicked() {
+                                            app.run_or_alert("home.insertSheet", json!({"before": i}));
+                                        }
+                                        if ui.button(crate::i18n::current(ui.ctx()).tr("Delete")).clicked() {
+                                            app.run_or_alert("home.deleteSheet", json!({"sheet": i}));
+                                        }
+                                        if ui.button(crate::i18n::current(ui.ctx()).tr("Rename")).clicked() {
+                                            app.grid.renaming_tab = Some(i);
+                                            app.grid.rename_text = name.clone();
+                                        }
+                                        if ui.button(crate::i18n::current(ui.ctx()).tr("Move or Copy…")).clicked() {
+                                            app.open_dialog("moveSheet", json!({"sheet": i}));
+                                        }
+                                        if ui.button(crate::i18n::current(ui.ctx()).tr("Duplicate")).clicked() {
+                                            app.run_or_alert("sheet.move", json!({"sheet": i, "to": i + 1, "copy": true}));
+                                        }
+                                        ui.menu_button(crate::i18n::current(ui.ctx()).tr("Tab Color"), |ui| {
+                                            crate::i18n::column(ui, |ui| {
+                                                let colors = app.session.active().map(|d| d.wb.theme.colors).unwrap_or_default();
+                                                if let Some(c) = crate::widgets::color_palette(ui, &colors, "No Color") {
+                                                    app.run_or_alert("sheet.tabColor", json!({"sheet": i, "color": c}));
+                                                    ui.close();
+                                                }
+                                            });
+                                        });
+                                        ui.separator();
+                                        if ui.button(crate::i18n::current(ui.ctx()).tr("Hide")).clicked() {
+                                            app.run_or_alert("sheet.hide", json!({"sheet": i}));
+                                        }
+                                        if ui.button(crate::i18n::current(ui.ctx()).tr("Unhide…")).clicked() {
+                                            app.run_or_alert("sheet.unhide", json!({}));
+                                        }
+                                        ui.separator();
+                                        let protected = app.session.active().and_then(|d| d.wb.active().map(|s| s.is_protected())).unwrap_or(false);
+                                        if ui
+                                            .button(crate::i18n::current(ui.ctx()).tr(if protected {
+                                                "Unprotect Sheet…"
+                                            } else {
+                                                "Protect Sheet…"
+                                            }))
+                                            .clicked()
+                                        {
+                                            app.open_dialog(if protected { "unprotectSheet" } else { "protectSheet" }, json!({}));
+                                        }
+                                        if ui.button(crate::i18n::current(ui.ctx()).tr("Select All Sheets")).clicked() {
                                             ui.close();
                                         }
                                     });
-                                    ui.separator();
-                                    if ui.button("Hide").clicked() {
-                                        app.run_or_alert("sheet.hide", json!({"sheet": i}));
-                                    }
-                                    if ui.button("Unhide…").clicked() {
-                                        app.run_or_alert("sheet.unhide", json!({}));
-                                    }
-                                    ui.separator();
-                                    let protected = app.session.active().and_then(|d| d.wb.active().map(|s| s.is_protected())).unwrap_or(false);
-                                    if ui.button(if protected { "Unprotect Sheet…" } else { "Protect Sheet…" }).clicked() {
-                                        app.open_dialog(if protected { "unprotectSheet" } else { "protectSheet" }, json!({}));
-                                    }
-                                    if ui.button("Select All Sheets").clicked() {
-                                        ui.close();
-                                    }
                                 });
                             }
                         });
@@ -229,109 +265,119 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
     egui::Panel::bottom("status_bar").exact_size(26.0).frame(egui::Frame::NONE.fill(t.status_bar).inner_margin(egui::Margin::symmetric(12, 0))).show(
         ui,
         |ui| {
-            ui.horizontal_centered(|ui| {
-                let mode = match app.session.mode {
-                    gridcraft_engine::Mode::Ready => "Ready",
-                    gridcraft_engine::Mode::Enter => "Enter",
-                    gridcraft_engine::Mode::Edit => "Edit",
-                    gridcraft_engine::Mode::Point => "Point",
-                };
-                ui.label(egui::RichText::new(app.ui.language.tr(mode)).font(theme::ui_font(12.5)).color(t.text_dim));
-                if let Some(d) = app.session.active() {
-                    if d.wb.vba_project.is_some() {
-                        ui.add_space(12.0);
-                        ui.label(egui::RichText::new("Macros preserved (not executed)").font(theme::ui_font(12.5)).color(t.danger));
+            crate::i18n::column(ui, |ui| {
+                ui.horizontal_centered(|ui| {
+                    let mode = match app.session.mode {
+                        gridcraft_engine::Mode::Ready => "Ready",
+                        gridcraft_engine::Mode::Enter => "Enter",
+                        gridcraft_engine::Mode::Edit => "Edit",
+                        gridcraft_engine::Mode::Point => "Point",
+                    };
+                    ui.label(egui::RichText::new(app.ui.language.tr(mode)).font(theme::ui_font(12.5)).color(t.text_dim));
+                    if let Some(d) = app.session.active() {
+                        if d.wb.vba_project.is_some() {
+                            ui.add_space(12.0);
+                            ui.label(
+                                egui::RichText::new(crate::i18n::current(ui.ctx()).tr("Macros preserved (not executed)"))
+                                    .font(theme::ui_font(12.5))
+                                    .color(t.danger),
+                            );
+                        }
+                        if d.wb.calc.mode == gridcraft_engine::model::CalcMode::Manual {
+                            ui.add_space(12.0);
+                            ui.label(egui::RichText::new(app.ui.language.tr("Calculate")).font(theme::ui_font(12.5)).color(t.text_dim));
+                        }
+                        if !d.calc.circular.is_empty() {
+                            ui.add_space(12.0);
+                            let (si, c) = d.calc.circular[0];
+                            let name = d.wb.sheet(si).map(|s| s.name.clone()).unwrap_or_default();
+                            ui.label(
+                                egui::RichText::new(format!("Circular References: {name}!{}", c.a1())).font(theme::ui_font(12.5)).color(t.danger),
+                            );
+                        }
+                        if app.session.clipboard.is_some() && app.editor.is_none() {
+                            ui.add_space(12.0);
+                            ui.label(
+                                egui::RichText::new(app.ui.language.tr("Select destination and press Enter or choose Paste"))
+                                    .font(theme::ui_font(12.5))
+                                    .color(t.text_dim),
+                            );
+                        }
                     }
-                    if d.wb.calc.mode == gridcraft_engine::model::CalcMode::Manual {
-                        ui.add_space(12.0);
-                        ui.label(egui::RichText::new(app.ui.language.tr("Calculate")).font(theme::ui_font(12.5)).color(t.text_dim));
-                    }
-                    if !d.calc.circular.is_empty() {
-                        ui.add_space(12.0);
-                        let (si, c) = d.calc.circular[0];
-                        let name = d.wb.sheet(si).map(|s| s.name.clone()).unwrap_or_default();
-                        ui.label(egui::RichText::new(format!("Circular References: {name}!{}", c.a1())).font(theme::ui_font(12.5)).color(t.danger));
-                    }
-                    if app.session.clipboard.is_some() && app.editor.is_none() {
-                        ui.add_space(12.0);
-                        ui.label(
-                            egui::RichText::new(app.ui.language.tr("Select destination and press Enter or choose Paste"))
-                                .font(theme::ui_font(12.5))
-                                .color(t.text_dim),
+                    ui.with_layout(crate::i18n::trailing_layout(ui.ctx()), |ui| {
+                        // Zoom percentage and slider.
+                        let zoom = app.session.active().and_then(|d| d.wb.active().map(|s| s.zoom)).unwrap_or(100);
+                        let zl = ui.add(
+                            egui::Label::new(egui::RichText::new(format!("{zoom}%")).font(theme::ui_font(12.5)).color(t.text_dim))
+                                .sense(Sense::click()),
                         );
-                    }
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // Zoom percentage and slider.
-                    let zoom = app.session.active().and_then(|d| d.wb.active().map(|s| s.zoom)).unwrap_or(100);
-                    let zl = ui.add(
-                        egui::Label::new(egui::RichText::new(format!("{zoom}%")).font(theme::ui_font(12.5)).color(t.text_dim)).sense(Sense::click()),
-                    );
-                    if zl.clicked() {
-                        app.open_dialog("zoom", json!({}));
-                    }
-                    ui.add_space(4.0);
-                    if crate::widgets::icon_button(ui, Icon::Plus, t.text_dim, "Zoom In", vec2(18.0, 18.0)).clicked() {
-                        let z = ((zoom as f32 / 10.0).floor() * 10.0 + 10.0).min(400.0);
-                        app.run_or_alert("view.zoom", json!({"percent": z}));
-                    }
-                    let mut z = zoom as f32;
-                    let slider = ui.add(egui::Slider::new(&mut z, 10.0..=400.0).show_value(false).logarithmic(true));
-                    if slider.changed() {
-                        let _ = app.session.run("view.zoom", json!({"percent": z.round()}));
-                    }
-                    if crate::widgets::icon_button(ui, Icon::Minus, t.text_dim, "Zoom Out", vec2(18.0, 18.0)).clicked() {
-                        let z = ((zoom as f32 / 10.0).ceil() * 10.0 - 10.0).max(10.0);
-                        app.run_or_alert("view.zoom", json!({"percent": z}));
-                    }
-                    ui.add_space(10.0);
-                    for (icon, tip, mode, cmd) in [
-                        (Icon::PageBreak, "Page Break Preview", "pageBreakPreview", "view.pageBreakPreview"),
-                        (Icon::PageLayout, "Page Layout", "pageLayout", "view.pageLayout"),
-                        (Icon::Normal, "Normal", "normal", "view.normal"),
-                    ] {
-                        let (r, resp) = ui.allocate_exact_size(vec2(26.0, 20.0), Sense::click());
-                        let cur = app.session.active().and_then(|d| d.wb.active().map(|s| s.view.as_str())).unwrap_or("normal");
-                        if cur == mode {
-                            ui.painter().rect_filled(r, 3.0, t.pressed);
-                        } else if resp.hovered() {
-                            ui.painter().rect_filled(r, 3.0, t.hover);
+                        if zl.clicked() {
+                            app.open_dialog("zoom", json!({}));
                         }
-                        icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(14.0, 14.0)), icon, t.text_dim);
-                        if resp.on_hover_text(tip).clicked() {
-                            app.run_or_alert(cmd, json!({}));
+                        ui.add_space(4.0);
+                        if crate::widgets::icon_button(ui, Icon::Plus, t.text_dim, "Zoom In", vec2(18.0, 18.0)).clicked() {
+                            let z = ((zoom as f32 / 10.0).floor() * 10.0 + 10.0).min(400.0);
+                            app.run_or_alert("view.zoom", json!({"percent": z}));
                         }
-                    }
-                    ui.add_space(16.0);
-                    // Average / Count / Sum.
-                    if let Some(d) = app.session.active()
-                        && let Some(sh) = d.wb.active()
-                        && !d.selection.is_single_cell()
-                    {
-                        let st = gridcraft_engine::display::stats(sh, &d.selection.ranges);
-                        let fmt = |v: f64| {
-                            let code = d.wb.styles.get(sh.style_id(d.selection.active)).num_fmt.as_str().to_string();
-                            let code = if code == "General" { "#,##0.##########".to_string() } else { code };
-                            gridcraft_engine::display::format(&gridcraft_engine::core::Value::Number(v), &code, &d.wb)
-                                .text
-                                .trim_end_matches('.')
-                                .to_string()
-                        };
-                        let mut parts = Vec::new();
-                        if st.numeric > 0 {
-                            parts.push(format!("Sum: {}", fmt(st.sum)));
+                        let mut z = zoom as f32;
+                        let range = if app.ui.language.is_rtl() { 400.0..=10.0 } else { 10.0..=400.0 };
+                        let slider = ui.add(egui::Slider::new(&mut z, range).show_value(false).logarithmic(true));
+                        if slider.changed() {
+                            let _ = app.session.run("view.zoom", json!({"percent": z.round()}));
                         }
-                        if st.count > 0 {
-                            parts.push(format!("Count: {}", st.count));
+                        if crate::widgets::icon_button(ui, Icon::Minus, t.text_dim, "Zoom Out", vec2(18.0, 18.0)).clicked() {
+                            let z = ((zoom as f32 / 10.0).ceil() * 10.0 - 10.0).max(10.0);
+                            app.run_or_alert("view.zoom", json!({"percent": z}));
                         }
-                        if let Some(a) = st.average {
-                            parts.push(format!("Average: {}", fmt(a)));
+                        ui.add_space(10.0);
+                        for (icon, tip, mode, cmd) in [
+                            (Icon::PageBreak, "Page Break Preview", "pageBreakPreview", "view.pageBreakPreview"),
+                            (Icon::PageLayout, "Page Layout", "pageLayout", "view.pageLayout"),
+                            (Icon::Normal, "Normal", "normal", "view.normal"),
+                        ] {
+                            let (r, resp) = ui.allocate_exact_size(vec2(26.0, 20.0), Sense::click());
+                            let cur = app.session.active().and_then(|d| d.wb.active().map(|s| s.view.as_str())).unwrap_or("normal");
+                            if cur == mode {
+                                ui.painter().rect_filled(r, 3.0, t.pressed);
+                            } else if resp.hovered() {
+                                ui.painter().rect_filled(r, 3.0, t.hover);
+                            }
+                            icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(14.0, 14.0)), icon, t.text_dim);
+                            if resp.on_hover_text(tip).clicked() {
+                                app.run_or_alert(cmd, json!({}));
+                            }
                         }
-                        for p in parts {
-                            ui.label(egui::RichText::new(p).font(theme::ui_font(12.5)).color(t.text_dim));
-                            ui.add_space(10.0);
+                        ui.add_space(16.0);
+                        // Average / Count / Sum.
+                        if let Some(d) = app.session.active()
+                            && let Some(sh) = d.wb.active()
+                            && !d.selection.is_single_cell()
+                        {
+                            let st = gridcraft_engine::display::stats(sh, &d.selection.ranges);
+                            let fmt = |v: f64| {
+                                let code = d.wb.styles.get(sh.style_id(d.selection.active)).num_fmt.as_str().to_string();
+                                let code = if code == "General" { "#,##0.##########".to_string() } else { code };
+                                gridcraft_engine::display::format(&gridcraft_engine::core::Value::Number(v), &code, &d.wb)
+                                    .text
+                                    .trim_end_matches('.')
+                                    .to_string()
+                            };
+                            let mut parts = Vec::new();
+                            if st.numeric > 0 {
+                                parts.push(format!("{}: {}", app.ui.language.tr("Sum"), fmt(st.sum)));
+                            }
+                            if st.count > 0 {
+                                parts.push(format!("{}: {}", app.ui.language.tr("Count"), st.count));
+                            }
+                            if let Some(a) = st.average {
+                                parts.push(format!("{}: {}", app.ui.language.tr("Average"), fmt(a)));
+                            }
+                            for p in parts {
+                                ui.label(egui::RichText::new(p).font(theme::ui_font(12.5)).color(t.text_dim));
+                                ui.add_space(10.0);
+                            }
                         }
-                    }
+                    });
                 });
             });
         },

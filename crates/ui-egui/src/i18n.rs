@@ -9,6 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
+mod ar;
 mod cs;
 mod de;
 mod es;
@@ -24,6 +25,7 @@ mod zh;
 pub enum Language {
     #[default]
     En,
+    Ar,
     Es,
     Zh,
     Ja,
@@ -38,12 +40,19 @@ pub enum Language {
 }
 
 impl Language {
-    pub const ALL: [Self; 11] = [Self::En, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::PtBr, Self::De, Self::Cs, Self::Fr, Self::Sr];
+    /// Interface direction is independent of the active worksheet's saved direction.
+    pub const fn is_rtl(self) -> bool {
+        matches!(self, Self::Ar)
+    }
+
+    pub const ALL: [Self; 12] =
+        [Self::En, Self::Ar, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::PtBr, Self::De, Self::Cs, Self::Fr, Self::Sr];
 
     /// The language's own name, shown in the switcher.
     pub fn name(self) -> &'static str {
         match self {
             Self::En => "English",
+            Self::Ar => "العربية",
             Self::Es => "Español",
             Self::Zh => "简体中文",
             Self::Ja => "日本語",
@@ -61,6 +70,7 @@ impl Language {
     pub const fn code(self) -> &'static str {
         match self {
             Self::En => "en",
+            Self::Ar => "ar",
             Self::Es => "es",
             Self::Zh => "zh",
             Self::Ja => "ja",
@@ -81,6 +91,7 @@ impl Language {
     fn from_tag(tag: &str) -> Option<Self> {
         match tag.trim().split(['-', '_']).next()?.to_ascii_lowercase().as_str() {
             "en" => Some(Self::En),
+            "ar" => Some(Self::Ar),
             "es" => Some(Self::Es),
             "zh" => Some(Self::Zh),
             "ja" => Some(Self::Ja),
@@ -119,6 +130,7 @@ impl Language {
     pub fn tr(self, text: &str) -> &str {
         let translated = match self {
             Self::En => None,
+            Self::Ar => ar::translate(text),
             Self::Es => es::translate(text),
             Self::Ja => JAPANESE.iter().find(|(english, _)| *english == text).map(|(_, translated)| *translated),
             Self::Zh => zh::translate(text),
@@ -171,6 +183,69 @@ pub fn current(ctx: &egui::Context) -> Language {
 /// Sets the language for the current frame; call once per frame before anything is drawn.
 pub fn set_current(ctx: &egui::Context, language: Language) {
     ctx.data_mut(|d| d.insert_temp(lang_key(), language));
+}
+
+/// Shared interface direction. Worksheet geometry and formula syntax keep their own direction.
+pub fn layout(ctx: &egui::Context) -> egui::Layout {
+    egui::Layout::top_down(if current(ctx).is_rtl() { egui::Align::RIGHT } else { egui::Align::LEFT })
+}
+
+/// Compact vertical group, anchored to the leading edge of the current interface language.
+pub fn column<R>(ui: &mut egui::Ui, draw: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
+    let mut builder = egui::UiBuilder::new().layout(layout(ui.ctx()));
+    if ui.is_sizing_pass() && egui::menu::is_in_menu(ui) {
+        // Measure from the origin during the invisible pass, so RTL's leading edge
+        // does not turn the popup's offered width into its content width.
+        builder = builder.layout(egui::Layout::top_down(egui::Align::LEFT));
+    }
+    if current(ui.ctx()).is_rtl() {
+        // Floating windows and scroll areas initially offer infinite width. RTL needs a
+        // finite leading edge before laying out its first widget.
+        let mut bounds = ui.available_rect_before_wrap();
+        if !bounds.width().is_finite() {
+            let width = ui.min_rect().width().max(ui.spacing().text_edit_width).min(ui.ctx().content_rect().width().max(1.0));
+            bounds.max.x = bounds.min.x + width;
+            builder = builder.max_rect(bounds);
+        }
+    }
+    ui.scope_builder(builder, draw)
+}
+
+/// Buttons that occupy the trailing edge of a row reverse with the interface direction.
+pub fn trailing_layout(ctx: &egui::Context) -> egui::Layout {
+    if current(ctx).is_rtl() { egui::Layout::left_to_right(egui::Align::Center) } else { egui::Layout::right_to_left(egui::Align::Center) }
+}
+
+/// Rect for a manually painted widget before its space is allocated by the caller.
+pub fn leading_rect(ui: &egui::Ui, size: egui::Vec2) -> egui::Rect {
+    let available = ui.available_rect_before_wrap();
+    let x = if ui.layout().prefer_right_to_left() { available.right() - size.x } else { available.left() };
+    egui::Rect::from_min_size(egui::pos2(x, available.top()), size)
+}
+
+/// egui::Grid currently supports LTR only. Existing form row boundaries also work in its
+/// wrapping row layout, which keeps Arabic fields in RTL order without duplicating forms.
+pub fn form<R>(ui: &mut egui::Ui, grid: egui::Grid, draw: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
+    if current(ui.ctx()).is_rtl() { column(ui, |ui| ui.horizontal_wrapped(draw)).inner } else { grid.show(ui, draw) }
+}
+
+pub fn columns<R>(ui: &mut egui::Ui, count: usize, draw: impl FnOnce(&mut [egui::Ui]) -> R) -> R {
+    let rtl = current(ui.ctx()).is_rtl();
+    ui.columns(count, |cols| {
+        if rtl {
+            cols.reverse();
+            for col in cols.iter_mut() {
+                let bounds = col.max_rect();
+                *col = col.new_child(egui::UiBuilder::new().max_rect(bounds).layout(layout(col.ctx()).with_cross_justify(true)));
+            }
+        }
+        draw(cols)
+    })
+}
+
+pub fn menu(response: &egui::Response) -> egui::Popup<'_> {
+    let menu = egui::Popup::menu(response);
+    if current(&response.ctx).is_rtl() { menu.align(egui::RectAlign::BOTTOM_END) } else { menu }
 }
 
 /// English label → Japanese. Keys are the exact interface strings (command ids, file names and
@@ -592,6 +667,42 @@ const JAPANESE: &[(&str, &str)] = &[
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn arabic_catalog_covers_commands_and_preserves_placeholders() {
+        for command in gridcraft_engine::Session::new().commands() {
+            assert!(super::ar::translate(command.label).is_some(), "missing Arabic command label: {}", command.label);
+            for part in command.menu {
+                assert!(super::ar::translate(part).is_some(), "missing Arabic command path: {part}");
+            }
+        }
+        let placeholders =
+            |s: &str| -> Vec<String> { s.split('{').skip(1).filter_map(|part| part.split_once('}').map(|(name, _)| name.to_owned())).collect() };
+        for line in include_str!("i18n/ar.rs").lines() {
+            let Some((key, value)) = line.trim().strip_prefix('"').and_then(|rest| rest.split_once("\" => \"")) else { continue };
+            assert!(!value.trim_end_matches(['"', ',']).is_empty());
+            assert_eq!(placeholders(key), placeholders(value), "placeholder mismatch: {key}");
+        }
+    }
+
+    #[test]
+    fn arabic_locale_and_preference_round_trip() {
+        use super::Language;
+        for tag in ["ar", "ar-EG", "ar_SA", "AR-ma"] {
+            assert_eq!(Language::parse(tag), Some(Language::Ar));
+        }
+        assert!(Language::Ar.is_rtl());
+        assert!(!Language::En.is_rtl());
+        assert_eq!(Language::Ar.name(), "العربية");
+        assert_eq!(Language::Ar.tr("Home"), "الرئيسية");
+        assert_eq!(Language::Ar.tr("Page Layout|Orientation"), "اتجاه الصفحة");
+        assert_eq!(Language::Ar.tr("Sheet Right-to-Left"), "الورقة من اليمين إلى اليسار");
+        assert_eq!(Language::Ar.tr("Sheet1!A1"), "Sheet1!A1");
+        let mut app = crate::SheetApp::new(gridcraft_engine::Session::new(), Default::default());
+        app.run("app.language.set", serde_json::json!({"language": "ar-EG"})).unwrap();
+        let saved = serde_json::to_value(&app.ui).unwrap();
+        assert_eq!(super::saved_language(&saved), Some(Language::Ar));
+        assert_eq!(serde_json::from_value::<crate::UiState>(saved).unwrap().language, Language::Ar);
+    }
     use super::*;
 
     #[test]
@@ -712,6 +823,97 @@ mod tests {
         assert_eq!(app.ui.language, Language::En);
         for l in Language::ALL {
             assert_eq!(Language::parse(l.code()), Some(l));
+        }
+    }
+}
+
+use egui::text::{LayoutJob, LayoutSection, TextFormat};
+use egui::{Color32, FontId};
+use unicode_bidi::BidiInfo;
+
+/// A single unwrapped line, with Arabic and Latin/numeric runs in Unicode visual order.
+pub fn single_line(text: &str, font: FontId, color: Color32) -> LayoutJob {
+    let mut job = LayoutJob::single_section(text.to_owned(), TextFormat::simple(font, color));
+    if !text.chars().any(is_rtl) {
+        return job;
+    }
+    let bidi = BidiInfo::new(text, None);
+    let format = job.sections.first().map(|s| s.format.clone()).unwrap_or_default();
+    job.text.clear();
+    job.sections.clear();
+    for paragraph in &bidi.paragraphs {
+        let (_, runs) = bidi.visual_runs(paragraph, paragraph.range.clone());
+        for range in runs {
+            if let Some(run) = text.get(range) {
+                let start = job.text.len();
+                job.text.push_str(run);
+                // Sections must be contiguous in egui. Do not use LayoutJob::append, which
+                // merges identical formats and would shape runs of different directions together.
+                job.sections.push(LayoutSection { leading_space: 0.0, byte_range: start.into()..job.text.len().into(), format: format.clone() });
+            }
+        }
+    }
+    job
+}
+
+/// First strong character determines General alignment; ASCII numbers and formulas remain LTR.
+pub fn starts_rtl(text: &str) -> bool {
+    text.chars()
+        .find(|&c| matches!(unicode_bidi::bidi_class(c), unicode_bidi::BidiClass::L | unicode_bidi::BidiClass::R | unicode_bidi::BidiClass::AL))
+        .is_some_and(is_rtl)
+}
+
+/// Painter::text with bidi run ordering, preserving the same anchoring and return value.
+pub fn paint(painter: &egui::Painter, pos: egui::Pos2, anchor: egui::Align2, text: impl AsRef<str>, font: FontId, color: Color32) -> egui::Rect {
+    let galley = painter.layout_job(single_line(text.as_ref(), font, color));
+    let rect = anchor.anchor_size(pos, galley.size());
+    painter.galley(rect.min, galley, color);
+    rect
+}
+
+fn is_rtl(c: char) -> bool {
+    matches!(unicode_bidi::bidi_class(c), unicode_bidi::BidiClass::R | unicode_bidi::BidiClass::AL)
+}
+
+#[cfg(test)]
+mod text_layout_tests {
+    use super::*;
+
+    #[test]
+    fn mixed_arabic_orders_whole_directional_runs() {
+        let text = "الإجمالي 123 USD";
+        let job = single_line(text, FontId::proportional(14.0), Color32::BLACK);
+        assert!(job.sections.len() > 1);
+        let parts: Vec<_> = job.sections.iter().map(|s| job.text.get(s.byte_range.start.0..s.byte_range.end.0).unwrap()).collect();
+        assert_eq!(parts.first(), Some(&"USD"));
+        assert!(parts.iter().any(|s| s.contains("123")));
+        assert!(starts_rtl(text));
+        assert!(!starts_rtl("USD 123 الإجمالي"));
+        assert!(!starts_rtl("=SUM(A1:A2)"));
+    }
+
+    #[test]
+    fn mixed_text_survives_egui_layout_and_tessellation() {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::theme::font_definitions());
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            for text in ["الإجمالي 123 USD", "USD 123 الإجمالي", "الكمية (12)", "مرحبا", "123", ""] {
+                let job = single_line(text, FontId::proportional(14.0), Color32::BLACK);
+                let galley = ui.painter().layout_job(job);
+                assert!(galley.size().is_finite());
+                ui.painter().galley(ui.min_rect().min, galley, Color32::BLACK);
+            }
+        });
+        output.textures_delta.clear();
+        let _ = ctx.tessellate(output.shapes, output.pixels_per_point);
+    }
+
+    #[test]
+    fn ltr_and_empty_text_are_unchanged() {
+        for text in ["", "A1", "123.45", "=SUM(A1:A2)"] {
+            let job = single_line(text, FontId::proportional(14.0), Color32::BLACK);
+            assert_eq!(job.text, text);
+            assert_eq!(job.sections.len(), 1);
         }
     }
 }

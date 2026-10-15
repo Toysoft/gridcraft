@@ -46,7 +46,8 @@ pub fn big_button(ui: &mut Ui, icon: Icon, label: &str, tip: &str, dropdown: boo
     let t = Tokens::get(ui.ctx());
     let font = theme::ui_font(11.5);
     let label = tr(ui, label);
-    let lines: Vec<_> = label.split('\n').map(|line| ui.painter().layout_no_wrap(line.to_string(), font.clone(), t.text)).collect();
+    let rtl = i18n::current(ui.ctx()).is_rtl();
+    let lines: Vec<_> = label.split('\n').map(|line| ui.painter().layout_job(crate::i18n::single_line(line, font.clone(), t.text))).collect();
     let arrow_size = 10.0;
     let arrow_space = if dropdown { 4.0 + arrow_size } else { 0.0 };
     let text_w = lines.iter().enumerate().map(|(i, line)| line.size().x + if i + 1 == lines.len() { arrow_space } else { 0.0 }).fold(0.0, f32::max);
@@ -63,11 +64,14 @@ pub fn big_button(ui: &mut Ui, icon: Icon, label: &str, tip: &str, dropdown: boo
         let line_w = line.size().x + if has_arrow { arrow_space } else { 0.0 };
         let left = rect.center().x - line_w / 2.0;
         let y = rect.top() + 46.0 + i as f32 * 13.0;
-        ui.painter().galley(pos2(left, y - line.size().y / 2.0), line.clone(), t.text);
+        ui.painter().galley(pos2(left + if rtl && has_arrow { arrow_space } else { 0.0 }, y - line.size().y / 2.0), line.clone(), t.text);
         if has_arrow {
             icons::paint(
                 ui.painter(),
-                Rect::from_center_size(pos2(left + line_w - arrow_size / 2.0, y + 1.0), vec2(arrow_size, arrow_size)),
+                Rect::from_center_size(
+                    pos2(if rtl { left + arrow_size / 2.0 } else { left + line_w - arrow_size / 2.0 }, y + 1.0),
+                    vec2(arrow_size, arrow_size),
+                ),
                 Icon::Chevron,
                 t.text_dim,
             );
@@ -81,6 +85,7 @@ pub fn small_button(ui: &mut Ui, icon: Icon, label: &str, tip: &str, dropdown: b
     let t = Tokens::get(ui.ctx());
     let font = theme::ui_font(12.5);
     let label = tr(ui, label);
+    let rtl = i18n::current(ui.ctx()).is_rtl();
     let tw = if label.is_empty() { 0.0 } else { ui.painter().layout_no_wrap(label.to_string(), font.clone(), t.text).size().x + 6.0 };
     let w = 24.0 + tw + if dropdown { 12.0 } else { 0.0 };
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 23.0), Sense::click());
@@ -89,14 +94,16 @@ pub fn small_button(ui: &mut Ui, icon: Icon, label: &str, tip: &str, dropdown: b
     } else if resp.hovered() {
         ui.painter().rect_filled(rect, 4.0, t.hover);
     }
-    icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.left() + 12.0, rect.center().y), vec2(16.0, 16.0)), icon, t.text);
+    let icon_x = if rtl { rect.right() - 12.0 } else { rect.left() + 12.0 };
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(icon_x, rect.center().y), vec2(16.0, 16.0)), icon, t.text);
     if !label.is_empty() {
-        ui.painter().text(pos2(rect.left() + 24.0, rect.center().y), Align2::LEFT_CENTER, label, font, t.text);
+        let (x, align) = if rtl { (rect.right() - 24.0, Align2::RIGHT_CENTER) } else { (rect.left() + 24.0, Align2::LEFT_CENTER) };
+        crate::i18n::paint(ui.painter(), pos2(x, rect.center().y), align, label, font, t.text);
     }
     if dropdown {
         icons::paint(
             ui.painter(),
-            Rect::from_center_size(pos2(rect.right() - 7.0, rect.center().y + 1.0), vec2(10.0, 10.0)),
+            Rect::from_center_size(pos2(if rtl { rect.left() + 7.0 } else { rect.right() - 7.0 }, rect.center().y + 1.0), vec2(10.0, 10.0)),
             Icon::Chevron,
             t.text_dim,
         );
@@ -109,13 +116,15 @@ pub fn small_button(ui: &mut Ui, icon: Icon, label: &str, tip: &str, dropdown: b
 pub fn split_button(ui: &mut Ui, icon: Icon, accent: Option<Color32>, tip: &str) -> (bool, Response) {
     let t = Tokens::get(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(38.0, 24.0), Sense::hover());
-    let main = Rect::from_min_size(rect.min, vec2(25.0, 24.0));
-    let arrow = Rect::from_min_max(pos2(main.right(), rect.top()), rect.max);
+    let rtl = i18n::current(ui.ctx()).is_rtl();
+    let main = Rect::from_min_size(pos2(if rtl { rect.right() - 25.0 } else { rect.left() }, rect.top()), vec2(25.0, 24.0));
+    let arrow = if rtl { Rect::from_min_max(rect.min, main.left_bottom()) } else { Rect::from_min_max(pos2(main.right(), rect.top()), rect.max) };
     let m = ui.interact(main, ui.id().with((tip, "main")), Sense::click());
     let a = ui.interact(arrow, ui.id().with((tip, "arrow")), Sense::click());
     if m.hovered() || a.hovered() {
         ui.painter().rect_filled(rect, 4.0, t.hover);
-        ui.painter().line_segment([pos2(main.right(), rect.top() + 3.0), pos2(main.right(), rect.bottom() - 3.0)], Stroke::new(1.0, t.separator));
+        let separator_x = if rtl { main.left() } else { main.right() };
+        ui.painter().line_segment([pos2(separator_x, rect.top() + 3.0), pos2(separator_x, rect.bottom() - 3.0)], Stroke::new(1.0, t.separator));
     }
     icons::paint(ui.painter(), Rect::from_center_size(main.center() - vec2(0.0, 2.0), vec2(16.0, 16.0)), icon, t.text);
     if let Some(c) = accent {
@@ -161,6 +170,9 @@ pub fn color_palette(ui: &mut Ui, theme_colors: &[u32; 12], none_label: &str) ->
         dd = i.key_pressed(egui::Key::ArrowDown);
         ent = i.key_pressed(egui::Key::Enter);
     });
+    if i18n::current(ui.ctx()).is_rtl() {
+        std::mem::swap(&mut dl, &mut dr);
+    }
     if dl || dr || du || dd {
         cur = match cur {
             None => Some((
@@ -222,13 +234,13 @@ pub fn color_palette(ui: &mut Ui, theme_colors: &[u32; 12], none_label: &str) ->
         });
         ui.data_mut(|d| d.remove_temp::<Option<(usize, usize)>>(pal_id));
     }
-    if ui.button(none_label).clicked() {
+    if ui.button(tr(ui, none_label)).clicked() {
         picked = Some("none".to_string());
     }
-    ui.label(egui::RichText::new("Theme Colors").small());
+    ui.label(egui::RichText::new(tr(ui, "Theme Colors")).small());
     let order = [0usize, 1, 2, 3, 4, 5, 6, 7, 8, 9];
     let tints = [0.0f64, 0.8, 0.6, 0.4, -0.25, -0.5];
-    egui::Grid::new(ui.id().with("theme_grid")).spacing(vec2(2.0, 2.0)).show(ui, |ui| {
+    crate::i18n::form(ui, egui::Grid::new(ui.id().with("theme_grid")).spacing(vec2(2.0, 2.0)), |ui| {
         for (row, tint) in tints.iter().enumerate() {
             for (col, &i) in order.iter().enumerate() {
                 let base = theme_colors.get(i).copied().unwrap_or(0);
@@ -248,7 +260,7 @@ pub fn color_palette(ui: &mut Ui, theme_colors: &[u32; 12], none_label: &str) ->
             ui.end_row();
         }
     });
-    ui.label(egui::RichText::new("Standard Colors").small());
+    ui.label(egui::RichText::new(tr(ui, "Standard Colors")).small());
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         for (col, hex) in std_hex.iter().enumerate() {
@@ -274,21 +286,23 @@ pub fn message_box(app: &mut SheetApp, ctx: &egui::Context) {
     let Some((title, msg)) = app.message.clone() else { return };
     let mut close = false;
     egui::Modal::new(egui::Id::new("message_box")).show(ctx, |ui| {
-        ui.set_width(380.0);
-        ui.horizontal(|ui| {
-            let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
-            ui.painter().circle_filled(r.center(), 16.0, Color32::from_rgb(0xF2, 0xC3, 0x2E));
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, "!", theme::ui_bold(20.0), Color32::WHITE);
-            ui.vertical(|ui| {
-                ui.label(egui::RichText::new(title).strong());
-                ui.add(egui::Label::new(msg).wrap());
+        crate::i18n::column(ui, |ui| {
+            ui.set_width(380.0);
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
+                ui.painter().circle_filled(r.center(), 16.0, Color32::from_rgb(0xF2, 0xC3, 0x2E));
+                ui.painter().text(r.center(), Align2::CENTER_CENTER, "!", theme::ui_bold(20.0), Color32::WHITE);
+                crate::i18n::column(ui, |ui| {
+                    ui.label(egui::RichText::new(title).strong());
+                    ui.add(egui::Label::new(msg).wrap());
+                });
             });
-        });
-        ui.add_space(8.0);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("  OK  ").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape)) {
-                close = true;
-            }
+            ui.add_space(8.0);
+            ui.with_layout(crate::i18n::trailing_layout(ui.ctx()), |ui| {
+                if ui.button("  OK  ").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape)) {
+                    close = true;
+                }
+            });
         });
     });
     if close {
@@ -327,31 +341,33 @@ pub fn notice_bar(app: &mut SheetApp, ui: &mut Ui) {
     let mut dismiss = false;
     let mut action: Option<(String, String)> = None;
     egui::Panel::top("notice_bar").frame(egui::Frame::NONE.fill(bg).inner_margin(egui::Margin::symmetric(12, 0))).show(ui, |ui| {
-        // Bottom border as a 1px strip spanning the bar.
-        let bar = ui.max_rect();
-        ui.painter().rect_stroke(bar, 0.0, Stroke::new(1.0, border), StrokeKind::Inside);
-        ui.horizontal_centered(|ui| {
-            let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
-            icons::paint(
-                ui.painter(),
-                r,
-                match notice.kind {
-                    crate::NoticeKind::Warning => Icon::Lock,
-                    crate::NoticeKind::Info => Icon::Note,
-                },
-                border,
-            );
-            ui.add_space(6.0);
-            ui.label(egui::RichText::new(&notice.text).font(theme::ui_font(12.5)).color(t.text));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if icon_button(ui, Icon::Close, t.text_dim, "Dismiss", vec2(20.0, 20.0)).clicked() {
-                    dismiss = true;
-                }
-                if let Some((label, dialog)) = &notice.action
-                    && ui.button(egui::RichText::new(label).font(theme::ui_font(12.5))).clicked()
-                {
-                    action = Some((label.clone(), dialog.clone()));
-                }
+        crate::i18n::column(ui, |ui| {
+            // Bottom border as a 1px strip spanning the bar.
+            let bar = ui.max_rect();
+            ui.painter().rect_stroke(bar, 0.0, Stroke::new(1.0, border), StrokeKind::Inside);
+            ui.horizontal_centered(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                icons::paint(
+                    ui.painter(),
+                    r,
+                    match notice.kind {
+                        crate::NoticeKind::Warning => Icon::Lock,
+                        crate::NoticeKind::Info => Icon::Note,
+                    },
+                    border,
+                );
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(&notice.text).font(theme::ui_font(12.5)).color(t.text));
+                ui.with_layout(crate::i18n::trailing_layout(ui.ctx()), |ui| {
+                    if icon_button(ui, Icon::Close, t.text_dim, "Dismiss", vec2(20.0, 20.0)).clicked() {
+                        dismiss = true;
+                    }
+                    if let Some((label, dialog)) = &notice.action
+                        && ui.button(egui::RichText::new(label).font(theme::ui_font(12.5))).clicked()
+                    {
+                        action = Some((label.clone(), dialog.clone()));
+                    }
+                });
             });
         });
     });

@@ -156,62 +156,67 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let mut out = Outcome::default();
     let (nav_bg, nav_text, nav_sel) =
         if t.dark { (t.accent_soft, t.text, Color32::from_white_alpha(30)) } else { (t.accent, Color32::WHITE, Color32::from_black_alpha(46)) };
-    egui::Panel::left("backstage_nav")
+    let navigation = if lang.is_rtl() { egui::Panel::right("backstage_nav") } else { egui::Panel::left("backstage_nav") };
+    navigation
         .exact_size(NAV_W)
         .resizable(false)
         .frame(egui::Frame::NONE.fill(nav_bg).inner_margin(egui::Margin { left: 0, right: 0, top: 10, bottom: 10 }))
         .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            if nav_item(ui, Icon::Back, lang.tr("Back"), false, nav_text, nav_sel).clicked() {
-                out.close = true;
-            }
-            ui.add_space(10.0);
-            for page in [Page::Home, Page::New, Page::Open] {
-                if nav_item(ui, page.icon(), lang.tr(page.label()), bs.page == page, nav_text, nav_sel).clicked() {
-                    out.page = Some(page);
-                }
-            }
-            nav_separator(ui, nav_text);
-            if nav_item(ui, Page::Info.icon(), lang.tr("Info"), bs.page == Page::Info, nav_text, nav_sel).clicked() {
-                out.page = Some(Page::Info);
-            }
-            if nav_item(ui, Icon::Save, lang.tr("Save"), false, nav_text, nav_sel).clicked() {
-                save(app, &mut out);
-            }
-            for page in [Page::SaveAs, Page::Print, Page::Export] {
-                if nav_item(ui, page.icon(), lang.tr(page.label()), bs.page == page, nav_text, nav_sel).clicked() {
-                    out.page = Some(page);
-                }
-            }
-            if nav_item(ui, Icon::Close, lang.tr("Close"), false, nav_text, nav_sel).clicked() {
-                // A cell still being edited is part of the workbook; Close keeps the unsaved prompt.
-                if app.commit_edit(0, 0, false, false) {
-                    app.run_or_alert("file.close", json!({}));
+            crate::i18n::column(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                if nav_item(ui, Icon::Back, lang.tr("Back"), false, nav_text, nav_sel).clicked() {
                     out.close = true;
                 }
-            }
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                if nav_item(ui, Page::Options.icon(), lang.tr("Options"), bs.page == Page::Options, nav_text, nav_sel).clicked() {
-                    out.page = Some(Page::Options);
+                ui.add_space(10.0);
+                for page in [Page::Home, Page::New, Page::Open] {
+                    if nav_item(ui, page.icon(), lang.tr(page.label()), bs.page == page, nav_text, nav_sel).clicked() {
+                        out.page = Some(page);
+                    }
                 }
+                nav_separator(ui, nav_text);
+                if nav_item(ui, Page::Info.icon(), lang.tr("Info"), bs.page == Page::Info, nav_text, nav_sel).clicked() {
+                    out.page = Some(Page::Info);
+                }
+                if nav_item(ui, Icon::Save, lang.tr("Save"), false, nav_text, nav_sel).clicked() {
+                    save(app, &mut out);
+                }
+                for page in [Page::SaveAs, Page::Print, Page::Export] {
+                    if nav_item(ui, page.icon(), lang.tr(page.label()), bs.page == page, nav_text, nav_sel).clicked() {
+                        out.page = Some(page);
+                    }
+                }
+                if nav_item(ui, Icon::Close, lang.tr("Close"), false, nav_text, nav_sel).clicked() {
+                    // A cell still being edited is part of the workbook; Close keeps the unsaved prompt.
+                    if app.commit_edit(0, 0, false, false) {
+                        app.run_or_alert("file.close", json!({}));
+                        out.close = true;
+                    }
+                }
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                    if nav_item(ui, Page::Options.icon(), lang.tr("Options"), bs.page == Page::Options, nav_text, nav_sel).clicked() {
+                        out.page = Some(Page::Options);
+                    }
+                });
             });
         });
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.ribbon)).show(ui, |ui| {
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            egui::Frame::NONE.inner_margin(egui::Margin { left: 44, right: 32, top: 26, bottom: 32 }).show(ui, |ui| {
-                ui.set_max_width(CONTENT_W);
-                ui.label(RichText::new(lang.tr(bs.page.label())).font(theme::ui_font(28.0)).color(t.text));
-                ui.add_space(18.0);
-                match bs.page {
-                    Page::Home => home(app, ui, &mut bs, &mut out),
-                    Page::New => new_page(app, ui, &mut out),
-                    Page::Open => open_page(app, ui, &mut bs, &mut out),
-                    Page::Info => info(app, ui, &mut bs),
-                    Page::SaveAs => save_as(app, ui, &mut bs, &mut out),
-                    Page::Print => print(app, ui, &mut bs, &mut out),
-                    Page::Export => export(app, ui, &mut out),
-                    Page::Options => options(app, ui),
-                }
+        crate::i18n::column(ui, |ui| {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                egui::Frame::NONE.inner_margin(egui::Margin { left: 44, right: 32, top: 26, bottom: 32 }).show(ui, |ui| {
+                    ui.set_max_width(CONTENT_W);
+                    ui.label(RichText::new(lang.tr(bs.page.label())).font(theme::ui_font(28.0)).color(t.text));
+                    ui.add_space(18.0);
+                    match bs.page {
+                        Page::Home => home(app, ui, &mut bs, &mut out),
+                        Page::New => new_page(app, ui, &mut out),
+                        Page::Open => open_page(app, ui, &mut bs, &mut out),
+                        Page::Info => info(app, ui, &mut bs),
+                        Page::SaveAs => save_as(app, ui, &mut bs, &mut out),
+                        Page::Print => print(app, ui, &mut bs, &mut out),
+                        Page::Export => export(app, ui, &mut out),
+                        Page::Options => options(app, ui),
+                    }
+                });
             });
         });
     });
@@ -254,14 +259,23 @@ fn nav_item(ui: &mut Ui, icon: Icon, label: &str, selected: bool, text: Color32,
     let (rect, resp) = ui.allocate_exact_size(vec2(NAV_W, 38.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label));
     let p = ui.painter();
+    let rtl = crate::i18n::current(ui.ctx()).is_rtl();
+    let leading = |offset| if rtl { rect.right() - offset } else { rect.left() + offset };
     if selected {
         p.rect_filled(rect, 0.0, sel);
-        p.rect_filled(Rect::from_min_size(rect.min, vec2(4.0, rect.height())), 0.0, text);
+        p.rect_filled(Rect::from_min_size(pos2(leading(if rtl { 4.0 } else { 0.0 }), rect.top()), vec2(4.0, rect.height())), 0.0, text);
     } else if resp.hovered() {
         p.rect_filled(rect, 0.0, sel.gamma_multiply(0.55));
     }
-    icons::paint(p, Rect::from_center_size(pos2(rect.left() + 30.0, rect.center().y), vec2(17.0, 17.0)), icon, text);
-    p.text(pos2(rect.left() + 50.0, rect.center().y), Align2::LEFT_CENTER, label, theme::ui_font(14.0), text);
+    icons::paint(p, Rect::from_center_size(pos2(leading(30.0), rect.center().y), vec2(17.0, 17.0)), icon, text);
+    crate::i18n::paint(
+        p,
+        pos2(leading(50.0), rect.center().y),
+        if rtl { Align2::RIGHT_CENTER } else { Align2::LEFT_CENTER },
+        label,
+        theme::ui_font(14.0),
+        text,
+    );
     resp
 }
 
@@ -333,7 +347,7 @@ fn new_tiles(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
             out.close = true;
         }
         for (i, (name, title)) in gridcraft_engine::sample::SAMPLES.iter().enumerate() {
-            if tile(ui, title, Some(i)).clicked() {
+            if tile(ui, lang.tr(title), Some(i)).clicked() {
                 app.run_or_alert("file.new", json!({"sample": name}));
                 out.close = true;
             }
@@ -368,9 +382,10 @@ fn recent_list(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Ou
     let modified_w = if cfg!(target_arch = "wasm32") || width < 420.0 { 0.0 } else { MODIFIED_W };
     if modified_w > 0.0 {
         let (head, _) = ui.allocate_exact_size(vec2(width, 20.0), Sense::hover());
-        ui.painter().text(
-            pos2(head.right() - modified_w, head.center().y),
-            Align2::LEFT_CENTER,
+        crate::i18n::paint(
+            ui.painter(),
+            pos2(if lang.is_rtl() { head.left() + modified_w } else { head.right() - modified_w }, head.center().y),
+            if lang.is_rtl() { Align2::RIGHT_CENTER } else { Align2::LEFT_CENTER },
             lang.tr("Modified"),
             theme::ui_font(11.5),
             t.text_dim,
@@ -385,19 +400,33 @@ fn recent_list(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Ou
         if resp.hovered() {
             p.rect_filled(rect, 4.0, t.hover);
         }
-        icons::paint(p, Rect::from_center_size(pos2(rect.left() + 20.0, rect.center().y), vec2(20.0, 20.0)), Icon::Book, t.text);
+        let leading = |offset| if lang.is_rtl() { rect.right() - offset } else { rect.left() + offset };
+        let align = if lang.is_rtl() { Align2::RIGHT_CENTER } else { Align2::LEFT_CENTER };
+        icons::paint(p, Rect::from_center_size(pos2(leading(20.0), rect.center().y), vec2(20.0, 20.0)), Icon::Book, t.text);
         // A long name or folder stops short of the column instead of running under it.
-        let room = if modified_w > 0.0 { rect.right() - modified_w - 14.0 } else { rect.right() };
-        let text = p.with_clip_rect(Rect::from_min_max(rect.min, pos2(room, rect.bottom())).intersect(p.clip_rect()));
-        text.text(pos2(rect.left() + 42.0, rect.center().y - 8.0), Align2::LEFT_CENTER, &name, theme::ui_font(13.5), t.text);
-        text.text(pos2(rect.left() + 42.0, rect.center().y + 9.0), Align2::LEFT_CENTER, &folder, theme::ui_font(11.5), t.text_dim);
+        let gap = if modified_w > 0.0 { modified_w + 14.0 } else { 0.0 };
+        let clip = if lang.is_rtl() {
+            Rect::from_min_max(pos2(rect.left() + gap, rect.top()), rect.max)
+        } else {
+            Rect::from_min_max(rect.min, pos2(rect.right() - gap, rect.bottom()))
+        };
+        let text = p.with_clip_rect(clip.intersect(p.clip_rect()));
+        crate::i18n::paint(&text, pos2(leading(42.0), rect.center().y - 8.0), align, &name, theme::ui_font(13.5), t.text);
+        crate::i18n::paint(&text, pos2(leading(42.0), rect.center().y + 9.0), align, &folder, theme::ui_font(11.5), t.text_dim);
         if modified_w > 0.0 {
             let (words, color) = match known.get(&path) {
                 Some(Modified::At(seconds)) => (age(lang, now - seconds), t.text_dim),
                 Some(Modified::Unknown) => (lang.tr("Not available").to_string(), t.text_disabled),
                 None => (String::new(), t.text_dim),
             };
-            p.text(pos2(rect.right() - modified_w, rect.center().y), Align2::LEFT_CENTER, words, theme::ui_font(12.0), color);
+            crate::i18n::paint(
+                p,
+                pos2(if lang.is_rtl() { rect.left() + modified_w } else { rect.right() - modified_w }, rect.center().y),
+                if lang.is_rtl() { Align2::RIGHT_CENTER } else { Align2::LEFT_CENTER },
+                &words,
+                theme::ui_font(12.0),
+                color,
+            );
         }
         let resp = resp.on_hover_text(&path);
         if resp.clicked() {
@@ -511,9 +540,12 @@ fn action_row(ui: &mut Ui, icon: Icon, title: &str, detail: &str) -> egui::Respo
     if resp.hovered() {
         p.rect_filled(rect, 4.0, t.hover);
     }
-    icons::paint(p, Rect::from_center_size(pos2(rect.left() + 24.0, rect.center().y), vec2(24.0, 24.0)), icon, t.text);
-    p.text(pos2(rect.left() + 52.0, rect.center().y - 9.0), Align2::LEFT_CENTER, title, theme::ui_bold(13.5), t.text);
-    p.text(pos2(rect.left() + 52.0, rect.center().y + 10.0), Align2::LEFT_CENTER, detail, theme::ui_font(12.0), t.text_dim);
+    let rtl = crate::i18n::current(ui.ctx()).is_rtl();
+    let leading = |offset| if rtl { rect.right() - offset } else { rect.left() + offset };
+    let align = if rtl { Align2::RIGHT_CENTER } else { Align2::LEFT_CENTER };
+    icons::paint(p, Rect::from_center_size(pos2(leading(24.0), rect.center().y), vec2(24.0, 24.0)), icon, t.text);
+    crate::i18n::paint(p, pos2(leading(52.0), rect.center().y - 9.0), align, title, theme::ui_bold(13.5), t.text);
+    crate::i18n::paint(p, pos2(leading(52.0), rect.center().y + 10.0), align, detail, theme::ui_font(12.0), t.text_dim);
     resp
 }
 
@@ -599,7 +631,7 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
     ui.horizontal(|ui| {
         icons::paint(ui.painter(), Rect::from_min_size(ui.cursor().min, vec2(28.0, 28.0)), Icon::Book, t.text);
         ui.add_space(38.0);
-        ui.vertical(|ui| {
+        crate::i18n::column(ui, |ui| {
             ui.label(RichText::new(&title).font(theme::ui_bold(16.0)).color(t.text));
             match &path {
                 Some(p) => dim(ui, p),
@@ -613,7 +645,7 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
             protect_workbook(app);
         }
         ui.add_space(12.0);
-        ui.vertical(|ui| {
+        crate::i18n::column(ui, |ui| {
             ui.add_space(14.0);
             ui.label(RichText::new(lang.tr("Protect Workbook")).font(theme::ui_bold(13.5)).color(t.text));
             let text = if protected {
@@ -626,7 +658,7 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
     });
     ui.add_space(22.0);
     section(ui, lang, "Properties");
-    egui::Grid::new("backstage_props").num_columns(2).spacing(vec2(18.0, 8.0)).show(ui, |ui| {
+    crate::i18n::form(ui, egui::Grid::new("backstage_props").num_columns(2).spacing(vec2(18.0, 8.0)), |ui| {
         ui.label(RichText::new(lang.tr("Location")).color(t.text_dim));
         ui.label(path.as_deref().unwrap_or(lang.tr("Not saved yet")));
         ui.end_row();
@@ -661,11 +693,13 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
     ui.horizontal(|ui| {
         ui.label(lang.tr("Save as type"));
         egui::ComboBox::from_id_salt("backstage_save_type").width(280.0).selected_text(lang.tr(current)).show_ui(ui, |ui| {
-            for (ext, label) in SAVE_TYPES {
-                if ui.selectable_label(fmt == ext, lang.tr(label)).clicked() {
-                    bs.save_format = ext;
+            crate::i18n::column(ui, |ui| {
+                for (ext, label) in SAVE_TYPES {
+                    if ui.selectable_label(fmt == ext, lang.tr(label)).clicked() {
+                        bs.save_format = ext;
+                    }
                 }
-            }
+            });
         });
     });
     ui.add_space(14.0);
@@ -706,7 +740,7 @@ fn print(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome)
     }
     let pages: Vec<Json> = bs.preview.as_ref().and_then(|(_, p)| p.get("pageList")).and_then(Json::as_array).cloned().unwrap_or_default();
     ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
+        crate::i18n::column(ui, |ui| {
             ui.set_width(250.0);
             if let Some(discover) = &app.services.printers {
                 crate::printing::show(&mut app.printing, ui, discover, |label| lang.tr(label).to_owned());
@@ -721,12 +755,14 @@ fn print(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome)
             ui.add_space(16.0);
             let scope = if bs.print_all { "Print Entire Workbook" } else { "Print Active Sheets" };
             egui::ComboBox::from_id_salt("backstage_print_scope").width(230.0).selected_text(lang.tr(scope)).show_ui(ui, |ui| {
-                for (all, label) in [(false, "Print Active Sheets"), (true, "Print Entire Workbook")] {
-                    if ui.selectable_label(bs.print_all == all, lang.tr(label)).clicked() {
-                        bs.print_all = all;
-                        bs.preview_page = 0;
+                crate::i18n::column(ui, |ui| {
+                    for (all, label) in [(false, "Print Active Sheets"), (true, "Print Entire Workbook")] {
+                        if ui.selectable_label(bs.print_all == all, lang.tr(label)).clicked() {
+                            bs.print_all = all;
+                            bs.preview_page = 0;
+                        }
                     }
-                }
+                });
             });
             ui.add_space(8.0);
             if ui.checkbox(&mut bs.fit_to_page, lang.tr("Fit Sheet on One Page")).changed() {
@@ -738,7 +774,7 @@ fn print(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome)
             }
         });
         ui.add_space(24.0);
-        ui.vertical(|ui| {
+        crate::i18n::column(ui, |ui| {
             if pages.is_empty() {
                 dim(ui, lang.tr("Nothing to print."));
                 return;
@@ -930,7 +966,7 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
 fn options(app: &mut SheetApp, ui: &mut Ui) {
     let lang = app.ui.language;
     section(ui, lang, "Options|General");
-    egui::Grid::new("backstage_options_general").num_columns(2).spacing(vec2(18.0, 10.0)).show(ui, |ui| {
+    crate::i18n::form(ui, egui::Grid::new("backstage_options_general").num_columns(2).spacing(vec2(18.0, 10.0)), |ui| {
         ui.label(lang.tr("Display theme"));
         let mode = app.ui.theme_mode();
         let current = match mode {
@@ -939,20 +975,24 @@ fn options(app: &mut SheetApp, ui: &mut Ui) {
             _ => "Light",
         };
         egui::ComboBox::from_id_salt("backstage_theme").width(160.0).selected_text(lang.tr(current)).show_ui(ui, |ui| {
-            for (value, label) in [("system", "System"), ("light", "Light"), ("dark", "Dark")] {
-                if ui.selectable_label(mode == value, lang.tr(label)).clicked() {
-                    app.run_or_alert("view.theme", json!({"mode": value}));
+            crate::i18n::column(ui, |ui| {
+                for (value, label) in [("system", "System"), ("light", "Light"), ("dark", "Dark")] {
+                    if ui.selectable_label(mode == value, lang.tr(label)).clicked() {
+                        app.run_or_alert("view.theme", json!({"mode": value}));
+                    }
                 }
-            }
+            });
         });
         ui.end_row();
         ui.label(lang.tr("Interface language"));
         egui::ComboBox::from_id_salt("backstage_language").width(160.0).selected_text(lang.name()).show_ui(ui, |ui| {
-            for l in i18n::Language::ALL {
-                if ui.selectable_label(l == lang, l.name()).clicked() {
-                    app.run_or_alert("app.language.set", json!({"language": l.code()}));
+            crate::i18n::column(ui, |ui| {
+                for l in i18n::Language::ALL {
+                    if ui.selectable_label(l == lang, l.name()).clicked() {
+                        app.run_or_alert("app.language.set", json!({"language": l.code()}));
+                    }
                 }
-            }
+            });
         });
         ui.end_row();
     });
