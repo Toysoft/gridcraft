@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (XLSX chart sheets are kept on save (#727); previously minor: CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-15 · **Change:** minor (XLSX keeps `#SPILL!` and `#CALC!` values as `_error` rich values, as Excel does; previously trivial: XLSX chart sheets are kept on save (#727)) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -19,6 +19,17 @@ colour, integer width and anchor. Curves, filled paths, transforms and unsupport
 not interpreted as ink. This does not implement Office InkML or fix inserted icons (#551).
 Command and package tests cover repeated saves and unrelated cell edits; external Excel rendering
 and repair-free opening remain unverified.
+
+Error values: `#SPILL!` and `#CALC!` (formula results, and constants pasted as values) are saved
+as Excel saves them: a cached `#VALUE!` whose value metadata (`vm`) points at an `_error` rich
+value, `errorType` being `ERROR.TYPE` minus one (8 and 13). They read back as the same error,
+from GridCraft's files and from Excel's (which add sub-types and spill offsets we ignore). Excel's
+other newer errors (`#FIELD!` 12, and `#CONNECT!`, `#BLOCKED!`, `#UNKNOWN!`, `#BUSY!`,
+`#PYTHON!`) have no GridCraft kind and read as `#VALUE!`. Typed `#SPILL!`/`#CALC!` stay text, as
+in Excel (ft-3ir.10.25). The rich-value metadata type now carries `coerce="1"` and lower-case
+extension URIs: without them Excel 16.0 refused the whole file, cell pictures included. Checked
+in Excel 16.0 (build 20430) over COM: constants, cached formula results, with and without cell
+pictures, reopen with the same errors (`ERROR.TYPE` 9 and 14).
 
 | Format | Excel | GridCraft read | GridCraft write | Fidelity / notes | Tests |
 |---|---|---|---|---|---|
@@ -85,6 +96,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | XLSX: `#SPILL!`/`#CALC!` saved and read as `_error` rich values like Excel (they reopened as `#VALUE!`); typed `#SPILL!`/`#CALC!` stay text; rich-value metadata Excel accepts (`coerce`, lower-case URIs) |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |
 | 2026-10-12 | trivial | CSV and TSV export is capped at 512 MiB and refuses a larger used range with an error (#528) |
 | 2026-10-12 | minor | `.xls` import reads the calculation settings (CalcMode, CalcIter, CalcCount, CalcDelta, CalcPrecision), so circular models calculate instead of showing `#CIRC!` (#724) |
