@@ -57,8 +57,11 @@ every combination measured in Excel:
 English Excel uses `\` between array columns with every decimal-comma region (Stack Overflow
 57120417, which also measured the French rows). French Excel 2024 with the Windows regional
 format "English (Europe)" (`.` decimal, system separators on) takes `=CENTILE.EXCLURE(A1:A6,0.5)`
-and `=RECHERCHEX(3,A1:A6,A1:A6)` (#443). Czech, Japanese, Chinese and Korean formulas use
-English names with their region's separators (`=SUM(1,5;{1\2;3\4})` in cs-CZ).
+and `=RECHERCHEX(3,A1:A6,A1:A6)` (#443). Excel's `TEXT` format codes follow the region the same
+way: that Excel takes `"dd/mm/yyyy"` and refuses `"jj/mm/aaaa"`, which French Excel 2013 with a
+French region required (#191, #443). GridCraft's format codes are English in every region. Czech,
+Japanese, Chinese and Korean formulas use English names with their region's separators
+(`=SUM(1,5;{1\2;3\4})` in cs-CZ).
 
 ## Where it applies
 
