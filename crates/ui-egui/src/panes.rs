@@ -286,15 +286,17 @@ fn format_chart(app: &mut SheetApp, ui: &mut Ui) {
         }
     });
     ui.collapsing("Trendline", |ui| {
-        // Come in Excel, niente trendline su torta, ad anello e radar (né 3-D e chartex).
-        // VERIFICA: nome e valori del campo tipo di `Chart` (qui `chart.kind`).
-        let supported = !matches!(chart.kind.as_str(), "pie" | "doughnut" | "radar");
+        //As in Excel, no trendlines on cake, ring and radar (nor 3-D and chartex).
+        let kind_name = format!("{:?}", chart.kind).to_lowercase();
+        let supported = !["pie", "doughnut", "radar", "3d", "histogram", "waterfall", "funnel", "treemap", "sunburst", "boxwhisker"]
+        .iter()
+        .any(|k| kind_name.contains(k));
         if !supported {
             ui.label(egui::RichText::new("Trendlines are not available for this chart type.").italics());
             return;
         }
 
-        // Serie a cui applicarla (le trendline sono per serie).
+        // Series to aplly to
         let sel_key = egui::Id::new(("gridcraft.trend_series", id));
         let mut series: usize = ui.data_mut(|d| d.get_temp(sel_key)).unwrap_or(0);
         series = series.min(chart.series.len().saturating_sub(1));
@@ -307,7 +309,6 @@ fn format_chart(app: &mut SheetApp, ui: &mut Ui) {
             });
         ui.data_mut(|d| d.insert_temp(sel_key, series));
 
-        // Parametri tenuti tra un frame e l'altro (stesso trucco di "Size" qui sopra).
         let ord_key = egui::Id::new(("gridcraft.trend_order", id));
         let per_key = egui::Id::new(("gridcraft.trend_period", id));
         let mut order: u32 = ui.data_mut(|d| d.get_temp(ord_key)).unwrap_or(2);
@@ -323,8 +324,7 @@ fn format_chart(app: &mut SheetApp, ui: &mut Ui) {
         });
 
         ui.horizontal_wrapped(|ui| {
-            // (etichetta, tipo, parametro extra)
-            // VERIFICA: stringhe esatte accettate da `chart.addElement`.
+            // (label, type, extra parameter)
             let items = [
                 ("Linear", "linear", json!({})),
                 ("Exponential", "exponential", json!({})),
@@ -335,7 +335,6 @@ fn format_chart(app: &mut SheetApp, ui: &mut Ui) {
             ];
             for (label, kind, extra) in items {
                 if ui.button(label).clicked() {
-                    // VERIFICA: nomi dei campi ("element", "series", "type"…).
                     let mut args = json!({"chart": id, "element": "trendline", "series": series, "type": kind});
                     if let (Some(a), Some(e)) = (args.as_object_mut(), extra.as_object()) {
                         a.extend(e.clone());
