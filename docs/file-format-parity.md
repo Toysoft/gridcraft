@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (XLSX chart sheets are kept on save (#727); previously minor: CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (CLI hyperlink fidelity checks) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -68,6 +68,13 @@ Server, Access, ODBC, …), web pages, SharePoint and online services, through P
 GridCraft imports CSV/TSV, JSON and HTML tables only, with no query editor, no connections and no
 refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
+## Hyperlink fidelity checks
+
+The CLI compares hyperlink cells, destinations, internal/external routing and tooltips after
+save/reopen, allowing the writer's representation conventions. Equal link counts alone no longer
+pass. This comparison starts after import; it does not establish initial-import fidelity.
+See [CLI documentation](cli.md) for normalization and report-count semantics.
+
 ## Work (76–114 h)
 
 | Work | Hours |
@@ -85,6 +92,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Document content-level hyperlink comparison and its limits |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |
 | 2026-10-12 | trivial | CSV and TSV export is capped at 512 MiB and refuses a larger used range with an error (#528) |
 | 2026-10-12 | minor | `.xls` import reads the calculation settings (CalcMode, CalcIter, CalcCount, CalcDelta, CalcPrecision), so circular models calculate instead of showing `#CIRC!` (#724) |
