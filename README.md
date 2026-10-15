@@ -122,6 +122,11 @@ cd apps/gridcraft-web && trunk serve --release     # http://127.0.0.1:8771  (?sa
 You need [trunk](https://trunkrs.dev) and the `wasm32-unknown-unknown` target. Open uses the
 browser's file picker (dropping files works too) and Save downloads the workbook.
 
+Live updates: `gridcraft-cli relay --watch model.xlsx`, then open
+`http://127.0.0.1:8771/?control=7980`. The page reloads the workbook whenever the file changes,
+and scripts, `gridcraft-cli send 7979 …` and MCP (`--connect 7979`) drive it like the desktop
+app's control port ([control protocol](docs/control-protocol.md#in-the-browser)).
+
 ### Ribbon access keys
 
 Press and release **left Alt** on Windows/Linux/BSD, or press **F10** on any platform,

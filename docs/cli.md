@@ -32,6 +32,7 @@ cargo install --path apps/gridcraft-cli     # or: cargo run -p gridcraft-cli -- 
 | `functions [--json] [--search X] [--category C]` | `gridcraft-cli functions --search lookup` |
 | `mcp [--connect PORT] [--in FILE \| --sample NAME]` | MCP server on stdio ([mcp.md](mcp.md)). |
 | `send <port> <method> [json]` | `gridcraft-cli send 7979 engine.execute '{"command":"home.bold","params":{"range":"A1:C1"}}'` — one control-channel request to a running app (`gridcraft --control 7979`). |
+| `relay [--port 7979] [--ws-port 7980] [--watch FILE]... [--origin URL]...` | `gridcraft-cli relay --watch model.xlsx` — the control channel for GridCraft in the browser: open the web app with `?control=7980` and drive it on port 7979 like the desktop app; `--watch` reloads the file in the page whenever it changes ([control-protocol.md](control-protocol.md#in-the-browser)). |
 | `version` | Prints `gridcraft-cli <version>`. |
 
 ## `run`
