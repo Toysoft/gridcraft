@@ -381,6 +381,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Excel Workbook (*.xlsx)" => "Pasta de Trabalho do Excel (*.xlsx)",
         "CSV UTF-8 (Comma delimited) (*.csv)" => "CSV UTF-8 (Delimitado por vírgulas) (*.csv)",
         "Web Page (*.html)" => "Página da Web (*.html)",
+        "OpenDocument Spreadsheet (*.ods)" => "Planilha OpenDocument (*.ods)",
         "PDF (*.pdf)" => "Arquivo PDF (*.pdf)",
         "Download" => "Baixar",
         "A CSV file, web page or PDF is a copy: the workbook keeps its own file." => {
@@ -402,6 +403,8 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Save the active sheet as comma-separated text." => "Salve a planilha ativa como texto separado por vírgulas.",
         "Web Page (.html)" => "Página da Web (.html)",
         "Save the workbook as a web page." => "Salve a pasta de trabalho como uma página da Web.",
+        "OpenDocument Spreadsheet (.ods)" => "Planilha OpenDocument (.ods)",
+        "Save the workbook as an OpenDocument spreadsheet." => "Salve a pasta de trabalho como uma planilha OpenDocument.",
         "Options|General" => "Geral",
         "Options|Save" => "Salvar",
         "Show formula bar" => "Mostrar barra de fórmulas",

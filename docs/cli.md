@@ -12,9 +12,9 @@ supported.
 values; source formatting and other workbook features are omitted. Import warnings go to stderr.
 Convert to `.xlsx` to save the imported workbook; XLSB output is not supported.
 
-`.ods` files support [worksheet data import](ods-import.md). Formula cells use their last saved
-values; source formatting and other workbook features are omitted. Import warnings go to stderr.
-Convert to `.xlsx` to save the imported workbook; ODS output is not supported.
+`.ods` files open with their formulas, styles, number formats, column widths, row heights,
+merges and names, and `convert` writes `.ods` output ([details](ods-import.md)). Import warnings go
+to stderr.
 
 ```sh
 cargo install --path apps/gridcraft-cli     # or: cargo run -p gridcraft-cli -- <subcommand>

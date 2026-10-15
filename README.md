@@ -86,7 +86,7 @@
   PivotTables and print settings round-trip. CSV and TSV too.
   Excel 97-2003 `.xls` workbooks open with their values, formulas and number formats (formatting and objects not yet).
   [XLSB worksheet data can be imported](docs/xlsb-import.md), using saved values instead of formulas.
-  [ODS worksheet data can be imported](docs/ods-import.md), using saved values instead of formulas.
+  [ODS files open and save](docs/ods-import.md) with formulas, styles, number formats, sizes, merges and names.
   [Static pictures can live inside cells](docs/cell-pictures.md), fitting their size and moving with the data.
 - **Capable.** A dependency-graph calculation engine with dynamic arrays and spilling,
   500+ worksheet functions plus LET, LAMBDA, MAP, REDUCE, SCAN, BYROW, BYCOL and MAKEARRAY,
@@ -184,7 +184,7 @@ egui frontend is a separate crate, so the UI can be swapped without touching the
 |---|---|
 | L0 | `core` (addresses, values, errors, dates, input parsing) · `numfmt` (number format codes) |
 | L1 | `formula` (lexer, parser, printer, reference adjustment) · `functions` (worksheet function library) |
-| L2 | `model` (workbook, sheets, copy-on-write cells, styles, tables, charts…) · `calc` (dependency graph, evaluator, dynamic arrays) · `xlsx` (XLSX, CSV, plus XLSB and ODS data import) |
+| L2 | `model` (workbook, sheets, copy-on-write cells, styles, tables, charts…) · `calc` (dependency graph, evaluator, dynamic arrays) · `xlsx` (XLSX, ODS, CSV, plus XLSB data import) |
 | L3 | `chart` (toolkit-free chart layout and rendering) |
 | L5 | `engine` (session, commands, history, clipboard, fill, sort, filter, file I/O) |
 | L6 | `ui-egui` (Excel-style UI, control channel) · `mcp` (MCP server) |

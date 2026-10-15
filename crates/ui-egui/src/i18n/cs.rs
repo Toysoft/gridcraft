@@ -295,6 +295,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Excel Workbook (*.xlsx)" => "Sešit Excelu (*.xlsx)",
         "CSV UTF-8 (Comma delimited) (*.csv)" => "CSV UTF-8 (oddělený čárkami) (*.csv)",
         "Web Page (*.html)" => "Webová stránka (*.html)",
+        "OpenDocument Spreadsheet (*.ods)" => "Tabulka OpenDocument (*.ods)",
         "PDF (*.pdf)" => "Soubor PDF (*.pdf)",
         "Download" => "Stáhnout",
         "A CSV file, web page or PDF is a copy: the workbook keeps its own file." => {
@@ -316,6 +317,8 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Save the active sheet as comma-separated text." => "Uloží aktivní list jako text oddělený čárkami.",
         "Web Page (.html)" => "Webová stránka (.html)",
         "Save the workbook as a web page." => "Uloží sešit jako webovou stránku.",
+        "OpenDocument Spreadsheet (.ods)" => "Tabulka OpenDocument (.ods)",
+        "Save the workbook as an OpenDocument spreadsheet." => "Uloží sešit jako tabulku OpenDocument.",
         "Options|General" => "Obecné",
         "Options|Save" => "Uložit",
         "Show formula bar" => "Zobrazit řádek vzorců",

@@ -379,6 +379,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Excel Workbook (*.xlsx)" => "Classeur Excel (*.xlsx)",
         "CSV UTF-8 (Comma delimited) (*.csv)" => "CSV UTF-8 (séparateur point-virgule) (*.csv)",
         "Web Page (*.html)" => "Page web (*.html)",
+        "OpenDocument Spreadsheet (*.ods)" => "Feuille de calcul OpenDocument (*.ods)",
         "PDF (*.pdf)" => "PDF (*.pdf)",
         "Download" => "Télécharger",
         "A CSV file, web page or PDF is a copy: the workbook keeps its own file." => {
@@ -402,6 +403,8 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Save the active sheet as comma-separated text." => "Enregistrer la feuille active sous forme de texte séparé par des points-virgules.",
         "Web Page (.html)" => "Page web (.html)",
         "Save the workbook as a web page." => "Enregistrer le classeur en tant que page web.",
+        "OpenDocument Spreadsheet (.ods)" => "Feuille de calcul OpenDocument (.ods)",
+        "Save the workbook as an OpenDocument spreadsheet." => "Enregistrer le classeur en tant que feuille de calcul OpenDocument.",
         "Options|General" => "Options|Général",
         "Options|Save" => "Options|Enregistrer",
         "Show formula bar" => "Afficher la barre de formule",

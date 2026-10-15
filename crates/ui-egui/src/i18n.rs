@@ -558,6 +558,7 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Excel Workbook (*.xlsx)", "Excel ブック (*.xlsx)"),
     ("CSV UTF-8 (Comma delimited) (*.csv)", "CSV UTF-8 (コンマ区切り) (*.csv)"),
     ("Web Page (*.html)", "Web ページ (*.html)"),
+    ("OpenDocument Spreadsheet (*.ods)", "OpenDocument スプレッドシート (*.ods)"),
     ("PDF (*.pdf)", "PDF ファイル (*.pdf)"),
     ("Download", "ダウンロード"),
     (
@@ -580,6 +581,8 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Save the active sheet as comma-separated text.", "作業中のシートをコンマ区切りのテキストとして保存します。"),
     ("Web Page (.html)", "Web ページ (.html)"),
     ("Save the workbook as a web page.", "ブックを Web ページとして保存します。"),
+    ("OpenDocument Spreadsheet (.ods)", "OpenDocument スプレッドシート (.ods)"),
+    ("Save the workbook as an OpenDocument spreadsheet.", "ブックを OpenDocument スプレッドシートとして保存します。"),
     ("Options|General", "全般"),
     ("Options|Save", "保存"),
     ("Show formula bar", "数式バーを表示する"),
