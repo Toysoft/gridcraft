@@ -806,6 +806,7 @@ fn paint_panes(
         let p = painter.with_clip_rect(*clip);
         paint_quadrant(&p, geo, wb, si, sh, *rows, *cols, cf, t);
         paint_selection(&p, geo, sh, sel, outline, t, app, *rows, *cols);
+        crate::collab_ui::paint_remote(&p, geo, sh, app, *rows, *cols);
     }
     // Freeze lines.
     if geo.fr > 0 {

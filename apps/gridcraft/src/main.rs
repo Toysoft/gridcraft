@@ -320,6 +320,8 @@ fn main() -> eframe::Result<()> {
         }
     }
     let mut session = Session::new();
+    // Live sessions keep their room's state here, so a crash and rejoin merges.
+    session.collab.recovery_dir = config_dir().filter(|_| prefs_enabled()).map(|d| d.join("recovery"));
     if let Some(s) = &sample
         && let Err(e) = session.execute("file.new", json!({"sample": s}))
     {

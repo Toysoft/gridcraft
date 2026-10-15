@@ -252,6 +252,8 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
                     ui.add_space(12.0);
                     ui.label(egui::RichText::new(label).font(theme::ui_font(12.5)).color(t.text_dim));
                 }
+                // A live session: its state and the people in it.
+                crate::collab_ui::status(app, ui);
                 // A plugin's answer to a document event, for 10 seconds.
                 if let Some((text, at)) = &app.status_message {
                     if crate::now_ms() - at < 10_000.0 {

@@ -10,6 +10,7 @@ pub mod backstage;
 mod border_preview;
 mod cell_pictures;
 pub mod chartview;
+pub mod collab_ui;
 pub mod control;
 pub mod credits;
 pub mod developer_ui;
@@ -242,6 +243,10 @@ pub struct SheetApp {
     pub doc_labels: HashMap<u64, String>,
     /// A message for the status bar (a plugin's answer to a document event) and when it came.
     pub status_message: Option<(String, f64)>,
+    /// Cells others changed in a live session, highlighted briefly: (document uid, sheet, cell, when).
+    pub collab_highlights: Vec<(u64, usize, gridcraft_engine::core::CellRef, f64)>,
+    /// When the live sessions' state was last kept for recovery.
+    pub collab_recovery_at: f64,
     print_feedback_seen: Option<printing::Feedback>,
     /// Synthetic input from agents, one batch per frame (drags need several frames).
     pub synthetic: std::collections::VecDeque<Vec<egui::Event>>,
@@ -304,6 +309,8 @@ impl SheetApp {
             plugin_dialog: None,
             doc_labels: HashMap::new(),
             status_message: None,
+            collab_highlights: Vec::new(),
+            collab_recovery_at: 0.0,
             print_feedback_seen: None,
             synthetic: Default::default(),
             control_rx: None,
@@ -1134,6 +1141,7 @@ impl SheetApp {
         self.poll_printing(&ctx);
         plugin_ui::poll_install(self, &ctx);
         plugin_ui::poll_events(self, &ctx);
+        collab_ui::pump(self, &ctx);
         office_pane::pump(self);
         if !self.fonts_ready || self.fonts_rebind {
             ctx.request_repaint();

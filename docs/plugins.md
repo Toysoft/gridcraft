@@ -1,6 +1,6 @@
 # Plugins
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (protocol 1.2: host-drawn dialogs, opening files, document events, `context.document`; previously minor: commands see the workbook's sheets and names; previously minor: commands see the selection's formulas; previously minor: plugin functions in autocomplete and Insert Function; previously minor: ribbon buttons that run macros; previously minor: protocol 1.1: host requests, macros and the Developer tab) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (protocol 2: the push channel and co-editing transports; previously minor: protocol 1.2: host-drawn dialogs, opening files, document events, `context.document`; previously minor: commands see the workbook's sheets and names; previously minor: commands see the selection's formulas; previously minor: plugin functions in autocomplete and Insert Function; previously minor: ribbon buttons that run macros; previously minor: protocol 1.1: host requests, macros and the Developer tab) · **Target:** Microsoft Excel (Microsoft 365)
 
 A plugin adds **functions** that formulas call and **commands** the user (or an agent) runs,
 and can put its commands on the ribbon (a group on a built-in tab, or a tab of its own) and in
@@ -22,8 +22,9 @@ only; functions are GridCraft's. A test plugin written in Python that works in b
 **Office add-ins** (Office.js web add-ins with an XML manifest) load as plugins too: their
 commands open their task pane in a web view; see [officejs.md](officejs.md).
 
-Live data from sources and streams (protocol 2) and co-editing come later; see
-[gaps.md](gaps.md) #16 and #21.
+**Co-editing** (protocol 2): transport plugins carry live sessions between people; see
+[Protocol 2](#protocol-2-the-push-channel-and-co-editing) and [collab.md](collab.md). Live data
+from sources and streams comes later; see [gaps.md](gaps.md) #16 and #21.
 
 ## Installing a plugin
 
@@ -427,6 +428,30 @@ an error whose `data.code` is `AccessDenied`: events are notifications, not edit
 The web app has no plugins, so none of this applies there. The dialog isn't a web view and can't
 hold HTML.
 
+## Protocol 2: the push channel and co-editing
+
+[Craft plugin protocol 2](https://github.com/sirmmo/craft-collab/blob/main/docs/protocol-2.md)
+(2.0.1, shared with WordCraft and DeckCraft) adds to 1, 1.1 and 1.2 and changes nothing in them:
+
+- **The push channel.** GridCraft reads every running plugin's output all the time. A plugin may
+  send notifications whenever it likes, and requests to the *anytime* methods (`collab/snapshot`,
+  `host/log`); GridCraft answers them in its main loop, in any order, and may send the plugin
+  notifications interleaved with its own requests, so a plugin must match answers by `id`. The
+  protocol-1 rules hold for GridCraft's requests. A line may be 64 MiB; more than 1,000 messages
+  a second for 5 s and the plugin is stopped. `initialize` gets `host.features` `"push"` and
+  `"collab"` and `host.collab = {formats: ["yjs-v1"], app: "gridcraft", schema: 1,
+  encryption: ["aes-256-gcm"]}`.
+- **Transports.** A plugin whose manifest has `"collab": {"transport": "mqtt", "label": "Live
+  (MQTT)"}` may join rooms. Its command answers `{"collab": {"join": {room, mode, user, role?,
+  key?, path?, title?}}}` (alongside `message`, `dialog`, `open`); `plugins.run` returns it and
+  the interface runs `collab.join` with it. Then the `collab/*` messages flow: `collab/joined`,
+  `sync1`/`sync2`/`update`/`awareness` (Yjs, base64, encrypted when keyed), `collab/status`,
+  `collab/leave`, `collab/snapshot`.
+
+GridCraft's shared document (schema 1), commands and behaviour: [collab.md](collab.md). A test
+transport that relays between two rooms is `crates/engine/tests/collab_push.rs`; craft-collab
+has MQTT and loopback transports.
+
 ## Publishing a plugin on GitHub
 
 Put `plugin.json` at the root of the repository (or in one folder of it). A plugin written in
@@ -454,8 +479,8 @@ are kept.
 
 - Calls are synchronous. A slow function holds up recalculation for up to its timeout.
   Asynchronous functions (`#GETTING_DATA` until the answer arrives) come with protocol 2.
-- Protocol 2 (planned): data sources and streams pushed by the plugin (`STREAM()`, `RTD`), with
-  targeted recalculation of the cells that use them.
+- Data sources and streams pushed by the plugin (`STREAM()`, `RTD`), with targeted
+  recalculation of the cells that use them, will build on protocol 2's push channel.
 - Installed plugins aren't updated automatically; install again to update. There's no
   Uninstall button yet: unload the plugin and delete its folder.
 - Ribbon groups go at the end of a tab; plugins can't place them between built-in groups, add
@@ -468,6 +493,7 @@ are kept.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Protocol 2: the push channel (plugins speak any time; `host.features` `push`, `collab`; `host.collab`), manifest `collab` (transports), `collab.join` in command results; co-editing in [collab.md](collab.md) |
 | 2026-10-15 | minor | Protocol 1.2: `host.features` and `host.language`, `context.document`, command results that open a file (`open`) or show a host-drawn dialog (`dialog`: list, form, message; chained), manifest `events` and `events/documentOpened`, `documentSaved`, `documentClosed` |
 | 2026-10-14 | minor | `context.sheets` and `context.names`: commands see every sheet and the defined names |
 | 2026-10-14 | minor | `context.formulas`: commands see the selection's formula text, so plugins can tell inputs from calculations |

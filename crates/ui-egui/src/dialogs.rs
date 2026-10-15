@@ -522,6 +522,31 @@ impl Dialog {
                 ],
                 json!({"groupBy": "A", "function": "sum"}),
             ),
+            "collabShare" => {
+                let mode = params.get("mode").and_then(Json::as_str).unwrap_or("share").to_string();
+                let defaults = crate::collab_ui::share_defaults(app, &mode);
+                let note = defaults["transports"].as_str().unwrap_or("").to_string();
+                Dialog::form(
+                    "collabShare",
+                    if mode == "join" { "Join Live Session" } else { "Start Live Session" },
+                    "collab.join",
+                    vec![
+                        Choice {
+                            key: "mode",
+                            label: "Session",
+                            options: vec![("share", "Share this workbook"), ("join", "Join a session (new workbook)")],
+                        },
+                        Text { key: "plugin", label: "Transport plugin:" },
+                        Text { key: "room", label: "Room:" },
+                        Text { key: "name", label: "Your name:" },
+                        Text { key: "color", label: "Your colour (#RRGGBB):" },
+                        Check { key: "encrypt", label: "Encrypt end to end (a new room key)" },
+                        Password { key: "key", label: "Room key (base64, from the invitation):" },
+                        Note(note),
+                    ],
+                    defaults,
+                )
+            }
             "zoom" => Dialog::form(
                 "zoom",
                 "Zoom",
@@ -986,6 +1011,25 @@ fn build_params(d: &Dialog) -> Json {
                 if m.remove("removePassword").and_then(|x| x.as_bool()) == Some(true) {
                     m.insert("password".into(), json!(""));
                 }
+            }
+        }
+        "collabShare" => {
+            let get = |k: &str| d.values.get(k).and_then(Json::as_str).unwrap_or("").trim().to_string();
+            let mut key = get("key");
+            if key.is_empty()
+                && d.values.get("encrypt").and_then(Json::as_bool) == Some(true)
+                && let Ok(k) = gridcraft_engine::collab_core::crypto::Key::generate()
+            {
+                key = k.to_base64();
+            }
+            v = json!({
+                "plugin": get("plugin"),
+                "room": get("room"),
+                "mode": get("mode"),
+                "user": {"id": get("userId"), "name": get("name"), "color": get("color")},
+            });
+            if !key.is_empty() {
+                v["key"] = json!(key);
             }
         }
         "zoom" => {

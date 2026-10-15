@@ -2116,6 +2116,24 @@ fn review(app: &mut SheetApp, ui: &mut Ui) {
     if big_button(ui, Icon::Validation, "Allow Edit\nRanges", "Allow Edit Ranges", false).clicked() {
         app.open_dialog("allowEditRanges", json!({}));
     }
+    // Share: live sessions (co-editing through a transport plugin, protocol 2).
+    sep(ui);
+    let in_room = app.session.active_room().is_some();
+    if big_button(ui, Icon::Share, "Start Live\nSession", "Share this workbook in a live session (co-editing)", false).clicked() {
+        act(app, "collab.share", json!({}));
+    }
+    ui.vertical(|ui| {
+        if small_button(ui, Icon::Link, "Join", "Join a live session", false).clicked() {
+            act(app, "collab.join", json!({}));
+        }
+        if ui
+            .add_enabled_ui(in_room, |ui| small_button(ui, Icon::Close, "Leave", "Leave the live session (the workbook stays open)", false))
+            .inner
+            .clicked()
+        {
+            act(app, "collab.leave", json!({}));
+        }
+    });
 }
 
 fn view(app: &mut SheetApp, ui: &mut Ui) {
