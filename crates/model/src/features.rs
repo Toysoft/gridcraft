@@ -482,6 +482,32 @@ pub struct Trendline {
     pub dash: Option<LineDash>,
 }
 
+/// Imported DrawingML metadata, separate from GridCraft's object ids. XLSX saves use it to retain
+/// object identity, visibility, macro bindings and stacking order. New objects start with default
+/// metadata; the writer assigns their file names and ids.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DrawingInfo {
+    pub name: Option<String>,
+    /// `cNvPr id` in the file; written again when it is still unique in the drawing.
+    pub file_id: Option<u32>,
+    pub hidden: bool,
+    /// DrawingML `macro` binding, preserved without executing it.
+    pub macro_name: Option<String>,
+    /// Sheet-local link to legacy VML. Excluded from JSON because [`Sheet::preserved`](crate::Sheet::preserved)
+    /// is not serialized; XLSX saves emit the link only when its backing shape is retained.
+    #[serde(skip)]
+    pub compat_spid: Option<String>,
+    /// Stored drawing position (0 = bottom), updated by Arrange; objects without one go on top.
+    pub order: Option<u32>,
+}
+
+impl DrawingInfo {
+    pub fn is_empty(&self) -> bool {
+        *self == DrawingInfo::default()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Chart {
     pub id: u32,
@@ -502,6 +528,9 @@ pub struct Chart {
     /// whenever the PivotTable is refreshed or its layout changes.
     #[serde(default)]
     pub pivot: Option<String>,
+    /// Imported drawing metadata; see [`DrawingInfo`].
+    #[serde(default, skip_serializing_if = "DrawingInfo::is_empty")]
+    pub info: DrawingInfo,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -513,6 +542,9 @@ pub struct Image {
     pub data: Vec<u8>,
     pub mime: String,
     pub alt: String,
+    /// Imported drawing metadata; see [`DrawingInfo`].
+    #[serde(default, skip_serializing_if = "DrawingInfo::is_empty")]
+    pub info: DrawingInfo,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -543,6 +575,9 @@ pub struct Shape {
     /// Outline visibility and text formatting (DrawingML `a:ln`, `a:bodyPr`, `a:pPr`, `a:rPr`).
     #[serde(default)]
     pub format: ShapeFormat,
+    /// Imported drawing metadata; see [`DrawingInfo`].
+    #[serde(default, skip_serializing_if = "DrawingInfo::is_empty")]
+    pub info: DrawingInfo,
 }
 
 /// Horizontal alignment of a shape's text (`a:pPr algn`).
