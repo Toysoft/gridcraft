@@ -2936,7 +2936,7 @@ fn from_database(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm:
     ui.horizontal(|ui| {
         let cur = db_str(d, "driver");
         for (val, text) in [("postgres", "PostgreSQL"), ("mysql", "MySQL / MariaDB"), ("sqlite", "SQLite file"), ("odbc", "ODBC")] {
-            if ui.radio(cur == val, text).clicked() {
+            if ui.radio(cur == val, lang.tr(text)).clicked() {
                 d.set_value("driver", json!(val));
             }
         }
