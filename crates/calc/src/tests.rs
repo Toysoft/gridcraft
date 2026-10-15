@@ -1266,3 +1266,12 @@ fn offset_extreme_arguments_return_ref() {
         assert_eq!(crate::evaluate(&wb, 0, c("D1"), formula), Value::Number(expected), "{formula}");
     }
 }
+
+#[test]
+fn formula_language_tables_only_name_functions_the_engine_knows() {
+    // A typo'd canonical name in a language table would turn a valid local name into #NAME?.
+    for locale in gridcraft_formula::FormulaLocale::ALL {
+        let unknown: Vec<&str> = locale.translations().iter().map(|(en, _)| *en).filter(|en| !crate::eval::is_known_function(en)).collect();
+        assert!(unknown.is_empty(), "{locale:?}: {unknown:?}");
+    }
+}

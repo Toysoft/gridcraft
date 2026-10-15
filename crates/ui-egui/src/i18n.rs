@@ -17,6 +17,7 @@ mod ko;
 mod pt;
 mod ru;
 mod sr;
+mod sv;
 mod zh;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,10 +36,12 @@ pub enum Language {
     Cs,
     Fr,
     Sr,
+    Sv,
 }
 
 impl Language {
-    pub const ALL: [Self; 11] = [Self::En, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::PtBr, Self::De, Self::Cs, Self::Fr, Self::Sr];
+    pub const ALL: [Self; 12] =
+        [Self::En, Self::Es, Self::Zh, Self::Ja, Self::Ko, Self::Ru, Self::PtBr, Self::De, Self::Cs, Self::Fr, Self::Sr, Self::Sv];
 
     /// The language's own name, shown in the switcher.
     pub fn name(self) -> &'static str {
@@ -54,6 +57,7 @@ impl Language {
             Self::Cs => "Čeština",
             Self::Fr => "Français",
             Self::Sr => "Srpski",
+            Self::Sv => "Svenska",
         }
     }
 
@@ -71,6 +75,7 @@ impl Language {
             Self::Cs => "cs",
             Self::Fr => "fr",
             Self::Sr => "sr",
+            Self::Sv => "sv",
         }
     }
 
@@ -91,6 +96,7 @@ impl Language {
             "cs" => Some(Self::Cs),
             "fr" => Some(Self::Fr),
             "sr" => Some(Self::Sr),
+            "sv" => Some(Self::Sv),
             _ => None,
         }
     }
@@ -108,8 +114,19 @@ impl Language {
         }
     }
 
+    /// The formula language this interface language enters and shows. Japanese, Chinese and
+    /// Korean Excel use English function names; Czech and Serbian have no function table yet.
     pub fn formula_locale(self) -> gridcraft_engine::formula::FormulaLocale {
-        if self == Self::Es { gridcraft_engine::formula::FormulaLocale::Es } else { gridcraft_engine::formula::FormulaLocale::En }
+        use gridcraft_engine::formula::FormulaLocale;
+        match self {
+            Self::Es => FormulaLocale::Es,
+            Self::De => FormulaLocale::De,
+            Self::PtBr => FormulaLocale::PtBr,
+            Self::Ru => FormulaLocale::Ru,
+            Self::Fr => FormulaLocale::Fr,
+            Self::Sv => FormulaLocale::Sv,
+            Self::En | Self::Zh | Self::Ja | Self::Ko | Self::Cs | Self::Sr => FormulaLocale::En,
+        }
     }
 
     /// Translates an interface label; untranslated labels fall back to English.
@@ -129,6 +146,7 @@ impl Language {
             Self::Cs => cs::translate(text),
             Self::Fr => fr::translate(text),
             Self::Sr => sr::translate(text),
+            Self::Sv => sv::translate(text),
         };
         translated.unwrap_or_else(|| text.rsplit_once('|').map_or(text, |(_, label)| label))
     }
@@ -624,6 +642,11 @@ mod tests {
         assert_eq!(Language::De.tr("Sheet1!A1"), "Sheet1!A1");
         assert_eq!(Language::Fr.tr("Data"), "Données");
         assert_eq!(Language::Fr.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Sv.tr("Data"), "Data");
+        assert_eq!(Language::Sv.tr("Formulas"), "Formler");
+        assert_eq!(Language::Sv.tr("Sheet1!A1"), "Sheet1!A1");
+        assert_eq!(Language::Sv.tr("Page Layout|Orientation"), "Orientering");
+        assert_eq!(Language::Sv.tr("Orientation"), "Orientering");
         assert_eq!(Language::PtBr.tr("Date"), "Data");
         assert_eq!(Language::PtBr.tr("Sheet1!A1"), "Sheet1!A1");
         assert_eq!(Language::Ja.tr("Sheet1!A1"), "Sheet1!A1");
@@ -682,6 +705,9 @@ mod tests {
         assert_eq!(Language::from_tag("fr-FR"), Some(Language::Fr));
         assert_eq!(Language::from_tag("fr_CA"), Some(Language::Fr));
         assert_eq!(Language::parse("fr"), Some(Language::Fr));
+        assert_eq!(Language::from_tag("sv-SE"), Some(Language::Sv));
+        assert_eq!(Language::from_tag("sv_FI.UTF-8"), Some(Language::Sv));
+        assert_eq!(Language::parse("sv"), Some(Language::Sv));
         assert_eq!(Language::from_tag("sr-Latn-RS"), Some(Language::Sr));
         assert_eq!(Language::from_tag("sr-RS"), Some(Language::Sr));
         assert_eq!(Language::parse("sr"), Some(Language::Sr));
