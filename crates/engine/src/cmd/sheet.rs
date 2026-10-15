@@ -746,7 +746,7 @@ fn delete_sheet(s: &mut Session, p: &Json) -> Result<Json> {
                 *sc -= 1;
             }
             // Names referring to the sheet become #REF!.
-            if let Ok(e) = gridcraft_formula::parse(&n.formula) {
+            if let Ok(e) = gridcraft_formula::parse_name(&n.formula) {
                 let ne = gridcraft_formula::adjust::delete_sheet(e.clone(), &name, &order);
                 if ne != e {
                     n.formula = gridcraft_formula::print(&ne);
@@ -808,7 +808,7 @@ fn rename_sheet(s: &mut Session, p: &Json) -> Result<Json> {
             }
         }
         for n in cx.wb.names.iter_mut() {
-            if let Ok(e) = gridcraft_formula::parse(&n.formula) {
+            if let Ok(e) = gridcraft_formula::parse_name(&n.formula) {
                 n.formula = gridcraft_formula::print(&gridcraft_formula::adjust::rename_sheet(e, &old, &name));
             }
         }
@@ -847,7 +847,7 @@ fn move_sheet(s: &mut Session, p: &Json) -> Result<Json> {
                 .iter()
                 .filter(|nm| nm.scope == Some(i))
                 .map(|nm| {
-                    let formula = gridcraft_formula::parse(&nm.formula)
+                    let formula = gridcraft_formula::parse_name(&nm.formula)
                         .map(|e| gridcraft_formula::print(&gridcraft_formula::adjust::rename_sheet(e, &base, &sh.name)))
                         .unwrap_or_else(|_| nm.formula.clone());
                     gridcraft_model::DefinedName { scope: Some(at), formula, ..nm.clone() }

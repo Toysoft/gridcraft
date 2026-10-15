@@ -658,6 +658,24 @@ fn names_and_sheets() {
 }
 
 #[test]
+fn name_referring_to_several_ranges() {
+    let mut t = T::new();
+    // As Excel writes it in `<definedName>`: a union with no parentheses around it.
+    let union = "Sheet1!$A$1:$A$2,Sheet1!$C$1:$C$2";
+    t.wb.names.push(gridcraft_model::DefinedName { name: "u".into(), scope: None, formula: union.into(), comment: String::new(), hidden: false });
+    for (at, v) in [("A1", "1"), ("A2", "2"), ("C1", "5"), ("C2", "7")] {
+        t.set(at, v);
+    }
+    t.set("E1", "=SUM(u)");
+    t.set("E2", "=AREAS(u)");
+    t.set("E3", "=MIN(u)");
+    t.set("E4", "=INDEX(u,2,1,2)");
+    assert_eq!((t.num("E1"), t.num("E2"), t.num("E3"), t.num("E4")), (15.0, 2.0, 1.0, 7.0));
+    t.set("C2", "70");
+    assert_eq!(t.num("E1"), 78.0);
+}
+
+#[test]
 fn legacy_array_formulas_fill_their_range() {
     let mut t = T::new();
     t.set("A1", "1");

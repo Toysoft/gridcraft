@@ -1,6 +1,6 @@
 //! Formulas tab: AutoSum, Insert Function, names, auditing, calculation.
 
-use gridcraft_core::{CellRef, RangeRef};
+use gridcraft_core::{CellError, CellRef, RangeRef, Value};
 use gridcraft_model::{CalcMode, DefinedName, Formula};
 use serde_json::{Value as Json, json};
 
@@ -265,7 +265,7 @@ fn define_name(s: &mut Session, p: &Json) -> Result<Json> {
     let refers = match str_param(p, "refersTo") {
         // As in Excel, relative references are relative to the active cell; names keep them
         // relative to A1, as files do.
-        Some(r) => match gridcraft_formula::parse(r.trim_start_matches('=')) {
+        Some(r) => match gridcraft_formula::parse_name(r.trim_start_matches('=')) {
             Ok(e) if gridcraft_formula::adjust::has_relative_refs(&e) => {
                 let at = d.selection.active;
                 gridcraft_formula::print(&gridcraft_formula::adjust::shift_relative_wrapping(e, -(at.row as i64), -(at.col as i64)))
@@ -280,7 +280,7 @@ fn define_name(s: &mut Session, p: &Json) -> Result<Json> {
             format!("{}!{}", gridcraft_formula::quote_sheet(&sh.name), body)
         }
     };
-    if gridcraft_formula::parse(&refers).is_err() {
+    if gridcraft_formula::parse_name(&refers).is_err() {
         return Err(EngineError::Other("There's a problem with this formula.".into()));
     }
     let comment = str_param(p, "comment").unwrap_or("").to_string();
@@ -355,7 +355,7 @@ fn rename_name_in_formulas(wb: &mut gridcraft_model::Workbook, old: &str, old_sc
     }
     for n in wb.names.iter_mut() {
         if n.scope.is_none_or(applies)
-            && let Some(e) = gridcraft_formula::parse(&n.formula).ok().and_then(rename)
+            && let Some(e) = gridcraft_formula::parse_name(&n.formula).ok().and_then(rename)
         {
             n.formula = gridcraft_formula::print(&e);
         }
@@ -389,7 +389,9 @@ fn name_manager(s: &mut Session, _: &Json) -> Result<Json> {
         .filter(|n| !n.hidden)
         .map(|n| {
             let sheet = n.scope.unwrap_or(d.wb.active_sheet);
-            let v = gridcraft_calc::evaluate(&d.wb, sheet, CellRef::default(), &n.formula);
+            // parse_name, not evaluate's parse: a name's top-level commas are unions.
+            let v = gridcraft_formula::parse_name(&n.formula)
+                .map_or(Value::Error(CellError::Name), |e| gridcraft_calc::recalc::evaluate_expr(&d.wb, sheet, CellRef::default(), &e));
             json!({"name": n.name, "refersTo": format!("={}", n.formula), "scope": n.scope.and_then(|i| d.wb.sheet(i)).map(|s| s.name.clone()).unwrap_or_else(|| "Workbook".into()), "value": crate::cmd::inspect::value_json(&v), "comment": n.comment})
         })
         .collect();
@@ -609,5 +611,40 @@ mod tests {
         // Absolute references are kept as they are.
         let r = s.execute("formulas.defineName", json!({"name": "First", "refersTo": "=Sheet1!$A$1"})).unwrap();
         assert_eq!(r["refersTo"], "=Sheet1!$A$1");
+    }
+
+    #[test]
+    fn names_referring_to_several_ranges() {
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("range.setValues", json!({"range": "A1:C2", "values": [[1, 0, 5], [2, 0, 7]]})).unwrap();
+        // Excel writes and accepts a union in a name without parentheses.
+        let r = s.execute("formulas.defineName", json!({"name": "u", "refersTo": "=Sheet1!$A$1:$A$2,Sheet1!$C$1:$C$2"})).unwrap();
+        assert_eq!(r["refersTo"], "=Sheet1!$A$1:$A$2,Sheet1!$C$1:$C$2");
+        for (cell, input) in [("E1", "=SUM(u)"), ("E2", "=AREAS(u)"), ("E3", "=MIN(u)"), ("E4", "=INDEX(u,2,1,2)")] {
+            s.execute("cell.set", json!({"cell": cell, "input": input})).unwrap();
+        }
+        let v = |s: &mut Session, a: &str| s.execute("cell.get", json!({"cell": a})).unwrap()["value"].clone();
+        assert_eq!(v(&mut s, "E1"), json!(15.0));
+        assert_eq!(v(&mut s, "E2"), json!(2.0));
+        assert_eq!(v(&mut s, "E3"), json!(1.0));
+        assert_eq!(v(&mut s, "E4"), json!(7.0));
+        // Renaming the sheet follows every area, and the definition keeps Excel's form.
+        s.execute("sheet.rename", json!({"name": "Data"})).unwrap();
+        let name = s.doc().unwrap().wb.names.iter().find(|n| n.name == "u").map(|n| n.formula.clone());
+        assert_eq!(name.as_deref(), Some("Data!$A$1:$A$2,Data!$C$1:$C$2"));
+        assert_eq!(v(&mut s, "E1"), json!(15.0));
+    }
+
+    #[test]
+    fn name_manager_previews_a_name_over_several_ranges() {
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("range.setValues", json!({"range": "A1:C2", "values": [[1, 0, 5], [2, 0, 7]]})).unwrap();
+        s.execute("formulas.defineName", json!({"name": "u", "refersTo": "=Sheet1!$A$1:$A$2,Sheet1!$C$1:$C$2"})).unwrap();
+        let list = s.execute("formulas.nameManager", json!({})).unwrap();
+        let u = list.as_array().and_then(|l| l.iter().find(|n| n["name"] == "u")).cloned().unwrap();
+        // The union parses as one, so the preview is what the union gives in a cell, not #NAME?.
+        assert_eq!(u["value"], json!({"error": "#VALUE!"}));
     }
 }

@@ -271,7 +271,7 @@ impl<'h> Evaluator<'h> {
         if let Some(def) = wb.name(bare, scope_sheet) {
             let text = def.formula.clone();
             let scope = def.scope.unwrap_or(self.sheet);
-            return match gridcraft_formula::parse(&text) {
+            return match gridcraft_formula::parse_name(&text) {
                 Ok(expr) => {
                     // Relative references in a name are relative to A1: used here, they move by
                     // this cell's offset from it.

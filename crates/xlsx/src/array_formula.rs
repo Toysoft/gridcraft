@@ -57,7 +57,7 @@ impl Scan<'_> {
                     None => (sheet, n.as_str()),
                 };
                 if let Some(def) = self.wb.name(bare, scope) {
-                    return match gridcraft_formula::parse(def.formula.trim_start_matches('=')) {
+                    return match gridcraft_formula::parse_name(def.formula.trim_start_matches('=')) {
                         Ok(expr) => self.expr(&expr, def.scope.unwrap_or(scope), array_context, depth + 1),
                         Err(_) => Shape::array(),
                     };
