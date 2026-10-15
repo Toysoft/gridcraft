@@ -30,6 +30,18 @@ fn harness() -> egui_kittest::Harness<'static, SheetApp> {
     h
 }
 
+/// Ubuntu Light, base64-encoded, with table `from` renamed to `to` so nothing finds it.
+fn ubuntu_renaming(from: &[u8; 4], to: &[u8; 4]) -> String {
+    let mut font = epaint_default_fonts::UBUNTU_LIGHT.to_vec();
+    let tables = u16::from_be_bytes([font[4], font[5]]) as usize;
+    for at in (0..tables).map(|i| 12 + 16 * i) {
+        if &font[at..at + 4] == from {
+            font[at..at + 4].copy_from_slice(to);
+        }
+    }
+    gridcraft_engine::io::base64_encode(&font)
+}
+
 fn add(h: &mut egui_kittest::Harness<'static, SheetApp>, params: Json) -> Json {
     let ctx = h.ctx.clone();
     match control::handle(h.state_mut(), &ctx, "engine.execute", &json!({"command": "app.font.add", "params": params})) {
@@ -82,13 +94,16 @@ fn a_bad_font_is_refused_and_the_app_keeps_drawing() {
         json!({"name": "Huge Index", "base64": ubuntu, "index": 4_294_967_296_u64}),
         json!({"name": "Missing Face", "base64": ubuntu, "index": 3}),
         json!({"name": "", "base64": ubuntu}),
+        // Readable, but nothing egui could draw with: no outlines, no units per em.
+        json!({"name": "No Outlines", "base64": ubuntu_renaming(b"glyf", b"gly_")}),
+        json!({"name": "No Head", "base64": ubuntu_renaming(b"head", b"hea_")}),
     ] {
         let reply = add(&mut h, params.clone());
         assert_eq!(reply["ok"], false, "{params}: {reply}");
     }
     h.run_steps(3);
     let fonts = h.ctx.fonts(|f| f.definitions().clone());
-    for name in ["No Bytes", "Garbage", "Bad Index", "Huge Index", "Missing Face"] {
+    for name in ["No Bytes", "Garbage", "Bad Index", "Huge Index", "Missing Face", "No Outlines", "No Head"] {
         assert!(!fonts.font_data.contains_key(&format!("extra:{name}")), "{name} was refused");
     }
     assert!(h.state().fonts_ready, "the app still draws");

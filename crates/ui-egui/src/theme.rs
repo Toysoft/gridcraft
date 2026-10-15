@@ -408,9 +408,10 @@ static EXTRA_FONT_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::Ato
 /// glyphs (`app.font.add`, the web host's `gridcraft:font`). `index` picks the face in a
 /// collection; TrueType and OpenType files only (not WOFF). The checks run in this order: the
 /// name, a name already added (ignored: its first font stays, `added` is false), the size, how
-/// many fonts there are, then the face itself, which egui would panic on if it can't read it.
-/// The bytes are kept once, for the life of the app. Font sets built from now on carry the font;
-/// the app rebuilds its own at the next frame.
+/// many fonts there are, then the face itself: one egui can't read (it would panic) is refused,
+/// and so is one it can't draw from (no glyph outlines, as in a file cut off after its character
+/// map, or no units per em). The bytes are kept once, for the life of the app. Font sets built
+/// from now on carry the font; the app rebuilds its own at the next frame.
 pub fn add_font(name: &str, bytes: Vec<u8>, index: u32) -> Result<FontAdded, String> {
     let mut fonts = EXTRA_FONTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let added = add_extra(&mut fonts, name, bytes, index)?;
@@ -473,8 +474,8 @@ fn add_extra(fonts: &mut Vec<ExtraFont>, name: &str, bytes: Vec<u8>, index: u32)
         return Ok(known);
     }
     let name = name.trim();
-    if !font_parses(&bytes, index) {
-        return Err(format!("font {name:?} (face {index}) isn't a font file egui can read"));
+    if let Some(why) = cannot_draw(&bytes, index) {
+        return Err(format!("font {name:?} (face {index}) {why}"));
     }
     let covers = coverage(&bytes, index);
     // Kept for the life of the app (fonts are never removed): as static bytes, which epaint shares
@@ -483,6 +484,28 @@ fn add_extra(fonts: &mut Vec<ExtraFont>, name: &str, bytes: Vec<u8>, index: u32)
     data.index = index;
     fonts.push(ExtraFont { name: name.to_string(), data: Arc::new(data), covers });
     Ok(FontAdded { added: true, covers })
+}
+
+/// Why face `index` of a font the host hands over can't be added, or `None` when it can. Past
+/// [`font_parses`], the face has to be one epaint can draw: epaint picks the face for a character
+/// from its character map alone, so a face with no glyph outlines (a file cut off after its
+/// character map, a bitmap-only font) would take characters from the faces after it and draw them
+/// blank, and one with no units per em (no `head` table) scales every glyph by infinity, which
+/// trips a debug assertion in epaint and leaves sizes infinite or NaN in a release build. Checked
+/// with the calls epaint makes when it loads a face.
+fn cannot_draw(bytes: &[u8], index: u32) -> Option<&'static str> {
+    use skrifa::MetadataProvider;
+    let font = match skrifa::FontRef::from_index(bytes, index) {
+        Ok(font) if font_parses(bytes, index) => font,
+        _ => return Some("isn't a font file egui can read"),
+    };
+    if font.metrics(skrifa::instance::Size::unscaled(), skrifa::instance::LocationRef::default()).units_per_em == 0 {
+        return Some("has no units per em (a missing or broken head table)");
+    }
+    if font.outline_glyphs().format().is_none() {
+        return Some("has no glyph outlines egui can draw");
+    }
+    None
 }
 
 /// Which CJK scripts face `index` of `bytes` maps: every sample character must have a glyph.
@@ -1110,6 +1133,52 @@ mod extra_font_tests {
         Ok(FontAdded { added: true, covers })
     }
 
+    /// Where table record `i` of a font's table directory starts.
+    fn record(i: usize) -> usize {
+        12 + 16 * i
+    }
+
+    fn table_count(font: &[u8]) -> usize {
+        u16::from_be_bytes([font[4], font[5]]) as usize
+    }
+
+    /// Ubuntu Light with table `from` renamed to `to` in its table directory: every byte is still
+    /// there, but nothing finds the table any more.
+    fn ubuntu_renaming(from: &[u8; 4], to: &[u8; 4]) -> Vec<u8> {
+        let mut font = ubuntu();
+        for i in 0..table_count(&font) {
+            let at = record(i);
+            if &font[at..at + 4] == from {
+                font[at..at + 4].copy_from_slice(to);
+            }
+        }
+        font
+    }
+
+    /// `font` rewritten with its outlines (`glyf`) last, the order most fonts are laid out in
+    /// (character map and metrics first), and where `glyf` now starts: cut there, a file keeps
+    /// everything but its outlines, like a font whose transfer broke off.
+    fn outlines_last(font: &[u8]) -> (Vec<u8>, usize) {
+        let tables = table_count(font);
+        let mut order: Vec<usize> = (0..tables).collect();
+        order.sort_by_key(|&i| &font[record(i)..record(i) + 4] == b"glyf");
+        let mut out = font[..record(tables)].to_vec();
+        let mut glyf = 0;
+        for i in order {
+            let at = record(i);
+            let offset = u32::from_be_bytes([font[at + 8], font[at + 9], font[at + 10], font[at + 11]]) as usize;
+            let len = u32::from_be_bytes([font[at + 12], font[at + 13], font[at + 14], font[at + 15]]) as usize;
+            out.resize(out.len().next_multiple_of(4), 0);
+            if &font[at..at + 4] == b"glyf" {
+                glyf = out.len();
+            }
+            let moved = u32::try_from(out.len()).unwrap().to_be_bytes();
+            out[at + 8..at + 12].copy_from_slice(&moved);
+            out.extend_from_slice(&font[offset..offset + len]);
+        }
+        (out, glyf)
+    }
+
     /// A Korean face installed on this machine, if any (a minimal machine has none: the checks
     /// that need one are skipped there).
     fn korean_face() -> Option<(Vec<u8>, u32)> {
@@ -1185,6 +1254,28 @@ mod extra_font_tests {
         assert!(add_extra(&mut extra, "  ", real.clone(), 0).is_err(), "a font needs a name");
         assert!(add_extra(&mut extra, &"x".repeat(1_000), real, 0).is_err(), "a name is short");
         assert!(extra.is_empty(), "nothing was added");
+    }
+
+    #[test]
+    fn a_font_that_cannot_draw_is_refused() {
+        // epaint picks the face for a character from its character map alone: a face with no
+        // outlines would take characters from the faces after it and draw them blank, and one with
+        // no units per em (no `head`) scales every glyph by infinity, a debug assertion panic
+        // ("Bad px_scale_factor: inf").
+        let mut extra = Vec::new();
+        let no_outlines = add_extra(&mut extra, "No Outlines", ubuntu_renaming(b"glyf", b"gly_"), 0);
+        assert!(no_outlines.as_ref().is_err_and(|e| e.contains("glyph outlines")), "{no_outlines:?}");
+        let no_head = add_extra(&mut extra, "No Head", ubuntu_renaming(b"head", b"hea_"), 0);
+        assert!(no_head.as_ref().is_err_and(|e| e.contains("units per em")), "{no_head:?}");
+        // A real font whose transfer broke off inside its outlines: its character map, head and
+        // metrics all arrived.
+        let (whole, glyf) = outlines_last(&ubuntu());
+        let cut = add_extra(&mut extra, "Cut Off", whole.get(..glyf + 1_000).unwrap_or_default().to_vec(), 0);
+        assert!(cut.as_ref().is_err_and(|e| e.contains("glyph outlines")), "{cut:?}");
+        assert!(extra.is_empty(), "nothing was added");
+        // Laid out that way but whole, it is a font like any other.
+        assert!(add_extra(&mut extra, "Outlines Last", whole, 0).is_ok());
+        assert!(extra.first().is_some_and(|f| draws(f.data.clone(), "Hello")));
     }
 
     #[test]

@@ -63,10 +63,12 @@ before it (the first one added wins where two cover the same character), so text
 other fonts lack draws with it. It returns `{name, added, covers: {hangul, han, kana}}`: `added` is
 false when a font of that name was already added, which is then left as it was; `covers` is a hint
 from a few sample characters of each script in the font's character map, not a check of every
-character. A file egui can't read, one over 64 MiB, or a font past 32 (256 MiB in all) is refused;
-over the desktop channel the base64 text has to fit a 64 MiB line, so about 48 MiB of font is the
-practical limit there. Added fonts stay, one copy each, until the app quits. The web build has no
-system fonts, so a page that embeds it (`?host=parent`) sends its CJK fonts as `gridcraft:font`
+character. A file egui can't read, one it can't draw from (no glyph outlines, as in a file cut off
+in transfer after its character map, or no units per em), one over 64 MiB, or a font past 32
+(256 MiB in all) is refused, with an error that says which; over the desktop channel the base64
+text has to fit a 64 MiB line, so about 48 MiB of font is the practical limit there. Added fonts
+stay, one copy each, until the app quits. The web build has no system fonts, so a page that
+embeds it (`?host=parent`) sends its CJK fonts as `gridcraft:font`
 messages (`{name, bytes, index?}`, bytes an `ArrayBuffer` or `Uint8Array`; see
 `apps/gridcraft-web/src/host.rs`), each answered with `gridcraft:fontResult`, in this order:
 `gridcraft:ready` (from GridCraft, with `"font"` in `capabilities`), then `gridcraft:font`, then

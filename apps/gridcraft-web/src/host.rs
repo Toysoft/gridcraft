@@ -12,8 +12,9 @@
 //!   `gridcraft:open`; the app redraws with them at its next frame. Answered with
 //!   `gridcraft:fontResult` (to the parent): `{ name, ok: true, added, covers }` (`added` false
 //!   when a font of that name was already added and this one was ignored), or
-//!   `{ name, ok: false, error }` for a file that isn't a readable font, one over 64 MiB, or a
-//!   font past 32 (256 MiB in all).
+//!   `{ name, ok: false, error }` for a file that isn't a readable font, one egui can't draw
+//!   from (no glyph outlines, as in a file cut off in transfer, or no units per em), one over
+//!   64 MiB, or a font past 32 (256 MiB in all).
 //! - `gridcraft:save` (to the parent): `{ name, bytes }` (a transferred `ArrayBuffer`) for every
 //!   file GridCraft would otherwise download: Save and Save As (an .xlsx workbook) and Export
 //!   as PDF. The parent stores it and reports failures itself.
