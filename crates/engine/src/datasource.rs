@@ -58,3 +58,28 @@ pub type DataSource = Arc<dyn Fn(&DbRequest) -> Result<DbTable, String> + Send +
 
 /// Drivers a host may support; the command rejects anything else before calling the host.
 pub const DRIVERS: &[&str] = &["postgres", "mysql", "sqlite", "odbc"];
+
+/// The driver a URL connection names by its scheme (`postgres://`, `mysql://`, …), if any.
+pub fn driver_for_connection(connection: &str) -> Option<&'static str> {
+    let (scheme, _) = connection.trim().split_once("://")?;
+    match scheme.to_ascii_lowercase().as_str() {
+        "postgres" | "postgresql" => Some("postgres"),
+        "mysql" | "mariadb" => Some("mysql"),
+        "sqlite" => Some("sqlite"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn driver_from_url_scheme() {
+        assert_eq!(driver_for_connection("mysql://u@h:3306/db"), Some("mysql"));
+        assert_eq!(driver_for_connection(" MariaDB://u@h/db"), Some("mysql"));
+        assert_eq!(driver_for_connection("postgresql://u@h/db"), Some("postgres"));
+        assert_eq!(driver_for_connection("/data/x.db"), None);
+        assert_eq!(driver_for_connection("DSN=Sales"), None);
+    }
+}

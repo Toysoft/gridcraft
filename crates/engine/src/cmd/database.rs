@@ -7,7 +7,7 @@ use gridcraft_model::Cell;
 use serde_json::{Value as Json, json};
 
 use super::*;
-use crate::datasource::{DEFAULT_MAX_ROWS, DEFAULT_TIMEOUT_SECS, DRIVERS, DbRequest, DbTable, DbValue};
+use crate::datasource::{DEFAULT_MAX_ROWS, DEFAULT_TIMEOUT_SECS, DRIVERS, DbRequest, DbTable, DbValue, driver_for_connection};
 use crate::{EngineError, Session};
 
 /// Longest text a cell holds (Excel's limit).
@@ -38,6 +38,12 @@ fn from_database(s: &mut Session, p: &Json) -> Result<Json> {
         return Err(bad(ID, format!("`driver` must be one of {}", DRIVERS.join(", "))));
     }
     let connection = str_param(p, "connection").map(str::trim).filter(|c| !c.is_empty()).ok_or_else(|| bad(ID, "missing `connection`"))?;
+    // A `mysql://` URL sent to the PostgreSQL driver fails with an obscure parse error; say what is wrong.
+    if let Some(named) = driver_for_connection(connection)
+        && named != driver
+    {
+        return Err(bad(ID, format!("the connection is a {named} URL but `driver` is {driver}; choose {named}")));
+    }
     let query = str_param(p, "query").map(str::trim).filter(|q| !q.is_empty()).ok_or_else(|| bad(ID, "missing `query`"))?;
     let max_rows =
         p.get("maxRows").and_then(Json::as_u64).map_or(DEFAULT_MAX_ROWS, |n| usize::try_from(n).unwrap_or(usize::MAX).clamp(1, DEFAULT_MAX_ROWS));
@@ -234,6 +240,8 @@ mod tests {
         assert!(s.execute("data.fromDatabase", p.clone()).unwrap_err().to_string().contains("not available"));
         assert!(s.execute("data.fromDatabase", json!({"driver": "oracle", "connection": "x", "query": "q"})).is_err());
         assert!(s.execute("data.fromDatabase", json!({"driver": "sqlite", "connection": "/x.db"})).is_err());
+        let e = s.execute("data.fromDatabase", json!({"driver": "postgres", "connection": "mysql://u@h/db", "query": "q"})).unwrap_err();
+        assert!(e.to_string().contains("mysql URL"));
         s.data_source = Some(Arc::new(|_: &DbRequest| Err("connection refused".to_string())));
         assert!(s.execute("data.fromDatabase", p).unwrap_err().to_string().contains("connection refused"));
         let (mut s, _) = session_with(DbTable::default());

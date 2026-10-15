@@ -55,6 +55,13 @@ impl Dialog {
         {
             self.values.insert("percent".into(), json!(p));
         }
+        // Typing a `mysql://` or `postgres://` URL picks the matching driver.
+        if self.name == "fromDatabase"
+            && key == "connection"
+            && let Some(driver) = value.as_str().and_then(gridcraft_engine::datasource::driver_for_connection)
+        {
+            self.values.insert("driver".into(), json!(driver));
+        }
         self.values.insert(key.into(), value);
     }
 
@@ -1432,7 +1439,7 @@ fn form_fields(ui: &mut egui::Ui, d: &mut Dialog) {
                             ui.add(egui::TextEdit::singleline(&mut s).desired_width(320.0))
                         };
                         if r.changed() {
-                            d.values.insert(key.into(), json!(s));
+                            d.set_value(key, json!(s));
                         }
                     });
                 }
