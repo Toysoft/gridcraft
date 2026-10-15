@@ -520,6 +520,10 @@ pub fn lookup(tag: &str) -> &'static Region {
     let mut script = String::new();
     let mut country = String::new();
     for p in parts {
+        // An extension or private-use singleton (`-u-ca-gregory`, `-x-…`) ends the region part.
+        if p.len() == 1 {
+            break;
+        }
         if p.len() == 4 && p.chars().all(|c| c.is_ascii_alphabetic()) {
             script = p.to_ascii_lowercase();
         } else if (p.len() == 2 && p.chars().all(|c| c.is_ascii_alphabetic())) || (p.len() == 3 && p.chars().all(|c| c.is_ascii_digit())) {
@@ -536,13 +540,13 @@ pub fn lookup(tag: &str) -> &'static Region {
             "AO" | "CH" | "CV" | "FR" | "GQ" | "GW" | "LU" | "MO" | "MZ" | "ST" | "TL" | "PT" => "pt-PT",
             _ => "pt-BR",
         },
-        "zh" => {
-            if script == "hant" || matches!(country.as_str(), "TW" | "HK" | "MO") {
-                "zh-TW"
-            } else {
-                "zh-CN"
-            }
-        }
+        "zh" => match country.as_str() {
+            // An explicit territory wins over the script (`zh-Hant-CN` is China's conventions).
+            "CN" | "SG" => "zh-CN",
+            "TW" | "HK" | "MO" => "zh-TW",
+            _ if script == "hant" => "zh-TW",
+            _ => "zh-CN",
+        },
         "es" => "es-ES",
         "de" => "de-DE",
         "fr" => "fr-FR",
@@ -574,20 +578,25 @@ impl Region {
     /// ignoring case. Names with a day (`1 января`) match too.
     pub fn month_from_name(&self, word: &str) -> Option<u32> {
         let w = word.trim().to_lowercase();
-        if w.is_empty() {
+        // Where the abbreviations end in a period (`сент.`, `janv.`), any abbreviation may be typed
+        // with one (`мар.`, `juin.`). Elsewhere a period is not part of a month name, so en-US
+        // `Mar. 4, 2026` stays text as before.
+        let dotted = self.months_abbr.iter().any(|a| a.ends_with('.'));
+        let stem = if dotted { w.trim_end_matches('.') } else { w.as_str() };
+        if stem.is_empty() {
             return None;
         }
-        let long_enough = w.chars().count() >= 3;
+        let long_enough = stem.chars().count() >= 3;
         for (i, full) in self.months.iter().enumerate() {
             let full_l = full.to_lowercase();
             let abbr_l = self.months_abbr.get(i).map(|a| a.to_lowercase()).unwrap_or_default();
             let gen_l = self.months_genitive.as_ref().and_then(|g| g.get(i)).map(|g| g.to_lowercase());
             let hit = w == full_l
                 || w == abbr_l
-                || w == abbr_l.trim_end_matches('.')
+                || stem == abbr_l.trim_end_matches('.')
                 || gen_l.as_deref() == Some(w.as_str())
-                || (long_enough && full_l.starts_with(&w))
-                || (long_enough && gen_l.as_deref().is_some_and(|g| g.starts_with(&w)));
+                || (long_enough && full_l.starts_with(stem))
+                || (long_enough && gen_l.as_deref().is_some_and(|g| g.starts_with(stem)));
             if hit {
                 return Some(i as u32 + 1);
             }
@@ -635,6 +644,11 @@ mod tests {
         assert_eq!(lookup("zh-Hant").tag, "zh-TW");
         assert_eq!(lookup("zh-HK").tag, "zh-TW");
         assert_eq!(lookup("zh").tag, "zh-CN");
+        // Extensions don't replace the region or script; an explicit territory beats the script.
+        assert_eq!(lookup("en-GB-u-ca-gregory").tag, "en-GB");
+        assert_eq!(lookup("zh-Hant-u-nu-latn").tag, "zh-TW");
+        assert_eq!(lookup("zh-Hant-CN").tag, "zh-CN");
+        assert_eq!(lookup("zh-Hans-TW").tag, "zh-TW");
         assert_eq!(lookup("cs_CZ.UTF-8").tag, "cs-CZ");
         assert_eq!(lookup("C").tag, "en-US");
         assert_eq!(lookup("").tag, "en-US");
@@ -669,6 +683,12 @@ mod tests {
         let ru = find("ru-RU").unwrap();
         assert_eq!(ru.month_from_name("сентября"), Some(9));
         assert_eq!(ru.month_from_name("сент."), Some(9));
+        // Abbreviations typed with a period the table doesn't carry.
+        assert_eq!(ru.month_from_name("мар."), Some(3));
+        assert_eq!(ru.month_from_name("июн."), Some(6));
+        assert_eq!(find("fr-FR").unwrap().month_from_name("juin."), Some(6));
+        assert_eq!(EN_US.month_from_name("Mar."), None);
+        assert_eq!(de.month_from_name("."), None);
         assert_eq!(EN_US.month_from_name("Ma"), None);
         assert_eq!(EN_US.month_from_name("May"), Some(5));
     }
