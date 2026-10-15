@@ -20,14 +20,14 @@ pub(crate) const MAX_DEPTH: usize = 256;
 /// Parses formula text. A leading `=` (or `+`/`-` as Lotus users type) is accepted and skipped
 /// for `=`.
 pub fn parse(src: &str) -> Result<Expr, ParseError> {
-    parse_syntax(src, crate::FormulaLocale::En)
+    parse_syntax(src, crate::FormulaLocale::En, crate::Separators::EN_US)
 }
 
-pub(crate) fn parse_syntax(src: &str, locale: crate::FormulaLocale) -> Result<Expr, ParseError> {
+pub(crate) fn parse_syntax(src: &str, locale: crate::FormulaLocale, separators: crate::Separators) -> Result<Expr, ParseError> {
     let body = src.strip_prefix('=').unwrap_or(src);
-    let toks = tokenize_locale(body, locale).map_err(|e| ParseError { msg: e.msg, pos: e.pos })?;
+    let toks = tokenize_locale(body, locale, separators).map_err(|e| ParseError { msg: e.msg, pos: e.pos })?;
     let toks = significant_spaces(toks);
-    let mut p = Parser { toks, i: 0, depth: 0, input: locale == crate::FormulaLocale::Es };
+    let mut p = Parser { toks, i: 0, depth: 0, locale };
     let e = p.expr(0, false)?;
     match p.peek() {
         Tok::Eof => Ok(e),
@@ -67,7 +67,7 @@ struct Parser {
     toks: Vec<Token>,
     i: usize,
     depth: usize,
-    input: bool,
+    locale: crate::FormulaLocale,
 }
 
 fn word_is_cols(w: &str) -> Option<(u32, bool)> {
@@ -384,7 +384,9 @@ impl Parser {
                 },
                 Tok::Text(s) => Expr::Text(Arc::from(s)),
                 Tok::Bool(b) => Expr::Bool(b),
-                Tok::Word(w) if self.input => crate::input::boolean_alias(&w)
+                Tok::Word(w) => self
+                    .locale
+                    .boolean(&w)
                     .map(Expr::Bool)
                     .ok_or_else(|| self.err(format!("array constants may only contain constants, found {}", describe(&Tok::Word(w)))))?,
                 Tok::Error(e) => Expr::Error(e),

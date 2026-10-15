@@ -69,11 +69,11 @@ fn starts_range_end(c: Option<char>) -> bool {
 
 /// Tokenizes formula text (without the leading `=`).
 pub fn tokenize(src: &str) -> Result<Vec<Token>, LexError> {
-    tokenize_locale(src, crate::FormulaLocale::En)
+    tokenize_locale(src, crate::FormulaLocale::En, crate::Separators::EN_US)
 }
 
 /// Tokenizes UI syntax while retaining byte spans in the original text.
-pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<Token>, LexError> {
+pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale, separators: crate::Separators) -> Result<Vec<Token>, LexError> {
     let chars: Vec<(usize, char)> = src.char_indices().collect();
     let n = chars.len();
     let pos_of = |i: usize| chars.get(i).map(|c| c.0).unwrap_or(src.len());
@@ -160,12 +160,17 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                 for e in CellError::ALL {
                     let t = e.as_str();
                     if rest.len() >= t.len() && rest.get(..t.len()).is_some_and(|p| p.eq_ignore_ascii_case(t)) {
-                        found = Some(e);
+                        found = Some((e, t.chars().count()));
                         break;
                     }
                 }
-                let Some(e) = found else { return Err(LexError { msg: "unknown error literal".into(), pos: start }) };
-                let len = e.as_str().chars().count();
+                // The language's own spelling (`#NV`, `#Н/Д`); the longer match wins.
+                if let Some((e, len)) = locale.error_prefix(rest)
+                    && found.is_none_or(|(_, english)| len > english)
+                {
+                    found = Some((e, len));
+                }
+                let Some((e, len)) = found else { return Err(LexError { msg: "unknown error literal".into(), pos: start }) };
                 // `#REF!A1` style is not valid; `#REF!` is an error literal.
                 push(&mut out, Tok::Error(e), i + len);
                 i += len;
@@ -192,7 +197,8 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                         Some(_) => j += 1,
                     }
                 }
-                let inner = src.get(pos_of(i + 1)..pos_of(j.saturating_sub(1))).unwrap_or("").to_string();
+                let inner = src.get(pos_of(i + 1)..pos_of(j.saturating_sub(1))).unwrap_or("");
+                let inner = locale.struct_to_canonical(inner, separators.list);
                 push(&mut out, Tok::Struct(inner), j);
                 i = j;
             }
@@ -206,15 +212,18 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                     i += 2;
                 }
             }
-            c if c.is_ascii_digit() || (c == locale.decimal_separator() && ch(i + 1).is_some_and(|d| d.is_ascii_digit())) => {
+            c if c.is_ascii_digit() || (c == separators.decimal && ch(i + 1).is_some_and(|d| d.is_ascii_digit())) => {
                 // Number, unless it is a row range like 1:3 (handled by parser via Word) — numbers
                 // followed by ':' and digits are row refs: lex as Word.
                 let mut j = i;
                 while ch(j).is_some_and(|d| d.is_ascii_digit()) {
                     j += 1;
                 }
-                // Row ranges `1:3`, and the trim forms `1.:3`, `1:.3`, `1.:.3`.
-                let is_row_ref = {
+                // Row ranges `1:3`, and the trim forms `1.:3`, `1:.3`, `1.:.3`. Array constants hold
+                // no references, so where `:` separates array rows (ru-RU) a number followed by `:`
+                // inside braces is a number.
+                let rows_by_colon = array_depth > 0 && separators.array_row == ':';
+                let is_row_ref = !rows_by_colon && {
                     let mut k = j;
                     if ch(k) == Some('.') && ch(k + 1) == Some(':') {
                         k += 1;
@@ -237,7 +246,7 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                     i = j;
                     continue;
                 }
-                if ch(j) == Some(locale.decimal_separator()) {
+                if ch(j) == Some(separators.decimal) {
                     j += 1;
                     while ch(j).is_some_and(|d| d.is_ascii_digit()) {
                         j += 1;
@@ -256,10 +265,8 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                     }
                 }
                 let text = src.get(start..pos_of(j)).unwrap_or("");
-                let v: f64 = text
-                    .replace(locale.decimal_separator(), ".")
-                    .parse()
-                    .map_err(|_| LexError { msg: format!("bad number `{text}`"), pos: start })?;
+                let v: f64 =
+                    text.replace(separators.decimal, ".").parse().map_err(|_| LexError { msg: format!("bad number `{text}`"), pos: start })?;
                 push(&mut out, Tok::Number(v), j);
                 i = j;
             }
@@ -281,8 +288,13 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                 push(&mut out, Tok::RBrace, i + 1);
                 i += 1;
             }
-            c if (array_depth == 0 && c == locale.list_separator()) || (array_depth > 0 && c == locale.array_column_separator()) => {
+            c if (array_depth == 0 && c == separators.list) || (array_depth > 0 && c == separators.array_column) => {
                 push(&mut out, Tok::Comma, i + 1);
+                i += 1;
+            }
+            // Array rows: `;`, or the language's own separator (`:` in Russian).
+            c if array_depth > 0 && c == separators.array_row => {
+                push(&mut out, Tok::Semicolon, i + 1);
                 i += 1;
             }
             ';' => {
@@ -327,7 +339,7 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
             }
             c if is_word_char(c) => {
                 let mut j = i;
-                while ch(j).is_some_and(|c| is_word_char(c) && !(array_depth > 0 && c == locale.array_column_separator())) {
+                while ch(j).is_some_and(|c| is_word_char(c) && !in_array_separator(c, array_depth, separators)) {
                     j += 1;
                 }
                 let w: String = chars.get(i..j).map(|s| s.iter().map(|c| c.1).collect()).unwrap_or_default();
@@ -337,13 +349,13 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                 } else if ch(j) == Some(':') && {
                     // Sheet1:Sheet3!A1 — look ahead for word then '!'
                     let mut k = j + 1;
-                    while ch(k).is_some_and(|c| is_word_char(c) && !(array_depth > 0 && c == locale.array_column_separator())) {
+                    while ch(k).is_some_and(|c| is_word_char(c) && !in_array_separator(c, array_depth, separators)) {
                         k += 1;
                     }
                     k > j + 1 && ch(k) == Some('!')
                 } {
                     let mut k = j + 1;
-                    while ch(k).is_some_and(|c| is_word_char(c) && !(array_depth > 0 && c == locale.array_column_separator())) {
+                    while ch(k).is_some_and(|c| is_word_char(c) && !in_array_separator(c, array_depth, separators)) {
                         k += 1;
                     }
                     let w2: String = chars.get(j + 1..k).map(|s| s.iter().map(|c| c.1).collect()).unwrap_or_default();
@@ -373,4 +385,9 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
     }
     out.push(Token { tok: Tok::Eof, start: src.len(), end: src.len() });
     Ok(out)
+}
+
+/// Whether `c` separates array columns or rows here, so it ends a word (`{1.VRAI}` in French).
+fn in_array_separator(c: char, array_depth: usize, separators: crate::Separators) -> bool {
+    array_depth > 0 && (c == separators.array_column || c == separators.array_row)
 }

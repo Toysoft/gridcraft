@@ -58,6 +58,12 @@ pub fn start() {
                     ) {
                         app.ui.language = browser;
                     }
+                    // The browser's regional format too, with the same CJK exception: month names and AM/PM
+                    // words of those regions need a CJK font the web build doesn't have.
+                    let region = gridcraft_ui_egui::i18n::system_region();
+                    if !matches!(region.tag, "ja-JP" | "ko-KR" | "zh-CN" | "zh-TW") {
+                        let _ = app.session.set_region(region.tag);
+                    }
                     SheetApp::setup_context_for_language(&cc.egui_ctx, false, app.ui.language);
                     if let Some(bridge) = &app_bridge {
                         if let Some(author) = query_param("author") {

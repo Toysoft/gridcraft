@@ -217,3 +217,23 @@ fn a_cancelled_export_pdf_picker_writes_nothing() {
     assert!(h.state().message.is_none());
     assert!(h.state_mut().session.take_ui_requests().is_empty());
 }
+
+#[test]
+fn options_page_picks_the_regional_format_and_typed_dates_follow_it() {
+    let mut h = harness(Services::default());
+    h.state_mut().run("file.options", serde_json::json!({})).unwrap();
+    h.run_steps(3);
+    assert_eq!(page(&h), Some("options"));
+    h.get_all_by_role(egui::accesskit::Role::ComboBox).nth(2).expect("regional format combo").click();
+    h.run_steps(3);
+    h.get_by_label("English (United Kingdom)").click();
+    h.run_steps(3);
+    assert_eq!(h.state().session.region().tag, "en-GB");
+    h.state_mut().run("ui.backstage", serde_json::json!({"page": "close"})).unwrap();
+    // Typing in the editor passes the workbook's region on; the command alone reads canonical text.
+    h.state_mut().begin_edit(Some("25/09/2026".into()), false);
+    assert!(h.state_mut().commit_edit(0, 0, false, false));
+    let doc = h.state().session.active().unwrap();
+    assert_eq!(doc.wb.active().unwrap().value(CellRef::new(0, 0)), Value::Number(46290.0));
+    assert_eq!(gridcraft_engine::display::format(&Value::Number(46290.0), "m/d/yyyy", &doc.wb).text, "25/09/2026");
+}

@@ -73,7 +73,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             validation
         ),
-        cmd!(query "data.validate", "Check Value Against Validation", [], None, "{cell?, input} → {ok, message?}", has_doc, validate_cmd),
+        cmd!(query "data.validate", "Check Value Against Validation", [], None, "{cell?, input, region?: tag the input was typed in (default: canonical en-US text)} → {ok, message?}", has_doc, validate_cmd),
         cmd!(noundo "data.circleInvalid", "Circle Invalid Data", ["Data", "Data Tools", "Data Validation"], None, "{} → invalid cells", has_doc, circle_invalid),
         cmd!(
             "data.group",
@@ -837,7 +837,7 @@ fn text_to_columns(s: &mut Session, p: &Json) -> Result<Json> {
             }
         }
         for (c, t) in out {
-            let cell = super::edit::input_to_cell(&t, sheet, c, &mut cx.wb).unwrap_or(None);
+            let cell = super::edit::input_to_cell(&t, sheet, c, &mut cx.wb, &gridcraft_core::region::EN_US).unwrap_or(None);
             let shm = cx.sheet_mut(sheet)?;
             match cell {
                 Some(x) => shm.set_cell(c, x),
@@ -996,8 +996,9 @@ pub fn list_items(wb: &Workbook, sheet: usize, dv: &Validation) -> Vec<String> {
     }
 }
 
-/// Checks typed input against the validation of a cell. `Ok(None)` = valid.
-pub fn check_validation(wb: &Workbook, sheet: usize, at: CellRef, input: &str) -> Option<(Validation, String)> {
+/// Checks typed input against the validation of a cell. `Ok(None)` = valid. `region` is how the
+/// input was typed (en-US for a canonical `input_text`).
+pub fn check_validation(wb: &Workbook, sheet: usize, at: CellRef, input: &str, region: &gridcraft_core::Region) -> Option<(Validation, String)> {
     let sh = wb.sheet(sheet)?;
     let dv = sh.validations.iter().find(|d| d.ranges.iter().any(|r| r.contains(at)))?;
     if dv.kind == ValidationKind::Any || !dv.show_error {
@@ -1006,7 +1007,7 @@ pub fn check_validation(wb: &Workbook, sheet: usize, at: CellRef, input: &str) -
     if input.is_empty() && dv.allow_blank {
         return None;
     }
-    let v = gridcraft_core::parse::parse_input(input, wb.date_system).value;
+    let v = gridcraft_core::parse::parse_input_in(input, wb.date_system, region).value;
     // The formulas are written for the first cell of the range and see the value being entered,
     // as in Excel (a custom `=A1>10` on A1:A9 checks A5's new value at A5).
     let first = dv.ranges.first().map(|r| r.start).unwrap_or(at);
@@ -1098,7 +1099,8 @@ fn validate_cmd(s: &mut Session, p: &Json) -> Result<Json> {
     let d = s.doc()?;
     let at = cell_param(s, p, "cell")?.unwrap_or(d.selection.active);
     let input = str_param(p, "input").unwrap_or("");
-    match check_validation(&d.wb, d.wb.active_sheet, at, input) {
+    let region = typed_region(p, "data.validate")?;
+    match check_validation(&d.wb, d.wb.active_sheet, at, input, region) {
         None => Ok(json!({"ok": true})),
         Some((dv, msg)) => Ok(json!({"ok": false, "message": msg, "title": dv.error_title, "style": format!("{:?}", dv.error_style)})),
     }
@@ -1114,8 +1116,9 @@ fn circle_invalid(s: &mut Session, _: &Json) -> Result<Json> {
             let r = sh.used_range().and_then(|u| r.intersection(&u));
             let Some(r) = r else { continue };
             for c in r.iter().take(100_000) {
+                // The stored value's canonical text: en-US, like `data.validate` without a region.
                 let text = sh.input_text(c);
-                if !text.is_empty() && check_validation(&d.wb, sheet, c, &text).is_some() {
+                if !text.is_empty() && check_validation(&d.wb, sheet, c, &text, gridcraft_core::region::default_region()).is_some() {
                     bad_cells.push(c.a1());
                 }
             }

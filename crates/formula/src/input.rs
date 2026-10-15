@@ -1,68 +1,257 @@
 //! Localized aliases accepted at user-entry boundaries; file syntax stays English.
+//!
+//! Each formula language is a [`Dialect`]: function names, booleans, error literals and
+//! structured-reference specifiers as that language's Excel spells them, and the array-constant
+//! separators it prefers. Functions a language doesn't list keep their English name, and English
+//! names are accepted in every language. The list and decimal separators come from the region:
+//! Excel takes the words from its interface language and those separators from the regional
+//! settings ([`Separators::new`]).
+
+use gridcraft_core::{CellError, Region};
 
 use crate::{Expr, ParseError, parser};
 
-/// Formula-entry syntax selected by the interface language. Other interface languages
-/// currently use the canonical English function table until a translation table is supplied.
+mod de;
+mod es;
+mod fr;
+mod pt;
+mod ru;
+
+/// Formula-entry words selected by the interface language. Interface languages without a
+/// formula table (Japanese, Chinese and Korean Excel use English names; Czech and Serbian have no
+/// table yet) use [`FormulaLocale::En`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FormulaLocale {
     #[default]
     En,
     Es,
+    De,
+    PtBr,
+    Ru,
+    Fr,
 }
 
-const SPANISH: &[(&str, &str)] = &[
-    ("SUM", "SUMA"),
-    ("AVERAGE", "PROMEDIO"),
-    ("IF", "SI"),
-    ("COUNT", "CONTAR"),
-    ("SUMIF", "SUMAR.SI"),
-    ("COUNTIF", "CONTAR.SI"),
-    ("VLOOKUP", "BUSCARV"),
-    ("TODAY", "HOY"),
-    ("TRUE", "VERDADERO"),
-    ("FALSE", "FALSO"),
-];
+/// One formula language's words, and the array-constant separators its Excel prefers.
+pub(crate) struct Dialect {
+    array_column: char,
+    array_row: char,
+    bool_true: &'static str,
+    bool_false: &'static str,
+    /// Every error literal, as this language spells it.
+    errors: &'static [(CellError, &'static str)],
+    /// The local spellings of [`TABLE_ITEMS`], in the same order.
+    table_items: [&'static str; 5],
+    /// `(canonical, local)` for the functions spelled differently from English, sorted by the
+    /// canonical name.
+    functions: &'static [(&'static str, &'static str)],
+}
+
+/// The separators of formula text typed and shown in the UI: between arguments, in numbers, and
+/// between the columns and rows of array constants. See [`Separators::new`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Separators {
+    pub list: char,
+    pub decimal: char,
+    pub array_column: char,
+    pub array_row: char,
+}
+
+impl Separators {
+    /// Canonical syntax: `=SUM(1.5,{1,2;3,4})`.
+    pub const EN_US: Self = Self { list: ',', decimal: '.', array_column: ',', array_row: ';' };
+
+    /// The separators Excel uses with this formula language and regional format. The list and
+    /// decimal separators are the region's, whatever the language (English Excel with a Croatian
+    /// region takes `=SUM(1;2)`). Array constants use the language's own separators (`{1,2}`,
+    /// `{1.2}` in French and German, `{1\2}` in Spanish and Portuguese, `{1;2:3;4}` in Russian),
+    /// except that a column separator that is the region's decimal becomes `\`. That reproduces
+    /// every combination measured in Excel (Stack Overflow 57120417: English Excel with fr, de,
+    /// it, ru, cs, es and pt regions uses `\`; French Excel 2016 uses `.` with a French region and
+    /// `\` with an English one; French Excel 2013 used `.` in France, storytold/gridcraft#191).
+    pub fn new(locale: FormulaLocale, region: &Region) -> Self {
+        let (column, row) = locale.dialect().map_or((',', ';'), |d| (d.array_column, d.array_row));
+        let array_column = if column == region.decimal { '\\' } else { column };
+        Self { list: region.list, decimal: region.decimal, array_column, array_row: row }
+    }
+}
+
+impl Default for Separators {
+    fn default() -> Self {
+        Self::EN_US
+    }
+}
+
+/// Structured-reference specifiers in canonical syntax.
+const TABLE_ITEMS: [&str; 5] = ["#All", "#Data", "#Headers", "#Totals", "#This Row"];
 
 impl FormulaLocale {
-    pub fn list_separator(self) -> char {
-        if self == Self::Es { ';' } else { ',' }
+    pub const ALL: [Self; 6] = [Self::En, Self::Es, Self::De, Self::PtBr, Self::Ru, Self::Fr];
+
+    fn dialect(self) -> Option<&'static Dialect> {
+        match self {
+            Self::En => None,
+            Self::Es => Some(&es::DIALECT),
+            Self::De => Some(&de::DIALECT),
+            Self::PtBr => Some(&pt::DIALECT),
+            Self::Ru => Some(&ru::DIALECT),
+            Self::Fr => Some(&fr::DIALECT),
+        }
     }
-    pub fn decimal_separator(self) -> char {
-        if self == Self::Es { ',' } else { '.' }
+
+    fn table_items(self) -> &'static [&'static str; 5] {
+        self.dialect().map_or(&TABLE_ITEMS, |d| &d.table_items)
     }
-    pub fn array_column_separator(self) -> char {
-        if self == Self::Es { '\\' } else { ',' }
-    }
+
+    /// The local name of a canonical function name (itself when the language keeps English).
     pub fn function_name(self, canonical: &str) -> &str {
-        if self == Self::Es {
-            SPANISH.iter().find(|(en, _)| en.eq_ignore_ascii_case(canonical)).map(|(_, es)| *es).unwrap_or(canonical)
-        } else {
-            canonical
-        }
+        self.dialect()
+            .and_then(|d| d.functions.binary_search_by(|(en, _)| cmp_ascii_ignore_case(en, canonical)).ok().and_then(|i| d.functions.get(i)))
+            .map_or(canonical, |(_, local)| *local)
     }
+
+    /// The canonical name of a local function name, case-insensitively (itself when it isn't one).
     pub fn canonical_name(self, localized: &str) -> &str {
-        if self == Self::Es {
-            SPANISH.iter().find(|(_, es)| es.eq_ignore_ascii_case(localized)).map(|(en, _)| *en).unwrap_or(localized)
-        } else {
-            localized
+        self.dialect().and_then(|d| d.functions.iter().find(|(_, local)| eq_ignore_case(local, localized))).map_or(localized, |(en, _)| *en)
+    }
+
+    /// `(canonical, local)` for every function this language spells differently from English,
+    /// sorted by the canonical name.
+    pub fn translations(self) -> &'static [(&'static str, &'static str)] {
+        self.dialect().map_or(&[], |d| d.functions)
+    }
+
+    pub fn boolean_name(self, value: bool) -> &'static str {
+        match (self.dialect(), value) {
+            (Some(d), true) => d.bool_true,
+            (Some(d), false) => d.bool_false,
+            (None, true) => "TRUE",
+            (None, false) => "FALSE",
         }
     }
+
+    /// The boolean a local word spells, case-insensitively. English `TRUE`/`FALSE` are lexed as
+    /// booleans in every language, so only the local words are matched here.
+    pub(crate) fn boolean(self, word: &str) -> Option<bool> {
+        let d = self.dialect()?;
+        if eq_ignore_case(word, d.bool_true) {
+            Some(true)
+        } else if eq_ignore_case(word, d.bool_false) {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    pub fn error_name(self, error: CellError) -> &'static str {
+        self.dialect().and_then(|d| d.errors.iter().find(|(e, _)| *e == error)).map_or_else(|| error.as_str(), |(_, local)| *local)
+    }
+
+    /// The longest local error literal `text` starts with, and its length in characters.
+    pub(crate) fn error_prefix(self, text: &str) -> Option<(CellError, usize)> {
+        let d = self.dialect()?;
+        d.errors
+            .iter()
+            .filter(|(_, local)| starts_with_ignore_case(text, local))
+            .map(|(e, local)| (*e, local.chars().count()))
+            .max_by_key(|(_, len)| *len)
+    }
+
+    /// Converts the inside of a local structured reference (`[...]` without its outer brackets)
+    /// to canonical syntax: specifiers in English, `,` between bracketed items.
+    pub(crate) fn struct_to_canonical(self, inner: &str, list: char) -> String {
+        if self == Self::En && list == ',' {
+            return inner.to_string();
+        }
+        translate_struct(inner, self.table_items(), &TABLE_ITEMS, list, ',')
+    }
+
+    /// Converts the inside of a canonical structured reference to this language and list
+    /// separator.
+    pub(crate) fn struct_to_local(self, inner: &str, list: char) -> String {
+        if self == Self::En && list == ',' {
+            return inner.to_string();
+        }
+        translate_struct(inner, &TABLE_ITEMS, self.table_items(), ',', list)
+    }
+}
+
+fn cmp_ascii_ignore_case(a: &str, b: &str) -> std::cmp::Ordering {
+    a.bytes().map(|c| c.to_ascii_uppercase()).cmp(b.bytes().map(|c| c.to_ascii_uppercase()))
+}
+
+/// Unicode case-insensitive equality (`zählenwenn` = `ZÄHLENWENN`, `сумм` = `СУММ`).
+fn eq_ignore_case(a: &str, b: &str) -> bool {
+    a.chars().flat_map(char::to_uppercase).eq(b.chars().flat_map(char::to_uppercase))
+}
+
+fn starts_with_ignore_case(text: &str, prefix: &str) -> bool {
+    text.chars().take(prefix.chars().count()).flat_map(char::to_uppercase).eq(prefix.chars().flat_map(char::to_uppercase))
+}
+
+/// Rewrites specifiers (`#Headers` <-> `#Kopfzeilen`) and the separator between bracketed
+/// items, leaving column names and `'` escapes alone.
+fn translate_struct(inner: &str, from: &[&'static str; 5], to: &[&'static str; 5], from_sep: char, to_sep: char) -> String {
+    let item = |text: &str| -> Option<&'static str> { from.iter().position(|f| eq_ignore_case(text.trim(), f)).and_then(|i| to.get(i).copied()) };
+    if !inner.starts_with('[') {
+        return item(inner).map_or_else(|| inner.to_string(), str::to_string);
+    }
+    let mut out = String::with_capacity(inner.len());
+    let mut group = String::new();
+    let mut depth = 0usize;
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                let target = if depth > 0 { &mut group } else { &mut out };
+                target.push(c);
+                if let Some(escaped) = chars.next() {
+                    target.push(escaped);
+                }
+            }
+            '[' => {
+                if depth == 0 {
+                    group.clear();
+                } else {
+                    group.push(c);
+                }
+                depth += 1;
+            }
+            ']' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    out.push('[');
+                    out.push_str(item(&group).unwrap_or(&group));
+                    out.push(']');
+                } else {
+                    group.push(c);
+                }
+            }
+            c if depth == 0 && c == from_sep => out.push(to_sep),
+            c if depth > 0 => group.push(c),
+            c => out.push(c),
+        }
+    }
+    if depth > 0 {
+        // Unbalanced input: keep what was read so the parser reports the error.
+        out.push('[');
+        out.push_str(&group);
+    }
+    out
 }
 
 /// Parses UI input using the selected function table and separators. Existing names and
 /// LET/LAMBDA bindings take precedence over aliases. File and API syntax uses [`crate::parse`].
-pub fn parse_input(src: &str, locale: FormulaLocale, known_name: impl Fn(&str) -> bool) -> Result<Expr, ParseError> {
-    let mut expr = parser::parse_syntax(src, locale)?;
-    if locale == FormulaLocale::Es {
-        normalize(&mut expr, &known_name, &mut Vec::new(), 0, false)?;
+pub fn parse_input(src: &str, locale: FormulaLocale, separators: Separators, known_name: impl Fn(&str) -> bool) -> Result<Expr, ParseError> {
+    let mut expr = parser::parse_syntax(src, locale, separators)?;
+    if locale != FormulaLocale::En {
+        normalize(&mut expr, locale, &known_name, &mut Vec::new(), 0, false)?;
     }
     Ok(expr)
 }
 
 /// Prints canonical expressions for editing. Name collisions retain the canonical spelling
 /// so displaying then committing a formula never changes a defined-name reference.
-pub fn print_input(expr: &Expr, locale: FormulaLocale, known_name: impl Fn(&str) -> bool) -> Result<String, ParseError> {
+pub fn print_input(expr: &Expr, locale: FormulaLocale, separators: Separators, known_name: impl Fn(&str) -> bool) -> Result<String, ParseError> {
     // Check before cloning/printing: a flat operator chain can produce a deep AST even
     // though the parser itself did not recurse deeply.
     let mut pending = vec![(expr, 0usize)];
@@ -85,11 +274,13 @@ pub fn print_input(expr: &Expr, locale: FormulaLocale, known_name: impl Fn(&str)
             _ => {}
         }
     }
-    if locale == FormulaLocale::En {
+    if locale == FormulaLocale::En && separators == Separators::EN_US {
         return Ok(crate::print(expr));
     }
     let mut expr = expr.clone();
-    normalize(&mut expr, &known_name, &mut Vec::new(), 0, true)?;
+    if locale != FormulaLocale::En {
+        normalize(&mut expr, locale, &known_name, &mut Vec::new(), 0, true)?;
+    }
     let canonical = crate::print(&expr);
     let tokens = crate::lexer::tokenize(&canonical).map_err(|e| ParseError { msg: e.msg, pos: e.pos })?;
     let mut out = String::new();
@@ -106,38 +297,43 @@ pub fn print_input(expr: &Expr, locale: FormulaLocale, known_name: impl Fn(&str)
                 array_depth = array_depth.saturating_sub(1);
                 out.push_str(text);
             }
-            Tok::Number(_) => out.push_str(&text.replace('.', &locale.decimal_separator().to_string())),
-            Tok::Comma => out.push(if array_depth > 0 { locale.array_column_separator() } else { locale.list_separator() }),
+            Tok::Number(_) => out.push_str(&text.replace('.', &separators.decimal.to_string())),
+            Tok::Comma => out.push(if array_depth > 0 { separators.array_column } else { separators.list }),
+            Tok::Semicolon if array_depth > 0 => out.push(separators.array_row),
+            Tok::Error(e) => out.push_str(locale.error_name(e)),
+            Tok::Struct(inner) => {
+                out.push('[');
+                out.push_str(&locale.struct_to_local(&inner, separators.list));
+                out.push(']');
+            }
             _ => out.push_str(text),
         }
     }
     Ok(out)
 }
 
-pub(crate) fn boolean_alias(name: &str) -> Option<bool> {
-    if name.eq_ignore_ascii_case("VERDADERO") {
-        Some(true)
-    } else if name.eq_ignore_ascii_case("FALSO") {
-        Some(false)
-    } else {
-        None
-    }
-}
-
-fn normalize(expr: &mut Expr, known_name: &impl Fn(&str) -> bool, bindings: &mut Vec<String>, depth: usize, display: bool) -> Result<(), ParseError> {
+fn normalize(
+    expr: &mut Expr,
+    locale: FormulaLocale,
+    known_name: &impl Fn(&str) -> bool,
+    bindings: &mut Vec<String>,
+    depth: usize,
+    display: bool,
+) -> Result<(), ParseError> {
     if depth > parser::MAX_DEPTH {
         return Err(ParseError { msg: "formula is nested too deeply".into(), pos: 0 });
     }
-    let bound = |name: &str, bindings: &[String]| bindings.iter().rev().any(|n| n.eq_ignore_ascii_case(name)) || known_name(name);
+    // Names ignore case in any script, so a binding `zählenwenn` shadows the call `ZÄHLENWENN(…)`.
+    let bound = |name: &str, bindings: &[String]| bindings.iter().rev().any(|n| eq_ignore_case(n, name)) || known_name(name);
     match expr {
         Expr::Bool(value) if display => {
-            let alias = if *value { "VERDADERO" } else { "FALSO" };
+            let alias = locale.boolean_name(*value);
             if !bound(alias, bindings) {
                 *expr = Expr::Name(alias.into());
             }
         }
         Expr::Name(name) if !display && !bound(name, bindings) => {
-            if let Some(value) = boolean_alias(name) {
+            if let Some(value) = locale.boolean(name) {
                 *expr = Expr::Bool(value);
             }
         }
@@ -147,13 +343,13 @@ fn normalize(expr: &mut Expr, known_name: &impl Fn(&str) -> bool, bindings: &mut
                 for pair in pairs.chunks_mut(2) {
                     if let [declaration, value] = pair {
                         // The new name is not in scope in its own value expression.
-                        normalize(value, known_name, bindings, depth + 1, display)?;
+                        normalize(value, locale, known_name, bindings, depth + 1, display)?;
                         if let Expr::Name(name) = declaration {
                             bindings.push(name.clone());
                         }
                     }
                 }
-                normalize(body, known_name, bindings, depth + 1, display)?;
+                normalize(body, locale, known_name, bindings, depth + 1, display)?;
             }
             bindings.truncate(saved);
         }
@@ -165,34 +361,46 @@ fn normalize(expr: &mut Expr, known_name: &impl Fn(&str) -> bool, bindings: &mut
                         bindings.push(name.clone());
                     }
                 }
-                normalize(body, known_name, bindings, depth + 1, display)?;
+                normalize(body, locale, known_name, bindings, depth + 1, display)?;
             }
             bindings.truncate(saved);
         }
         Expr::Call(name, args) => {
-            let alias = if display { FormulaLocale::Es.function_name(name) } else { FormulaLocale::Es.canonical_name(name) };
+            let alias = if display { locale.function_name(name) } else { locale.canonical_name(name) };
             if !bound(name, bindings) && (!display || !bound(alias, bindings)) {
                 *name = alias.to_string();
             }
             for arg in args {
-                normalize(arg, known_name, bindings, depth + 1, display)?;
+                // A worksheet function passed by name (`BYROW(A1:C3;SOMA)`, saved as `_xleta.SUM`)
+                // is spelled like its call. A local boolean word stays a boolean.
+                if let Expr::Name(function) = arg
+                    && !bound(function, bindings)
+                    && (display || locale.boolean(function).is_none())
+                {
+                    let alias = if display { locale.function_name(function) } else { locale.canonical_name(function) };
+                    if alias != function.as_str() && (!display || (!bound(alias, bindings) && locale.boolean(alias).is_none())) {
+                        *function = alias.to_string();
+                        continue;
+                    }
+                }
+                normalize(arg, locale, known_name, bindings, depth + 1, display)?;
             }
         }
         Expr::Invoke(callee, args) => {
-            normalize(callee, known_name, bindings, depth + 1, display)?;
+            normalize(callee, locale, known_name, bindings, depth + 1, display)?;
             for arg in args {
-                normalize(arg, known_name, bindings, depth + 1, display)?;
+                normalize(arg, locale, known_name, bindings, depth + 1, display)?;
             }
         }
-        Expr::Unary(_, child) | Expr::Paren(child) => normalize(child, known_name, bindings, depth + 1, display)?,
+        Expr::Unary(_, child) | Expr::Paren(child) => normalize(child, locale, known_name, bindings, depth + 1, display)?,
         Expr::Binary(_, left, right) => {
-            normalize(left, known_name, bindings, depth + 1, display)?;
-            normalize(right, known_name, bindings, depth + 1, display)?;
+            normalize(left, locale, known_name, bindings, depth + 1, display)?;
+            normalize(right, locale, known_name, bindings, depth + 1, display)?;
         }
         Expr::Array(rows) if display => {
             for row in rows {
                 for child in row {
-                    normalize(child, known_name, bindings, depth + 1, display)?;
+                    normalize(child, locale, known_name, bindings, depth + 1, display)?;
                 }
             }
         }

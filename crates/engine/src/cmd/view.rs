@@ -33,6 +33,15 @@ pub fn specs() -> Vec<CommandSpec> {
             s.prefs.formula_bar = bool_param(p, "on").unwrap_or(!s.prefs.formula_bar);
             Ok(json!({"on": s.prefs.formula_bar}))
         }),
+        cmd!(
+            noundo "app.region",
+            "Region",
+            [],
+            None,
+            "{region?: \"en-US\"|\"en-GB\"|\"en-IN\"|\"es-ES\"|\"de-DE\"|\"fr-FR\"|\"it-IT\"|\"pt-BR\"|\"pt-PT\"|\"ru-RU\"|\"cs-CZ\"|\"ja-JP\"|\"ko-KR\"|\"zh-CN\"|\"zh-TW\"} — sets the regional format every open workbook is typed and shown in (decimal and group separators, date order, month names, system dates); display only, values never change. Without `region` it reports the current one → {region, name, decimal, group, dateOrder, shortDate, longDate, available: [tags]}",
+            always,
+            region
+        ),
         cmd!("view.zoomToSelection", "Zoom to Selection", ["View", "Zoom"], None, "{viewWidth?, viewHeight?}", has_doc, zoom_selection),
         cmd!("pageLayout.orientation", "Orientation", ["Page Layout", "Page Setup"], None, "{orientation: portrait|landscape}", has_doc, orientation),
         cmd!("pageLayout.size", "Size", ["Page Layout", "Page Setup"], None, "{paper: Letter|Legal|A4|A3|A5|Tabloid|Executive}", has_doc, paper),
@@ -110,6 +119,30 @@ pub fn specs() -> Vec<CommandSpec> {
             theme
         ),
     ]
+}
+
+/// Options › Region: sets (or reports) the regional format; never opens a dialog.
+fn region(s: &mut Session, p: &Json) -> Result<Json> {
+    let r = match str_param(p, "region") {
+        Some(tag) => s.set_region(tag)?,
+        None if p.get("region").is_some_and(|v| !v.is_null()) => return Err(bad("app.region", "`region` must be a tag such as \"pt-BR\"")),
+        None => s.region(),
+    };
+    let order = match r.date_order {
+        gridcraft_core::region::DateOrder::Mdy => "MDY",
+        gridcraft_core::region::DateOrder::Dmy => "DMY",
+        gridcraft_core::region::DateOrder::Ymd => "YMD",
+    };
+    Ok(json!({
+        "region": r.tag,
+        "name": r.name,
+        "decimal": r.decimal.to_string(),
+        "group": r.group.to_string(),
+        "dateOrder": order,
+        "shortDate": r.short_date,
+        "longDate": r.long_date,
+        "available": gridcraft_core::region::all().iter().map(|r| r.tag).collect::<Vec<_>>(),
+    }))
 }
 
 fn freeze_panes(s: &mut Session, p: &Json) -> Result<Json> {

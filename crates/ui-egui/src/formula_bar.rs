@@ -257,7 +257,7 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
         }
     }
     // The text widget.
-    let refs = formula_refs(&ed.text);
+    let refs = formula_refs(&ed.text, ed.locale, ed.separators);
     let text_color = Tokens::get(ui.ctx()).text;
     let cell_text_color = if id == egui::Id::new("gridcraft.cell_editor") { Color32::BLACK } else { text_color };
     let font2 = font.clone();
@@ -380,20 +380,20 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
                         ed.request_focus = true;
                     }
                 } else if let Some((name, arg)) = ed.current_function()
-                    && let Some(sig) = crate::formula_locale::signature(&name, ed.locale)
+                    && let Some(sig) = crate::formula_locale::signature(&name, ed.locale, ed.separators)
                 {
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
                         let (head, rest) = sig.split_once('(').unwrap_or((&sig, ""));
                         ui.label(egui::RichText::new(format!("{}(", ed.locale.function_name(head))).font(theme::ui_font(12.0)));
                         let inner = rest.trim_end_matches(')');
-                        let parts: Vec<&str> = inner.split(&format!("{} ", ed.locale.list_separator())).collect();
+                        let parts: Vec<&str> = inner.split(&format!("{} ", ed.separators.list)).collect();
                         for (i, part) in parts.iter().enumerate() {
                             let is_cur = i == arg.min(parts.len().saturating_sub(1)) || (part.contains("...") && arg >= i);
                             let txt = egui::RichText::new(*part).font(if is_cur { theme::ui_bold(12.0) } else { theme::ui_font(12.0) });
                             ui.label(txt);
                             if i + 1 < parts.len() {
-                                ui.label(egui::RichText::new(format!("{} ", ed.locale.list_separator())).font(theme::ui_font(12.0)));
+                                ui.label(egui::RichText::new(format!("{} ", ed.separators.list)).font(theme::ui_font(12.0)));
                             }
                         }
                         ui.label(egui::RichText::new(")").font(theme::ui_font(12.0)));
@@ -419,7 +419,7 @@ pub fn editor_widget(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, font: 
 
 fn cycle_anchor(ed: &mut crate::editor::EditState) {
     let caret_b = ed.text.char_indices().nth(ed.caret).map(|(i, _)| i).unwrap_or(ed.text.len());
-    for (a, b, ..) in formula_refs(&ed.text) {
+    for (a, b, ..) in formula_refs(&ed.text, ed.locale, ed.separators) {
         if a <= caret_b && caret_b <= b {
             let Some(r) = ed.text.get(a..b) else { return };
             let cycled: String = r

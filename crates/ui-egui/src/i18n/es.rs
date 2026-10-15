@@ -334,6 +334,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Unfreeze Panes" => "Movilizar paneles",
         "Dark Mode" => "Modo oscuro",
         "Interface language" => "Idioma de la interfaz",
+        "Regional format" => "Formato regional",
         "Command\nPalette" => "Paleta de\ncomandos",
         "Agent\nControl" => "Control\ndel agente",
         "Action\nJournal" => "Registro\nde acciones",

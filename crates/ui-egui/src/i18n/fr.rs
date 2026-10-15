@@ -231,6 +231,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Light" => "Clair",
         "Dark" => "Sombre",
         "Interface language" => "Langue de l'interface",
+        "Regional format" => "Format régional",
         "Interface size" => "Taille de l'interface",
         "Auto" => "Automatique",
         "Drag to freeze columns" => "Faites glisser pour figer les colonnes",

@@ -105,6 +105,9 @@ fn load_prefs(app: &mut SheetApp) {
     app.ui.language = gridcraft_ui_egui::i18n::Language::system();
     // ...and its light or dark appearance (#239), until a theme is chosen and saved in ui.json.
     app.ui.system_theme = true;
+    // ...and its regional format (separators, date order), until one is chosen and saved in prefs.json.
+    app.session.prefs.region = gridcraft_ui_egui::i18n::system_region().tag.into();
+    app.session.apply_region();
     let Some(dir) = config_dir() else { return };
     if let Ok(b) = std::fs::read(dir.join("ui.json"))
         && let Ok(ui) = serde_json::from_slice::<gridcraft_ui_egui::UiState>(&b)
@@ -115,9 +118,16 @@ fn load_prefs(app: &mut SheetApp) {
         app.ui.language = language;
     }
     if let Ok(b) = std::fs::read(dir.join("prefs.json"))
-        && let Ok(p) = serde_json::from_slice(&b)
+        && let Ok(mut p) = serde_json::from_slice::<gridcraft_engine::Prefs>(&b)
     {
+        // A prefs.json from before regions existed has no region: keep the system's.
+        let saved_region =
+            serde_json::from_slice::<serde_json::Value>(&b).ok().is_some_and(|v| v.get("region").is_some_and(serde_json::Value::is_string));
+        if !saved_region {
+            p.region = app.session.prefs.region.clone();
+        }
         app.session.prefs = p;
+        app.session.apply_region();
     }
 }
 

@@ -10,13 +10,21 @@ use crate::{Clipboard, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("cell.set", "Enter Cell", [], None, "{cell?: \"B2\", input: \"text, number or =formula\", sheet?, array?: bool}", has_doc, cell_set),
+        cmd!(
+            "cell.set",
+            "Enter Cell",
+            [],
+            None,
+            "{cell?: \"B2\", input: \"text, number or =formula\", sheet?, array?: bool, region?: \"de-DE\" — the region the text was typed in; without it the text is canonical en-US, so `1.234` is 1.234 (a JSON number `value` is never re-read)}",
+            has_doc,
+            cell_set
+        ),
         cmd!(
             "range.setValues",
             "Set Values",
             [],
             None,
-            "{range?: \"A1\", values: [[...]] (rows of numbers/strings/bools/null; strings starting with = are formulas)}",
+            "{range?: \"A1\", values: [[...]] (rows of numbers/strings/bools/null; strings starting with = are formulas), region?: tag the strings were typed in (default canonical en-US)}",
             has_doc,
             range_set_values
         ),
@@ -25,7 +33,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Fill Range With Input",
             [],
             Some("Ctrl+Enter"),
-            "{range?, input}: enters the same input in every selected cell (relative formulas adjust)",
+            "{range?, input, region?}: enters the same input in every selected cell (relative formulas adjust); `region` is the tag the text was typed in (default canonical en-US)",
             has_doc,
             range_fill
         ),
@@ -47,7 +55,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Paste",
             ["Home", "Clipboard"],
             Some("Cmd+V"),
-            "{at?: \"C3\", text?: \"tab-separated text from the system clipboard\", html?: \"the clipboard's HTML flavour; cells the source recorded as numbers (x:num, sdval) stay numbers\"}",
+            "{at?: \"C3\", text?: \"tab-separated text from the system clipboard\", html?: \"the clipboard's HTML flavour; cells the source recorded as numbers (x:num, sdval) stay numbers\", region?: tag the text was typed in (default canonical en-US)}",
             has_doc,
             paste
         ),
@@ -118,10 +126,29 @@ pub fn specs() -> Vec<CommandSpec> {
 
 // ---------------------------------------------------------------- entry
 
+/// Whether text typed into a cell is a formula: it starts with `=`, or with `+` or `-` followed by a
+/// letter or `(` (`-A1`, `+SUM(1)`) unless `region` reads all of it as a number (`-R$ 5`). The
+/// formula-language boundary of the UI uses the same test, so the two never disagree.
+pub fn is_formula_input(input: &str, date_system: gridcraft_core::DateSystem, region: &gridcraft_core::Region) -> bool {
+    input.starts_with('=')
+        || (input.len() > 1
+            && (input.starts_with('+') || input.starts_with('-'))
+            && input.chars().nth(1).is_some_and(|c| c.is_ascii_alphabetic() || c == '(')
+            && !matches!(gridcraft_core::parse::parse_input_in(input, date_system, region).value, Value::Number(_)))
+}
+
 /// What typing `input` into a cell produces (constant or formula, plus an automatic number
 /// format). Inherits the destination's cell, row or column style, including its number
-/// format, before parsing. Errors when the formula can't be parsed.
-pub(crate) fn input_to_cell(input: &str, sheet: usize, at: CellRef, wb: &mut gridcraft_model::Workbook) -> Result<Option<Cell>> {
+/// format, before parsing. `region` is how the constants in `input` were typed: en-US for text
+/// that is canonical (files, other commands), the user's region for what they typed. Errors when
+/// the formula can't be parsed.
+pub(crate) fn input_to_cell(
+    input: &str,
+    sheet: usize,
+    at: CellRef,
+    wb: &mut gridcraft_model::Workbook,
+    region: &gridcraft_core::Region,
+) -> Result<Option<Cell>> {
     let style = wb.sheet(sheet).map(|sh| sh.style_id(at)).unwrap_or_default();
     if input.is_empty() {
         let c = Cell { value: Value::Empty, formula: None, style };
@@ -131,12 +158,7 @@ pub(crate) fn input_to_cell(input: &str, sheet: usize, at: CellRef, wb: &mut gri
     if fmt_is_text {
         return Ok(Some(Cell { value: Value::text(input), formula: None, style }));
     }
-    let is_formula = input.starts_with('=')
-        || (input.len() > 1
-            && (input.starts_with('+') || input.starts_with('-'))
-            && gridcraft_core::parse::parse_number_text(input).is_none()
-            && input.chars().nth(1).is_some_and(|c| c.is_ascii_alphabetic() || c == '('));
-    if is_formula {
+    if is_formula_input(input, wb.date_system, region) {
         let body = input.strip_prefix('=').unwrap_or(input);
         // Excel closes missing parentheses for you.
         let mut text = body.to_string();
@@ -176,7 +198,7 @@ pub(crate) fn input_to_cell(input: &str, sheet: usize, at: CellRef, wb: &mut gri
         }
         return Ok(Some(cell));
     }
-    let parsed = gridcraft_core::parse::parse_input(input, wb.date_system);
+    let parsed = gridcraft_core::parse::parse_input_in(input, wb.date_system, region);
     let mut style = style;
     if let Some(code) = parsed.format {
         let cur = wb.styles.get(style).num_fmt.as_str().to_string();
@@ -220,7 +242,11 @@ fn cell_set(s: &mut Session, p: &Json) -> Result<Json> {
         None => s.doc()?.selection.active,
     };
     // Both spellings take a string, number or boolean, as typed (#697).
-    let input = p.get("input").or_else(|| p.get("value")).map(json_to_input).ok_or_else(|| bad("cell.set", "missing `input` (or `value`)"))?;
+    let raw = p.get("input").or_else(|| p.get("value"));
+    let input = raw.map(json_to_input).ok_or_else(|| bad("cell.set", "missing `input` (or `value`)"))?;
+    // Text is typed in `region`; a JSON number or boolean is already a value and is canonical.
+    let typed = typed_region(p, "cell.set")?;
+    let region = if raw.is_some_and(Json::is_string) { typed } else { gridcraft_core::region::default_region() };
     let array = bool_param(p, "array").unwrap_or(false);
     let d = s.doc()?;
     if let Some(sh) = d.wb.sheet(sheet)
@@ -241,7 +267,7 @@ fn cell_set(s: &mut Session, p: &Json) -> Result<Json> {
             if !range.is_single() && cx.wb.sheet(sheet).is_some_and(|sh| sh.tables.iter().any(|t| t.range.intersects(&range))) {
                 return Err(EngineError::Other("Multi-cell array formulas aren't allowed in tables.".into()));
             }
-            let mut cell = input_to_cell(&input, sheet, range.start, &mut cx.wb)?.unwrap_or_default();
+            let mut cell = input_to_cell(&input, sheet, range.start, &mut cx.wb, region)?.unwrap_or_default();
             if let Some(f) = cell.formula.as_mut() {
                 std::sync::Arc::make_mut(f).array = Some(range);
             }
@@ -257,7 +283,7 @@ fn cell_set(s: &mut Session, p: &Json) -> Result<Json> {
             cx.touch(sheet, range.start);
             return Ok(Json::Null);
         }
-        let cell = input_to_cell(&input, sheet, at, &mut cx.wb)?;
+        let cell = input_to_cell(&input, sheet, at, &mut cx.wb, region)?;
         let sh = cx.sheet_mut(sheet)?;
         match cell {
             Some(c) => sh.set_cell(at, c),
@@ -295,6 +321,7 @@ fn range_set_values(s: &mut Session, p: &Json) -> Result<Json> {
     if rows.len() > MAX_ROWS as usize {
         return Err(bad("range.setValues", "too many rows"));
     }
+    let region = typed_region(p, "range.setValues")?;
     let mut count = 0;
     edit(s, |cx| {
         for (ri, row) in rows.iter().enumerate() {
@@ -314,7 +341,7 @@ fn range_set_values(s: &mut Session, p: &Json) -> Result<Json> {
                     Json::Bool(b) => {
                         Some(Cell { value: Value::Bool(*b), formula: None, style: cx.wb.sheet(sheet).map(|sh| sh.style_id(at)).unwrap_or_default() })
                     }
-                    _ => input_to_cell(&input, sheet, at, &mut cx.wb)?,
+                    _ => input_to_cell(&input, sheet, at, &mut cx.wb, region)?,
                 };
                 let sh = cx.sheet_mut(sheet)?;
                 match cell {
@@ -336,9 +363,10 @@ fn range_fill(s: &mut Session, p: &Json) -> Result<Json> {
     let sheet = target_sheet(s, p)?;
     let ranges = target_ranges(s, p)?;
     let input = str_param(p, "input").unwrap_or("").to_string();
+    let region = typed_region(p, "range.fill")?;
     let origin = s.doc()?.selection.active;
     edit(s, |cx| {
-        let base = input_to_cell(&input, sheet, origin, &mut cx.wb)?;
+        let base = input_to_cell(&input, sheet, origin, &mut cx.wb, region)?;
         for r in &ranges {
             if r.count() > 2_000_000 {
                 return Err(bad("range.fill", "range too large"));
@@ -596,6 +624,7 @@ fn coalesce(cells: &[CellRef]) -> Vec<RangeRef> {
 
 fn undo(s: &mut Session, p: &Json) -> Result<Json> {
     let steps = u32_param(p, "steps").unwrap_or(1).max(1);
+    let region = s.region();
     let d = s.doc_mut()?;
     let mut label = String::new();
     let now = d.wb.clone();
@@ -608,6 +637,7 @@ fn undo(s: &mut Session, p: &Json) -> Result<Json> {
         d.selection = e.selection;
     }
     super::extra::keep_watch_list(&now, &mut d.wb);
+    d.apply_region(region);
     d.calc.rebuild(&d.wb);
     d.revision += 1;
     Ok(json!({"undone": label}))
@@ -615,6 +645,7 @@ fn undo(s: &mut Session, p: &Json) -> Result<Json> {
 
 fn redo(s: &mut Session, p: &Json) -> Result<Json> {
     let steps = u32_param(p, "steps").unwrap_or(1).max(1);
+    let region = s.region();
     let d = s.doc_mut()?;
     let mut label = String::new();
     let now = d.wb.clone();
@@ -627,6 +658,7 @@ fn redo(s: &mut Session, p: &Json) -> Result<Json> {
         d.selection = e.selection;
     }
     super::extra::keep_watch_list(&now, &mut d.wb);
+    d.apply_region(region);
     d.calc.rebuild(&d.wb);
     d.revision += 1;
     Ok(json!({"redone": label}))
@@ -792,6 +824,7 @@ fn paste(s: &mut Session, p: &Json) -> Result<Json> {
 fn paste_text(s: &mut Session, p: &Json, text: &str) -> Result<Json> {
     let sheet = target_sheet(s, p)?;
     let at = cell_param_on(s, p, "at", sheet)?.unwrap_or(s.doc()?.selection.current().start);
+    let region = typed_region(p, "edit.paste")?;
     let rows: Vec<Vec<String>> = parse_tsv(text);
     // The HTML flavour, when the host passed it: the number behind each cell's shown text.
     let html = str_param(p, "html").map(crate::clip_html::table_cells).unwrap_or_default();
@@ -801,7 +834,7 @@ fn paste_text(s: &mut Session, p: &Json, text: &str) -> Result<Json> {
         for (ri, row) in rows.iter().enumerate() {
             for (ci, v) in row.iter().enumerate() {
                 let Some(c) = at.offset(ri as i64, ci as i64) else { continue };
-                let mut cell = input_to_cell(v, sheet, c, &mut cx.wb).unwrap_or_else(|_| Some(Cell::value(Value::text(v.as_str()))));
+                let mut cell = input_to_cell(v, sheet, c, &mut cx.wb, region).unwrap_or_else(|_| Some(Cell::value(Value::text(v.as_str()))));
                 if let Some(cl) = cell.as_mut() {
                     numeric_from_html(cl, v, html.get(ri).and_then(|r| r.get(ci)), &mut cx.wb);
                 }
@@ -1512,7 +1545,9 @@ fn replace(s: &mut Session, p: &Json) -> Result<Json> {
                 } else {
                     replace_ci(&text, &what, &with)
                 };
-                let cell = input_to_cell(&new, si, c, &mut cx.wb).unwrap_or_else(|_| Some(Cell::value(Value::text(new.as_str()))));
+                // `new` is built from `input_text`, which is canonical.
+                let cell = input_to_cell(&new, si, c, &mut cx.wb, &gridcraft_core::region::EN_US)
+                    .unwrap_or_else(|_| Some(Cell::value(Value::text(new.as_str()))));
                 let sh = cx.sheet_mut(si)?;
                 match cell {
                     Some(cell) => sh.set_cell(c, cell),

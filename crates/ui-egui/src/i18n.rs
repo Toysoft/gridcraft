@@ -108,8 +108,18 @@ impl Language {
         }
     }
 
+    /// The formula language this interface language enters and shows. Japanese, Chinese and
+    /// Korean Excel use English function names; Czech and Serbian have no function table yet.
     pub fn formula_locale(self) -> gridcraft_engine::formula::FormulaLocale {
-        if self == Self::Es { gridcraft_engine::formula::FormulaLocale::Es } else { gridcraft_engine::formula::FormulaLocale::En }
+        use gridcraft_engine::formula::FormulaLocale;
+        match self {
+            Self::Es => FormulaLocale::Es,
+            Self::De => FormulaLocale::De,
+            Self::PtBr => FormulaLocale::PtBr,
+            Self::Ru => FormulaLocale::Ru,
+            Self::Fr => FormulaLocale::Fr,
+            Self::En | Self::Zh | Self::Ja | Self::Ko | Self::Cs | Self::Sr => FormulaLocale::En,
+        }
     }
 
     /// Translates an interface label; untranslated labels fall back to English.
@@ -132,6 +142,16 @@ impl Language {
         };
         translated.unwrap_or_else(|| text.rsplit_once('|').map_or(text, |(_, label)| label))
     }
+}
+
+/// The region the operating system (or the browser) is set to, best effort; en-US when it is
+/// unknown. Used as the first-run default of the regional format while nothing is saved.
+pub fn system_region() -> &'static gridcraft_engine::core::Region {
+    #[cfg(not(target_arch = "wasm32"))]
+    let tag = sys_locale::get_locale();
+    #[cfg(target_arch = "wasm32")]
+    let tag = web_sys::window().and_then(|window| window.navigator().language());
+    tag.map_or_else(gridcraft_engine::core::region::default_region, |tag| gridcraft_engine::core::region::lookup(&tag))
 }
 
 /// Deserializes a saved language leniently: an unknown or malformed value (a language removed in a
@@ -404,6 +424,7 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Light", "ライト"),
     ("Dark", "ダーク"),
     ("Interface language", "表示言語"),
+    ("Regional format", "地域の形式"),
     ("Interface size", "表示サイズ"),
     ("Auto", "自動"),
     ("Drag to freeze columns", "ドラッグして列を固定"),

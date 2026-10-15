@@ -1257,7 +1257,13 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         confirm = false;
     }
     if confirm && let Some(cmd) = d.command {
-        let params = build_params(&d);
+        let mut params = build_params(&d);
+        // The forecast end is a date or number the user typed, in the workbook's region.
+        if cmd == "data.forecastSheet"
+            && let Some(map) = params.as_object_mut()
+        {
+            map.insert("region".into(), json!(app.session.region().tag));
+        }
         match app.run(cmd, params) {
             Ok(r) => {
                 open = false;
@@ -1752,17 +1758,23 @@ fn insert_function(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confir
         r.request_focus();
     });
     let locale = app.ui.language.formula_locale();
+    let separators = app.session.active().map(|doc| crate::formula_locale::separators(locale, &doc.wb)).unwrap_or_default();
     let list = gridcraft_engine::cmd::formulas::function_list();
-    let q = d.search.to_ascii_lowercase();
-    let hits: Vec<&Json> = list
+    // Unicode lower case: local names and searches are not ASCII (`zählenwenn`, `сумм`).
+    let q = d.search.to_lowercase();
+    let mut hits: Vec<&Json> = list
         .iter()
         .filter(|f| {
             q.is_empty()
-                || f["name"].as_str().is_some_and(|n| locale.function_name(n).to_ascii_lowercase().contains(&q))
-                || f["description"].as_str().is_some_and(|n| n.to_ascii_lowercase().contains(&q))
+                || f["name"].as_str().is_some_and(|n| locale.function_name(n).to_lowercase().contains(&q))
+                || f["description"].as_str().is_some_and(|n| n.to_lowercase().contains(&q))
         })
-        .take(300)
         .collect();
+    if locale != gridcraft_engine::formula::FormulaLocale::En {
+        // The list is sorted by English name; list it by the name shown.
+        hits.sort_by_cached_key(|&f| locale.function_name(f["name"].as_str().unwrap_or("")));
+    }
+    hits.truncate(300);
     egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
         for (i, f) in hits.iter().enumerate() {
             let name = locale.function_name(f["name"].as_str().unwrap_or(""));
@@ -1781,7 +1793,9 @@ fn insert_function(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confir
     });
     if let Some(f) = hits.get(d.list_index) {
         ui.separator();
-        ui.label(egui::RichText::new(crate::formula_locale::signature(f["name"].as_str().unwrap_or(""), locale).unwrap_or_default()).strong());
+        ui.label(
+            egui::RichText::new(crate::formula_locale::signature(f["name"].as_str().unwrap_or(""), locale, separators).unwrap_or_default()).strong(),
+        );
         ui.label(crate::formula_locale::description(f["name"].as_str().unwrap_or(""), locale).unwrap_or_default());
     }
     let mut open = true;
@@ -2725,8 +2739,8 @@ mod tests {
         app.run(d.command.unwrap(), build_params(&d)).unwrap();
         let doc = app.session.active().unwrap();
         let at = gridcraft_engine::core::CellRef::new(0, 0);
-        assert!(gridcraft_engine::cmd::data::check_validation(&doc.wb, 0, at, "6").is_none());
-        assert!(gridcraft_engine::cmd::data::check_validation(&doc.wb, 0, at, "4").is_some());
+        assert!(gridcraft_engine::cmd::data::check_validation(&doc.wb, 0, at, "6", doc.wb.region).is_none());
+        assert!(gridcraft_engine::cmd::data::check_validation(&doc.wb, 0, at, "4", doc.wb.region).is_some());
     }
 
     #[test]
