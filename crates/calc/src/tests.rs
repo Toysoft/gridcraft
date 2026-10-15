@@ -1172,6 +1172,28 @@ fn trim_references() {
 }
 
 #[test]
+fn lookup_of_an_empty_cell_stays_blank() {
+    // #374: B1 (the value for key "k") is empty.
+    let mut t = T::new();
+    t.set("A1", "k");
+    t.set("A2", "j");
+    t.set("B2", "v");
+    for (at, f, want) in [
+        ("D2", "=\"x\"&VLOOKUP(\"k\",A1:B2,2,0)&\"y\"", Value::from("xy")),
+        ("D3", "=CONCATENATE(\"x\",VLOOKUP(\"k\",A1:B2,2,0),\"y\")", Value::from("xy")),
+        ("D4", "=ISBLANK(XLOOKUP(\"k\",A1:A2,B1:B2))", Value::Bool(true)),
+        ("D5", "=\"x\"&XLOOKUP(\"k\",A1:A2,B1:B2)&\"y\"", Value::from("xy")),
+        // A bare lookup still shows 0, like a reference to an empty cell.
+        ("D8", "=VLOOKUP(\"k\",A1:B2,2,0)", Value::Number(0.0)),
+        // Arithmetic still reads the blank as 0.
+        ("D9", "=VLOOKUP(\"k\",A1:B2,2,0)+1", Value::Number(1.0)),
+    ] {
+        t.set(at, f);
+        assert_eq!(t.get(at), want, "{f}");
+    }
+}
+
+#[test]
 fn cell_width_is_the_column_width_dialog_value_rounded() {
     // #735: Excel 365 values. Widths in px as `home.columnWidth {"chars"}` sets them
     // (chars * 7 + 5): 10.71 -> 80, 12 -> 89, 10.57 -> 79, 2.86 -> 25; B keeps the default 8.43 (64).
