@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (XLSX chart sheets are kept on save (#727); previously minor: CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-14 · **Change:** minor (Get & Transform sources; GridCraft's query definitions round-trip in a custom XML part) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -65,8 +65,14 @@ and repair-free opening remain unverified.
 
 Excel's Get Data reaches files (Excel, CSV, XML, JSON, PDF, Parquet, folders), databases (SQL
 Server, Access, ODBC, …), web pages, SharePoint and online services, through Power Query.
-GridCraft imports CSV/TSV, JSON and HTML tables only, with no query editor, no connections and no
-refresh. Counted under features (Get & Transform, ~10% ready), not here.
+GridCraft's queries read Text/CSV (delimiter and file origin detected or chosen), Excel workbooks
+(sheets, tables, names), XML (repeating elements), JSON (arrays of records, flattened), folders
+(file list, or files combined), web pages (HTML tables), CSV/JSON/XML over HTTP(S), OData feeds,
+and ODBC data sources including SQL Server and Access (Windows). PDF, Parquet, SharePoint, Azure,
+online services, Analysis Services and OLE DB are listed and disabled. Query definitions are saved
+in GridCraft's own custom XML part (`customXml/gridcraftQueries.xml`), which Excel keeps; Excel's
+own Power Query parts (DataMashup, connections, query tables) are passed through unchanged but not
+read. Loaded results are ordinary tables. Counted under features (Get & Transform, ~45% ready).
 
 ## Work (76–114 h)
 
@@ -85,6 +91,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Get & Transform sources listed; query definitions round-trip in a GridCraft custom XML part beside Excel's kept DataMashup |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |
 | 2026-10-12 | trivial | CSV and TSV export is capped at 512 MiB and refuses a larger used range with an error (#528) |
 | 2026-10-12 | minor | `.xls` import reads the calculation settings (CalcMode, CalcIter, CalcCount, CalcDelta, CalcPrecision), so circular models calculate instead of showing `#CIRC!` (#724) |

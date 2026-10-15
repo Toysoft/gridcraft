@@ -1,6 +1,6 @@
 # Architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (created from the code on main; supersedes the local-only plan/architecture.md for committed docs) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** minor (Get & Transform: the engine's `DataAccess` trait and the native `external` crate) · **Target:** Microsoft Excel (Microsoft 365)
 
 How GridCraft is built today. Rules for contributors are in [`AGENTS.md`](../AGENTS.md).
 
@@ -24,6 +24,7 @@ including tests, 2026-10-10.
 | L5 | `engine` | ~17.7k | `Session`: open workbooks, selection, history (COW snapshots), clipboard, fill, sort, filter, PivotTables, what-if, print, file I/O (`io.rs`), and the command registry (`cmd/*`, 313 commands) with the Excel ribbon catalog (`catalog.rs`) |
 | L6 | `ui-egui` | ~11.6k | Excel-style UI (title bar, QAT, ribbon, formula bar, virtualised grid, editor, tabs, status bar, dialogs, task panes, chart view) and the control channel |
 | L6 | `mcp` | ~1.4k | MCP server over stdio (hand-written JSON-RPC), headless or bridged to a running app |
+| L6 | `external` | ~0.5k | Native data access for Get & Transform and WEBSERVICE: HTTP(S) (system TLS on Windows/macOS, rustls elsewhere) and ODBC on Windows; the desktop app and CLI inject it into the engine's `query::DataAccess` trait (never built for wasm) |
 | L7 | `apps/gridcraft`, `apps/gridcraft-cli`, `apps/gridcraft-web` | ~2.2k | Desktop (eframe/wgpu), CLI (`info`, `convert`, `eval`, `cat`, `run`, `commands`, `functions`, `mcp`, `send`), web (WASM via trunk) |
 | — | `xtask` | — | `ci`, `parity`, `assets`, `layers`, `wasm`, `version`, `stats` |
 
@@ -42,6 +43,11 @@ including tests, 2026-10-10.
    for the visible window only; charts render through `crates/chart` primitives.
 5. **Files**: `engine/io.rs` sniffs content (XLSX, XLSB, ODS) before trusting the extension and
    dispatches to `crates/xlsx`; imports that lose data return warnings shown to the user.
+6. **External data** (Get & Transform, WEBSERVICE): `engine/query` evaluates the workbook's
+   queries (`model::query`: a source and typed steps) through the `DataAccess` trait the engine
+   owns. Hosts inject an implementation (`Session::set_data_access`, the `external` crate);
+   without one, files go through `std::fs` and web/ODBC are disabled with a reason. A document
+   opened with external content stays blocked until `data.enableContent`.
 
 ## Agent control
 
@@ -68,4 +74,5 @@ rpm, tarball), FreeBSD, and web (WASM; WebGPU or WebGL2). Release workflows in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Get & Transform data flow; the `external` crate (L6) |
 | 2026-10-10 | major | Created from the code on main: crates, layers, data flow, agent control, known gaps |

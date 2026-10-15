@@ -339,7 +339,10 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
             Err(e) => cx.warn(format!("macros (VBA project) could not be read and were dropped: {e}")),
         }
     }
+    let (queries, query_parts) = crate::queries::read(&mut cx, &wb_rels);
+    wb.queries = queries;
     wb.preserved = kept.workbook(&mut cx, &wb_part, &wb_xml, &file_to_model);
+    crate::queries::unkeep(&mut wb.preserved, &query_parts);
     // Calls of LAMBDA names are spelled like the names (the parser upper-cases them).
     wb.apply_name_call_case();
     wb.styles = cx.styles;
