@@ -56,6 +56,7 @@ with a file open.
 | `undo` / `redo` | `steps?` | History. |
 | `screenshot` | `path` | PNG of the window (Remote only). |
 | `list_functions` | `search?`, `category?` | Worksheet functions with signatures. |
+| `run_script` | `code?`, `name?` | Runs a script ([scripts.md](scripts.md)): Rhai `code`, or a script saved in the workbook by `name`. One undo step; returns `output` (print/console.log lines) and `result`; an error names the line and column. No file access. |
 
 Results are one text block holding pretty JSON; failures set `isError: true` with a readable message. Unknown tools,
 missing required arguments and wrong argument types are JSON-RPC `-32602` errors; malformed JSON is `-32700`; unknown

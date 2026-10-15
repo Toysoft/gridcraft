@@ -339,6 +339,42 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Agent\nControl" => "Agenten-\nsteuerung",
         "Action\nJournal" => "Aktions-\nprotokoll",
         "About\nGridCraft" => "Über\nGridCraft",
+        // Automate › scripts (German Excel: Automatisieren › Skripttools, Code-Editor).
+        "Record\nActions" => "Aktionen\naufzeichnen",
+        "Stop\nRecording" => "Aufzeichnung\nbeenden",
+        "Record what you do as a script" => "Ihre Aktionen als Skript aufzeichnen",
+        "Stop recording and save what you did as a script" => "Aufzeichnung beenden und die Aktionen als Skript speichern",
+        "New\nScript" => "Neues\nSkript",
+        "New Script" => "Neues Skript",
+        "Write a new script in the Code Editor" => "Ein neues Skript im Code-Editor schreiben",
+        "All\nScripts" => "Alle\nSkripts",
+        "All Scripts" => "Alle Skripts",
+        "The scripts in this workbook (Code Editor)" => "Die Skripts dieser Arbeitsmappe (Code-Editor)",
+        "This workbook has no scripts yet." => "Diese Arbeitsmappe enthält noch keine Skripts.",
+        "More scripts" => "Weitere Skripts",
+        "Code Editor" => "Code-Editor",
+        "line" => "Zeile",
+        "lines" => "Zeilen",
+        "Recorded commands" => "Aufgezeichnete Befehle",
+        "This workbook has no scripts yet. Record Actions or New Script creates one." => {
+            "Diese Arbeitsmappe enthält noch keine Skripts. „Aktionen aufzeichnen“ oder „Neues Skript“ legt eines an."
+        }
+        "Run" => "Ausführen",
+        "Save and run this script" => "Dieses Skript speichern und ausführen",
+        "Output" => "Ausgabe",
+        "Run the script to see what it prints here." => "Führen Sie das Skript aus, um hier seine Ausgabe zu sehen.",
+        "The script ran without errors." => "Das Skript wurde ohne Fehler ausgeführt.",
+        "Script ran:" => "Skript ausgeführt:",
+        "Scripts in this workbook are turned off because it came from a file. Enable them only if you trust where it came from." => {
+            "Die Skripts dieser Arbeitsmappe sind deaktiviert, weil sie aus einer Datei stammt. Aktivieren Sie sie nur, wenn Sie der Herkunft vertrauen."
+        }
+        "Enable Content" => "Inhalt aktivieren",
+        "Macros" => "Makros",
+        "Macro name:" => "Makroname:",
+        "This workbook has no scripts or macros." => "Diese Arbeitsmappe enthält keine Skripts oder Makros.",
+        "VBA project (preserved, not run)" => "VBA-Projekt (erhalten, wird nicht ausgeführt)",
+        "Create" => "Erstellen",
+        "Macros and scripts in this workbook (Alt+F8)" => "Makros und Skripts dieser Arbeitsmappe (Alt+F8)",
         "Share" => "Teilen",
         "Add Chart\nElement" => "Diagrammelement\nhinzufügen",
         "Change\nChart Type" => "Diagrammtyp\nändern",

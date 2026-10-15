@@ -1077,7 +1077,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                         }
                     });
                 }
-                "macros" => macros(ui, &mut d),
+                "macros" => macros(app, ui, &mut d, &mut open),
                 "statistics" | "accessibility" | "errorChecking" | "evaluateFormula" | "comments" => {
                     let r = if d.name == "comments" {
                         app.session.active().and_then(|doc| doc.wb.active().map(|s| json!(s.comments.iter().map(|(c, m)| json!({"cell": c.a1(), "author": m.author, "text": m.text})).collect::<Vec<_>>())))
@@ -1493,32 +1493,64 @@ fn about(ui: &mut egui::Ui, d: &mut Dialog) {
     }
 }
 
-/// The Macros dialog: lists GridCraft's own recorded scripts and (if the file carries one) the
-/// preserved VBA project. Mirrors Excel's Developer ▸ Macros list, but is honest that VBA is
-/// preserved and not executed.
-fn macros(ui: &mut egui::Ui, d: &mut Dialog) {
-    ui.label("Automation in this workbook. GridCraft runs its own scripts; a file's VBA project is preserved but not executed.");
-    ui.add_space(6.0);
+/// The Macros dialog (View › Macros, Alt+F8): GridCraft's scripts and, if the file carries one,
+/// the preserved VBA project. Like Excel's Macro dialog: pick one, then Run, Edit, Create or
+/// Delete. VBA is preserved but not executed, and says so.
+fn macros(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mut bool) {
+    let lang = app.ui.language;
+    // The list is read again each frame, so Create and Delete show at once.
+    d.result = app.session.run("view.macros", json!({})).ok();
     let items: Vec<Json> = d.result.as_ref().and_then(Json::as_array).cloned().unwrap_or_default();
+    ui.label(lang.tr("Macro name:"));
     if items.is_empty() {
-        ui.weak("This workbook has no scripts or macros.");
-        return;
+        ui.weak(lang.tr("This workbook has no scripts or macros."));
     }
-    egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-        for it in &items {
+    let mut run: Option<String> = None;
+    egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+        for (i, it) in items.iter().enumerate() {
             let name = it.get("name").and_then(Json::as_str).unwrap_or("(unnamed)");
-            let is_vba = it.get("kind").and_then(Json::as_str) == Some("vba");
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(name).strong());
-                if is_vba {
-                    ui.weak("— VBA project (preserved, not run)");
-                } else {
-                    let steps = it.get("steps").and_then(Json::as_u64).unwrap_or(0);
-                    ui.weak(format!("— {steps} step{}", if steps == 1 { "" } else { "s" }));
-                }
-            });
+            let label = match it.get("kind").and_then(Json::as_str) {
+                Some("vba") => format!("{name}  — {}", lang.tr("VBA project (preserved, not run)")),
+                Some("commands") => format!("{name}  — {}", lang.tr("Recorded commands")),
+                _ => name.to_string(),
+            };
+            let r = ui.selectable_label(d.list_index == i, label);
+            if r.clicked() {
+                d.list_index = i;
+            }
+            if r.double_clicked() && it.get("kind").and_then(Json::as_str) != Some("vba") {
+                run = Some(name.to_string());
+            }
         }
     });
+    let chosen = items.get(d.list_index).filter(|it| it.get("kind").and_then(Json::as_str) != Some("vba"));
+    let chosen_name = chosen.and_then(|it| it.get("name")).and_then(Json::as_str).map(str::to_string);
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        if ui.add_enabled(chosen_name.is_some(), egui::Button::new(lang.tr("Run"))).clicked() {
+            run.clone_from(&chosen_name);
+        }
+        if ui.add_enabled(chosen_name.is_some(), egui::Button::new(lang.tr("Edit"))).clicked()
+            && let Some(n) = &chosen_name
+        {
+            crate::scripts::open(app, Some(n));
+            *open = false;
+        }
+        if ui.button(lang.tr("Create")).clicked() {
+            app.run_or_alert("automate.newScript", json!({}));
+            *open = false;
+        }
+        if ui.add_enabled(chosen_name.is_some(), egui::Button::new(lang.tr("Delete"))).clicked()
+            && let Some(n) = &chosen_name
+        {
+            app.run_or_alert("automate.deleteScript", json!({"name": n}));
+            d.list_index = 0;
+        }
+    });
+    if let Some(name) = run {
+        *open = false;
+        crate::scripts::run(app, &name);
+    }
 }
 
 fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool) {

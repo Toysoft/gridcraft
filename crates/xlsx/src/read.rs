@@ -339,6 +339,12 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
             Err(e) => cx.warn(format!("macros (VBA project) could not be read and were dropped: {e}")),
         }
     }
+    // Scripts live in a custom XML part of their own, which is modelled rather than kept.
+    let (scripts, script_parts) = crate::scripts::read(&mut cx, &wb_rels);
+    wb.scripts = scripts;
+    for part in &script_parts {
+        kept.skip(part);
+    }
     wb.preserved = kept.workbook(&mut cx, &wb_part, &wb_xml, &file_to_model);
     // Calls of LAMBDA names are spelled like the names (the parser upper-cases them).
     wb.apply_name_call_case();

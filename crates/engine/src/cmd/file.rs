@@ -77,6 +77,8 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
         s.close_document(0);
     }
     let mut doc = DocState::new(wb, path, title);
+    // A file's own scripts wait for Enable Content before they run.
+    doc.scripts_blocked = !doc.wb.scripts.is_empty();
     if crate::io::FileKind::from_path(&name).is_none() && gridcraft_xlsx::sniff(&bytes) == gridcraft_xlsx::Format::Xlsx {
         doc.content_kind = Some(crate::io::FileKind::Xlsx);
     }

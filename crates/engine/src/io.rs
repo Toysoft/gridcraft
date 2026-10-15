@@ -58,6 +58,7 @@ pub fn open_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>
     if gridcraft_xlsx::sniff(bytes) != gridcraft_xlsx::Format::Encrypted {
         let (mut wb, warnings) = open_plain(name, bytes)?;
         fit_imported_rows(&mut wb);
+        crate::cmd::automate::migrate_legacy(&mut wb);
         return Ok((wb, warnings));
     }
     // A scheme no password opens is said straight away, rather than after asking for one.
@@ -72,6 +73,7 @@ pub fn open_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>
     }
     let (mut wb, mut warnings) = open_plain(name, &plain)?;
     fit_imported_rows(&mut wb);
+    crate::cmd::automate::migrate_legacy(&mut wb);
     warnings.insert(0, DECRYPTED_NOTICE.into());
     Ok((wb, warnings))
 }

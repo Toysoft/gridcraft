@@ -75,6 +75,27 @@ pub struct DefinedName {
     pub hidden: bool,
 }
 
+/// The language a [`Script`] is written in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ScriptLanguage {
+    /// Rhai code (`fn main(workbook) { … }`), run by the engine's script host.
+    #[default]
+    Rhai,
+    /// A recorded list of commands (`[{"command": id, "params": {…}}]` as JSON text), as GridCraft
+    /// stored scripts before they had code. Still runs; editing one turns it into Rhai.
+    Commands,
+}
+
+/// A script stored with the workbook (Automate tab), saved in the file.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Script {
+    pub name: String,
+    pub language: ScriptLanguage,
+    /// The source: Rhai code, or the JSON text of the command list.
+    pub code: String,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct DocProps {
     pub title: String,
@@ -109,6 +130,9 @@ pub struct Workbook {
     /// macros it arrived with. base64 in JSON. `None` = the workbook has no macros.
     #[serde(default, with = "crate::b64::opt")]
     pub vba_project: Option<Vec<u8>>,
+    /// Scripts (Automate tab), in the order they were created.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scripts: Vec<Script>,
     /// Field separator of the CSV this workbook was read from, so saving it as CSV writes the same
     /// separator back (a `;` file stays a `;` file). `None` = not read from CSV: CSV saves use `,`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -145,6 +169,7 @@ impl Workbook {
             custom_lists: vec![],
             cell_styles: vec![],
             vba_project: None,
+            scripts: vec![],
             csv_delimiter: None,
             preserved: None,
             source_dir: None,
@@ -191,6 +216,10 @@ impl Workbook {
             return Err("That name is already taken. Try a different one.".into());
         }
         Ok(())
+    }
+    /// The script named `name` (case-insensitive, like Excel's script names).
+    pub fn script(&self, name: &str) -> Option<&Script> {
+        self.scripts.iter().find(|s| s.name.eq_ignore_ascii_case(name))
     }
     /// Finds a defined name visible from `sheet`: sheet scope first, then workbook scope.
     pub fn name(&self, name: &str, sheet: usize) -> Option<&DefinedName> {

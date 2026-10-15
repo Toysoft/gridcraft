@@ -106,6 +106,7 @@ fn tools_list_has_schemas() {
         "redo",
         "screenshot",
         "list_functions",
+        "run_script",
     ] {
         assert!(names.contains(&want), "missing tool {want}");
     }
@@ -545,4 +546,30 @@ fn invalid_sort_keys_are_invalid_params() {
         assert_eq!(err_code(&v), -32602, "{v}");
     }
     ok(&mut s, "sort_range", json!({"range": "A1:A3", "keys": ["A", {"column": "A", "order": "desc"}]}));
+}
+
+#[test]
+fn run_script_tool() {
+    let mut s = server();
+    let r = ok(
+        &mut s,
+        "run_script",
+        json!({"code": "fn main(workbook) { let r = workbook.getActiveWorksheet().getRange(\"A1:A3\"); r.setValues([[1], [2], [3]]); let t = 0; for row in r.getValues() { t += row[0]; } console.log(\"total\", t); t }"}),
+    );
+    assert_eq!(r["output"], json!(["total 6"]), "{r}");
+    assert_eq!(r["result"], json!(6));
+    // One undo step for the whole run.
+    ok(&mut s, "undo", json!({}));
+    assert_eq!(ok(&mut s, "get_cell", json!({"cell": "A3"}))["value"], Value::Null);
+    let e = fails(
+        &mut s,
+        "run_script",
+        json!({"code": "let x = 1;
+throw \"no\";"}),
+    );
+    assert!(e.contains("Line 2") && e.contains("no"), "{e}");
+    assert!(fails(&mut s, "run_script", json!({})).contains("code"));
+    assert!(fails(&mut s, "run_script", json!({"name": "missing"})).contains("no script named"));
+    let e = fails(&mut s, "run_script", json!({"code": "run(\"file.saveAs\", #{path: \"x.xlsx\"});"}));
+    assert!(e.contains("may not"), "{e}");
 }

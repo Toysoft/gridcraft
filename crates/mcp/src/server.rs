@@ -28,7 +28,7 @@ execute_command. Convenience tools cover the common flow: write_range / set_cell
 starting with = are formulas), read_range / get_cell to read computed values back, format_range, create_table, \
 insert_chart, sort_range, filter, evaluate_formula (try a formula without changing the sheet), undo / redo, \
 open_workbook / save_workbook. inspect_workbook summarizes sheets, used ranges, tables, charts and names. \
-list_functions lists the worksheet functions.";
+list_functions lists the worksheet functions. run_script runs a script (Rhai, with an object model shaped like Office Scripts) for logic that needs loops or conditions.";
 
 /// Resource URIs.
 pub const WORKBOOK_URI: &str = "gridcraft://workbook";

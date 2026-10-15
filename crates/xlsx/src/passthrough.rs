@@ -225,6 +225,8 @@ fn chart_sheet_entries<'a>(wb_xml: &'a xml::El, wb_rels: &[PreservedRel], file_t
 
 /// Collects kept content while a package is read.
 pub struct KeptReader {
+    /// Parts read into the model (normalised names), which are not kept as well.
+    skip: HashSet<String>,
     on: bool,
     strict: bool,
     defaults: HashMap<String, String>,
@@ -236,6 +238,7 @@ pub struct KeptReader {
 impl KeptReader {
     pub fn new(cx: &mut Ctx<'_>) -> KeptReader {
         let mut k = KeptReader {
+            skip: HashSet::new(),
             on: true,
             strict: false,
             defaults: HashMap::new(),
@@ -265,6 +268,11 @@ impl KeptReader {
             None => k.on = false,
         }
         k
+    }
+
+    /// Leaves out a workbook-level part that was read into the model (and its relationships).
+    pub fn skip(&mut self, part: &str) {
+        self.skip.insert(normalize(part));
     }
 
     fn content_type(&self, part: &str) -> Option<String> {
@@ -385,7 +393,9 @@ impl KeptReader {
             }
         }
         let wb_rels = raw_rels(cx, wb_part).unwrap_or_default();
-        for r in wb_rels.iter().filter(|r| is_kind(r, WORKBOOK_ROOTS)) {
+        let roots: Vec<PreservedRel> =
+            wb_rels.iter().filter(|r| is_kind(r, WORKBOOK_ROOTS) && !self.skip.contains(&normalize(&r.target))).cloned().collect();
+        for r in &roots {
             if let Err(why) = self.keep(cx, &mut p, std::slice::from_ref(r), &mut seen) {
                 cx.warn(format!("{} part {} was dropped: {why}", kind(&r.rel_type), r.target));
             }

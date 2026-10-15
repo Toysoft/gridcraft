@@ -28,6 +28,7 @@ pub mod paper_view;
 pub mod pivot_pane;
 pub mod printing;
 pub mod ribbon;
+pub mod scripts;
 pub mod selection_glide;
 pub mod tabs;
 pub mod text_box;
@@ -263,6 +264,8 @@ pub struct SheetApp {
     /// holding other text. Once the cut has been pasted, Paste leaves this text alone.
     cut_text: Option<String>,
     pub started: f64,
+    /// The Code Editor task pane (Automate › scripts).
+    pub scripts: scripts::CodeEditor,
 }
 
 impl SheetApp {
@@ -306,6 +309,7 @@ impl SheetApp {
             clipboard_text_at_copy: None,
             cut_text: None,
             started: now_ms(),
+            scripts: scripts::CodeEditor::default(),
         }
     }
 
@@ -739,6 +743,13 @@ impl SheetApp {
                     dl(&name, &b);
                 }
             }
+            // Automate: New Script and recordings open the Code Editor pane; the message bar's
+            // Enable Content lets a file's scripts run.
+            scripts::PANE => {
+                let name = params.get("script").and_then(Json::as_str).map(str::to_string);
+                scripts::open(self, name.as_deref());
+            }
+            scripts::ENABLE => scripts::enable_content(self),
             // File › Options (`file.options`) and the File tab itself open the Backstage view.
             "options" => self.open_backstage(backstage::Page::Options),
             "backstage" => {

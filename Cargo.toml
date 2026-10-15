@@ -39,6 +39,10 @@ sha2 = { version = "0.11", default-features = false }
 aes = { version = "0.9", default-features = false }
 sha1 = { version = "0.11", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# Scripts (Automate tab): the Rhai embedded language, pure Rust and wasm-safe. Default features
+# off: `no_time` (Instant traps on wasm32), `no_module` (no `import`, so no file loading),
+# `no_closure` (no shared captured values), `only_i64`, and no runtime RNG (getrandom).
+rhai = { version = "1.26", default-features = false, features = ["std", "no_time", "no_module", "no_closure", "no_custom_syntax", "only_i64"] }
 
 # ui
 egui = "0.36"

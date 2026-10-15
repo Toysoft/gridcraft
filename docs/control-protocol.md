@@ -63,6 +63,12 @@ password returns "The password is incorrect." The password is left out of the jo
 quoted in an error. The opened workbook has no save path, so Save asks where to save it, without
 the password, and never replaces the encrypted original.
 
+`{command: "automate.runScript", params: {code: "fn main(workbook) { … }"}}` runs a script in the open
+workbook (Rhai, [scripts.md](scripts.md)); `{name: "…"}` runs one saved in the workbook. The run is one undo
+step and returns `{name, output, result}`; a failing script is an error naming the line and column.
+`ui.dialog` with `{name: "codeEditor", script?: "…"}` opens the Code Editor pane on a script or on the list of
+scripts; `automate.newScript` with no params opens it on the new script.
+
 For a headless equivalent (no window), use `gridcraft-cli mcp` or `gridcraft-cli run`;
 see [`mcp.md`](mcp.md) and [`cli.md`](cli.md).
 

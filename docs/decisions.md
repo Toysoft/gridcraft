@@ -1,5 +1,21 @@
 # Decisions
 
+## Scripts are Rhai with an Office Scripts-shaped object model
+
+Proposed (gaps.md §21 leaves the language to the maintainers): [Rhai](https://rhai.rs) for scripts with logic: pure Rust, builds for
+wasm32, and sandboxable (operation, call-depth and data-size limits; no file or network access in
+the language). The object model keeps Excel's Office Scripts names (`getActiveWorksheet`, `getRange`,
+`setValues`, `getFormat().getFont().setBold`) so knowledge carries over; any command is reachable
+through `run(id, params)`. The engine (L5) hosts it in `crates/engine/src/script/`, because scripts
+act through `Session::execute` (undo, protection, journal) and read the model directly; no new crate
+or layer. Rhai is MIT OR Apache-2.0; it builds with default features off (`std`, `no_time`,
+`no_module`, `no_closure`, `no_custom_syntax`, `only_i64`), so there is no clock (which traps on
+wasm), no module loading from files and no runtime RNG. Its dependencies are MIT/Apache-2.0 except
+`smartstring` (MPL-2.0, used unmodified from crates.io; file-level copyleft that doesn't extend to
+GridCraft's code). Scripts are stored in the workbook; XLSX has no place for them (Excel keeps Office
+Scripts in OneDrive), so they go into one custom XML part in GridCraft's namespace, which other
+applications carry along unread. See [scripts.md](scripts.md).
+
 ## Formula localization uses the existing interface preference
 
 PR #98 builds on the persisted `UiState.language` introduced by #31 and extended by #104.

@@ -1,5 +1,5 @@
 //! More ribbon commands: Chart Design and Format, object arrangement, workbook views, table
-//! tools, Get Data, scripts (Automate), cell checkboxes, theme colours and fonts.
+//! tools, Get Data, cell checkboxes, theme colours and fonts.
 
 use gridcraft_core::{CellRef, RangeRef, Value};
 use gridcraft_model::*;
@@ -147,7 +147,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "view.unhideWindow", "Unhide…", ["View", "Window"], None, "{index?}", has_doc, unhide_window),
         cmd!(query "view.switchWindows", "Switch Windows", ["View", "Window"], None, "{} → open windows", always, switch_windows),
         cmd!(noundo "view.ruler", "Ruler", ["View", "Show"], None, "{on?} → {on}: rulers in Page Layout view (an application option)", has_doc, ruler),
-        cmd!(query "view.macros", "Macros", ["View", "Macros"], None, "{} → scripts", has_doc, all_scripts),
+        cmd!(query "view.macros", "Macros", ["View", "Macros"], None, "{} → scripts (run one with automate.runScript)", has_doc, super::automate::all_scripts),
         // Table tools
         cmd!("table.resize", "Resize Table", ["Table Design", "Properties"], None, "{table?, range: \"A1:F20\"}", has_doc, table_resize),
         cmd!("table.removeDuplicates", "Remove Duplicates", ["Table Design", "Tools"], None, "{table?, columns?}", has_doc, |s, p| s
@@ -181,20 +181,6 @@ pub fn specs() -> Vec<CommandSpec> {
             from_table_range
         ),
         cmd!(query "data.queriesConnections", "Queries & Connections", ["Data", "Queries & Connections"], None, "{} → imported tables", has_doc, queries),
-        // Automate
-        cmd!(noundo "automate.recordActions", "Record Actions", ["Automate", "Scripting Tools"], None, "{stop?: bool, name?: script name when stopping}", has_doc, record),
-        cmd!(
-            "automate.newScript",
-            "New Script",
-            ["Automate", "Scripting Tools"],
-            None,
-            "{name, commands: [{command, params}] }",
-            has_doc,
-            new_script
-        ),
-        cmd!(query "automate.allScripts", "All Scripts", ["Automate", "Scripting Tools"], None, "{} → saved scripts", has_doc, all_scripts),
-        cmd!("automate.runScript", "Run Script", [], None, "{name}", has_doc, run_script),
-        cmd!("automate.deleteScript", "Delete Script", [], None, "{name}", has_doc, delete_script),
         // Cell controls, themes, borders, styles
         cmd!(
             "insert.checkbox",
@@ -688,11 +674,10 @@ fn ruler(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 const VIEWS_NAME: &str = "_sc_custom_views";
-const SCRIPTS_NAME: &str = "_sc_scripts";
 const WATCH_NAME: &str = "_sc_watch";
 
 /// Workbook-level JSON stored in a hidden defined name (round-trips through XLSX).
-fn stash_get(wb: &Workbook, key: &str) -> Json {
+pub(crate) fn stash_get(wb: &Workbook, key: &str) -> Json {
     wb.names
         .iter()
         .find(|n| n.name == key)
@@ -782,6 +767,7 @@ fn new_window(s: &mut Session, _: &Json) -> Result<Json> {
     let d = s.doc()?.clone();
     let mut copy = crate::DocState::new((*d.wb).clone(), d.path.clone(), format!("{}:2", d.display_title()));
     copy.selection = d.selection.clone();
+    copy.scripts_blocked = d.scripts_blocked;
     let i = s.add_document(copy);
     Ok(json!({"index": i}))
 }
@@ -940,74 +926,6 @@ fn queries(s: &mut Session, _: &Json) -> Result<Json> {
             })
             .collect(),
     ))
-}
-
-fn record(s: &mut Session, p: &Json) -> Result<Json> {
-    if bool_param(p, "stop").unwrap_or(false) || s.recording.is_some() {
-        let Some(start) = s.recording.take() else { return Ok(json!({"recording": false})) };
-        let cmds: Vec<Json> =
-            s.journal.iter().skip(start).filter(|(id, _)| !id.starts_with("automate.")).map(|(id, p)| json!({"command": id, "params": p})).collect();
-        let name = str_param(p, "name").map(str::to_string).unwrap_or_else(|| format!("Script {}", start));
-        s.execute("automate.newScript", json!({"name": name, "commands": cmds}))?;
-        return Ok(json!({"recording": false, "saved": name, "steps": cmds.len()}));
-    }
-    s.recording = Some(s.journal.len());
-    Ok(json!({"recording": true}))
-}
-
-fn new_script(s: &mut Session, p: &Json) -> Result<Json> {
-    let name = str_param(p, "name").ok_or_else(|| bad("automate.newScript", "missing `name`"))?.to_string();
-    let cmds = p.get("commands").cloned().unwrap_or(json!([]));
-    if !cmds.is_array() {
-        return Err(bad("automate.newScript", "`commands` must be an array"));
-    }
-    edit(s, |cx| {
-        let mut all = stash_map(&cx.wb, SCRIPTS_NAME);
-        all[name.as_str()] = cmds.clone();
-        stash_set(&mut cx.wb, SCRIPTS_NAME, &all);
-        Ok(json!({"name": name}))
-    })
-}
-
-fn all_scripts(s: &mut Session, _: &Json) -> Result<Json> {
-    let wb = &s.doc()?.wb;
-    let all = stash_get(wb, SCRIPTS_NAME);
-    let mut list: Vec<Json> =
-        all.as_object().map(|o| o.iter().map(|(k, v)| json!({"name": k, "steps": v.as_array().map_or(0, Vec::len)})).collect()).unwrap_or_default();
-    // A preserved VBA project is reported alongside GridCraft's own scripts; it is carried on
-    // save but never executed here, so it has no step count.
-    if let Some(bytes) = &wb.vba_project {
-        list.push(json!({"name": "(VBA)", "steps": 0, "kind": "vba", "size": bytes.len(), "executed": false}));
-    }
-    Ok(Json::Array(list))
-}
-
-fn run_script(s: &mut Session, p: &Json) -> Result<Json> {
-    let name = str_param(p, "name").ok_or_else(|| bad("automate.runScript", "missing `name`"))?;
-    let all = stash_get(&s.doc()?.wb, SCRIPTS_NAME);
-    let steps = all.get(name).and_then(Json::as_array).cloned().ok_or_else(|| bad("automate.runScript", "no such script"))?;
-    let mut n = 0;
-    for st in steps.iter().take(100_000) {
-        let id = st["command"].as_str().unwrap_or("");
-        if id.starts_with("automate.") {
-            continue;
-        }
-        s.execute(id, st["params"].clone())?;
-        n += 1;
-    }
-    Ok(json!({"ran": n}))
-}
-
-fn delete_script(s: &mut Session, p: &Json) -> Result<Json> {
-    let name = str_param(p, "name").ok_or_else(|| bad("automate.deleteScript", "missing `name`"))?.to_string();
-    edit(s, |cx| {
-        let mut all = stash_map(&cx.wb, SCRIPTS_NAME);
-        if let Some(o) = all.as_object_mut() {
-            o.remove(&name);
-        }
-        stash_set(&mut cx.wb, SCRIPTS_NAME, &all);
-        Ok(Json::Null)
-    })
 }
 
 /// Number format that marks checkbox cells (TRUE/FALSE values drawn as boxes).

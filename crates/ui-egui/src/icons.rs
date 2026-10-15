@@ -106,6 +106,14 @@ pub enum Icon {
     Paper,
     PrintArea,
     Script,
+    /// Automate › Record Actions: a round record button.
+    Record,
+    /// Automate › New Script: a script page with a plus.
+    NewScript,
+    /// Automate › All Scripts: script lines in a list.
+    ScriptList,
+    /// Code Editor › Run: a play triangle.
+    Run,
     Pen,
     Share,
     Search,
@@ -621,6 +629,23 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, c: Color32) {
             g.line(&[(4.5, 6.0), (7.0, 8.0), (4.5, 10.0)], GREEN, 1.3);
             g.stroke(&[(8.0, 10.5), (11.5, 10.5)], c);
         }
+        Icon::Record => {
+            g.circle(8.0, 8.0, 5.5, None, Some(c));
+            g.circle(8.0, 8.0, 3.0, Some(RED), None);
+        }
+        Icon::NewScript => {
+            g.rect(2.0, 2.0, 10.0, 12.0, None, Some(c));
+            g.line(&[(4.0, 5.5), (6.0, 7.0), (4.0, 8.5)], GREEN, 1.2);
+            g.line(&[(12.0, 9.0), (12.0, 15.0)], GREEN, 1.4);
+            g.line(&[(9.0, 12.0), (15.0, 12.0)], GREEN, 1.4);
+        }
+        Icon::ScriptList => {
+            for y in [4.0, 8.0, 12.0] {
+                g.line(&[(2.5, y - 1.5), (4.5, y), (2.5, y + 1.5)], GREEN, 1.1);
+                g.stroke(&[(6.5, y), (13.5, y)], c);
+            }
+        }
+        Icon::Run => g.poly(&[(4.5, 3.0), (13.0, 8.0), (4.5, 13.0)], GREEN),
         Icon::Pen => {
             g.poly(&[(3.0, 13.0), (4.0, 10.0), (11.0, 3.0), (13.0, 5.0), (6.0, 12.0)], BLUE);
             g.stroke(&[(3.0, 13.0), (4.0, 10.0)], c);

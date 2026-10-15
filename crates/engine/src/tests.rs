@@ -907,7 +907,7 @@ fn protection_passwords_stay_out_of_the_journal_and_recorded_scripts() {
     // The recorded script is stored in the workbook, so it is saved with the file.
     let bytes = crate::io::save_bytes(&s.doc().unwrap().wb, "book.xlsx").unwrap();
     let (reopened, _) = crate::io::open_bytes("book.xlsx", &bytes).unwrap();
-    let script = reopened.names.iter().find(|n| n.name == "_sc_scripts").map(|n| n.formula.clone()).unwrap();
+    let script = reopened.script("Lock").map(|sc| sc.code.clone()).unwrap();
     assert!(script.contains("review.protectSheet"), "{script}");
     assert!(!script.contains(PW), "{script}");
 

@@ -174,3 +174,41 @@ fn check_exit_codes_and_json() {
     assert_eq!(run(&["check", book_s, "--tolerance", "x"]).status.code(), Some(2));
     assert_eq!(run(&["check", book_s, "--bogus"]).status.code(), Some(2));
 }
+
+#[test]
+fn rhai_scripts_run_with_output_errors_and_the_file_rule() {
+    let dir = tmpdir("rhai");
+    let script = dir.join("fill.rhai");
+    std::fs::write(
+        &script,
+        "fn main(workbook) {\n    let s = workbook.getActiveWorksheet();\n    s.getRange(\"A1:B1\").setValues([[2, 3]]);\n    s.getRange(\"C1\").setFormula(\"=A1*B1\");\n    console.log(\"product\", s.getRange(\"C1\").getValue());\n}\n",
+    )
+    .unwrap();
+    let out = ok(&["run", "--script", script.to_str().unwrap(), "--print", "A1:C1"]);
+    assert!(out.contains("product 6"), "{out}");
+    assert!(out.lines().any(|l| l.split_whitespace().eq(["2", "3", "6"])), "{out}");
+    // A failing script names the file, line and column; what it printed first still shows.
+    let bad = dir.join("bad.rhai");
+    std::fs::write(&bad, "print(\"before\");\nthrow \"boom\";\n").unwrap();
+    let o = run(&["run", "--script", bad.to_str().unwrap()]);
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stdout).contains("before"));
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("bad.rhai:2:") && err.contains("boom"), "{err}");
+    // Files only with --allow-files.
+    let target = dir.join("written.xlsx");
+    let save = dir.join("save.rhai");
+    std::fs::write(&save, format!("run(\"file.saveAs\", #{{path: \"{}\"}});\n", target.to_str().unwrap().replace('\\', "/"))).unwrap();
+    let o = run(&["run", "--script", save.to_str().unwrap()]);
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("--allow-files"));
+    assert!(!target.exists());
+    ok(&["run", "--script", save.to_str().unwrap(), "--allow-files"]);
+    assert!(target.exists());
+    // A JSON-lines script still runs as commands, next to a Rhai one.
+    let steps = dir.join("steps.jsonl");
+    std::fs::write(&steps, "cell.set {\"cell\":\"A1\",\"input\":\"5\"}\n").unwrap();
+    let out = ok(&["run", "--script", steps.to_str().unwrap(), "--script", script.to_str().unwrap(), "--quiet"]);
+    assert!(out.contains("product 6"), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

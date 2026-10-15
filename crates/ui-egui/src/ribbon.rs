@@ -2239,29 +2239,159 @@ fn view(app: &mut SheetApp, ui: &mut Ui) {
     });
 }
 
+/// Automate, as in Excel 365: Scripting Tools (Record Actions, New Script, All Scripts), then the
+/// gallery of this workbook's scripts (a click runs one), then GridCraft's own automation extras.
 fn automate(app: &mut SheetApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    // Scripting Tools
+    let recording = app.session.recording.is_some();
+    let (label, tip) = if recording {
+        (
+            "Stop
+Recording",
+            "Stop recording and save what you did as a script",
+        )
+    } else {
+        (
+            "Record
+Actions",
+            "Record what you do as a script",
+        )
+    };
+    let rec = big_button(ui, Icon::Record, label, tip, false);
+    if recording {
+        ui.painter().rect_stroke(rec.rect, 5.0, Stroke::new(1.5, t.accent), StrokeKind::Inside);
+    }
+    control_keytip(app, ui, &rec, "automate.recordActions");
+    if rec.clicked() {
+        match app.run("automate.recordActions", json!({})) {
+            // Like Excel, the recording opens in the Code Editor.
+            Ok(r) => {
+                if let Some(name) = r.get("saved").and_then(serde_json::Value::as_str) {
+                    crate::scripts::open(app, Some(name));
+                }
+            }
+            Err(e) => app.message = Some(("Record Actions".into(), crate::clean_error(&e))),
+        }
+    }
+    let __k = big_button(
+        ui,
+        Icon::NewScript,
+        "New
+Script",
+        "Write a new script in the Code Editor",
+        false,
+    );
+    control_keytip(app, ui, &__k, "automate.newScript");
+    if __k.clicked() {
+        act(app, "automate.newScript", json!({}));
+    }
+    let __k = big_button(
+        ui,
+        Icon::ScriptList,
+        "All
+Scripts",
+        "The scripts in this workbook (Code Editor)",
+        false,
+    );
+    control_keytip(app, ui, &__k, "automate.allScripts");
+    if __k.clicked() {
+        crate::scripts::open(app, None);
+    }
+    sep(ui);
+    script_gallery(app, ui);
+    sep(ui);
+    // GridCraft's own automation, after Excel's groups.
     if big_button(ui, Icon::Script, "Macros", "Macros and scripts in this workbook (Alt+F8)", false).clicked() {
         app.open_dialog("macros", json!({}));
     }
-    let __k = big_button(ui, Icon::Script, "Command\nPalette", "Search and run any command", false);
+    let __k = big_button(
+        ui,
+        Icon::Script,
+        "Command
+Palette",
+        "Search and run any command",
+        false,
+    );
     control_keytip(app, ui, &__k, "commandSearch");
     if __k.clicked() {
         app.open_dialog("commandSearch", json!({}));
     }
-    let __k = big_button(ui, Icon::Script, "Agent\nControl", "How agents drive GridCraft (MCP / control channel)", false);
+    let __k = big_button(
+        ui,
+        Icon::Script,
+        "Agent
+Control",
+        "How agents drive GridCraft (MCP / control channel)",
+        false,
+    );
     control_keytip(app, ui, &__k, "agents");
     if __k.clicked() {
         app.open_dialog("agents", json!({}));
     }
-    let __k = big_button(ui, Icon::Script, "Action\nJournal", "Every command run in this session (replayable)", false);
+    let __k = big_button(
+        ui,
+        Icon::Script,
+        "Action
+Journal",
+        "Every command run in this session (replayable)",
+        false,
+    );
     control_keytip(app, ui, &__k, "journal");
     if __k.clicked() {
         app.open_dialog("journal", json!({}));
     }
-    let __k = big_button(ui, Icon::Script, "About\nGridCraft", "Version, contributors and the AI models that helped", false);
+    let __k = big_button(
+        ui,
+        Icon::Script,
+        "About
+GridCraft",
+        "Version, contributors and the AI models that helped",
+        false,
+    );
     control_keytip(app, ui, &__k, "about");
     if __k.clicked() {
         app.open_dialog("about", json!({}));
+    }
+}
+
+/// The Automate tab's gallery of this workbook's scripts (Excel's Office Scripts gallery): two
+/// columns of three, the rest under the arrow. A click runs the script.
+fn script_gallery(app: &mut SheetApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    let names: Vec<String> = app.session.active().map(|d| d.wb.scripts.iter().map(|s| s.name.clone()).collect()).unwrap_or_default();
+    if names.is_empty() {
+        ui.vertical(|ui| {
+            ui.set_width(150.0);
+            ui.add_space(22.0);
+            ui.label(egui::RichText::new(app.ui.language.tr("This workbook has no scripts yet.")).font(theme::ui_font(11.5)).color(t.text_dim));
+        });
+        return;
+    }
+    let short = |n: &str| if n.chars().count() > 20 { format!("{}…", n.chars().take(19).collect::<String>()) } else { n.to_string() };
+    let mut chosen: Option<String> = None;
+    for column in names.chunks(3).take(2) {
+        ui.vertical(|ui| {
+            for n in column {
+                if small_button(ui, Icon::Script, &short(n), n, false).clicked() {
+                    chosen = Some(n.clone());
+                }
+            }
+        });
+    }
+    if names.len() > 6 {
+        let more = icon_button(ui, Icon::Chevron, t.text_dim, "More scripts", vec2(18.0, 66.0));
+        egui::Popup::menu(&more).show(|ui| {
+            for n in &names {
+                if ui.button(n).clicked() {
+                    chosen = Some(n.clone());
+                    ui.close();
+                }
+            }
+        });
+    }
+    if let Some(n) = chosen {
+        crate::scripts::run(app, &n);
     }
 }
 

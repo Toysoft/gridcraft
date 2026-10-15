@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (rows auto-fit oversized fonts on open and whole-row/column formatting) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (§21: Rhai scripts with an Office Scripts-shaped object model) · **Target:** Microsoft Excel (Microsoft 365)
 
 Every known shortfall against Excel, one entry each, ranked by user impact (what blocks someone
 using GridCraft for real work first). This is the work list: pick from the top, check the open
@@ -150,8 +150,20 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
   [hardware-parity.md](hardware-parity.md)
 
 ### 21. Automation and add-ins (F)
-- VBA out of scope (dropped on open, #6); no Office Scripts compatibility; no plugin or custom
-  function API. **Estimate:** 25–40 h plus an owner decision.
+- **Language proposed, pending the maintainers' decision:** scripts are written in [Rhai](https://rhai.rs) (pure Rust, builds for
+  wasm, sandboxable) with an object model shaped like Excel's Office Scripts API (`workbook`,
+  `getActiveWorksheet`, `getRange`, `getValues`/`setValues`, `getFormat().getFont()…`) plus
+  `run(id, params)` for any command. Landed: Automate › Scripting Tools (Record Actions records
+  Rhai, New Script, All Scripts), the scripts gallery, the Code Editor pane with output and
+  error lines, View › Macros running scripts, one undo step per run, a sandbox (operation, time,
+  recursion and size limits; no file access unless `gridcraft-cli run --allow-files`), Enable
+  Content for scripts that came with a file, scripts saved in XLSX (a custom XML part), CLI
+  `--script file.rhai` and the MCP `run_script` tool.
+- Remaining: Office Scripts TypeScript source isn't accepted as is (the syntax is Rhai's, the API
+  names are Excel's), the object model covers ranges, formats, sheets and names but not tables,
+  charts, PivotTables or events; no script buttons on the sheet, no Power Automate flows. VBA is
+  preserved, not run (PR #990 adds a VBA interpreter). No plugin or custom function API.
+  **Estimate:** 15–25 h for the rest of the object model and script buttons.
 
 ### 22. AI features (F)
 - No in-app assistant, natural-language formulas or Analyze Data; agent control via MCP is
@@ -168,6 +180,7 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | §21: Rhai proposed for scripts (maintainers to decide); Automate › Scripting Tools, Code Editor, Office Scripts-shaped object model, sandbox, XLSX storage, CLI and MCP landed |
 | 2026-10-12 | minor | rows auto-fit oversized fonts on open and whole-row/column formatting (#833) |
 | 2026-10-12 | minor | Page Layout view: dragging margins on the rulers (#792) removed from the §14 remainder |
 | 2026-10-12 | minor | §13: Forecast Sheet Forecast Start (hindcast) landed (#785) |

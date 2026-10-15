@@ -38,7 +38,7 @@ cargo install --path apps/gridcraft-cli     # or: cargo run -p gridcraft-cli -- 
 
 ```sh
 gridcraft-cli run [--in FILE | --sample budget|sales|grades] \
-    [--cmd 'id={json}']... [--script steps.jsonl] \
+    [--cmd 'id={json}']... [--script steps.jsonl | --script script.rhai]... [--allow-files] \
     [--out FILE] [--print RANGE|used] [--sheet S] [--csv] [--formulas] [--quiet]
 ```
 
@@ -58,6 +58,27 @@ gridcraft-cli run --in book.xlsx \
 ```
 
 Command ids and parameters: `gridcraft-cli commands`.
+
+A `--script` ending in `.rhai` is a script with logic ([scripts.md](scripts.md)) and runs as one step on the workbook:
+its `print`/`console.log` lines go to stdout, and a failing script stops the run with `file.rhai:LINE:COLUMN: message`
+on stderr. Scripts can't run commands that open, read or write files (`file.save`, `file.saveAs`, exports, a `path`
+param…) unless you add `--allow-files`. A workbook's own scripts run with `--cmd 'automate.runScript={"name":"…"}'`
+after `--cmd automate.enableScripts` (a file's scripts stay off until enabled, as in the app).
+
+```sh
+cat > totals.rhai <<'RHAI'
+fn main(workbook) {
+    let used = workbook.getActiveWorksheet().getUsedRange();
+    let total = 0.0;
+    for row in used.getValues() {
+        if type_of(row[1]) == "i64" || type_of(row[1]) == "f64" { total += row[1]; }
+    }
+    used.getLastRow().getOffsetRange(1, 0).getCell(0, 1).setValue(total);
+    console.log("total", total);
+}
+RHAI
+gridcraft-cli run --in book.xlsx --script totals.rhai --out book.xlsx
+```
 
 ## `check`
 

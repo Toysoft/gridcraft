@@ -364,6 +364,13 @@ pub fn tool_definitions() -> Vec<Value> {
             true,
         ),
         tool(
+            "run_script",
+            "Run script",
+            "Run a GridCraft script in the active workbook: Rhai code with an object model shaped like Excel's Office Scripts              (workbook.getActiveWorksheet(), sheet.getRange(\"A1:B2\").setValues([[1,2],[3,4]]), range.getValues(),              range.getFormat().getFont().setBold(true), getOffsetRange, getUsedRange…) plus run(\"command.id\", #{params}) for              any command. Give `code` (`fn main(workbook) { … }` or plain statements) or the `name` of a script saved in the              workbook. The whole run is one undo step; print and console.log lines come back in `output`, and a failing script              reports the line and column. Scripts can't open, read or write files.",
+            obj(json!({"code": string("Rhai source"), "name": string("A script saved in the workbook (or a label for `code`)")}), &[]),
+            false,
+        ),
+        tool(
             "list_functions",
             "List functions",
             "List worksheet functions: name, category, signature and description. Filter with `search` (name or description) or `category`.",
@@ -633,6 +640,12 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Args) -> Result<Value, String> 
         "redo" => exec(b, "edit.redo", pick(a, &["steps"])),
         "screenshot" => screenshot(b, a),
         "list_functions" => exec(b, "formulas.functions", pick(a, &["search", "category"])),
+        "run_script" => {
+            if a.get("code").is_none() && a.get("name").is_none() {
+                return Err("give `code` (Rhai source) or the `name` of a saved script".into());
+            }
+            exec(b, "automate.runScript", pick(a, &["code", "name"]))
+        }
         other => Err(format!("unknown tool `{other}`")),
     }
 }

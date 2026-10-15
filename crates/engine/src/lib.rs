@@ -19,6 +19,7 @@ pub mod paper;
 pub mod pivot;
 pub mod pivot_calc;
 pub mod sample;
+pub mod script;
 pub mod selection;
 pub mod tables;
 
@@ -112,6 +113,9 @@ pub struct DocState {
     /// The format `path`'s content was recognised as when its extension doesn't name one (an
     /// XLSX called `budget.dat`): Save writes it back in that format.
     pub content_kind: Option<io::FileKind>,
+    /// The workbook was opened from a file that holds scripts: they don't run until the user
+    /// enables content (`automate.enableScripts`), once for this opened document.
+    pub scripts_blocked: bool,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -137,6 +141,7 @@ impl DocState {
             sheet_selections: vec![],
             unlocked_ranges: vec![],
             content_kind: None,
+            scripts_blocked: false,
         }
     }
     pub fn is_dirty(&self) -> bool {
@@ -256,6 +261,13 @@ pub struct Session {
     /// Review › Notes › Show All Notes: every note is displayed. An application display setting
     /// (like Excel's comment indicator option), so it's not saved in the file.
     pub show_all_notes: bool,
+    /// The last script run's output and error (Automate › Code Editor › Output).
+    pub last_script: Option<script::ScriptRun>,
+    /// Scripts may run commands that open, read or write files. Off unless the caller is trusted
+    /// to decide (`gridcraft-cli run --allow-files`); no command turns it on.
+    pub script_file_access: bool,
+    /// Resource limits of script runs (operations, time, recursion, data sizes).
+    pub script_limits: script::Limits,
 }
 
 impl Session {

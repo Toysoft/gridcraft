@@ -138,6 +138,10 @@ impl Out {
     pub fn default_type(&mut self, ext: &str, ct: &str) {
         self.defaults.entry(ext.to_string()).or_insert_with(|| ct.to_string());
     }
+    /// Whether a part of that name (any case) was written already.
+    pub fn has_part(&self, name: &str) -> bool {
+        self.parts.iter().any(|(n, _)| n.eq_ignore_ascii_case(name))
+    }
 }
 
 /// Id of the i-th person of `xl/persons/person.xml`: a GUID-shaped, deterministic id (the
@@ -406,6 +410,7 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
         wb_rels.add("vbaProject", "vbaProject.bin");
         out.part("xl/vbaProject.bin", Some(CT_VBA), data.clone());
     }
+    crate::scripts::write(wb, &mut out, &mut wb_rels);
     out.part("xl/_rels/workbook.xml.rels", None, wb_rels.xml().into_bytes());
 
     // Document properties.

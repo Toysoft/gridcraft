@@ -1,4 +1,4 @@
-//! Right-hand task panes: Comments, Watch Window, Selection Pane, Format Chart.
+//! Right-hand task panes: Comments, Watch Window, Selection Pane, Format Chart, Code Editor.
 
 use egui::{Color32, Ui, vec2};
 use serde_json::{Value as Json, json};
@@ -19,7 +19,13 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     // Capped at half the window so a pane can never cover the sheet, whatever its content asks for.
     let max = (ui.available_width() / 2.0).max(300.0);
-    let panel = egui::Panel::right("task_pane").default_size(300.0).max_size(max).resizable(true);
+    // The Code Editor starts wider (code lines are long) and keeps its own width.
+    let panel = if pane == crate::scripts::PANE {
+        egui::Panel::right("code_editor_pane").default_size(440.0)
+    } else {
+        egui::Panel::right("task_pane").default_size(300.0)
+    };
+    let panel = panel.max_size(max).resizable(true);
     panel.frame(egui::Frame::NONE.fill(t.ribbon).inner_margin(10)).show(ui, |ui| {
         ui.horizontal(|ui| {
             let title = match pane.as_str() {
@@ -27,9 +33,10 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 "watch" => "Watch Window",
                 "selection" => "Selection",
                 "formatChart" => "Format Chart Area",
+                crate::scripts::PANE => "Code Editor",
                 _ => "",
             };
-            ui.label(egui::RichText::new(title).font(theme::ui_bold(15.0)));
+            ui.label(egui::RichText::new(app.ui.language.tr(title)).font(theme::ui_bold(15.0)));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if crate::widgets::icon_button(ui, crate::icons::Icon::Close, t.text_dim, "Close", vec2(22.0, 22.0)).clicked() {
                     if pane == "comments" {
@@ -40,6 +47,11 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             });
         });
         ui.separator();
+        // The Code Editor lays out its own scrolling code and output areas.
+        if pane == crate::scripts::PANE {
+            crate::scripts::pane(app, ui);
+            return;
+        }
         egui::ScrollArea::vertical().show(ui, |ui| match pane.as_str() {
             "comments" => comments(app, ui),
             "watch" => watch(app, ui),

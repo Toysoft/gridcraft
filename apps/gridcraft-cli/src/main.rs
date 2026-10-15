@@ -6,7 +6,7 @@
 //! gridcraft-cli eval <formula> [--in FILE] [--sheet S] [--cell A1] [--json]
 //! gridcraft-cli cat <file> [--range A1:D20] [--sheet S] [--formulas] [--csv]
 //! gridcraft-cli check <file-or-dir>... [--json] [--tolerance 1e-9] [--max-report N]
-//! gridcraft-cli run [--in FILE | --sample NAME] [--cmd 'id={json}']... [--script FILE.jsonl] [--out FILE] [--print RANGE] [--quiet]
+//! gridcraft-cli run [--in FILE | --sample NAME] [--cmd 'id={json}']... [--script FILE.jsonl | FILE.rhai]... [--allow-files] [--out FILE] [--print RANGE] [--quiet]
 //! gridcraft-cli commands [--json] [--search X]
 //! gridcraft-cli functions [--json] [--search X] [--category C]
 //! gridcraft-cli mcp [--connect PORT] [--in FILE | --sample NAME]
@@ -41,8 +41,10 @@ const USAGE: &str = "usage:
   gridcraft-cli cat <file> [--range A1:D20] [--sheet S] [--formulas] [--csv]
   gridcraft-cli check <file-or-dir>... [--json] [--tolerance 1e-9] [--max-report N]
                      cached-value calc oracle + XLSX round-trip fidelity (exit 1 on any difference)
-  gridcraft-cli run [--in FILE | --sample NAME] [--cmd 'id={json}']... [--script FILE.jsonl]
-                     [--out FILE] [--print RANGE] [--quiet]
+  gridcraft-cli run [--in FILE | --sample NAME] [--cmd 'id={json}']... [--script FILE.jsonl | FILE.rhai]...
+                     [--allow-files] [--out FILE] [--print RANGE] [--quiet]
+                     a .rhai script runs as one step (its print/console.log output goes to stdout);
+                     --allow-files lets scripts run commands that open, read or write files
   gridcraft-cli commands [--json] [--search X]
   gridcraft-cli functions [--json] [--search X] [--category C]
   gridcraft-cli mcp [--connect PORT] [--in FILE | --sample NAME]
@@ -382,7 +384,7 @@ fn parse_command(text: &str) -> Result<Option<(String, Value)>, String> {
 }
 
 fn run(args: &[String]) -> Result<(), String> {
-    let a = Args::parse(args, &["in", "sample", "cmd", "script", "out", "print", "sheet"], &["quiet", "csv", "formulas"])?;
+    let a = Args::parse(args, &["in", "sample", "cmd", "script", "out", "print", "sheet"], &["quiet", "csv", "formulas", "allow-files"])?;
     a.no_extra(0)?;
     let mut s = match (a.opt("in"), a.opt("sample")) {
         (Some(_), Some(_)) => return Err("give --in or --sample, not both".into()),
@@ -395,8 +397,15 @@ fn run(args: &[String]) -> Result<(), String> {
         (None, None) => blank(),
     };
     let quiet = a.has("quiet");
+    // Scripts may touch files only when the user says so on the command line.
+    s.script_file_access = a.has("allow-files");
     let mut step = 0usize;
     for (name, value) in &a.opts {
+        if name == "script" && is_rhai(value) {
+            step += 1;
+            run_rhai(&mut s, value, quiet).map_err(|e| format!("step {step} ({value}): {e}"))?;
+            continue;
+        }
         let cmds: Vec<(String, Value, String)> = match name.as_str() {
             "cmd" => parse_command(value)?.map(|(id, p)| vec![(id, p, "--cmd".to_string())]).unwrap_or_default(),
             "script" => {
@@ -428,6 +437,37 @@ fn run(args: &[String]) -> Result<(), String> {
             let range = if range.is_empty() || range == "used" { None } else { Some(range.as_str()) };
             print_range(&mut s, range, a.opt("sheet"), a.has("formulas"), a.has("csv"))?;
         }
+    }
+    Ok(())
+}
+
+/// A script file in the Rhai language (by extension).
+fn is_rhai(path: &str) -> bool {
+    std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("rhai"))
+}
+
+/// Runs a `.rhai` file on the workbook as one step: its output goes to stdout, an error names the
+/// file, line and column.
+fn run_rhai(s: &mut Session, path: &str, quiet: bool) -> Result<(), String> {
+    let code = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    let name = std::path::Path::new(path).file_stem().and_then(|n| n.to_str()).unwrap_or("script").to_string();
+    let r = s.execute_headless("automate.runScript", json!({"name": name, "code": code}));
+    if let Some(run) = s.last_script.take() {
+        for line in &run.output {
+            outln!("{line}");
+        }
+        if let Some(e) = run.error {
+            let at = match (e.line, e.column) {
+                (Some(l), Some(c)) => format!("{path}:{l}:{c}: "),
+                (Some(l), None) => format!("{path}:{l}: "),
+                _ => format!("{path}: "),
+            };
+            return Err(format!("{at}{}", e.message));
+        }
+    }
+    let r = r.map_err(|e| e.to_string())?;
+    if !quiet && !r["result"].is_null() {
+        outln!("{}", serde_json::to_string(&json!({"script": name, "result": r["result"]})).unwrap_or_default());
     }
     Ok(())
 }
