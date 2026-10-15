@@ -23,6 +23,8 @@ gridcraft-xlsx = { workspace = true }
 gridcraft-chart = { workspace = true }
 gridcraft-pdf = { workspace = true }
 gridcraft-plugin = { workspace = true }
+gridcraft-collab = { workspace = true }
+sha2 = { workspace = true }
 image = { workspace = true }
 
 [dev-dependencies]
@@ -42,4 +44,14 @@ harness = false
 # Runs without libtest: the test binary doubles as the protocol 1.2 plugin it starts.
 [[test]]
 name = "plugin_protocol"
+harness = false
+
+# Runs without libtest: the test binary doubles as the co-editing transport it starts.
+[[test]]
+name = "collab_push"
+harness = false
+
+# Runs without libtest: the test binary doubles as the two GridCraft peers it starts.
+[[test]]
+name = "collab_loopback"
 harness = false

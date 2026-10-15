@@ -159,7 +159,8 @@ fn initialize_announces_features_and_language(_dir: &std::path::Path) {
     let r = run(&mut s, PLUGIN, "hello", json!({})).unwrap();
     let host = &r["result"]["init"]["host"];
     assert_eq!(host["id"], "gridcraft");
-    assert_eq!(host["features"], json!(["dialogs", "open", "events", "document"]));
+    assert_eq!(host["features"], json!(["dialogs", "open", "events", "document", "push", "collab"]));
+    assert_eq!(host["collab"], json!({"formats": ["yjs-v1"], "app": "gridcraft", "schema": 1, "encryption": ["aes-256-gcm"]}));
     assert_eq!(host["language"], "it");
     assert_eq!(r["result"]["init"]["protocolVersion"], 1, "the protocol version stays 1");
 }

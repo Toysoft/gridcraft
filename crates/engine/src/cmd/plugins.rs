@@ -43,7 +43,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Run Plugin Command",
             [],
             None,
-            "{plugin, command, params?} → {ran, message?, result?, open?, dialog?}. The plugin's commands run as one undoable step; `open` (a file) and `dialog` (protocol 1.2) are returned for the caller, and the interface performs them when a button, menu item or plugin dialog ran the command",
+            "{plugin, command, params?} → {ran, message?, result?, open?, dialog?, collab?}. The plugin's commands run as one undoable step; `open` (a file) and `dialog` (protocol 1.2) and `collab.join` (a live session, protocol 2) are returned for the caller, and the interface performs them when a button, menu item or plugin dialog ran the command",
             always,
             run
         ),
@@ -370,6 +370,10 @@ fn run(s: &mut Session, p: &Json) -> Result<Json> {
     }
     if let Some(d) = &reply.dialog {
         out["dialog"] = d.to_json();
+    }
+    // Protocol 2: a room to join or start, for the caller (the interface runs `collab.join`).
+    if let Some(j) = &reply.collab_join {
+        out["collab"] = json!({"join": j});
     }
     Ok(out)
 }

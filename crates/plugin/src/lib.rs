@@ -19,6 +19,7 @@ pub mod events;
 pub mod install;
 pub mod office;
 mod process;
+pub mod push;
 pub mod values;
 
 use std::collections::HashMap;
@@ -30,14 +31,14 @@ use gridcraft_core::{CellError, Value};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
-pub use process::{Connection, HostError, HostHandler, RequestError};
+pub use process::{Connection, HostError, HostHandler, Notifier, RequestError};
 
 /// The protocol version this host speaks (sent in `initialize`).
 pub const PROTOCOL_VERSION: u32 = 1;
-/// What this host does beyond protocol 1.1 (`initialize`'s `host.features`; protocol 1.2): host
-/// drawn dialogs and opening files from a command's result, document events, and
-/// `context.document`.
-pub const FEATURES: &[&str] = &["dialogs", "open", "events", "document"];
+/// What this host does beyond protocol 1.1 (`initialize`'s `host.features`): host drawn dialogs
+/// and opening files from a command's result, document events, and `context.document`
+/// (protocol 1.2); the push channel and co-editing (protocol 2).
+pub const FEATURES: &[&str] = &["dialogs", "open", "events", "document", "push", "collab"];
 /// This app's id in a manifest's `apps` and `uiFor`, and in `initialize`'s `host.id`. The
 /// manifest and protocol are shared with the other craft apps (WordCraft), so one plugin can
 /// serve several.
@@ -102,9 +103,23 @@ pub struct Manifest {
     /// `documentClosed`. Names this host doesn't know are ignored.
     #[serde(default)]
     pub events: Vec<String>,
+    /// A co-editing transport (protocol 2): `{"transport": "mqtt", "label": "Live (MQTT)"}`.
+    /// Only such a plugin may join rooms.
+    #[serde(default)]
+    pub collab: Option<CollabDecl>,
     /// An Office add-in (read from its `manifest.xml`): its task panes and permissions.
     #[serde(skip)]
     pub office: Option<office::OfficeInfo>,
+}
+
+/// A transport plugin's declaration (protocol 2).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CollabDecl {
+    /// The kind of transport (`mqtt`, `loopback`, `y-websocket`…).
+    pub transport: String,
+    /// What the Share menus call it.
+    #[serde(default)]
+    pub label: String,
 }
 
 /// A plugin that runs macros (`"macros": {"language": "VBA"}`): the Developer tab's Macros and
@@ -310,6 +325,11 @@ impl Manifest {
         if !office && self.run.command.trim().is_empty() {
             return Err(format!("{MANIFEST}: `run.command` is empty"));
         }
+        if let Some(c) = &self.collab
+            && (c.transport.trim().is_empty() || c.transport.len() > 64 || c.label.chars().count() > MAX_LABEL)
+        {
+            return Err(format!("{MANIFEST}: `collab.transport` needs 1–64 characters and `collab.label` at most {MAX_LABEL}"));
+        }
         if self.events.len() > MAX_DECLARATIONS {
             return Err(format!("{MANIFEST}: at most {MAX_DECLARATIONS} events"));
         }
@@ -393,6 +413,8 @@ pub struct Plugin {
     enabled: std::sync::atomic::AtomicBool,
     /// Where it was installed from (`.craft-source.json`), for plugins installed from GitHub.
     pub source: Option<Json>,
+    /// Sends to the running process without its lock (protocol 2's notifications).
+    notifier: Mutex<Option<Notifier>>,
 }
 
 thread_local! {
@@ -416,6 +438,7 @@ impl Plugin {
             enabled: std::sync::atomic::AtomicBool::new(true),
             source: install::read_source(&dir),
             dir,
+            notifier: Mutex::new(None),
         }
     }
 
@@ -456,24 +479,18 @@ impl Plugin {
             return Err(why.clone());
         }
         if !matches!(state, State::Running(_)) {
-            let mut conn = Connection::start(&self.manifest, &self.dir)?;
-            let mut host_info = json!({"id": HOST_ID, "name": "GridCraft", "version": env!("CARGO_PKG_VERSION"), "features": FEATURES});
-            let language = host_language();
-            if !language.is_empty() {
-                host_info["language"] = json!(language);
+            match self.start(failures) {
+                Ok(conn) => {
+                    *lock(&self.notifier) = conn.sender();
+                    *state = State::Running(conn);
+                }
+                Err(e) => {
+                    if *failures >= MAX_FAILURES {
+                        *state = State::Failed(format!("stopped after {failures} failures: {e}"));
+                    }
+                    return Err(e);
+                }
             }
-            let init = json!({
-                "protocolVersion": PROTOCOL_VERSION,
-                "host": host_info,
-                "plugin": {"id": self.manifest.id, "dir": self.dir.display().to_string()},
-            });
-            if let Err(e) = conn.request("initialize", init, INIT_TIMEOUT) {
-                *failures += 1;
-                *state =
-                    if *failures >= MAX_FAILURES { State::Failed(format!("stopped after {failures} failures: {}", e.message)) } else { State::Idle };
-                return Err(e.message);
-            }
-            *state = State::Running(conn);
         }
         let State::Running(conn) = state else { return Err("plugin not running".into()) };
         match conn.request_with(method, params, timeout, host) {
@@ -484,10 +501,124 @@ impl Plugin {
                 log::warn!("plugin {}: {} (failure {failures} of {MAX_FAILURES})", self.manifest.id, e.message);
                 *state =
                     if *failures >= MAX_FAILURES { State::Failed(format!("stopped after {failures} failures: {}", e.message)) } else { State::Idle };
+                *lock(&self.notifier) = None;
                 Err(e.message)
             }
             Err(e) => Err(e.message),
         }
+    }
+
+    /// Starts the process and sends `initialize`. A failure counts.
+    fn start(&self, failures: &mut u32) -> Result<Connection, String> {
+        let mut conn = Connection::start(&self.manifest, &self.dir)?;
+        let mut host_info = json!({"id": HOST_ID, "name": "GridCraft", "version": env!("CARGO_PKG_VERSION"), "features": FEATURES});
+        let language = host_language();
+        if !language.is_empty() {
+            host_info["language"] = json!(language);
+        }
+        host_info["collab"] = json!({
+            "formats": [gridcraft_collab::FORMAT],
+            "app": gridcraft_collab::APP,
+            "schema": gridcraft_collab::SCHEMA,
+            "encryption": ["aes-256-gcm"],
+        });
+        let init = json!({
+            "protocolVersion": PROTOCOL_VERSION,
+            "host": host_info,
+            "plugin": {"id": self.manifest.id, "dir": self.dir.display().to_string()},
+        });
+        if let Err(e) = conn.request("initialize", init, INIT_TIMEOUT) {
+            *failures += 1;
+            return Err(e.message);
+        }
+        Ok(conn)
+    }
+
+    /// Starts the process when it isn't running (protocol 2: a transport runs while it's in a
+    /// room, not only during calls).
+    pub fn ensure_running(&self) -> Result<(), String> {
+        if self.manifest.office.is_some() {
+            return Err(format!("{} is an Office add-in: it runs in its task pane", self.manifest.id));
+        }
+        let mut guard = lock(&self.state);
+        if !self.enabled() {
+            return Err(format!("plugin {} is turned off", self.manifest.id));
+        }
+        let (state, failures) = &mut *guard;
+        match state {
+            State::Running(_) => Ok(()),
+            State::Failed(why) => Err(why.clone()),
+            State::Idle => match self.start(failures) {
+                Ok(conn) => {
+                    *lock(&self.notifier) = conn.sender();
+                    *state = State::Running(conn);
+                    Ok(())
+                }
+                Err(e) => {
+                    if *failures >= MAX_FAILURES {
+                        *state = State::Failed(format!("stopped after {failures} failures: {e}"));
+                    }
+                    Err(e)
+                }
+            },
+        }
+    }
+
+    /// Sends a notification (protocol 2), without waiting for a request in progress.
+    pub fn notify(&self, method: &str, params: Json) -> Result<(), String> {
+        let n = lock(&self.notifier).clone().ok_or_else(|| format!("plugin {} isn't running", self.manifest.id))?;
+        n.send(&json!({"jsonrpc": "2.0", "method": method, "params": params}))
+    }
+
+    /// Answers one of the plugin's own requests (protocol 2's *anytime* requests).
+    pub fn respond(&self, id: &Json, answer: Result<Json, HostError>) -> Result<(), String> {
+        let n = lock(&self.notifier).clone().ok_or_else(|| format!("plugin {} isn't running", self.manifest.id))?;
+        let msg = match answer {
+            Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
+            Err(e) => json!({"jsonrpc": "2.0", "id": id, "error": {"code": e.code, "message": e.message, "data": e.data}}),
+        };
+        n.send(&msg)
+    }
+
+    /// Records a failure that happened outside a request (the process exited, a message was too
+    /// long). The next use starts it again, until it failed too often.
+    pub fn count_failure(&self, why: &str) {
+        let mut guard = lock(&self.state);
+        let (state, failures) = &mut *guard;
+        *failures += 1;
+        log::warn!("plugin {}: {why} (failure {failures} of {MAX_FAILURES})", self.manifest.id);
+        if *failures >= MAX_FAILURES {
+            if let State::Running(conn) = std::mem::replace(state, State::Failed(format!("stopped after {failures} failures: {why}"))) {
+                conn.shutdown();
+            } else {
+                *state = State::Failed(format!("stopped after {failures} failures: {why}"));
+            }
+            *lock(&self.notifier) = None;
+        }
+    }
+
+    /// The process exited on its own: it's started again on next use.
+    pub fn exited(&self) {
+        let mut guard = lock(&self.state);
+        if matches!(guard.0, State::Running(_)) {
+            guard.0 = State::Idle;
+        }
+        *lock(&self.notifier) = None;
+    }
+
+    /// Stops the plugin and marks it failed (it flooded the app, say) until it is reloaded.
+    pub fn fail(&self, why: &str) {
+        let mut guard = lock(&self.state);
+        if let State::Running(conn) = std::mem::replace(&mut guard.0, State::Failed(why.to_string())) {
+            conn.shutdown();
+        }
+        *lock(&self.notifier) = None;
+        log::warn!("plugin {}: {why}", self.manifest.id);
+    }
+
+    /// A co-editing transport (its manifest has `collab`).
+    pub fn is_transport(&self) -> bool {
+        self.manifest.collab.is_some() && self.manifest.office.is_none()
     }
 
     /// Calls one of the plugin's functions. Errors become `#VALUE!` (logged).
@@ -562,6 +693,7 @@ impl Plugin {
             })).collect::<Vec<_>>(),
             "ui": m.ui,
             "kind": if m.office.is_some() { "office" } else { "native" },
+            "collab": m.collab,
             "office": m.office.as_ref().map(|o| json!({
                 "id": o.office_id, "permissions": o.permissions, "sourceLocation": o.source_location,
                 "requirements": o.requirements, "iconUrl": o.icon_url,
@@ -571,6 +703,7 @@ impl Plugin {
 
     fn stop(&self) {
         let mut guard = lock(&self.state);
+        *lock(&self.notifier) = None;
         if let State::Running(conn) = std::mem::replace(&mut guard.0, State::Idle) {
             conn.shutdown();
         }
@@ -782,6 +915,8 @@ pub struct CommandReply {
     pub open: Option<dialog::OpenRequest>,
     /// A dialog to show after the step (protocol 1.2).
     pub dialog: Option<dialog::Dialog>,
+    /// `collab.join`: a room to join or start (protocol 2), as the plugin gave it.
+    pub collab_join: Option<Json>,
 }
 
 /// Most engine commands one plugin command may run.
@@ -829,6 +964,11 @@ pub fn call_macros(plugin_id: &str, method: &str, params: Json, host: &mut HostH
     plugin.request_with(method, params, COMMAND_TIMEOUT, host)
 }
 
+/// The enabled co-editing transports (protocol 2), in load order.
+pub fn transports() -> Vec<Arc<Plugin>> {
+    list().into_iter().filter(|p| p.enabled() && p.is_transport()).collect()
+}
+
 /// The enabled plugins that run macros, with their language.
 pub fn macro_plugins() -> Vec<(String, String)> {
     list()
@@ -859,6 +999,12 @@ fn parse_reply(r: Json) -> Result<CommandReply, String> {
     }
     if let Some(d) = r.get("dialog").filter(|d| !d.is_null()) {
         reply.dialog = Some(dialog::Dialog::parse(d)?);
+    }
+    if let Some(j) = r.get("collab").and_then(|c| c.get("join")).filter(|j| !j.is_null()) {
+        if !j.is_object() {
+            return Err("`collab.join` must be an object".into());
+        }
+        reply.collab_join = Some(j.clone());
     }
     Ok(reply)
 }
