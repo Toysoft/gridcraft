@@ -1,10 +1,17 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (XLSX chart sheets are kept on save (#727); previously minor: CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-14 · **Change:** minor (fixed drawing extents survive substitute column metrics) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
 (estimated).
+
+Fixed-size drawings now write `absoluteAnchor` (fixed position and size) or `oneCellAnchor`
+(move with the cell, fixed size), with explicit EMU extents. Only move-and-size drawings write
+a two-cell range. This prevents substitute column-font metrics from stretching fixed pictures
+on reopening in other applications. The regression changes worksheet column metrics after
+export and verifies dimensions/mode/absolute position. See [native reproduction and reference
+view limits](fixed-picture-extents.md).
 
 Excel's list comes from Microsoft's public "File formats that are supported in Excel"
 documentation (the Office bundle is off limits under this repo's clean-room rule). GridCraft's

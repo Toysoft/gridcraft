@@ -264,32 +264,39 @@ fn read_text_format(body: Option<&El>) -> ShapeFormat {
 
 // ---------------------------------------------------------------- writing
 
-/// The opening `<xdr:twoCellAnchor>` for a model anchor, carrying Excel's `editAs` when the mode
-/// is not the default: omitted for "Move and size with cells", `editAs="oneCell"` for "Move but
-/// don't size", `editAs="absolute"` for "Don't move or size". (Excel writes pictures this way;
-/// the standalone `oneCellAnchor`/`absoluteAnchor` elements are read on import but not written.)
-/// Returns the opening tag and the matching closing tag.
+/// Preserve fixed-size drawing geometry with explicit EMU extents. A two-cell range
+/// depends on the importing application's column/font metrics, even with editAs set.
+/// Use cell markers only for drawings intended to move AND size with cells.
 fn anchor_open(sheet: &Sheet, a: &Anchor) -> (String, &'static str) {
     let px = |v: f64| ((v.max(0.0)) * EMU_PER_PX).round() as i64;
     let x1 = sheet.col_left(a.cell.col) + a.dx as f64;
     let y1 = sheet.row_top(a.cell.row) + a.dy as f64;
+    let width = px(a.width as f64);
+    let height = px(a.height as f64);
+    if a.mode == AnchorMode::Absolute {
+        return (
+            format!("<xdr:absoluteAnchor><xdr:pos x=\"{}\" y=\"{}\"/><xdr:ext cx=\"{width}\" cy=\"{height}\"/>", px(x1), px(y1)),
+            "</xdr:absoluteAnchor>",
+        );
+    }
+    let from = format!(
+        "<xdr:from><xdr:col>{}</xdr:col><xdr:colOff>{}</xdr:colOff><xdr:row>{}</xdr:row><xdr:rowOff>{}</xdr:rowOff></xdr:from>",
+        a.cell.col,
+        px(a.dx as f64),
+        a.cell.row,
+        px(a.dy as f64)
+    );
+    if a.mode == AnchorMode::MoveOnly {
+        return (format!("<xdr:oneCellAnchor>{from}<xdr:ext cx=\"{width}\" cy=\"{height}\"/>"), "</xdr:oneCellAnchor>");
+    }
     let x2 = x1 + a.width.max(0.0) as f64;
     let y2 = y1 + a.height.max(0.0) as f64;
     let tc = sheet.col_at(x2);
     let tr = sheet.row_at(y2);
     let tdx = x2 - sheet.col_left(tc);
     let tdy = y2 - sheet.row_top(tr);
-    let edit = match a.mode {
-        AnchorMode::MoveAndSize => "",
-        AnchorMode::MoveOnly => " editAs=\"oneCell\"",
-        AnchorMode::Absolute => " editAs=\"absolute\"",
-    };
     let open = format!(
-        "<xdr:twoCellAnchor{edit}><xdr:from><xdr:col>{}</xdr:col><xdr:colOff>{}</xdr:colOff><xdr:row>{}</xdr:row><xdr:rowOff>{}</xdr:rowOff></xdr:from><xdr:to><xdr:col>{tc}</xdr:col><xdr:colOff>{}</xdr:colOff><xdr:row>{tr}</xdr:row><xdr:rowOff>{}</xdr:rowOff></xdr:to>",
-        a.cell.col,
-        px(a.dx as f64),
-        a.cell.row,
-        px(a.dy as f64),
+        "<xdr:twoCellAnchor>{from}<xdr:to><xdr:col>{tc}</xdr:col><xdr:colOff>{}</xdr:colOff><xdr:row>{tr}</xdr:row><xdr:rowOff>{}</xdr:rowOff></xdr:to>",
         px(tdx),
         px(tdy)
     );
