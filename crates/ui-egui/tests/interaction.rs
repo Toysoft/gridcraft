@@ -213,7 +213,8 @@ fn name_box_enter_goes_to_the_typed_cell_not_the_one_below() {
     let mut h = harness(blank());
     h.state_mut().session.run("selection.set", json!({"cell": "C5"})).unwrap();
     h.run_steps(2);
-    h.ctx.memory_mut(|m| m.request_focus(egui::Id::new("gridcraft.name_box")));
+    let name_box = h.state().widget_id("gridcraft.name_box");
+    h.ctx.memory_mut(|m| m.request_focus(name_box));
     h.run_steps(2);
     h.input_mut().events.push(Event::Key { key: Key::A, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::COMMAND });
     h.input_mut().events.push(Event::Text("A1".into()));
@@ -639,6 +640,37 @@ fn about_renders_every_tab() {
         assert_eq!(h.state().dialog.as_ref().map(|d| d.tab.clone()).as_deref(), Some(tab));
         h.state_mut().dialog = None;
     }
+}
+
+#[test]
+fn switching_workbooks_clears_transient_editor_state() {
+    let mut s = blank();
+    s.execute("file.new", json!({})).unwrap();
+    let mut h = harness(s);
+    assert_eq!(h.state().session.documents().len(), 2);
+    h.state_mut().begin_edit(Some("belongs to Book2".into()), false);
+    assert!(h.state().editor.is_some());
+
+    h.state_mut().activate_document(0);
+
+    assert_eq!(h.state().session.active_index(), 0);
+    assert!(h.state().editor.is_none());
+}
+
+#[test]
+fn closing_workbooks_preserves_dirty_documents_until_confirmed() {
+    let mut s = blank();
+    s.execute("cell.set", json!({"cell": "A1", "input": "unsaved"})).unwrap();
+    s.execute("file.new", json!({})).unwrap();
+    let mut h = harness(s);
+
+    h.state_mut().close_document(0, false);
+    assert_eq!(h.state().session.documents().len(), 2);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some("saveChanges"));
+
+    h.state_mut().close_document(0, true);
+    assert_eq!(h.state().session.documents().len(), 1);
+    assert_eq!(h.state().session.active().map(|d| d.display_title()).as_deref(), Some("Book2"));
 }
 
 #[test]

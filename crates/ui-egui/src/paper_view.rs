@@ -476,7 +476,7 @@ fn editor(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, pg: &PageGrid) {
         app.grid.hf_edit = Some(e);
         return;
     };
-    let id = egui::Id::new("gridcraft.header_footer_editor");
+    let id = app.widget_id("gridcraft.header_footer_editor");
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r.shrink2(vec2(3.0, 2.0)).intersect(geo.cells)));
     let align = [egui::Align::LEFT, egui::Align::Center, egui::Align::RIGHT][e.section.min(2)];
     if let Some(text) = e.texts.get_mut(e.section) {

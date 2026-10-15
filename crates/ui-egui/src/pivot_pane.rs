@@ -25,7 +25,8 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         Ok(v) => v,
         Err(_) => return,
     };
-    egui::Panel::right("pivot_pane").default_size(280.0).resizable(true).frame(egui::Frame::NONE.fill(t.ribbon).inner_margin(10)).show(ui, |ui| {
+    let panel_id = app.widget_id("pivot_pane");
+    egui::Panel::right(panel_id).default_size(280.0).resizable(true).frame(egui::Frame::NONE.fill(t.ribbon).inner_margin(10)).show(ui, |ui| {
         ui.label(egui::RichText::new(lang.tr("PivotTable Fields")).font(theme::ui_bold(15.0)));
         ui.label(egui::RichText::new(lang.tr("Choose fields to add to report:")).small().color(t.text_dim));
         ui.add_space(4.0);

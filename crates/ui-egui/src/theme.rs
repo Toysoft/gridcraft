@@ -50,6 +50,7 @@ pub struct Tokens {
     pub notice_warn_border: Color32,
     pub notice_info_bg: Color32,
     pub notice_info_border: Color32,
+    pub warning: Color32,
 }
 
 impl Tokens {
@@ -92,6 +93,7 @@ impl Tokens {
             notice_warn_border: Color32::from_rgb(0xF0, 0xC3, 0x6E),
             notice_info_bg: Color32::from_rgb(0xEA, 0xF2, 0xFB),
             notice_info_border: Color32::from_rgb(0xB9, 0xD2, 0xEC),
+            warning: Color32::from_rgb(0x8A, 0x68, 0x00),
         }
     }
 
@@ -134,6 +136,7 @@ impl Tokens {
             notice_warn_border: Color32::from_rgb(0x7A, 0x67, 0x30),
             notice_info_bg: Color32::from_rgb(0x24, 0x33, 0x44),
             notice_info_border: Color32::from_rgb(0x3B, 0x55, 0x72),
+            warning: Color32::from_rgb(0xE0, 0xB8, 0x42),
         }
     }
 
