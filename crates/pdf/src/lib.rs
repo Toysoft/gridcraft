@@ -210,6 +210,19 @@ fn pdf_string(text: &str) -> String {
     s
 }
 
+/// URI actions use byte strings. Percent-encode non-ASCII UTF-8 before PDF string escaping.
+fn pdf_uri_string(uri: &str) -> String {
+    let mut ascii = String::with_capacity(uri.len());
+    for byte in uri.bytes() {
+        if byte.is_ascii() {
+            ascii.push(byte as char);
+        } else {
+            let _ = write!(ascii, "%{byte:02X}");
+        }
+    }
+    pdf_string(&ascii)
+}
+
 /// A number for a content stream: finite, short.
 fn n(v: f32) -> String {
     let v = if v.is_finite() { v.clamp(-1.0e7, 1.0e7) } else { 0.0 };
@@ -260,6 +273,17 @@ struct ImageData {
     alpha: Option<Vec<u8>>,
 }
 
+enum LinkTarget {
+    Uri(String),
+    Page { index: usize, x: f32, y: f32 },
+}
+
+struct LinkAnnotation {
+    /// PDF coordinates, with the origin at the bottom left.
+    rect: [f32; 4],
+    target: LinkTarget,
+}
+
 /// A page under construction. Obtain one with [`PdfDoc::add_page`].
 pub struct Page {
     width: f32,
@@ -267,6 +291,7 @@ pub struct Page {
     content: String,
     fonts: [bool; 12],
     images: Vec<ImageData>,
+    links: Vec<LinkAnnotation>,
     depth: u32,
 }
 
@@ -275,6 +300,8 @@ pub struct Page {
 const MAX_PAGE_CONTENT: usize = 64 * 1024 * 1024;
 /// Largest image (pixels) embedded.
 const MAX_IMAGE_PIXELS: u64 = 40_000_000;
+const MAX_PAGE_LINKS: usize = 4096;
+const MAX_LINK_URI_BYTES: usize = 4096;
 
 impl Page {
     pub fn width(&self) -> f32 {
@@ -293,6 +320,42 @@ impl Page {
         if !self.full() {
             self.content.push_str(s);
             self.content.push('\n');
+        }
+    }
+
+    fn link_rect(&self, x: f32, y: f32, w: f32, h: f32) -> Option<[f32; 4]> {
+        if !finite(&[x, y, w, h]) || !extent(w) || !extent(h) || self.links.len() >= MAX_PAGE_LINKS {
+            return None;
+        }
+        let (right, bottom) = (x + w, y + h);
+        if !finite(&[right, bottom]) {
+            return None;
+        }
+        let (left, right) = (x.max(0.0), right.min(self.width));
+        let (top, bottom) = (y.max(0.0), bottom.min(self.height));
+        (right > left && bottom > top).then(|| [left, self.y(bottom), right, self.y(top)])
+    }
+
+    /// Adds an invisible clickable area for an external URI. Invalid or excessive links are ignored.
+    pub fn link_uri(&mut self, x: f32, y: f32, w: f32, h: f32, uri: &str) {
+        let allowed = uri
+            .split_once(':')
+            .is_some_and(|(scheme, rest)| matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https" | "mailto") && !rest.is_empty());
+        if !allowed || uri.len() > MAX_LINK_URI_BYTES || uri.chars().any(char::is_control) {
+            return;
+        }
+        if let Some(rect) = self.link_rect(x, y, w, h) {
+            self.links.push(LinkAnnotation { rect, target: LinkTarget::Uri(uri.to_string()) });
+        }
+    }
+
+    /// Adds a link to a location on another page of this document (zero-based page index).
+    pub fn link_page(&mut self, x: f32, y: f32, w: f32, h: f32, page: usize, target_x: f32, target_y: f32) {
+        if !finite(&[target_x, target_y]) {
+            return;
+        }
+        if let Some(rect) = self.link_rect(x, y, w, h) {
+            self.links.push(LinkAnnotation { rect, target: LinkTarget::Page { index: page, x: target_x, y: target_y } });
         }
     }
 
@@ -583,7 +646,7 @@ impl PdfDoc {
     pub fn add_page(&mut self, width_pt: f32, height_pt: f32) -> &mut Page {
         let width = if width_pt.is_finite() { width_pt.clamp(3.0, 14_400.0) } else { 612.0 };
         let height = if height_pt.is_finite() { height_pt.clamp(3.0, 14_400.0) } else { 792.0 };
-        self.pages.push(Page { width, height, content: String::new(), fonts: [false; 12], images: Vec::new(), depth: 0 });
+        self.pages.push(Page { width, height, content: String::new(), fonts: [false; 12], images: Vec::new(), links: Vec::new(), depth: 0 });
         let i = self.pages.len() - 1;
         &mut self.pages[i]
     }
@@ -619,6 +682,8 @@ impl PdfDoc {
         }
         let mut objects: Vec<(u32, Vec<u8>)> = Vec::new();
         let mut kids = Vec::new();
+        let mut annotations = Vec::new();
+        let page_count = self.pages.len();
         let mut font_dict = String::new();
         for (i, id) in font_ids.iter().enumerate() {
             if *id != 0 {
@@ -678,19 +743,46 @@ impl PdfDoc {
             o.extend_from_slice(b"endstream");
             objects.push((content_id, o));
             let xo = if xobjects.is_empty() { String::new() } else { format!(" /XObject << {xobjects}>>") };
+            let mut link_refs = String::new();
+            for link in std::mem::take(&mut page.links) {
+                if matches!(&link.target, LinkTarget::Page { index, .. } if *index >= page_count) {
+                    continue;
+                }
+                let id = next;
+                next += 1;
+                let _ = write!(link_refs, "{id} 0 R ");
+                annotations.push((id, link));
+            }
+            let annots = if link_refs.is_empty() { String::new() } else { format!(" /Annots [{link_refs}]") };
             objects.push((
                 page_id,
                 format!(
-                    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {} {}] /Resources << /ProcSet [/PDF /Text /ImageB /ImageC] /Font << {}>>{} >> /Contents {} 0 R >>",
+                    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {} {}] /Resources << /ProcSet [/PDF /Text /ImageB /ImageC] /Font << {}>>{} >> /Contents {} 0 R{} >>",
                     n(page.width),
                     n(page.height),
                     font_dict,
                     xo,
-                    content_id
+                    content_id,
+                    annots
                 )
                 .into_bytes(),
             ));
             kids.push(page_id);
+        }
+        for (id, link) in annotations {
+            let [x0, y0, x1, y1] = link.rect;
+            let action = match link.target {
+                LinkTarget::Uri(uri) => format!("/A << /S /URI /URI {} >>", pdf_uri_string(&uri)),
+                LinkTarget::Page { index, x, y } => {
+                    let Some(&page_id) = kids.get(index) else { continue };
+                    let height = self.pages.get(index).map_or(0.0, |p| p.height);
+                    format!("/Dest [{page_id} 0 R /XYZ {} {} null]", n(x), n(height - y))
+                }
+            };
+            objects.push((
+                id,
+                format!("<< /Type /Annot /Subtype /Link /Rect [{} {} {} {}] /Border [0 0 0] {action} >>", n(x0), n(y0), n(x1), n(y1)).into_bytes(),
+            ));
         }
         objects.push((1, b"<< /Type /Catalog /Pages 2 0 R >>".to_vec()));
         let kids_s: Vec<String> = kids.iter().map(|k| format!("{k} 0 R")).collect();

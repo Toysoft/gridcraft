@@ -77,6 +77,29 @@ fn drawing_and_text() {
 }
 
 #[test]
+fn uri_and_page_links_are_real_pdf_annotations() {
+    let mut d = PdfDoc::new();
+    let first = d.add_page(200.0, 300.0);
+    first.link_uri(10.0, 20.0, 80.0, 30.0, "https://example.org/a(b)?q=£");
+    first.link_page(100.0, 40.0, 50.0, 20.0, 1, 35.0, 60.0);
+    first.link_uri(-20.0, -20.0, 40.0, 40.0, "mailto:a@example.org");
+    first.link_uri(0.0, 0.0, f32::NAN, 10.0, "https://bad.example");
+    first.link_uri(0.0, 0.0, 10.0, 10.0, "javascript:alert(1)");
+    let second = d.add_page(100.0, 200.0);
+    second.link_page(0.0, 0.0, 10.0, 10.0, 99, 0.0, 0.0);
+    let pdf = d.finish();
+    check_xref(&pdf);
+    let s = String::from_utf8_lossy(&pdf);
+    assert_eq!(s.matches("/Subtype /Link").count(), 3);
+    assert!(s.contains("/Annots ["));
+    assert!(s.contains("/Rect [10 250 90 280]"));
+    assert!(s.contains("/Rect [0 280 20 300]"));
+    assert!(s.contains("/URI (https://example.org/a\\(b\\)?q=%C2%A3)"));
+    assert!(s.contains("/XYZ 35 140 null"));
+    assert!(!s.contains("https://bad.example"));
+}
+
+#[test]
 fn images_with_alpha() {
     let mut d = PdfDoc::new();
     let p = d.add_page(200.0, 200.0);

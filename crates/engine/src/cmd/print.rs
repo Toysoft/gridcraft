@@ -996,6 +996,62 @@ fn draw_block(pg: &mut Page, b: &Block, gridlines: bool, cf: &mut Option<crate::
     pg.restore();
 }
 
+struct PendingPdfLink {
+    page: usize,
+    sheet: usize,
+    rect: (f32, f32, f32, f32),
+    target: String,
+}
+
+struct PrintedBlock {
+    page: usize,
+    sheet: usize,
+    rows: (u32, u32),
+    cols: (u32, u32),
+    x: f32,
+    y: f32,
+    k: f32,
+}
+
+/// PDF annotations are not affected by graphics clipping, so intersect each cell with its page
+/// block before adding a clickable rectangle. A repeated print-title cell may appear on several
+/// pages and receives one annotation on each of them.
+fn draw_block_links(pg: &mut Page, b: &Block, page: usize, pending: &mut Vec<PendingPdfLink>) {
+    let range = b.range();
+    let (Some(&bx), Some(&by), Some(&right), Some(&bottom)) = (b.xs.first(), b.ys.first(), b.xs.last(), b.ys.last()) else { return };
+    for (cell, link) in b.sh.hyperlinks.range(range.start..=range.end) {
+        if !range.contains(*cell) {
+            continue;
+        }
+        let cell_range = b.sh.merges.iter().find(|m| m.start == *cell).copied().unwrap_or(RangeRef::cell(*cell));
+        let (x, y, w, h) = b.rect(cell_range);
+        let (x0, y0, x1, y1) = (x.max(bx), y.max(by), (x + w).min(right), (y + h).min(bottom));
+        if x1 <= x0 || y1 <= y0 {
+            continue;
+        }
+        let rect = (x0, y0, x1 - x0, y1 - y0);
+        match crate::links::classify(&link.target) {
+            crate::links::LinkKind::External(uri) => pg.link_uri(rect.0, rect.1, rect.2, rect.3, &uri),
+            crate::links::LinkKind::Internal(target) if !link.external => {
+                pending.push(PendingPdfLink { page, sheet: b.si, rect, target });
+            }
+            _ => {}
+        }
+    }
+}
+
+fn printed_target(wb: &Workbook, blocks: &[PrintedBlock], source_sheet: usize, target: &str) -> Option<(usize, f32, f32)> {
+    let target = target.trim().trim_start_matches('#').trim_start_matches('=');
+    let (sheet_name, range) = split_sheet(target);
+    let sheet = sheet_name.map_or(Some(source_sheet), |name| wb.sheet_index(&name))?;
+    let cell = RangeRef::parse(&range.replace('$', ""))?.start;
+    let sh = wb.sheet(sheet)?;
+    let block = blocks.iter().find(|b| b.sheet == sheet && (b.rows.0..=b.rows.1).contains(&cell.row) && (b.cols.0..=b.cols.1).contains(&cell.col))?;
+    let x = block.x + (sh.col_left(cell.col) - sh.col_left(block.cols.0)) as f32 * block.k;
+    let y = block.y + (sh.row_top(cell.row) - sh.row_top(block.rows.0)) as f32 * block.k;
+    Some((block.page, x, y))
+}
+
 /// Cell pictures fit the current cell (or merged-cell) rectangle without changing aspect ratio.
 fn draw_cell_picture(pg: &mut Page, data: &[u8], rect: (f32, f32, f32, f32), k: f32) {
     let (x, y, w, h) = rect;
@@ -1462,6 +1518,8 @@ pub fn render_pdf(wb: &Workbook, layouts: &[SheetLayout], file: &str, path: &str
     let total: usize = layouts.iter().map(|l| l.pages.len()).sum();
     let (date, time) = hf_date_time(wb);
     let mut page_no = 0usize;
+    let mut pending_links = Vec::new();
+    let mut printed_blocks = Vec::new();
     for lay in layouts {
         let Some(sh) = wb.sheet(lay.sheet) else { continue };
         let mut cf = if sh.cond_formats.is_empty() { None } else { Some(crate::cf::CfCache::new()) };
@@ -1476,6 +1534,7 @@ pub fn render_pdf(wb: &Workbook, layouts: &[SheetLayout], file: &str, path: &str
             let content_h = (lay.heading_h + rsegs.iter().map(|s| seg_size(sh, *s, true)).sum::<f32>()) * k;
             let ox = lay.margins[0] + if lay.settings.center_h { ((aw - content_w) / 2.0).max(0.0) } else { 0.0 };
             let oy = lay.margins[2] + if lay.settings.center_v { ((ah - content_h) / 2.0).max(0.0) } else { 0.0 };
+            let page_index = doc.page_count();
             let pg = doc.add_page(lay.page_w, lay.page_h);
             let mut y = oy + lay.heading_h * k;
             let mut body: Option<Block> = None;
@@ -1484,6 +1543,8 @@ pub fn render_pdf(wb: &Workbook, layouts: &[SheetLayout], file: &str, path: &str
                 for (csi, cs) in csegs.iter().enumerate() {
                     let b = make_block(wb, lay.sheet, sh, *rs, *cs, x, y, lay);
                     draw_block(pg, &b, lay.settings.gridlines, &mut cf);
+                    draw_block_links(pg, &b, page_index, &mut pending_links);
+                    printed_blocks.push(PrintedBlock { page: page_index, sheet: lay.sheet, rows: *rs, cols: *cs, x, y, k });
                     if lay.settings.headings {
                         draw_headings(pg, &b, rsi == 0, csi == 0, (ox, oy), (lay.heading_w * k, lay.heading_h * k));
                     }
@@ -1512,6 +1573,14 @@ pub fn render_pdf(wb: &Workbook, layouts: &[SheetLayout], file: &str, path: &str
                 time: time.clone(),
             };
             draw_header_footer(pg, lay, lay.settings.hf_page(pi == 0, page_no), &cx);
+        }
+    }
+    for link in pending_links {
+        if let Some((target_page, x, y)) = printed_target(wb, &printed_blocks, link.sheet, &link.target)
+            && let Some(page) = doc.page_mut(link.page)
+        {
+            let (lx, ly, w, h) = link.rect;
+            page.link_page(lx, ly, w, h, target_page, x, y);
         }
     }
     let n = doc.page_count();
@@ -1757,6 +1826,29 @@ mod tests {
     }
     fn contains(hay: &[u8], needle: &str) -> bool {
         hay.windows(needle.len()).any(|w| w == needle.as_bytes())
+    }
+
+    #[test]
+    fn pdf_export_keeps_safe_links_on_their_printed_pages() {
+        let mut s = s();
+        s.execute("insert.link", json!({"cell": "A1", "target": "https://example.org/report"})).unwrap();
+        s.execute("insert.link", json!({"cell": "A2", "target": "Sheet1!A60"})).unwrap();
+        s.execute("insert.link", json!({"cell": "A3", "target": "file:///private/report"})).unwrap();
+        s.execute("cell.set", json!({"cell": "A60", "input": "Destination"})).unwrap();
+        let (pdf, pages) = pdf_of(&mut s, json!({}));
+        assert_eq!(pages, 2);
+        let text = String::from_utf8_lossy(&pdf);
+        assert_eq!(text.matches("/Subtype /Link").count(), 2);
+        assert!(text.contains("/URI (https://example.org/report)"));
+        assert!(text.contains("/Dest [") && text.contains("/XYZ "));
+        assert!(!text.contains("/URI (file:"));
+
+        // A link to a cell omitted by the selected print range must not point to a nonexistent
+        // destination. The external link in the selected range remains clickable.
+        let (cropped, _) = pdf_of(&mut s, json!({"range": "A1:A3"}));
+        let cropped = String::from_utf8_lossy(&cropped);
+        assert_eq!(cropped.matches("/Subtype /Link").count(), 1);
+        assert!(!cropped.contains("/Dest ["));
     }
 
     #[test]
