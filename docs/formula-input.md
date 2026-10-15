@@ -64,7 +64,7 @@ sometimes wrong, so an entry needs two agreeing signals on its page (title, desc
 paragraph aligned with the English page, examples); entries marked `reviewed` were decided by
 hand against independent function-name references. Booleans, errors and table specifiers cite
 their sources per item. A French user checked the French separators, `SOMME`, `TEXTE`,
-`AUJOURDHUI`, `LIGNES`, `#VALEUR!` and four table specifiers in French Excel 2013, and 29 more
+`AUJOURDHUI`, `LIGNES`, `#VALEUR!` and four table specifiers in French Excel 2013, and 38 more
 function names in French Excel 2024, three of which were wrong and are fixed (#191, #443). Functions
 added to Excel after the tables were first built (the irregular-period bond functions, the
 `FORECAST.ETS` family, `PERCENTOF`, `TRIMRANGE`…) were checked name by name against a Microsoft

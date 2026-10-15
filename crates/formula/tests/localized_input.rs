@@ -49,6 +49,12 @@ fn each_language_spells_formulas_like_its_excel() {
             "PERCENTILE.EXC(A1:A6,0.5)+FORECAST.LINEAR(7,A1:A6,A1:A6)+SUM(FILTER(A1:A6,A1:A6>4))+XLOOKUP(3,A1:A6,A1:A6)",
         ),
         (Fr, "URLENCODAGE(\"a b\")", "ENCODEURL(\"a b\")"),
+        (
+            Fr,
+            "ET(ESTVIDE(Z1);ESTERR(1/0);ESTERREUR(1/0);ESTLOGIQUE(VRAI);ESTNA(#N/A);ESTNONTEXTE(1);NON(FAUX))",
+            "AND(ISBLANK(Z1),ISERR(1/0),ISERROR(1/0),ISLOGICAL(TRUE),ISNA(#N/A),ISNONTEXT(1),NOT(FALSE))",
+        ),
+        (Fr, "ORGA.LIGNES(A1:A6;3)+BDLIRE(F1:G3;\"b\";I1:I2)", "WRAPROWS(A1:A6,3)+DGET(F1:G3,\"b\",I1:I2)"),
     ] {
         assert_eq!(canonical(local, locale), english, "{locale:?} entry");
         assert_eq!(shown(english, locale), local, "{locale:?} display");

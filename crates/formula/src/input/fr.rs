@@ -20,7 +20,12 @@
 //! `PRENDRE`, `EXCLURE`, `ETENDRE`, `DANSCOL`, `ORGA.COLS`, `CENTILE.EXCLURE`, `PREVISION.LINEAIRE`,
 //! `FILTRE`, `RECHERCHEX`, `TROUVERB`, `CHERCHERB`, `LENB` and `URLENCODAGE` work. That Excel takes
 //! `,` between arguments and `.` as the decimal, from its Windows regional format ("English
-//! (Europe)", system separators on), not from the French interface.
+//! (Europe)", system separators on), not from the French interface. So does `TEXTE`: there
+//! `"dd/mm/yyyy"` works and `"jj/mm/aaaa"` is `#VALEUR!`, the reverse of Excel 2013 with a French
+//! region; format codes inside strings are never translated here.
+//! Also checked there (https://github.com/storytold/gridcraft/pull/443#issuecomment-6181684117):
+//! `ESTVIDE`, `ESTERR`, `ESTERREUR`, `ESTLOGIQUE`, `ESTNA`, `ESTNONTEXTE`, `NON`, `ORGA.LIGNES` and
+//! `BDLIRE`.
 //!
 //! Sources for the other words:
 //! - bool: https://support.microsoft.com/fr-fr/excel/functions/true-function | https://support.microsoft.com/fr-fr/excel/functions/false-function
