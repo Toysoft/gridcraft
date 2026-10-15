@@ -3118,6 +3118,7 @@ fn header_menu(app: &mut SheetApp, ui: &mut egui::Ui, was_open: bool) {
                     ("Delete", "home.deleteRows"),
                     ("Clear Contents", "edit.clearContents"),
                     ("-", ""),
+                    ("Format Cells…", "ui:formatCells"),
                     ("Row Height…", "ui:rowHeight"),
                     ("AutoFit Row Height", "home.autofitRowHeight"),
                     ("Hide", "home.hideRows"),
@@ -3134,6 +3135,7 @@ fn header_menu(app: &mut SheetApp, ui: &mut egui::Ui, was_open: bool) {
                     ("Delete", "home.deleteColumns"),
                     ("Clear Contents", "edit.clearContents"),
                     ("-", ""),
+                    ("Format Cells…", "ui:formatCells"),
                     ("Column Width…", "ui:columnWidth"),
                     ("AutoFit Column Width", "home.autofitColumnWidth"),
                     ("Hide", "home.hideColumns"),
@@ -3156,6 +3158,7 @@ fn header_menu(app: &mut SheetApp, ui: &mut egui::Ui, was_open: bool) {
                     match id {
                         "ui:insertPaste" => app.open_dialog("insertPaste", json!({})),
                         "ui:rowHeight" => app.open_dialog("rowHeight", json!({})),
+                        "ui:formatCells" => app.open_dialog("formatCells", json!({})),
                         "ui:columnWidth" => app.open_dialog("columnWidth", json!({})),
                         "edit.copy" | "edit.cut" => {
                             app.copy_to_clipboard(ui.ctx(), id);
