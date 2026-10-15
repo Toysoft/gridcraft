@@ -85,6 +85,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | XLSX PivotTables: source headers keep their leading and trailing spaces (a field no longer disappears on open, refresh or save), and a PivotChart's link to its PivotTable names the workbook in brackets (`[Q1 Report.xlsx]Sheet2!PivotTable1`, `[Workbook.xlsx]` when the file name is unknown) so Excel binds the chart to the PivotTable (#1447) |
 | 2026-10-15 | minor | XLSX PivotTables: booleans and errors count as strings in the cache flags (Excel refused files with `containsString="0"` next to them); a date group with a blank date drops `containsSemiMixedTypes`; date groups are written without `sortType`; a single-item report filter is read through the field's `<items>`; two value fields without a column field write `firstHeaderRow="0"` and `hideValuesRow` (#1447; header spaces and PivotChart links still open) |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |
 | 2026-10-12 | trivial | CSV and TSV export is capped at 512 MiB and refuses a larger used range with an error (#528) |
