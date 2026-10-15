@@ -214,12 +214,16 @@ pub(crate) fn dispatch(app: &mut SheetApp, ctx: &egui::Context, key: Key, physic
             let dc = if shortcut == Shortcut::ScreenRight { cols } else { -cols };
             let _ = app.session.run("selection.move", json!({"dr": 0, "dc": dc, "extend": m.shift}));
             app.grid.ensure_visible = true;
+            app.grid.reveal_moving_end = m.shift;
         }
         Shortcut::Edit => app.begin_edit(None, false),
         Shortcut::ContextMenu => app.grid.context_menu = Some(geo.cell_rect(sh, active).center()),
         Shortcut::DropDown => {
             if sh.validations.iter().any(|d| d.in_cell_dropdown && d.ranges.iter().any(|r| r.contains(active))) {
                 app.grid.list_picker = Some(active);
+            } else if sh.has_filter_button(active) {
+                let at = geo.mirror_pos(crate::grid::filter_button_rect(geo, sh, active).center());
+                app.grid.filter_menu = Some((active.col, active.row, at));
             }
         }
         Shortcut::Zoom(step) => {
@@ -245,4 +249,5 @@ fn extend(app: &mut SheetApp, anchor: CellRef, active: CellRef, to: CellRef) {
         d.selection.anchor = anchor;
     }
     app.grid.ensure_visible = true;
+    app.grid.reveal_moving_end = true;
 }

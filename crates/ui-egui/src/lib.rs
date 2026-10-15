@@ -58,6 +58,9 @@ pub struct UiState {
     pub status_bar: bool,
     /// Motion in the UI: the selection outline glides to a new selection (View ▸ Animations).
     pub animations: bool,
+    /// Enable AutoComplete for cell values (File ▸ Options ▸ Editing): typed text is completed
+    /// from the one matching entry in the same column.
+    pub autocomplete: bool,
     pub recent: Vec<String>,
     /// One-shot keytip request for a ribbon control: set when a keytip action resolves to
     /// [`keytips::Action::Control`], consumed (and cleared) by the control's render site.
@@ -100,6 +103,7 @@ impl Default for UiState {
             formula_bar_expanded: false,
             status_bar: true,
             animations: true,
+            autocomplete: true,
             recent: vec![],
             keytip_invoke: None,
             language: i18n::Language::En,
@@ -379,6 +383,13 @@ impl SheetApp {
         }
         let r = self.session.run(id, params);
         self.after_engine();
+        // The new chart is selected, as after inserting any object, so Delete removes it, not its data.
+        if id == "insert.chart"
+            && let Ok(r) = &r
+            && let Some(chart) = r.get("chart").and_then(Json::as_u64).and_then(|id| u32::try_from(id).ok())
+        {
+            self.selected_chart = Some(chart);
+        }
         if id == "file.exportPdf"
             && let Ok(r) = &r
         {
@@ -490,7 +501,35 @@ impl SheetApp {
             }
             return self.print_now(params);
         }
+        // Menu-style Export as PDF with no file named: ask where to save, like Save As does.
+        // Programmatic callers use `run` and keep getting the PDF bytes back.
+        if id == "file.exportPdf" && self.services.pick_save.is_some() && params.get("path").and_then(Json::as_str).is_none_or(str::is_empty) {
+            return self.export_pdf_with_picker(params);
+        }
         if let Err(e) = self.run(id, params) {
+            self.alert(e);
+        }
+    }
+
+    /// Asks for a `.pdf` path with the save picker, then re-runs `file.exportPdf` with it. Other
+    /// params (range, sheets, fitToPage) are kept. A cancelled picker does nothing.
+    fn export_pdf_with_picker(&mut self, mut params: Json) {
+        if !self.commit_edit(0, 0, false, false) {
+            return;
+        }
+        let title = self.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1".into());
+        let stem = std::path::Path::new(&title).file_stem().and_then(|s| s.to_str()).unwrap_or("Book1").to_string();
+        let Some(pick) = &self.services.pick_save else { return };
+        let Some(path) = pick(&format!("{stem}.pdf")) else { return };
+        // The picker may suggest a workbook extension; the export writes a PDF.
+        let path = std::path::Path::new(&path).with_extension("pdf").to_string_lossy().into_owned();
+        match &mut params {
+            Json::Object(map) => {
+                map.insert("path".into(), Json::String(path));
+            }
+            other => *other = json!({"path": path}),
+        }
+        if let Err(e) = self.run("file.exportPdf", params) {
             self.alert(e);
         }
     }
@@ -565,6 +604,10 @@ impl SheetApp {
             "view.animations" => {
                 self.ui.animations = p.get("on").and_then(Json::as_bool).unwrap_or(!self.ui.animations);
                 Ok(json!({"on": self.ui.animations}))
+            }
+            "options.autoComplete" => {
+                self.ui.autocomplete = p.get("on").and_then(Json::as_bool).unwrap_or(!self.ui.autocomplete);
+                Ok(json!({"on": self.ui.autocomplete}))
             }
             "view.interfaceScale" => {
                 // `{"percent": 125}` or `{"percent": "auto"}`; out-of-range values are clamped.
@@ -855,7 +898,7 @@ impl SheetApp {
         };
         let mut ed = editor::EditState::new(d.wb.active_sheet, at, text, replace, from_formula_bar);
         ed.locale = locale;
-        if replace && !ed.is_formula() {
+        if replace && self.ui.autocomplete && !ed.is_formula() {
             ed.completion = editor::column_completion(sh, at, &ed.text);
         }
         self.editor = Some(ed);

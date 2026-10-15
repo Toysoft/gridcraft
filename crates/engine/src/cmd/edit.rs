@@ -219,11 +219,8 @@ fn cell_set(s: &mut Session, p: &Json) -> Result<Json> {
         Some(c) => c,
         None => s.doc()?.selection.active,
     };
-    let input = str_param(p, "input")
-        .or_else(|| str_param(p, "value"))
-        .map(str::to_string)
-        .or_else(|| p.get("value").map(json_to_input))
-        .ok_or_else(|| bad("cell.set", "missing `input` (or `value`)"))?;
+    // Both spellings take a string, number or boolean, as typed (#697).
+    let input = p.get("input").or_else(|| p.get("value")).map(json_to_input).ok_or_else(|| bad("cell.set", "missing `input` (or `value`)"))?;
     let array = bool_param(p, "array").unwrap_or(false);
     let d = s.doc()?;
     if let Some(sh) = d.wb.sheet(sheet)
@@ -420,14 +417,7 @@ fn selection_move(s: &mut Session, p: &Json) -> Result<Json> {
     let Some(sheet) = d.wb.active() else { return Err(EngineError::NoDocument) };
     let sel = &mut d.selection;
     // Extension moves the far corner, not the active cell.
-    let from = if extend {
-        let r = sel.current();
-        let far_row = if sel.anchor.row == r.start.row { r.end.row } else { r.start.row };
-        let far_col = if sel.anchor.col == r.start.col { r.end.col } else { r.start.col };
-        CellRef::new(far_row, far_col)
-    } else {
-        sel.active
-    };
+    let from = if extend { sel.moving_end() } else { sel.active };
     // Skip hidden rows/columns and step over merged areas.
     let mut to = if jmp {
         jump(sheet, from, dr.signum(), dc.signum())
@@ -513,7 +503,7 @@ fn select_col(s: &mut Session, _: &Json) -> Result<Json> {
     Ok(json!({"selection": d.selection.a1()}))
 }
 
-fn go_to(s: &mut Session, p: &Json) -> Result<Json> {
+pub(super) fn go_to(s: &mut Session, p: &Json) -> Result<Json> {
     let Some(reference) = str_param(p, "reference").or_else(|| str_param(p, "range")) else { return Err(bad("edit.goTo", "missing `reference`")) };
     // A defined name or table?
     let d = s.doc()?;
@@ -1596,6 +1586,23 @@ fn begin_edit(s: &mut Session, _: &Json) -> Result<Json> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cell_set_takes_numbers_for_input_and_value() {
+        // #697: a JSON number for `input` used to clear the cell instead of entering it.
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("cell.set", json!({"cell": "A1", "input": 123.5})).unwrap();
+        s.execute("cell.set", json!({"cell": "A2", "value": 77})).unwrap();
+        s.execute("cell.set", json!({"cell": "A3", "input": true})).unwrap();
+        s.execute("cell.set", json!({"cell": "A4", "input": "=A1+A2"})).unwrap();
+        let get = |s: &mut Session, a: &str| s.execute("cell.get", json!({"cell": a})).unwrap();
+        assert_eq!(get(&mut s, "A1")["value"], json!(123.5));
+        assert_eq!(get(&mut s, "A2")["value"], json!(77.0));
+        assert_eq!(get(&mut s, "A3")["value"], json!(true));
+        assert_eq!(get(&mut s, "A4")["value"], json!(200.5));
+        assert!(s.execute("cell.set", json!({"cell": "A5"})).is_err());
+    }
 
     #[test]
     fn legacy_array_entry() {

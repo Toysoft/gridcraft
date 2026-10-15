@@ -122,7 +122,7 @@ pub fn specs() -> Vec<CommandSpec> {
 fn col_param(v: Option<&Json>, base: u32) -> Option<u32> {
     match v? {
         Json::String(s) => gridcraft_core::letters_to_col(s.trim_start_matches('$')),
-        Json::Number(n) => n.as_u64().map(|o| base + o as u32),
+        Json::Number(n) => n.as_u64().and_then(|o| u32::try_from(o).ok()).and_then(|o| base.checked_add(o)),
         _ => None,
     }
 }
@@ -456,9 +456,13 @@ fn toggle_filter(s: &mut Session, p: &Json) -> Result<Json> {
     if has {
         return edit(s, |cx| {
             let sh = cx.sheet_mut(sheet)?;
+            // Reveal only rows the filter hid; rows hidden by hand or by a collapsed group stay hidden.
+            let filtered: Vec<u32> = sh.rows.keys().copied().filter(|r| sh.is_row_filtered(*r)).collect();
             sh.autofilter = None;
-            for info in sh.rows.values_mut() {
-                info.hidden = false;
+            for r in filtered {
+                if let Some(info) = sh.rows.get_mut(&r) {
+                    info.hidden = false;
+                }
             }
             cx.structural = true;
             Ok(json!({"filter": false}))
@@ -496,7 +500,12 @@ fn filter_by(s: &mut Session, p: &Json) -> Result<Json> {
             s.doc()?.wb.sheet(sheet).and_then(|sh| sh.autofilter.clone()).ok_or_else(|| EngineError::Other("no filter".into()))?
         }
     };
-    let col = col_param(p.get("column"), af.range.start.col).ok_or_else(|| bad("data.filterBy", "missing `column`"))?;
+    let col = match col_param(p.get("column"), af.range.start.col) {
+        Some(c) => c,
+        // A number too large to be a column is outside the filter range, not a missing parameter.
+        None if p.get("column").is_some_and(|v| v.as_u64().is_some()) => return Err(bad("data.filterBy", "column outside the filter range")),
+        None => return Err(bad("data.filterBy", "missing `column`")),
+    };
     if col < af.range.start.col || col > af.range.end.col {
         return Err(bad("data.filterBy", "column outside the filter range"));
     }
@@ -578,19 +587,28 @@ pub(crate) fn apply_filter(wb: &mut Workbook, sheet: usize) {
     let Some(af) = sh.autofilter.clone() else { return };
     let r = af.range;
     let mut hide = Vec::new();
-    // Precompute per-column numbers for top10/average.
-    let mut col_stats: std::collections::HashMap<u32, (Vec<f64>, f64)> = std::collections::HashMap::new();
-    for (off, c) in &af.criteria {
+    // Precompute per-criterion top10 threshold and average once, not per row.
+    let mut col_stats: std::collections::HashMap<usize, (Option<f64>, f64)> = std::collections::HashMap::new();
+    for (i, (off, c)) in af.criteria.iter().enumerate() {
         if matches!(c, FilterCriterion::Top10 { .. } | FilterCriterion::AboveAverage(_)) {
             let col = r.start.col + off;
-            let nums: Vec<f64> = (r.start.row + 1..=r.end.row).filter_map(|row| sh.value(CellRef::new(row, col)).as_f64()).collect();
+            let mut nums: Vec<f64> = (r.start.row + 1..=r.end.row).filter_map(|row| sh.value(CellRef::new(row, col)).as_f64()).collect();
             let avg = if nums.is_empty() { 0.0 } else { nums.iter().sum::<f64>() / nums.len() as f64 };
-            col_stats.insert(*off, (nums, avg));
+            let thr = match c {
+                FilterCriterion::Top10 { bottom, percent, count } => {
+                    nums.sort_by(|a, b| if *bottom { a.partial_cmp(b) } else { b.partial_cmp(a) }.unwrap_or(Ordering::Equal));
+                    let k = if *percent { ((nums.len() as f64) * (*count as f64) / 100.0).ceil() as usize } else { *count as usize };
+                    let k = k.clamp(1, nums.len().max(1));
+                    nums.get(k - 1).copied()
+                }
+                _ => None,
+            };
+            col_stats.insert(i, (thr, avg));
         }
     }
     for row in r.start.row + 1..=r.end.row {
         let mut visible = true;
-        for (off, crit) in &af.criteria {
+        for (i, (off, crit)) in af.criteria.iter().enumerate() {
             let c = CellRef::new(row, r.start.col + off);
             let v = sh.value(c);
             let text = crate::display::cell_text(wb, sh, c);
@@ -612,18 +630,14 @@ pub(crate) fn apply_filter(wb: &mut Workbook, sheet: usize) {
                         None => x,
                     }
                 }
-                FilterCriterion::Top10 { bottom, percent, count } => match (v.as_f64(), col_stats.get(off)) {
-                    (Some(n), Some((nums, _))) => {
-                        let mut sorted = nums.clone();
-                        sorted.sort_by(|a, b| if *bottom { a.partial_cmp(b) } else { b.partial_cmp(a) }.unwrap_or(Ordering::Equal));
-                        let k = if *percent { ((sorted.len() as f64) * (*count as f64) / 100.0).ceil() as usize } else { *count as usize };
-                        let k = k.clamp(1, sorted.len().max(1));
-                        let thr = sorted.get(k - 1).copied().unwrap_or(n);
+                FilterCriterion::Top10 { bottom, .. } => match (v.as_f64(), col_stats.get(&i)) {
+                    (Some(n), Some((thr, _))) => {
+                        let thr = thr.unwrap_or(n);
                         if *bottom { n <= thr } else { n >= thr }
                     }
                     _ => false,
                 },
-                FilterCriterion::AboveAverage(above) => match (v.as_f64(), col_stats.get(off)) {
+                FilterCriterion::AboveAverage(above) => match (v.as_f64(), col_stats.get(&i)) {
                     (Some(n), Some((_, avg))) => {
                         if *above {
                             n > *avg
@@ -1149,6 +1163,7 @@ fn group(s: &mut Session, p: &Json, on: bool) -> Result<Json> {
         {
             e.collapsed = false;
         }
+        cx.structural = true; // ungrouping reveals hidden rows: SUBTOTAL(10x) depends on it
         Ok(Json::Null)
     })
 }
@@ -1299,6 +1314,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn filter_by_huge_numeric_column_is_rejected_not_overflowed() {
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("range.setValues", json!({"range": "B1", "values": [["Name", "Qty"], ["a", 1], ["b", 2]]})).unwrap();
+        s.execute("data.filter", json!({"range": "B1:C3"})).unwrap();
+        for col in [json!(2), json!(u64::from(u32::MAX)), json!(u64::MAX)] {
+            let err = s.execute("data.filterBy", json!({"column": col, "values": ["a"]})).unwrap_err();
+            assert!(err.to_string().contains("column outside the filter range"), "{col}: {err}");
+        }
+        let ok = s.execute("data.filterBy", json!({"column": 0, "values": ["a"]})).unwrap();
+        assert_eq!(ok["hiddenRows"], json!(1));
+    }
+
+    #[test]
     fn filter_by_inside_a_table_installs_the_autofilter_and_keeps_the_button() {
         for sel in [json!({"cell": "A1"}), json!({"cell": "A2"}), json!({"range": "A1:A3"})] {
             let mut s = Session::new();
@@ -1336,6 +1365,45 @@ mod tests {
         }
         assert!(ok(&mut s, "B1", "5"));
         assert!(!ok(&mut s, "B1", "150"));
+    }
+
+    #[test]
+    fn removing_an_autofilter_keeps_manually_hidden_and_collapsed_rows() {
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("range.setValues", json!({"range": "A1", "values": [["H"], ["a"], ["b"], ["c"]]})).unwrap();
+        s.execute("range.setValues", json!({"range": "A10", "values": [["z"]]})).unwrap();
+        s.execute("data.group", json!({"rows": "2:4"})).unwrap();
+        s.execute("data.hideDetail", json!({"rows": "2:4"})).unwrap();
+        s.execute("home.hideRows", json!({"rows": "10:10"})).unwrap();
+        let hidden = |s: &Session| -> Vec<u32> {
+            let sh = s.doc().unwrap().wb.active().unwrap();
+            sh.rows.iter().filter(|(_, l)| l.hidden).map(|(r, _)| *r).collect()
+        };
+        let before = hidden(&s);
+        assert_eq!(before, [1, 2, 3, 9]);
+        s.execute("data.filter", json!({"range": "A1:A4"})).unwrap();
+        s.execute("data.filter", json!({"range": "A1:A4"})).unwrap();
+        assert!(s.doc().unwrap().wb.active().unwrap().autofilter.is_none());
+        assert_eq!(hidden(&s), before);
+        assert_eq!(row_state(&s, 4..=4), [(false, true)]);
+    }
+
+    #[test]
+    fn table_dropdown_setup_outside_the_table_keeps_manually_hidden_rows() {
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("range.setValues", json!({"range": "A1", "values": [["H"], ["a"], ["b"], ["c"]]})).unwrap();
+        s.execute("range.setValues", json!({"range": "A10", "values": [["z"]]})).unwrap();
+        s.execute("insert.table", json!({"range": "A1:A4", "header": true})).unwrap();
+        s.execute("home.hideRows", json!({"rows": "3:3"})).unwrap();
+        s.execute("home.hideRows", json!({"rows": "10:10"})).unwrap();
+        s.execute("selection.set", json!({"range": "E1"})).unwrap();
+        // The table filter dropdown installs an AutoFilter on demand by toggling `data.filter` twice.
+        s.execute("data.filter", json!({"range": "A1:A4"})).unwrap();
+        s.execute("data.filter", json!({"range": "A1:A4"})).unwrap();
+        let sh = s.doc().unwrap().wb.active().unwrap();
+        assert_eq!(sh.rows.iter().filter(|(_, l)| l.hidden).map(|(r, _)| *r).collect::<Vec<_>>(), [2, 9]);
     }
 
     /// Rows 5:8 grouped, with 6:7 grouped again inside (0-based 4..=7 and 5..=6).

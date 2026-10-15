@@ -701,6 +701,12 @@ fn stash_get(wb: &Workbook, key: &str) -> Json {
         .unwrap_or(json!({}))
 }
 
+/// Like `stash_get`, for the name-keyed lists (views, scripts): a stored value that is not a JSON object is treated as empty.
+fn stash_map(wb: &Workbook, key: &str) -> Json {
+    let v = stash_get(wb, key);
+    if v.is_object() { v } else { json!({}) }
+}
+
 fn stash_set(wb: &mut Workbook, key: &str, v: &Json) {
     let text = v.to_string();
     let formula = format!("\"{}\"", text.replace('"', "\"\""));
@@ -723,7 +729,7 @@ pub(crate) fn keep_watch_list(from: &Workbook, to: &mut std::sync::Arc<Workbook>
 
 fn custom_views(s: &mut Session, p: &Json) -> Result<Json> {
     let d = s.doc()?;
-    let mut views = stash_get(&d.wb, VIEWS_NAME);
+    let mut views = stash_map(&d.wb, VIEWS_NAME);
     if let Some(name) = str_param(p, "save") {
         let sh = d.wb.active().ok_or(EngineError::NoDocument)?;
         views[name] = json!({"sheet": d.wb.active_sheet, "selection": d.selection.a1(), "zoom": sh.zoom, "freeze": sh.freeze});
@@ -832,7 +838,14 @@ fn table_resize(s: &mut Session, p: &Json) -> Result<Json> {
         for (i, h) in headers.iter().enumerate() {
             let name = if h.is_empty() { format!("Column{}", i + 1) } else { h.clone() };
             let existing = t.columns.iter().find(|c| c.name.eq_ignore_ascii_case(&name)).cloned();
-            cols.push(existing.unwrap_or(TableColumn { name, totals: TotalsFn::None, totals_label: None, formula: None }));
+            cols.push(existing.unwrap_or(TableColumn {
+                name,
+                totals: TotalsFn::None,
+                totals_label: None,
+                formula: None,
+                unique_name: None,
+                xml: None,
+            }));
         }
         t.columns = cols;
         t.range = r;
@@ -949,7 +962,7 @@ fn new_script(s: &mut Session, p: &Json) -> Result<Json> {
         return Err(bad("automate.newScript", "`commands` must be an array"));
     }
     edit(s, |cx| {
-        let mut all = stash_get(&cx.wb, SCRIPTS_NAME);
+        let mut all = stash_map(&cx.wb, SCRIPTS_NAME);
         all[name.as_str()] = cmds.clone();
         stash_set(&mut cx.wb, SCRIPTS_NAME, &all);
         Ok(json!({"name": name}))
@@ -988,7 +1001,7 @@ fn run_script(s: &mut Session, p: &Json) -> Result<Json> {
 fn delete_script(s: &mut Session, p: &Json) -> Result<Json> {
     let name = str_param(p, "name").ok_or_else(|| bad("automate.deleteScript", "missing `name`"))?.to_string();
     edit(s, |cx| {
-        let mut all = stash_get(&cx.wb, SCRIPTS_NAME);
+        let mut all = stash_map(&cx.wb, SCRIPTS_NAME);
         if let Some(o) = all.as_object_mut() {
             o.remove(&name);
         }
@@ -1063,8 +1076,13 @@ fn toggle_checkbox(s: &mut Session, p: &Json) -> Result<Json> {
     })
 }
 
+/// Copy of the params that is always a JSON object, so keys can be assigned; any other JSON value counts as no params (like null).
+fn object_params(p: &Json) -> Json {
+    Json::Object(p.as_object().cloned().unwrap_or_default())
+}
+
 fn theme_colors(s: &mut Session, p: &Json) -> Result<Json> {
-    let mut params = p.clone();
+    let mut params = object_params(p);
     if params.get("name").is_none() {
         params["name"] = json!(s.doc()?.wb.theme.name.clone());
     }
@@ -1085,7 +1103,7 @@ fn background(s: &mut Session, p: &Json) -> Result<Json> {
             Ok(Json::Null)
         });
     }
-    let mut params = p.clone();
+    let mut params = object_params(p);
     params["alt"] = json!("Sheet background");
     params["at"] = json!("A1");
     s.execute("insert.picture", params)
@@ -1101,7 +1119,7 @@ fn draw_border(s: &mut Session, p: &Json) -> Result<Json> {
         "outline" => "outside",
         _ => "all",
     };
-    let mut params = p.clone();
+    let mut params = object_params(p);
     params["preset"] = json!(preset);
     s.execute("home.borders", params)
 }

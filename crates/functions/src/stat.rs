@@ -79,10 +79,12 @@ fn mode_sngl(v: &[f64]) -> R<f64> {
 }
 
 /// Numbers for MODE / MODE.SNGL / MODE.MULT. Inside multi-cell ranges and arrays only numbers
-/// count, like [`numbers`]. Scalar arguments are stricter than in SUM: Excel answers `#VALUE!`
-/// for direct text (even numeric text such as `"1"`) and for a single-cell reference to text or
-/// a blank cell (observed: `MODE(B8,"1",2,3)` and `MODE(B9,2,D7)` with D7 blank are `#VALUE!`).
-/// Arguments are processed left to right, so the first error wins.
+/// count, like [`numbers`]. Scalar arguments differ from SUM: in Excel 365, text and logical
+/// values are skipped whether typed or referenced (even numeric text such as `"1"`, so
+/// `MODE(1,"1",2,3)` is `#N/A`, and `MODE(1,TRUE,TRUE,2)` is `#N/A`), but a single-cell reference
+/// to a blank cell is `#VALUE!` (`MODE(B9,2,D7)` with D7 blank). Arguments are processed left to
+/// right, so the first error wins. The results cached in POI's FormulaEvalTestData come from an
+/// older Excel that answered `#VALUE!` for typed text; they are not the reference here.
 fn mode_numbers(args: &[Arg]) -> R<Vec<f64>> {
     let mut out = Vec::new();
     for a in args {
@@ -98,9 +100,8 @@ fn mode_numbers(args: &[Arg]) -> R<Vec<f64>> {
             }
             Value::Number(n) => out.push(*n),
             Value::Error(e) => return Err(*e),
-            Value::Text(_) | Value::Empty => return Err(CellError::Value),
-            Value::Bool(_) if a.from_ref => {}
-            v => out.push(v.to_number()?),
+            Value::Text(_) | Value::Bool(_) => {}
+            Value::Empty => return Err(CellError::Value),
         }
     }
     Ok(out)
@@ -2279,9 +2280,11 @@ mod tests {
         assert_eq!(rows_of(&ev("MODE.MULT", vec![c(&[1.0, 2.0, 3.0, 4.0, 3.0, 2.0, 1.0, 2.0, 3.0])])), vec![vec![nv(2.0)], vec![nv(3.0)]]);
     }
 
-    /// MODE argument semantics observed in Excel (FormulaEvalTestData, row "Mode"): multi-cell
-    /// ranges skip text and blanks, but direct text and single-cell references to text or blank
-    /// cells are `#VALUE!`; the first error from the left wins.
+    /// MODE argument semantics in Excel 365, on the inputs of FormulaEvalTestData (row "Mode"):
+    /// text is skipped, typed or referenced, but a single-cell reference to a blank cell is
+    /// `#VALUE!`; the first error from the left wins. The values cached in POI's file come from an
+    /// older Excel and say `#VALUE!` for `MODE(C9,E16,"1",B8)`, `MODE(B8,"1",2,3)` and
+    /// `MODE("1",1,#DIV/0!,2,3)`; Excel 365 gives `#N/A`, `#N/A` and `#DIV/0!`.
     #[test]
     fn mode_scalar_arguments() {
         let data = arr(vec![vec![tv(""), nv(0.0), nv(1.0)], vec![tv("x"), nv(1.0), nv(1.001)], vec![tv("y"), nv(9e9), nv(2.3456)]]);
@@ -2290,9 +2293,9 @@ mod tests {
             (vec![rf(data)], Ok(1.0)),
             (vec![rf(arr(vec![vec![nv(-1.1), Value::Empty, tv("1.1")]])), n(-1.1)], Ok(-1.1)),
             // MODE(C9,E16,"1",B8): E16 holds the text "1.1".
-            (vec![rf(nv(1.1)), rf(tv("1.1")), t("1"), rf(nv(1.0))], Err(CellError::Value)),
-            (vec![rf(nv(1.0)), t("1"), n(2.0), n(3.0)], Err(CellError::Value)),
-            (vec![t("1"), n(1.0), e(CellError::Div0), n(2.0), n(3.0)], Err(CellError::Value)),
+            (vec![rf(nv(1.1)), rf(tv("1.1")), t("1"), rf(nv(1.0))], Err(CellError::NA)),
+            (vec![rf(nv(1.0)), t("1"), n(2.0), n(3.0)], Err(CellError::NA)),
+            (vec![t("1"), n(1.0), e(CellError::Div0), n(2.0), n(3.0)], Err(CellError::Div0)),
             // MODE(B9,2,D7) with D7 blank.
             (vec![rf(nv(2.0)), n(2.0), rf(Value::Empty)], Err(CellError::Value)),
             (vec![n(1.0), n(1.0), e(CellError::Div0), t("1")], Err(CellError::Div0)),
@@ -2305,7 +2308,31 @@ mod tests {
                 }
             }
         }
-        is_err(ev("MODE.MULT", vec![rf(nv(1.0)), t("1"), n(1.0)]), CellError::Value);
+        is_err(ev("MODE.MULT", vec![rf(nv(1.0)), t("1"), rf(Value::Empty)]), CellError::Value);
+    }
+
+    /// Text and logical values typed as arguments are skipped, not coerced (Excel 365, #736).
+    #[test]
+    fn mode_skips_typed_text_and_logicals() {
+        let cases: Vec<(Vec<crate::Arg>, Result<f64, CellError>)> = vec![
+            (vec![n(1.0), n(1.0), t("x")], Ok(1.0)),
+            (vec![n(1.0), n(2.0), t("x")], Err(CellError::NA)),
+            (vec![n(1.0), t("1"), n(2.0), n(3.0)], Err(CellError::NA)),
+            (vec![t("1"), n(1.0), n(2.0), n(3.0)], Err(CellError::NA)),
+            (vec![t("1"), n(1.0), e(CellError::Div0), n(2.0), n(3.0)], Err(CellError::Div0)),
+            (vec![n(1.0), b(true), b(true), n(2.0)], Err(CellError::NA)),
+            (vec![n(1.0), n(1.0), b(true)], Ok(1.0)),
+        ];
+        for name in ["MODE", "MODE.SNGL"] {
+            for (args, want) in &cases {
+                match want {
+                    Ok(x) => close(ev(name, args.clone()), *x),
+                    Err(err) => is_err(ev(name, args.clone()), *err),
+                }
+            }
+        }
+        assert_eq!(rows_of(&ev("MODE.MULT", vec![n(1.0), t("1"), n(1.0), t("x")])), vec![vec![nv(1.0)]]);
+        is_err(ev("MODE.MULT", vec![n(1.0), b(true), b(true), n(2.0)]), CellError::NA);
     }
 
     #[test]

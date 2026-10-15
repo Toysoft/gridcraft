@@ -88,6 +88,8 @@ pub struct Evaluator<'h> {
 
 struct FnCtx<'a, 'h> {
     ev: &'a mut Evaluator<'h>,
+    /// The criteria argument of a database function, when it is a reference.
+    criteria: Option<Area>,
 }
 
 impl Ctx for FnCtx<'_, '_> {
@@ -99,6 +101,28 @@ impl Ctx for FnCtx<'_, '_> {
     }
     fn random(&mut self) -> f64 {
         self.ev.host.random()
+    }
+    /// Excel's "formula as criteria": the formula is written for the first record, so its relative
+    /// references move down to `record`'s row, and the database's labels name its fields.
+    /// Known gap: the shifted references are not dependencies of the calling cell. One that lands
+    /// outside both the database and the criteria cell's own precedents (say `=G2<H2` with column H
+    /// outside the database) is read here but not tracked, so editing that cell doesn't recalculate
+    /// the D-function until something else does.
+    fn computed_criterion(&mut self, row: usize, col: usize, db: &Array, record: usize) -> Option<bool> {
+        let area = self.criteria?;
+        let at = area.range.start.offset(row as i64, col as i64).filter(|c| area.range.contains(*c))?;
+        let expr = self.ev.host.workbook().sheet(area.sheet)?.cell(at)?.formula.as_ref()?.expr_arc()?;
+        let shifted = gridcraft_formula::adjust::shift_relative((*expr).clone(), record as i64 - 1, 0);
+        let env = (0..db.cols)
+            .filter_map(|c| match db.get(0, c) {
+                Some(Value::Text(t)) if !t.trim().is_empty() => {
+                    Some((t.trim().to_string(), Ev::V(db.get(record, c).cloned().unwrap_or(Value::Empty))))
+                }
+                _ => None,
+            })
+            .collect();
+        let mut ev = Evaluator { host: &mut *self.ev.host, sheet: area.sheet, at, env, depth: self.ev.depth };
+        Some(matches!(ev.value(&shifted).scalar().to_bool(), Ok(true)))
     }
 }
 
@@ -383,6 +407,7 @@ impl<'h> Evaluator<'h> {
             };
         }
         let v = self.value(x);
+        let sys = self.host.workbook().date_system;
         Ev::V(map_unary(
             &v,
             &|n| match op {
@@ -392,6 +417,7 @@ impl<'h> Evaluator<'h> {
                 UnOp::At | UnOp::Spill | UnOp::Trim(_) => Value::number(n),
             },
             op == UnOp::Plus,
+            sys,
         ))
     }
 
@@ -478,7 +504,7 @@ impl<'h> Evaluator<'h> {
                 let mut acc = self.value(left);
                 while let Some((o, r)) = rest.pop() {
                     let y = self.value(r);
-                    acc = binary_values(o, &acc, &y);
+                    acc = binary_values(o, &acc, &y, self.host.workbook().date_system);
                 }
                 Ev::V(acc)
             }
@@ -592,7 +618,7 @@ impl<'h> Evaluator<'h> {
                         let value = self.value(a);
                         evaluated.push(Arg { value, from_ref: false });
                     }
-                    let mut ctx = FnCtx { ev: self };
+                    let mut ctx = FnCtx { ev: self, criteria: None };
                     return gridcraft_functions::call(spec, &evaluated, &mut ctx).pipe(Ev::V);
                 }
                 let i = match index.to_number() {
@@ -750,6 +776,20 @@ impl<'h> Evaluator<'h> {
                 Ev::V(Value::Bool(r))
             }
             "MAP" | "REDUCE" | "SCAN" | "BYROW" | "BYCOL" | "MAKEARRAY" => self.higher_order(name, args),
+            "GROUPBY" | "PIVOTBY" => {
+                // The aggregation may be a function given by name (`SUM`): pass it as its name.
+                let i = if name == "GROUPBY" { 2 } else { 3 };
+                match args.get(i).and_then(|a| self.function_by_name(a)) {
+                    Some(f) => {
+                        let mut args = args.to_vec();
+                        if let Some(a) = args.get_mut(i) {
+                            *a = Expr::Text(f.into());
+                        }
+                        self.builtin(name, &args)
+                    }
+                    None => self.builtin(name, args),
+                }
+            }
             "NOW" | "TODAY" | "RAND" | "RANDBETWEEN" | "RANDARRAY" => {
                 self.host.note_volatile();
                 self.builtin(name, args)
@@ -775,8 +815,17 @@ impl<'h> Evaluator<'h> {
         let mut evaluated = Vec::with_capacity(args.len());
         // SUMIF/AVERAGEIF: the size of the criteria range (argument 1), which the sum range takes.
         let mut criteria_shape = None;
+        // Database functions: the criteria range (argument 2), whose formulas are computed criteria.
+        let mut criteria = None;
         for (i, a) in args.iter().enumerate() {
             let mut ev = self.eval(a);
+            if spec.category == gridcraft_functions::Category::Database
+                && i == 2
+                && let Ev::R(areas) = &ev
+                && let [area] = areas.as_slice()
+            {
+                criteria = Some(*area);
+            }
             if resizes_sum_range(name, args.len()) {
                 if i == 0 {
                     criteria_shape = ev_shape(&ev);
@@ -804,7 +853,7 @@ impl<'h> Evaluator<'h> {
             };
             evaluated.push(Arg { value, from_ref });
         }
-        let mut ctx = FnCtx { ev: self };
+        let mut ctx = FnCtx { ev: self, criteria };
         gridcraft_functions::call(spec, &evaluated, &mut ctx).pipe(Ev::V)
     }
 
@@ -858,13 +907,13 @@ impl<'h> Evaluator<'h> {
         };
         let args = [Arg { value, from_ref }];
         if kind != Agg::Count {
-            match gridcraft_functions::call(sum, &args, &mut FnCtx { ev: self }) {
+            match gridcraft_functions::call(sum, &args, &mut FnCtx { ev: self, criteria: None }) {
                 Value::Number(n) => acc.sum += n,
                 other => return Err(Ev::V(other)),
             }
         }
         if kind != Agg::Sum {
-            match gridcraft_functions::call(count, &args, &mut FnCtx { ev: self }) {
+            match gridcraft_functions::call(count, &args, &mut FnCtx { ev: self, criteria: None }) {
                 Value::Number(n) => acc.count = acc.count.saturating_add(n as u64),
                 other => return Err(Ev::V(other)),
             }
@@ -921,7 +970,26 @@ impl<'h> Evaluator<'h> {
         r
     }
 
-    fn lambda_arg(&mut self, e: Option<&Expr>) -> Option<Arc<Lambda>> {
+    /// A worksheet function given by name where a function is expected (`BYROW(A1:C3,SUM)`,
+    /// `GROUPBY(A2:A9,B2:B9,SUM)`): its name, unless a LET/LAMBDA variable or a defined name has
+    /// that name.
+    fn function_by_name(&self, e: &Expr) -> Option<String> {
+        let Expr::Name(n) = e else { return None };
+        if self.env.iter().any(|(k, _)| k.eq_ignore_ascii_case(n)) || self.host.workbook().name(n, self.sheet).is_some() {
+            return None;
+        }
+        let u = n.to_ascii_uppercase();
+        gridcraft_functions::lookup(&u).map(|_| u)
+    }
+
+    /// The function argument of a LAMBDA helper; a function given by name takes `arity`
+    /// arguments.
+    fn lambda_arg(&mut self, e: Option<&Expr>, arity: usize) -> Option<Arc<Lambda>> {
+        if let Some(f) = e.and_then(|x| self.function_by_name(x)) {
+            let params: Vec<String> = (0..arity).map(|i| format!("_xleta.{i}")).collect();
+            let body = Expr::Call(f, params.iter().map(|p| Expr::Name(p.clone())).collect());
+            return Some(Arc::new(Lambda { params, body, env: Vec::new() }));
+        }
         match e.map(|x| self.eval(x)) {
             Some(Ev::L(l)) => Some(l),
             _ => None,
@@ -940,7 +1008,7 @@ impl<'h> Evaluator<'h> {
                 if args.len() < 2 {
                     return err(CellError::Value);
                 }
-                let Some(l) = self.lambda_arg(args.last()) else { return err(CellError::Value) };
+                let Some(l) = self.lambda_arg(args.last(), args.len() - 1) else { return err(CellError::Value) };
                 let arrays: Vec<Arc<Array>> = args[..args.len() - 1].iter().map(|a| as_array(self.value(a))).collect();
                 let rows = arrays.iter().map(|a| a.rows).max().unwrap_or(1);
                 let cols = arrays.iter().map(|a| a.cols).max().unwrap_or(1);
@@ -963,7 +1031,7 @@ impl<'h> Evaluator<'h> {
                 }
                 let mut acc = self.value(&args[0]);
                 let arr = as_array(self.value(&args[1]));
-                let Some(l) = self.lambda_arg(args.get(2)) else { return err(CellError::Value) };
+                let Some(l) = self.lambda_arg(args.get(2), 2) else { return err(CellError::Value) };
                 if l.params.len() != 2 {
                     return err(CellError::Value);
                 }
@@ -987,7 +1055,7 @@ impl<'h> Evaluator<'h> {
                     return err(CellError::Value);
                 }
                 let arr = as_array(self.value(&args[0]));
-                let Some(l) = self.lambda_arg(args.get(1)) else { return err(CellError::Value) };
+                let Some(l) = self.lambda_arg(args.get(1), 1) else { return err(CellError::Value) };
                 let Some(p) = l.params.first().cloned() else { return err(CellError::Value) };
                 let by_row = name == "BYROW";
                 let n = if by_row { arr.rows } else { arr.cols };
@@ -1016,7 +1084,7 @@ impl<'h> Evaluator<'h> {
                 if rows < 1.0 || cols < 1.0 || rows * cols > MAX_CELLS as f64 {
                     return err(CellError::Value);
                 }
-                let Some(l) = self.lambda_arg(args.get(2)) else { return err(CellError::Value) };
+                let Some(l) = self.lambda_arg(args.get(2), 2) else { return err(CellError::Value) };
                 if l.params.len() != 2 {
                     return err(CellError::Value);
                 }
@@ -1099,16 +1167,18 @@ impl<'h> Evaluator<'h> {
                 v.scalar().to_bool().unwrap_or(true)
             }
         };
-        let text = if a1 {
-            text
+        // With a1 = FALSE, text that isn't R1C1 can still be a name, but never an A1 reference.
+        let (text, a1_ok) = if a1 {
+            (text, true)
         } else {
             match r1c1_to_a1(&text, self.at) {
-                Ok(Some(a1_text)) => a1_text,
-                Ok(None) => text,
+                Ok(Some(a1_text)) => (a1_text, true),
+                Ok(None) => (text, false),
                 Err(e) => return err(e),
             }
         };
         match gridcraft_formula::parse(&text) {
+            Ok(Expr::Ref(_)) if !a1_ok => err(CellError::Ref),
             Ok(e @ (Expr::Ref(_) | Expr::Name(_) | Expr::Struct(_))) => match self.eval(&e) {
                 r @ Ev::R(_) => r,
                 _ => err(CellError::Ref),
@@ -1248,7 +1318,7 @@ impl<'h> Evaluator<'h> {
                         }
                     }
                 }
-                let mut ctx = FnCtx { ev: self };
+                let mut ctx = FnCtx { ev: self, criteria: None };
                 return match gridcraft_functions::call(spec, &xargs, &mut ctx) {
                     Value::Number(p) if p >= 1.0 => {
                         let k = p as u32 - 1;
@@ -1302,7 +1372,7 @@ impl<'h> Evaluator<'h> {
                     _ => "v",
                 }))
             }
-            "width" => Ev::V(Value::number(sheet.map_or(8.43, |s| (s.col_width(c.col) as f64 / 7.0 * 100.0).round() / 100.0).round())),
+            "width" => Ev::V(Value::number(sheet.map_or(8.43, |s| gridcraft_model::points_to_chars(s.col_width(c.col) as f64)).round())),
             "filename" => Ev::V(Value::text(String::new())),
             "sheetname" => Ev::V(Value::text(sheet.map(|s| s.name.clone()).unwrap_or_default())),
             "protect" => Ev::V(Value::number(if sheet.is_some_and(|s| wb.styles.get(s.style_id(c)).protection.locked) { 1.0 } else { 0.0 })),
@@ -1527,12 +1597,12 @@ impl Acc {
 
 // ---------------------------------------------------------------- operators
 
-fn map_unary(v: &Value, f: &dyn Fn(f64) -> Value, plus: bool) -> Value {
+fn map_unary(v: &Value, f: &dyn Fn(f64) -> Value, plus: bool, sys: gridcraft_core::DateSystem) -> Value {
     match v {
-        Value::Array(a) => Value::from(Array { rows: a.rows, cols: a.cols, data: a.data.iter().map(|x| map_unary(x, f, plus)).collect() }),
+        Value::Array(a) => Value::from(Array { rows: a.rows, cols: a.cols, data: a.data.iter().map(|x| map_unary(x, f, plus, sys)).collect() }),
         Value::Error(e) => Value::Error(*e),
         Value::Text(_) if plus => v.clone(),
-        other => match other.to_number() {
+        other => match other.to_number_in(sys) {
             Ok(n) => f(n),
             Err(e) => Value::Error(e),
         },
@@ -1585,18 +1655,18 @@ fn zip3(c: &Array, t: &Value, f: &Value, g: impl Fn(&Value, &Value, &Value) -> V
     Value::from(Array { rows, cols, data })
 }
 
-pub fn binary_values(op: BinOp, x: &Value, y: &Value) -> Value {
-    zip2(x, y, |a, b| binary_scalar(op, a, b))
+pub fn binary_values(op: BinOp, x: &Value, y: &Value, sys: gridcraft_core::DateSystem) -> Value {
+    zip2(x, y, |a, b| binary_scalar(op, a, b, sys))
 }
 
-fn binary_scalar(op: BinOp, a: &Value, b: &Value) -> Value {
+fn binary_scalar(op: BinOp, a: &Value, b: &Value, sys: gridcraft_core::DateSystem) -> Value {
     if let Value::Error(e) = a {
         return Value::Error(*e);
     }
     if let Value::Error(e) = b {
         return Value::Error(*e);
     }
-    let num = |f: fn(f64, f64) -> Value| match (a.to_number(), b.to_number()) {
+    let num = |f: fn(f64, f64) -> Value| match (a.to_number_in(sys), b.to_number_in(sys)) {
         (Ok(x), Ok(y)) => f(x, y),
         (Err(e), _) | (_, Err(e)) => Value::Error(e),
     };

@@ -131,6 +131,9 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                 }
                 let share = small_button(ui, Icon::Share, "Share", "Share: export or save a copy", true);
                 egui::Popup::menu(&share).show(|ui| {
+                    if ui.button("Export as PDF…").clicked() {
+                        app.run_or_alert("file.exportPdf", json!({}));
+                    }
                     for (label, fmt) in
                         [("Save a Copy as Excel Workbook (.xlsx)…", "xlsx"), ("Export as CSV…", "csv"), ("Export as Web Page (.html)…", "html")]
                     {
@@ -373,7 +376,7 @@ struct ComboState {
 }
 
 /// What the user did with an [`editable_combo`].
-enum ComboResult {
+pub(crate) enum ComboResult {
     None,
     /// A row was applied: clicked or Enter on the highlighted row.
     Picked(String),
@@ -384,7 +387,7 @@ enum ComboResult {
 /// Excel-style dropdown: a filter field (type to narrow the list) plus arrow/Enter selection.
 /// `items` are `(value, display)`; the value is what comes back. When `forced` (keytip invoke)
 /// or clicked, the popup opens, focuses the filter field, and selects its text.
-fn editable_combo(
+pub(crate) fn editable_combo(
     ui: &mut Ui,
     anchor: &egui::Response,
     salt: &'static str,
@@ -2039,9 +2042,6 @@ fn review(app: &mut SheetApp, ui: &mut Ui) {
     if __k.clicked() {
         app.open_dialog("comment", json!({"threaded": true}));
     }
-    if big_button(ui, Icon::Comment, "Show\nComments", "Comments pane", false).clicked() {
-        app.grid.pane = Some("comments".into());
-    }
     let __k = big_button(ui, Icon::Delete, "Delete", "Delete Comment", false);
     control_keytip(app, ui, &__k, "review.deleteComment");
     if __k.clicked() {
@@ -2123,6 +2123,7 @@ fn view(app: &mut SheetApp, ui: &mut Ui) {
     let lang = app.ui.language;
     let page_layout =
         app.session.active().and_then(|d| d.wb.active().map(|s| s.view == gridcraft_engine::model::SheetViewMode::PageLayout)).unwrap_or(false);
+    // Two columns of two, as in Excel's Show group: four stacked rows overflow the ribbon body.
     ui.vertical(|ui| {
         // Rulers exist only in Page Layout view.
         let mut ruler = !app.session.hide_ruler;
@@ -2131,17 +2132,20 @@ fn view(app: &mut SheetApp, ui: &mut Ui) {
         if ruler_resp.changed() {
             act(app, "view.ruler", json!({"on": ruler}));
         }
-        let mut fb = app.session.prefs.formula_bar;
-        let resp = ui.checkbox(&mut fb, lang.tr("Formula Bar"));
-        control_keytip(app, ui, &resp, "view.formulaBar");
-        if resp.changed() || invoke(app, "view.formulaBar") {
-            act(app, "view.formulaBar", json!({"on": checkbox_on(resp.changed(), fb)}));
-        }
         let mut g = s.0;
         let resp = ui.checkbox(&mut g, lang.tr("Gridlines"));
         control_keytip(app, ui, &resp, "view.gridlines");
         if resp.changed() {
             act(app, "view.gridlines", json!({"on": g}));
+        }
+    });
+    ui.add_space(6.0);
+    ui.vertical(|ui| {
+        let mut fb = app.session.prefs.formula_bar;
+        let resp = ui.checkbox(&mut fb, lang.tr("Formula Bar"));
+        control_keytip(app, ui, &resp, "view.formulaBar");
+        if resp.changed() || invoke(app, "view.formulaBar") {
+            act(app, "view.formulaBar", json!({"on": checkbox_on(resp.changed(), fb)}));
         }
         let mut h = s.1;
         let resp = ui.checkbox(&mut h, lang.tr("Headings"));

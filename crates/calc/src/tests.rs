@@ -182,6 +182,11 @@ fn errors_and_cycles() {
     assert!(t.get("B1").is_error());
     t.set("C1", "=NOSUCHFN(1)");
     assert_eq!(t.get("C1"), Value::Error(CellError::Name));
+    // `_xludf.` marks a user-defined function, never the built-in of the same name (#726).
+    for f in ["=_xludf.CONCAT(\"a\",\"b\")", "=_xludf.SUM(1,2)", "=_xludf.EOMONTH()"] {
+        t.set("C3", f);
+        assert_eq!(t.get("C3"), Value::Error(CellError::Name), "{f}");
+    }
     t.set("C2", "=1+");
     assert_eq!(t.get("C2"), Value::Error(CellError::Name));
 }
@@ -286,6 +291,26 @@ fn circular_references_without_iterative_calculation() {
 }
 
 #[test]
+fn date_text_coerces_in_the_workbook_date_system() {
+    for (sys, serial) in [(gridcraft_core::DateSystem::D1900, 1462.0), (gridcraft_core::DateSystem::D1904, 0.0)] {
+        let mut t = T::new();
+        t.wb.date_system = sys;
+        t.set("A1", "'1/1/1904");
+        t.set("B1", "=A1+0");
+        t.set("C1", "=VALUE(A1)");
+        t.set("D1", "=-A1");
+        t.set("E1", "=DATEVALUE(A1)");
+        t.set("F1", "=NUMBERVALUE(A1)");
+        assert_eq!(t.get("A1"), Value::from("1/1/1904"));
+        assert_eq!(t.num("B1"), serial, "{sys:?}");
+        assert_eq!(t.num("C1"), serial, "{sys:?}");
+        assert_eq!(t.num("D1"), -serial, "{sys:?}");
+        assert_eq!(t.num("E1"), serial, "{sys:?}");
+        assert_eq!(t.num("F1"), serial, "{sys:?}");
+    }
+}
+
+#[test]
 fn operators() {
     let mut t = T::new();
     t.set("A1", "=\"a\"&1&TRUE");
@@ -361,6 +386,8 @@ fn arrays_do_not_spill_in_tables() {
         last_col: false,
         filter_button: false,
         filter: vec![],
+        table_type: None,
+        connection_id: None,
     });
     t.set("C4", "=SEQUENCE(2)");
     t.set("E1", "=SEQUENCE(4)");
@@ -418,6 +445,22 @@ fn references_functions() {
     assert_eq!(t.num("B3"), 50.0);
     t.set("B4", "=INDIRECT(\"A\"&4)");
     assert_eq!(t.num("B4"), 40.0);
+    // With a1 = FALSE the text must be R1C1: A1-style text is #REF!, not read as A1.
+    t.set("C1", "=INDIRECT(\"R3C1\",FALSE)");
+    assert_eq!(t.num("C1"), 30.0);
+    t.set("C2", "=INDIRECT(\"A3\",FALSE)");
+    assert_eq!(t.get("C2"), Value::Error(CellError::Ref));
+    // Defined names don't depend on the reference style.
+    t.wb.names.push(gridcraft_model::DefinedName {
+        name: "Third".into(),
+        scope: None,
+        formula: "Sheet1!$A$3".into(),
+        comment: String::new(),
+        hidden: false,
+    });
+    t.calc.rebuild(&t.wb);
+    t.set("C3", "=INDIRECT(\"Third\",FALSE)");
+    assert_eq!(t.num("C3"), 30.0);
     t.set("B5", "=SUM(A1:INDEX(A1:A4,3))");
     assert_eq!(t.num("B5"), 60.0);
     t.set("B6", "=SUM(A:A)");
@@ -545,6 +588,27 @@ fn let_lambda() {
     assert_eq!(t.num("A3"), 6.0);
     t.set("A4", "=SUM(MAP({1,2,3},LAMBDA(v,v*v)))");
     assert_eq!(t.num("A4"), 14.0);
+}
+
+#[test]
+fn functions_given_by_name() {
+    let mut t = T::new();
+    for (i, (k, v)) in [("a", 1), ("b", -2), ("a", 3)].iter().enumerate() {
+        t.set(&format!("A{}", i + 1), k);
+        t.set(&format!("B{}", i + 1), &v.to_string());
+    }
+    t.set("D1", "=BYROW(B1:B3,SUM)");
+    assert_eq!(t.num("D2"), -2.0);
+    t.set("E1", "=MAP(B1:B3,ABS)");
+    assert_eq!(t.num("E2"), 2.0);
+    t.set("F1", "=REDUCE(0,B1:B3,SUM)");
+    assert_eq!(t.num("F1"), 2.0);
+    t.set("G1", "=GROUPBY(A1:A3,B1:B3,SUM,0,0)");
+    assert_eq!(t.get("G1"), Value::from("a"));
+    assert_eq!(t.num("H1"), 4.0);
+    // A LET variable of that name is still the variable.
+    t.set("J1", "=LET(ABS,LAMBDA(x,x*10),SUM(MAP(B1:B3,ABS)))");
+    assert_eq!(t.num("J1"), 20.0);
 }
 
 #[test]
@@ -693,7 +757,14 @@ fn subtotal_skips_filtered_rows() {
         range: gridcraft_core::RangeRef::parse("A1:A7").unwrap(),
         header_row: true,
         totals_row: false,
-        columns: vec![gridcraft_model::TableColumn { name: "Amount".into(), totals: Default::default(), totals_label: None, formula: None }],
+        columns: vec![gridcraft_model::TableColumn {
+            name: "Amount".into(),
+            totals: Default::default(),
+            totals_label: None,
+            formula: None,
+            unique_name: None,
+            xml: None,
+        }],
         style: String::new(),
         banded_rows: false,
         banded_cols: false,
@@ -701,6 +772,8 @@ fn subtotal_skips_filtered_rows() {
         last_col: false,
         filter_button: true,
         filter: crit(),
+        table_type: None,
+        connection_id: None,
     });
     sh.autofilter = Some(AutoFilter { range: gridcraft_core::RangeRef::parse("C1:C7").unwrap(), criteria: crit() });
     // Rows 3 and 5 are filtered out; row 9 (outside both filters) is hidden by hand.
@@ -1096,6 +1169,73 @@ fn trim_references() {
     // Nothing but blanks.
     t.set("K20", "=SUM(Q1:.Q9)");
     assert_eq!(t.get("K20"), Value::Error(CellError::Calc));
+}
+
+#[test]
+fn cell_width_is_the_column_width_dialog_value_rounded() {
+    // #735: Excel 365 values. Widths in px as `home.columnWidth {"chars"}` sets them
+    // (chars * 7 + 5): 10.71 -> 80, 12 -> 89, 10.57 -> 79, 2.86 -> 25; B keeps the default 8.43 (64).
+    let mut t = T::new();
+    let sh = t.wb.sheet_mut(0).unwrap();
+    for (col, px) in [(2, 80.0), (3, 89.0), (4, 79.0), (5, 25.0)] {
+        sh.cols.insert(col, gridcraft_model::LineInfo { size: Some(px), ..Default::default() });
+    }
+    for (at, col) in [("H1", "B"), ("H2", "C"), ("H3", "D"), ("H4", "E"), ("H5", "F")] {
+        t.set(at, &format!("=CELL(\"width\",{col}1)"));
+    }
+    assert_eq!([t.num("H1"), t.num("H2"), t.num("H3"), t.num("H4"), t.num("H5")], [8.0, 11.0, 12.0, 11.0, 3.0]);
+}
+
+/// Expected results are Excel's, from Apache POI's `DGet.xls` (rows 46-49): a criteria cell holding
+/// a formula under a label that names no field is evaluated for every record.
+#[test]
+fn database_functions_with_computed_criteria() {
+    let mut t = T::new();
+    let db = [
+        ["name", "age", "size", "headgear", "glasses"],
+        ["Huey", "6", "45", "cap~", "FALSE"],
+        ["Dewey", "7", "fourty-six", "cap?", "FALSE"],
+        ["Louie", "8", "47", "cap*", "FALSE"],
+        ["Donald", "32", "70", "sailor's hat", "FALSE"],
+        ["Scrooge", "62", "65", "top hat", "TRUE"],
+    ];
+    for (r, row) in db.iter().enumerate() {
+        for (c, v) in row.iter().enumerate() {
+            t.set(&format!("{}{}", ["F", "G", "H", "I", "J"][c], r + 2), v);
+        }
+    }
+    t.set("G45", "7");
+    let cases = [
+        // Relative references are to the first record's row and move to each record's row;
+        // `$G$45` stays put.
+        ("G", "=G2<$G$45", "Dewey"),
+        // Column labels stand for the record's fields.
+        ("H", "=glasses=TRUE", "Scrooge"),
+        ("I", "=age<7", "Huey"),
+        ("J", "=size/7=10", "Donald"),
+        // An absolute reference to a cell that is not the first record's.
+        ("K", "=H3=$L$1", "Donald"),
+    ];
+    t.set("L1", "70");
+    for (i, (col, formula, _)) in cases.iter().enumerate() {
+        t.set(&format!("{col}46"), "Formula");
+        t.set(&format!("{col}47"), formula);
+        t.set(&format!("B{}", 46 + i), &format!("=DGET($F$2:$J$7,\"name\",{col}46:{col}47)"));
+    }
+    for (i, (_, formula, want)) in cases.iter().enumerate() {
+        assert_eq!(t.get(&format!("B{}", 46 + i)), Value::text(*want), "{formula}");
+    }
+    // Every database function takes them, ANDed with the other criteria of their row.
+    // Text sorts after numbers, so Dewey's "fourty-six" is > 40.
+    t.set("L47", "=size>40");
+    t.set("M46", "age");
+    t.set("M47", ">6");
+    t.set("B51", "=DCOUNT($F$2:$J$7,\"age\",I46:I47)");
+    t.set("B52", "=DSUM($F$2:$J$7,\"age\",G46:G47)");
+    t.set("B53", "=DCOUNTA($F$2:$J$7,\"name\",L46:M47)");
+    assert_eq!(t.num("B51"), 1.0);
+    assert_eq!(t.num("B52"), 7.0);
+    assert_eq!(t.num("B53"), 4.0);
 }
 
 #[test]

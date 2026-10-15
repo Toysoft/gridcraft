@@ -89,15 +89,19 @@ fn word_is_cell(w: &str) -> Option<Anchor> {
     Some(Anchor { row, col, row_abs, col_abs })
 }
 
-/// `_xlfn.XLOOKUP` → `XLOOKUP`.
+/// `_xlfn.XLOOKUP` → `XLOOKUP`. `_xludf.` is kept (`_xludf.SUM`): it marks a user-defined
+/// function, never the built-in of the same name, and files need it back.
 pub fn normalize_function_name(name: &str) -> String {
     let u = name.to_ascii_uppercase();
-    for p in ["_XLFN._XLWS.", "_XLFN.", "_XLWS.", "_XLUDF."] {
+    for p in ["_XLFN._XLWS.", "_XLFN.", "_XLWS."] {
         if let Some(r) = u.strip_prefix(p) {
             return r.to_string();
         }
     }
-    u
+    match u.strip_prefix("_XLUDF.") {
+        Some(r) => format!("_xludf.{r}"),
+        None => u,
+    }
 }
 
 impl Parser {
@@ -358,6 +362,10 @@ impl Parser {
         if w.chars().next().is_some_and(|c| c.is_ascii_digit()) {
             return Err(self.err(format!("unexpected `{w}`")));
         }
+        // A function passed by name is saved as `_xleta.SUM`.
+        if let Some(f) = w.get(..7).filter(|p| p.eq_ignore_ascii_case("_xleta.")).and_then(|_| w.get(7..)) {
+            return Ok(Expr::Name(f.to_ascii_uppercase()));
+        }
         Ok(Expr::Name(w.to_string()))
     }
 
@@ -418,6 +426,9 @@ fn combine(op: BinOp, lhs: Expr, rhs: Expr) -> Expr {
 pub fn parse_struct(table: &str, body: &str) -> Result<StructRef, String> {
     let mut specifiers = Vec::new();
     let mut cols: Vec<String> = Vec::new();
+    // Spaces at the edges of a column name are part of it (`Table1[Qty ]` names `Qty `), so the
+    // untrimmed body is what a lone column is read from.
+    let raw = body;
     let body = body.trim();
     let unescape = |s: &str| {
         let mut out = String::new();
@@ -469,7 +480,7 @@ pub fn parse_struct(table: &str, body: &str) -> Result<StructRef, String> {
         } else if let Some(i) = item(body) {
             specifiers.push(i);
         } else if !body.is_empty() {
-            cols.push(column(body)?);
+            cols.push(column(raw)?);
         }
     } else {
         // [[#Headers],[Col1]:[Col3]], [[#This Row],[Col 1]] or [[#This Row],Col1]

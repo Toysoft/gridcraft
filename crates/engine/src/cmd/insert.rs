@@ -153,9 +153,18 @@ pub fn specs() -> Vec<CommandSpec> {
             "Link",
             ["Insert", "Links"],
             Some("Cmd+K"),
-            "{cell?, target: \"https://…\" | \"Sheet2!A1\" | \"mailto:…\", text?, tooltip?, remove?: bool}",
+            "{cell?, target: \"https://…\" | \"Book.xlsx\" | \"Sheet2!A1\" | \"mailto:…\", text?, tooltip?, remove?: bool}",
             has_doc,
             insert_link
+        ),
+        cmd!(
+            "link.open",
+            "Open Hyperlink",
+            [],
+            None,
+            "{url?: \"https://…\" | \"mailto:…\" | \"Sheet2!A1\", cell?} (default: the cell's link); only http, https and mailto are opened, any other scheme is an error; the UI asks before opening",
+            has_doc,
+            open_link
         ),
         cmd!("review.newNote", "New Note", ["Review", "Notes"], Some("Shift+F2"), "{cell?, text, author?}", has_doc, |s, p| comment(s, p, false)),
         cmd!("review.newComment", "New Comment", ["Review", "Comments"], Some("Cmd+Shift+F2"), "{cell?, text, author?}", has_doc, |s, p| comment(
@@ -310,7 +319,10 @@ fn insert_table(s: &mut Session, p: &Json) -> Result<Json> {
             range: r,
             header_row: true,
             totals_row: false,
-            columns: names.into_iter().map(|n| TableColumn { name: n, totals: TotalsFn::None, totals_label: None, formula: None }).collect(),
+            columns: names
+                .into_iter()
+                .map(|n| TableColumn { name: n, totals: TotalsFn::None, totals_label: None, formula: None, unique_name: None, xml: None })
+                .collect(),
             style,
             banded_rows: true,
             banded_cols: false,
@@ -318,6 +330,8 @@ fn insert_table(s: &mut Session, p: &Json) -> Result<Json> {
             last_col: false,
             filter_button: true,
             filter: vec![],
+            table_type: None,
+            connection_id: None,
         });
         cx.structural = true;
         Ok(json!({"table": name, "range": r.a1()}))
@@ -1166,6 +1180,7 @@ fn insert_link(s: &mut Session, p: &Json) -> Result<Json> {
     };
     let text = str_param(p, "text").map(str::to_string);
     let tooltip = str_param(p, "tooltip").map(str::to_string);
+    let external = links_outside(&s.doc()?.wb, sheet, &target);
     edit(s, |cx| {
         let link_style = cx.wb.styles.derive(cx.wb.sheet(sheet).map(|sh| sh.style_id(at)).unwrap_or_default(), |st| {
             st.font.color = Color::Theme(10, 0);
@@ -1177,10 +1192,53 @@ fn insert_link(s: &mut Session, p: &Json) -> Result<Json> {
         } else {
             sh.set_style(at, link_style);
         }
-        sh.hyperlinks.insert(at, Hyperlink { target: target.clone(), tooltip: tooltip.clone() });
+        sh.hyperlinks.insert(at, Hyperlink { target: target.clone(), tooltip: tooltip.clone(), external });
         cx.touch(sheet, at);
         Ok(Json::Null)
     })
+}
+
+/// Follows a link: a reference selects it, an `http`/`https`/`mailto` address is handed to the
+/// host (`UiRequest::OpenUrl`); anything else is refused ([`crate::links::classify`]). Opens no
+/// dialog; the interactive click asks for confirmation first, in the UI.
+fn open_link(s: &mut Session, p: &Json) -> Result<Json> {
+    let target = match str_param(p, "url").or_else(|| str_param(p, "target")) {
+        Some(t) => t.to_string(),
+        None => {
+            let sheet = target_sheet(s, p)?;
+            let at = cell_param_on(s, p, "cell", sheet)?.unwrap_or(s.doc()?.selection.active);
+            let Some(h) = s.doc()?.wb.sheet(sheet).and_then(|sh| sh.hyperlinks.get(&at)) else {
+                return Err(EngineError::Other("There's no hyperlink in this cell.".into()));
+            };
+            h.target.clone()
+        }
+    };
+    match crate::links::classify(&target) {
+        crate::links::LinkKind::Internal(r) => super::edit::go_to(s, &json!({"reference": r.trim_start_matches('#')})),
+        crate::links::LinkKind::External(u) => {
+            s.ui_requests.push(crate::UiRequest::OpenUrl(u.clone()));
+            Ok(json!({"opened": u}))
+        }
+        crate::links::LinkKind::Refused(why) => Err(EngineError::Other(why)),
+    }
+}
+
+/// Sorts a link target as the two pages of Excel's Insert Hyperlink dialog do: "Place in This
+/// Document" is a sheet reference, a defined name or `#…`; anything else ("Existing File or Web
+/// Page") is outside the workbook and saved as a relationship.
+fn links_outside(wb: &Workbook, sheet: usize, target: &str) -> bool {
+    let t = target.trim();
+    if t.starts_with('#') || wb.name(t, sheet).is_some() || wb.table(t).is_some() {
+        return false;
+    }
+    let (on, body) = split_sheet(t);
+    // Sheet names can't hold `: \ / ? * [ ]`, so `https://…!A1` or `C:\…!A1` is no sheet reference,
+    // and `Book.xlsx#Sheet1!A1` is a place in another file unless a sheet has that name.
+    let on_sheet = on.is_none_or(|name| {
+        wb.sheets.iter().any(|s| s.name.eq_ignore_ascii_case(&name))
+            || (!name.is_empty() && !name.contains([':', '\\', '/', '?', '*', '[', ']', '#']))
+    });
+    !(on_sheet && RangeRef::parse(body).is_some())
 }
 
 fn comment(s: &mut Session, p: &Json, threaded: bool) -> Result<Json> {

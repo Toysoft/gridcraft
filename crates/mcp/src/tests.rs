@@ -202,6 +202,9 @@ fn basic_tools() {
     assert!(f.as_array().unwrap().iter().any(|x| x["name"] == "VLOOKUP"));
     assert_eq!(ok(&mut s, "evaluate_formula", json!({"formula": "SUM(1,2,3)"}))["result"], json!(6.0));
     ok(&mut s, "set_cell", json!({"cell": "A1", "input": "5"}));
+    // #697: a number for `input` is entered, not rejected or cleared.
+    ok(&mut s, "set_cell", json!({"cell": "B1", "input": 42.5}));
+    assert_eq!(ok(&mut s, "get_cell", json!({"cell": "B1"}))["value"], json!(42.5));
     ok(&mut s, "execute_command", json!({"command": "cell.set", "params": {"cell": "A2", "input": "=A1*2"}}));
     assert_eq!(ok(&mut s, "get_cell", json!({"cell": "A2"}))["value"], json!(10.0));
     assert_eq!(ok(&mut s, "evaluate_formula", json!({"formula": "=A1+A2", "cell": "C1"}))["result"], json!(15.0));

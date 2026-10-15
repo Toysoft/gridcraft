@@ -121,6 +121,27 @@ fn copying_multiple_areas_copies_lined_up_areas_and_explains_the_rest() {
 }
 
 #[test]
+fn enter_pastes_the_copied_cells_and_ends_copy_mode() {
+    // #845: with the marching ants showing, Enter pastes into the selection and cancels the copy.
+    let mut h = harness(Services::default());
+    h.input_mut().events.push(Event::Copy);
+    h.step();
+    h.state_mut().run("selection.set", json!({"cell": "D5"})).unwrap();
+    h.key_press(egui::Key::Enter);
+    h.run_steps(2);
+    let value = |r, c| h.state().session.active().and_then(|d| d.wb.active().map(|s| s.value(gridcraft_engine::core::CellRef::new(r, c))));
+    assert_eq!(value(4, 3), Some(gridcraft_engine::core::Value::text("Name")));
+    assert_eq!(value(5, 4), Some(gridcraft_engine::core::Value::number(42.0)));
+    assert!(h.state().session.clipboard.is_none(), "the marching ants are gone");
+    assert_eq!(h.state().session.active().map(|d| d.selection.active.a1()), Some("D5".to_string()), "Enter does not also move down");
+
+    // Copy mode is over: the next Enter just moves.
+    h.key_press(egui::Key::Enter);
+    h.run_steps(2);
+    assert_eq!(h.state().session.active().map(|d| d.selection.active.a1()), Some("D6".to_string()));
+}
+
+#[test]
 fn clicking_the_ribbon_paste_button_or_its_menu_does_not_freeze() {
     // #273: a click on Paste deadlocked the UI thread (a click-state query inside the egui context
     // lock), so the frame never returned. Run the clicks on a worker and fail on a timeout instead of
