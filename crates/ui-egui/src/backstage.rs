@@ -825,7 +825,11 @@ fn paint_page(p: &egui::Painter, rect: Rect, paper_w: f32, page: &Json, wb: &gri
                 break;
             }
             let cell = gridcraft_engine::core::CellRef::new(row, col);
-            let text = gridcraft_engine::display::cell_text(wb, sh, cell);
+            // The preview shows what the print will: values as the interface shows them.
+            let text = wb
+                .sheet_index(&sh.name)
+                .map(|si| gridcraft_engine::display::cell_text_in(wb, si, cell, &crate::i18n::display_locale(p.ctx())))
+                .unwrap_or_default();
             if !text.is_empty() {
                 let numeric = sh.value(cell).as_f64().is_some();
                 // Text runs on over empty neighbours, as on the sheet; numbers stay in their cell.
@@ -967,6 +971,28 @@ fn options(app: &mut SheetApp, ui: &mut Ui) {
     if ui.checkbox(&mut autocomplete, lang.tr("Enable AutoComplete for cell values")).changed() {
         app.run_or_alert("options.autoComplete", json!({"on": autocomplete}));
     }
+    ui.add_space(18.0);
+    // Advanced › Editing options: the separators numbers are shown and typed with.
+    section(ui, lang, "Options|Advanced");
+    let mut use_system = app.ui.separators.use_system;
+    if ui.checkbox(&mut use_system, lang.tr("Use system separators")).changed() {
+        app.run_or_alert("options.separators", json!({"useSystem": use_system}));
+    }
+    let shown = crate::regional::number_locale(app.ui.language, &app.ui.separators);
+    egui::Grid::new("backstage_options_separators").num_columns(2).spacing(vec2(18.0, 8.0)).show(ui, |ui| {
+        for (key, label, current) in [("decimal", "Decimal separator:", shown.decimal), ("thousands", "Thousands separator:", shown.thousands)] {
+            ui.label(lang.tr(label));
+            // The field holds the separator in effect; a character typed into it replaces it.
+            let mut text = current.to_string();
+            let field = egui::TextEdit::singleline(&mut text).desired_width(28.0);
+            if ui.add_enabled(!use_system, field).changed()
+                && let Some(typed) = text.chars().find(|c| *c != current)
+            {
+                app.run_or_alert("options.separators", json!({"useSystem": false, key: typed.to_string()}));
+            }
+            ui.end_row();
+        }
+    });
     ui.add_space(18.0);
     section(ui, lang, "Options|Save");
     let mut autosave = app.grid.autosave();

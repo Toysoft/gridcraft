@@ -27,6 +27,7 @@ pub mod panes;
 pub mod paper_view;
 pub mod pivot_pane;
 pub mod printing;
+pub mod regional;
 pub mod ribbon;
 pub mod selection_glide;
 pub mod tabs;
@@ -76,6 +77,10 @@ pub struct UiState {
     /// [`INTERFACE_SCALE_MIN`]..=[`INTERFACE_SCALE_MAX`]; a malformed saved value reads as 100.
     #[serde(deserialize_with = "lenient_interface_scale")]
     pub interface_scale: u16,
+    /// File ▸ Options ▸ Advanced ▸ Use system separators, and the separators used without it
+    /// (see [`regional`]).
+    #[serde(deserialize_with = "regional::lenient")]
+    pub separators: regional::Separators,
 }
 
 pub const INTERFACE_SCALE_MIN: u16 = 75;
@@ -107,6 +112,7 @@ impl Default for UiState {
             keytip_invoke: None,
             language: i18n::Language::En,
             interface_scale: 100,
+            separators: regional::Separators::default(),
         }
     }
 }
@@ -266,6 +272,12 @@ pub struct SheetApp {
 }
 
 impl SheetApp {
+    /// How this interface shows values: the language's formula syntax and the regional number
+    /// format (with File ▸ Options ▸ Advanced separators).
+    pub fn display_locale(&self) -> gridcraft_engine::display::DisplayLocale {
+        regional::display_locale(self.ui.language, &self.ui.separators)
+    }
+
     pub fn new(session: Session, services: Services) -> SheetApp {
         SheetApp {
             session,
@@ -380,6 +392,8 @@ impl SheetApp {
         if let Some(r) = self.run_ui_command(id, &params) {
             return r;
         }
+        // What the engine prints and writes for people (PDF, CSV) looks as the interface does.
+        self.session.display_locale = self.display_locale();
         let r = self.session.run(id, params);
         self.after_engine();
         // The new chart is selected, as after inserting any object, so Delete removes it, not its data.
@@ -608,6 +622,7 @@ impl SheetApp {
                 self.ui.autocomplete = p.get("on").and_then(Json::as_bool).unwrap_or(!self.ui.autocomplete);
                 Ok(json!({"on": self.ui.autocomplete}))
             }
+            "options.separators" => regional::command(self.ui.language, &mut self.ui.separators, p),
             "view.interfaceScale" => {
                 // `{"percent": 125}` or `{"percent": "auto"}`; out-of-range values are clamped.
                 let percent = match p.get("percent") {
@@ -882,7 +897,7 @@ impl SheetApp {
         } else {
             match sh.cell(at) {
                 Some(c) if c.formula.is_some() => formula_locale::display(&c.input_text(), locale, &d.wb, d.wb.active_sheet),
-                _ => gridcraft_engine::display::edit_text(&d.wb, sh, at),
+                _ => gridcraft_engine::display::edit_text_in(&d.wb, sh, at, &self.display_locale()),
             }
         };
         let (text, replace) = match text {
@@ -906,16 +921,19 @@ impl SheetApp {
             Some(full) if full.to_lowercase().starts_with(&ed.text.to_lowercase()) => full.clone(),
             _ => ed.text.clone(),
         };
-        let text = match self.session.active().map(|d| formula_locale::canonical(&text, ed.locale, &d.wb, ed.sheet, ed.cell)) {
-            Some(Ok(text)) => text,
+        // The editor's formula language (fixed when editing began) and the regional number format.
+        let loc = gridcraft_engine::display::DisplayLocale { formula: ed.locale, ..self.display_locale() };
+        let entry = match self.session.active().map(|d| formula_locale::canonical(&text, &loc, &d.wb, ed.sheet, ed.cell)) {
+            Some(Ok(entry)) => entry,
             Some(Err(error)) => {
                 self.message = Some(("GridCraft".into(), error.to_string()));
                 self.editor = Some(ed);
                 self.session.mode = gridcraft_engine::Mode::Edit;
                 return false;
             }
-            None => text,
+            None => formula_locale::Entry { text, auto_format: None },
         };
+        let text = entry.text;
         // Data validation.
         if let Some(d) = self.session.active()
             && let Some((dv, msg)) = gridcraft_engine::cmd::data::check_validation(&d.wb, ed.sheet, ed.cell, &text)
@@ -929,11 +947,12 @@ impl SheetApp {
             }
             self.toast = Some((msg, now_ms()));
         }
-        let r = if fill_selection {
-            self.session.run("range.fill", json!({"input": text}))
-        } else {
-            self.session.run("cell.set", json!({"cell": ed.cell.a1(), "input": text, "array": array}))
-        };
+        let mut params = if fill_selection { json!({"input": text}) } else { json!({"cell": ed.cell.a1(), "input": text, "array": array}) };
+        if let Some(code) = entry.auto_format {
+            params["autoFormat"] = json!(code);
+        }
+        self.session.display_locale = self.display_locale();
+        let r = self.session.run(if fill_selection { "range.fill" } else { "cell.set" }, params);
         match r {
             Ok(_) => {
                 if dr != 0 || dc != 0 {
@@ -1100,8 +1119,10 @@ impl SheetApp {
         }
         let t0 = now_ms();
         text_box::before_ui(self, &ctx);
-        // The language the widgets translate with this frame (see `i18n::current`).
+        // The language the widgets translate with this frame (see `i18n::current`), and how
+        // values are shown in it (see `i18n::display_locale`).
         i18n::set_current(&ctx, self.ui.language);
+        i18n::set_display_locale(&ctx, self.display_locale());
         let t = theme::Tokens::get(&ctx);
         if self.backstage.is_none() {
             self.ribbon_keys(&ctx);

@@ -256,6 +256,11 @@ pub struct Session {
     /// Review › Notes › Show All Notes: every note is displayed. An application display setting
     /// (like Excel's comment indicator option), so it's not saved in the file.
     pub show_all_notes: bool,
+    /// How values are shown to people in what this session prints and writes for them: PDF and
+    /// print, and Save As CSV/Text (its separator and its numbers). The interface sets it from its
+    /// language and the separators option; headless sessions (CLI, MCP) stay canonical. Never
+    /// saved in a workbook.
+    pub display_locale: display::DisplayLocale,
 }
 
 impl Session {

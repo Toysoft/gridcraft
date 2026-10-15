@@ -272,9 +272,22 @@ fn unbracketed_this_row_column() {
         "Sales[[#All],[A]]junk",
         "Sales[[A],[B],[C]]",
         "Sales[@[A]x]",
+        "Sales[@[#Data],[A]:[B]]",
+        "Sales[@[A]:[B]x]",
     ] {
         assert!(parse(bad).is_err(), "{bad} should fail");
     }
+}
+
+#[test]
+fn this_row_of_a_column_range() {
+    // Excel shows `[[#This Row],[A]:[B]]` as `[@[A]:[B]]` (observed) and files keep the long form.
+    let Expr::Struct(s) = parse("Sales[@[Unit Price]:[Qty]]").unwrap() else { panic!() };
+    assert_eq!(s.specifiers, [StructItem::ThisRow]);
+    assert_eq!((s.col_start.as_deref(), s.col_end.as_deref()), (Some("Unit Price"), Some("Qty")));
+    assert_eq!(rt("Sales[[#This Row],[Unit Price]:[Qty]]"), "Sales[@[Unit Price]:[Qty]]");
+    assert_eq!(rt("SUM(Sales[@[A]:[B]])"), "SUM(Sales[@[A]:[B]])");
+    assert_eq!(crate::printer::struct_ref_file(&s), "Sales[[#This Row],[Unit Price]:[Qty]]");
 }
 
 #[test]

@@ -1128,7 +1128,11 @@ fn number_combo(app: &mut SheetApp, ui: &mut Ui, st: &Style) {
         .iter()
         .map(|n| {
             let code = gridcraft_engine::cmd::format::format_code_for(n);
-            let preview = app.session.active().map(|d| gridcraft_engine::display::format(&sample, code, &d.wb).text).unwrap_or_default();
+            let preview = app
+                .session
+                .active()
+                .map(|d| gridcraft_engine::display::format_in(&sample, code, &d.wb, &app.display_locale()).text)
+                .unwrap_or_default();
             (*n, format!("{:<12}   {preview}", lang.tr(n)))
         })
         .chain(std::iter::once(("__more", format!("{:>12}", lang.tr("More Number Formats…")))))
@@ -2467,7 +2471,7 @@ pub fn shortcut(app: &mut SheetApp, key: Key, m: Modifiers) {
                 .active()
                 .map(|d| {
                     let today = gridcraft_engine::core::date::serial_in_system(d.wb.date_system, gridcraft_engine::calc::now_serial()).floor();
-                    gridcraft_engine::display::format(&gridcraft_engine::core::Value::Number(today), "m/d/yyyy", &d.wb).text
+                    gridcraft_engine::display::format_in(&gridcraft_engine::core::Value::Number(today), "m/d/yyyy", &d.wb, &app.display_locale()).text
                 })
                 .unwrap_or_default();
             app.begin_edit(Some(text), false);

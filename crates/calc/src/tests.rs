@@ -1266,3 +1266,16 @@ fn offset_extreme_arguments_return_ref() {
         assert_eq!(crate::evaluate(&wb, 0, c("D1"), formula), Value::Number(expected), "{formula}");
     }
 }
+
+#[test]
+fn formula_language_tables_only_name_functions_the_engine_knows() {
+    // A typo'd canonical name in a language table would turn a valid local name into #NAME?.
+    // Excel's names GridCraft doesn't compute as functions may be listed too: a file's GETPIVOTDATA
+    // shows as PIVOTDATENZUORDNEN in German, a data table's TABLE as MEHRFACHOPERATION.
+    const ALSO_LISTED: [&str; 5] = ["DETECTLANGUAGE", "GETPIVOTDATA", "IMAGE", "TABLE", "TRANSLATE"];
+    for locale in gridcraft_formula::FormulaLocale::ALL {
+        let unknown: Vec<&str> =
+            locale.translations().iter().map(|(en, _)| *en).filter(|en| !crate::eval::is_known_function(en) && !ALSO_LISTED.contains(en)).collect();
+        assert!(unknown.is_empty(), "{locale:?}: {unknown:?}");
+    }
+}

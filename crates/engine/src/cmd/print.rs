@@ -9,6 +9,7 @@
 //! sparklines. Headers and footers support `&L`/`&C`/`&R` sections and the `&P &N &D &T &A &F &Z`
 //! codes.
 
+use crate::display::DisplayLocale;
 use gridcraft_core::{CellRef, MAX_COLS, MAX_ROWS, RangeRef, Value};
 use gridcraft_model::*;
 use gridcraft_pdf::{Font, Page, PdfDoc, Rgb};
@@ -391,9 +392,14 @@ pub struct HfContext {
 
 /// Today's date and the current time as headers and footers show them (`&D`, `&T`).
 pub fn hf_date_time(wb: &Workbook) -> (String, String) {
+    hf_date_time_in(wb, &DisplayLocale::CANONICAL)
+}
+
+/// [`hf_date_time`] in a regional format (the short date: `13.10.2026` in de-DE).
+pub fn hf_date_time_in(wb: &Workbook, loc: &DisplayLocale) -> (String, String) {
     let now = gridcraft_core::date::serial_in_system(wb.date_system, gridcraft_calc::now_serial());
-    let date = crate::display::format(&Value::Number(now.floor()), "m/d/yyyy", wb).text;
-    let time = crate::display::format(&Value::Number(now), "h:mm AM/PM", wb).text;
+    let date = crate::display::format_in(&Value::Number(now.floor()), "m/d/yyyy", wb, loc).text;
+    let time = crate::display::format_in(&Value::Number(now), "h:mm AM/PM", wb, loc).text;
     (date, time)
 }
 
@@ -806,6 +812,8 @@ fn wrap_lines(text: &str, font: Font, size: f32, width: f32) -> Vec<String> {
 /// Everything needed to draw one page block (a run of rows × a run of columns).
 struct Block<'a> {
     wb: &'a Workbook,
+    /// How values are shown: a print shows what the person sees on screen.
+    loc: DisplayLocale,
     si: usize,
     sh: &'a Sheet,
     rows: (u32, u32),
@@ -1060,7 +1068,7 @@ fn draw_text(pg: &mut Page, b: &Block, c: CellRef, l: &Look, rect: (f32, f32, f3
     let indent = st.align.indent as f32 * 9.0 * b.k;
     let avail = (w - 2.0 * pad - indent).max(0.0);
     let code = st.num_fmt.as_str();
-    let formatted = crate::display::format(&v, code, wb);
+    let formatted = crate::display::format_in(&v, code, wb, &b.loc);
     let mut color = formatted.color.map(numfmt_rgb).or_else(|| rgb_of(st.font.color, wb)).unwrap_or([0, 0, 0]);
     if l.cf.as_ref().and_then(|x| x.style.as_ref()).is_some_and(|s| s.font.color != Color::Auto) {
         color = rgb_of(st.font.color, wb).unwrap_or(color);
@@ -1068,15 +1076,15 @@ fn draw_text(pg: &mut Page, b: &Block, c: CellRef, l: &Look, rect: (f32, f32, f3
     let is_num = matches!(v, Value::Number(_));
     let wrap = st.align.wrap;
     let mut text = if sh.show_formulas {
-        crate::display::cell_text(wb, sh, c)
+        crate::display::cell_text_in(wb, b.si, c, &b.loc)
     } else if code == "General"
         && let Value::Number(n) = v
     {
         let digit = gridcraft_pdf::text_width(font, size, "0").max(0.1);
         let max_chars = (avail / digit).floor().max(1.0) as usize;
-        gridcraft_numfmt::format_general_fit(n, max_chars.min(11)).unwrap_or_else(|| "#".repeat(max_chars.min(255)))
+        gridcraft_numfmt::format_general_fit_in(n, max_chars.min(11), &b.loc.number).unwrap_or_else(|| "#".repeat(max_chars.min(255)))
     } else {
-        crate::display::cell_text(wb, sh, c)
+        crate::display::cell_text_in(wb, b.si, c, &b.loc)
     };
     if !wrap {
         text = text.replace(['\n', '\r'], " ");
@@ -1419,7 +1427,18 @@ fn draw_header_footer(pg: &mut Page, lay: &SheetLayout, which: gridcraft_model::
 }
 
 /// Builds a block for rows × cols positioned at (x, y) on the page.
-fn make_block<'a>(wb: &'a Workbook, si: usize, sh: &'a Sheet, rows: (u32, u32), cols: (u32, u32), x: f32, y: f32, lay: &SheetLayout) -> Block<'a> {
+#[allow(clippy::too_many_arguments)]
+fn make_block<'a>(
+    wb: &'a Workbook,
+    si: usize,
+    sh: &'a Sheet,
+    rows: (u32, u32),
+    cols: (u32, u32),
+    x: f32,
+    y: f32,
+    lay: &SheetLayout,
+    loc: DisplayLocale,
+) -> Block<'a> {
     let k = lay.k();
     let mut xs = Vec::with_capacity((cols.1 - cols.0 + 2) as usize);
     let mut acc = x;
@@ -1435,7 +1454,7 @@ fn make_block<'a>(wb: &'a Workbook, si: usize, sh: &'a Sheet, rows: (u32, u32), 
         acc += sh.row_height(r) * k;
         ys.push(acc);
     }
-    Block { wb, si, sh, rows, cols, xs, ys, k, scale: lay.scale }
+    Block { wb, loc, si, sh, rows, cols, xs, ys, k, scale: lay.scale }
 }
 
 /// Segments of a page along one axis: repeated titles (before the band) then the band.
@@ -1456,11 +1475,17 @@ fn seg_size(sh: &Sheet, seg: (u32, u32), rows: bool) -> f32 {
 
 /// Renders laid-out sheets to a PDF.
 pub fn render_pdf(wb: &Workbook, layouts: &[SheetLayout], file: &str, path: &str) -> (Vec<u8>, usize) {
+    render_pdf_in(wb, layouts, file, path, &DisplayLocale::CANONICAL)
+}
+
+/// [`render_pdf`] with values as a person working in `loc` sees them on screen (`1.234,56`,
+/// `13.10.2026`, `WAHR` in German): print and PDF show what the grid shows.
+pub fn render_pdf_in(wb: &Workbook, layouts: &[SheetLayout], file: &str, path: &str, loc: &DisplayLocale) -> (Vec<u8>, usize) {
     let mut doc = PdfDoc::new();
     doc.info.title = if wb.props.title.is_empty() { file.to_string() } else { wb.props.title.clone() };
     doc.info.author = wb.props.author.clone();
     let total: usize = layouts.iter().map(|l| l.pages.len()).sum();
-    let (date, time) = hf_date_time(wb);
+    let (date, time) = hf_date_time_in(wb, loc);
     let mut page_no = 0usize;
     for lay in layouts {
         let Some(sh) = wb.sheet(lay.sheet) else { continue };
@@ -1482,7 +1507,7 @@ pub fn render_pdf(wb: &Workbook, layouts: &[SheetLayout], file: &str, path: &str
             for (rsi, rs) in rsegs.iter().enumerate() {
                 let mut x = ox + lay.heading_w * k;
                 for (csi, cs) in csegs.iter().enumerate() {
-                    let b = make_block(wb, lay.sheet, sh, *rs, *cs, x, y, lay);
+                    let b = make_block(wb, lay.sheet, sh, *rs, *cs, x, y, lay, *loc);
                     draw_block(pg, &b, lay.settings.gridlines, &mut cf);
                     if lay.settings.headings {
                         draw_headings(pg, &b, rsi == 0, csi == 0, (ox, oy), (lay.heading_w * k, lay.heading_h * k));
@@ -1525,7 +1550,7 @@ fn build_pdf(s: &Session, p: &Json, cmd: &str) -> Result<(Vec<u8>, usize)> {
     let d = s.doc()?;
     let lays = layouts(&d.wb, &opts);
     let path = d.path.clone().unwrap_or_default();
-    Ok(render_pdf(&d.wb, &lays, &d.display_title(), &path))
+    Ok(render_pdf_in(&d.wb, &lays, &d.display_title(), &path, &s.display_locale))
 }
 
 pub(crate) fn export_pdf(s: &mut Session, p: &Json) -> Result<Json> {

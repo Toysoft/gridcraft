@@ -133,6 +133,10 @@ fn write_struct_ref(s: &StructRef, at_shorthand: bool) -> String {
                 let _ = write!(out, "[@[{}]]", esc(c));
             }
         }
+        // Excel shows this row of a column range as `[@[Col1]:[Col3]]`.
+        (Some(a), Some(b)) if this_row => {
+            let _ = write!(out, "[@[{}]:[{}]]", esc(a), esc(b));
+        }
         _ => {
             let mut parts: Vec<String> = s.specifiers.iter().map(|i| format!("[{}]", item(i))).collect();
             match (&s.col_start, &s.col_end) {

@@ -108,8 +108,18 @@ impl Language {
         }
     }
 
+    /// The formula language this interface language enters and shows. Japanese, Chinese and
+    /// Korean Excel use English function names; Czech, French and Serbian have no function table
+    /// yet.
     pub fn formula_locale(self) -> gridcraft_engine::formula::FormulaLocale {
-        if self == Self::Es { gridcraft_engine::formula::FormulaLocale::Es } else { gridcraft_engine::formula::FormulaLocale::En }
+        use gridcraft_engine::formula::FormulaLocale;
+        match self {
+            Self::Es => FormulaLocale::Es,
+            Self::De => FormulaLocale::De,
+            Self::PtBr => FormulaLocale::PtBr,
+            Self::Ru => FormulaLocale::Ru,
+            Self::En | Self::Zh | Self::Ja | Self::Ko | Self::Cs | Self::Fr | Self::Sr => FormulaLocale::En,
+        }
     }
 
     /// Translates an interface label; untranslated labels fall back to English.
@@ -171,6 +181,21 @@ pub fn current(ctx: &egui::Context) -> Language {
 /// Sets the language for the current frame; call once per frame before anything is drawn.
 pub fn set_current(ctx: &egui::Context, language: Language) {
     ctx.data_mut(|d| d.insert_temp(lang_key(), language));
+}
+
+fn display_key() -> egui::Id {
+    egui::Id::new("gridcraft.display_locale")
+}
+
+/// How the current frame shows values (regional numbers, the formula language's words);
+/// canonical when unset.
+pub fn display_locale(ctx: &egui::Context) -> gridcraft_engine::display::DisplayLocale {
+    ctx.data(|d| d.get_temp(display_key())).unwrap_or_default()
+}
+
+/// Sets [`display_locale`] for the current frame, next to [`set_current`].
+pub fn set_display_locale(ctx: &egui::Context, locale: gridcraft_engine::display::DisplayLocale) {
+    ctx.data_mut(|d| d.insert_temp(display_key(), locale));
 }
 
 /// English label → Japanese. Keys are the exact interface strings (command ids, file names and

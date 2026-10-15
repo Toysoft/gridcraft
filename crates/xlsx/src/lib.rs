@@ -147,11 +147,23 @@ pub struct CsvOptions {
     pub date_system: DateSystem,
     /// Interpret fields like typed input (numbers, dates, booleans…); otherwise keep text.
     pub parse_values: bool,
+    /// The regional format fields are read in (`1,5`, `13.10.2026` in de-DE) and the formula
+    /// language whose booleans and error values they may hold (`WAHR`, `#NV`). A file whose fields
+    /// are separated by commas is read in en-US whatever these say: commas there mean en-US style.
+    pub number_locale: gridcraft_core::NumberLocale,
+    pub formula_locale: gridcraft_formula::FormulaLocale,
 }
 
 impl Default for CsvOptions {
     fn default() -> Self {
-        CsvOptions { delimiter: b',', quote: b'"', date_system: DateSystem::D1900, parse_values: true }
+        CsvOptions {
+            delimiter: b',',
+            quote: b'"',
+            date_system: DateSystem::D1900,
+            parse_values: true,
+            number_locale: gridcraft_core::NumberLocale::EN_US,
+            formula_locale: gridcraft_formula::FormulaLocale::En,
+        }
     }
 }
 

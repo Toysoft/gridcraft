@@ -78,6 +78,10 @@ fn delimiter_sniffing() {
     assert_eq!(sniff_delimiter("alpha;beta\r\ngamma\r\n", '"'), b',');
     assert_eq!(sniff_delimiter("alpha\tbeta\r\ngamma\r\n", '"'), b',');
     assert_eq!(sniff_delimiter("a;b\r\n\r\nc;d\r\n", '"'), b';');
+    // Decimal commas outnumber the separators; a reader using decimal commas prefers `;`.
+    assert_eq!(sniff_delimiter("1,5;2,25\r\n", '"'), b',');
+    assert_eq!(crate::csv::sniff_delimiter_preferring("1,5;2,25\r\n", '"', Some(b';')), b';');
+    assert_eq!(crate::csv::sniff_delimiter_preferring("1,5\r\n2,5\r\n", '"', Some(b';')), b',');
     let wb = read_csv(b"x;y\n1,5;2", &CsvOptions { delimiter: 0, ..Default::default() }).unwrap();
     assert_eq!(v(&wb, 1, 1), Value::Number(2.0));
     // The workbook remembers the separator it was read with, sniffed or given.

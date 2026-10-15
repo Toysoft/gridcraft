@@ -521,6 +521,13 @@ fn fuzz_no_panic() {
                 assert!(r.text.is_char_boundary(pos), "{code:?} {v}");
             }
             let _ = format_value(&Value::Number(v), &fmt, DateSystem::D1904);
+            // German drawing (multi-byte separators and names) keeps the fill position valid.
+            for loc in [NumberLocale::DE_DE, NumberLocale::DE_DE.with_separators('·', '\u{202f}')] {
+                let r = format_value_in(&Value::Number(v), &fmt, S, &loc);
+                if let Some((_, pos)) = r.fill {
+                    assert!(r.text.is_char_boundary(pos), "{code:?} {v}");
+                }
+            }
             let _ = text_function(&Value::Number(v), &code, S);
         }
         let _ = format_value(&Value::from("text"), &fmt, S);
@@ -637,7 +644,7 @@ fn text_uncached(v: &Value, code: &str, sys: DateSystem) -> Result<String, CellE
     if !n.is_finite() {
         return Err(CellError::Num);
     }
-    let (f, overflow) = fmt.format_number(n, sys);
+    let (f, overflow) = fmt.format_number(n, sys, &NumberLocale::EN_US);
     if overflow { Err(CellError::Value) } else { Ok(f.text) }
 }
 
@@ -863,4 +870,119 @@ fn closed_brackets_still_hold_their_semicolons() {
     assert_eq!(parse::parse_sections("[unknown;x]0;0").len(), 2);
     assert_eq!(f("0\\[0", 5.0), "0[5");
     assert_eq!(f("\"[\"0;0", 5.0), "[5");
+}
+
+/// What Excel 365 shows with the de-DE regional format, observed through its automation
+/// interface on 2026-10-13 (value through the canonical code → cell text).
+#[test]
+fn german_regional_format_draws_as_excel_does() {
+    let de = NumberLocale::DE_DE;
+    let g = |code: &str, n: f64| format_value_in(&Value::Number(n), &NumberFormat::parse(code), S, &de).text;
+    let date = 46_308.604_166_666_7; // 2026-10-13 14:30
+    for (code, n, shown) in [
+        ("General", 1234.56, "1234,56"),
+        ("General", -1234.56, "-1234,56"),
+        ("General", 0.5, "0,5"),
+        ("General", 1234567.891, "1234567,891"),
+        ("General", 1.234_567_890_123_45e15, "1,23457E+15"),
+        ("General", 0.000012345, "1,2345E-05"),
+        ("0.00", 1234.56, "1234,56"),
+        ("#,##0.00", 1234.56, "1.234,56"),
+        ("#,##0.00", -1234.56, "-1.234,56"),
+        ("#,##0.00", 1234567.891, "1.234.567,89"),
+        ("#,##0", 1234.56, "1.235"),
+        ("#,##0", 46308.604, "46.309"),
+        ("0.00E+00", 1234.56, "1,23E+03"),
+        ("0.00E+00", 0.5, "5,00E-01"),
+        ("0.0%", 1234.56, "123456,0%"),
+        ("# ?/?", 1234.56, "1234 5/9"),
+        ("#,##0.00 \"€\"", 1234.56, "1.234,56 €"),
+        ("#,##0.00;[Red]-#,##0.00", -1234.56, "-1.234,56"),
+        ("#,##0.000,", 1234567.891, "1.234,568"),
+        ("0.0,,\"M\"", 1234567.891, "1,2M"),
+        ("#.##0", 1234.56, "1234,560"),
+        ("m/d/yyyy", date, "13.10.2026"),
+        ("m/d/yyyy", 1234.56, "18.05.1903"),
+        ("d-mmm-yy", date, "13. Okt 26"),
+        ("d-mmm-yy", 1234.56, "18. Mai 03"),
+        ("d-mmm", date, "13. Okt"),
+        ("mmm-yy", date, "Okt 26"),
+        ("h:mm AM/PM", date, "2:30 PM"),
+        ("h:mm:ss AM/PM", date, "2:30:00 PM"),
+        ("h:mm", date, "14:30"),
+        ("h:mm", 0.000012345, "00:00"),
+        ("h:mm:ss", date, "14:30:00"),
+        ("m/d/yyyy h:mm", date, "13.10.2026 14:30"),
+        ("mm:ss", date, "30:00"),
+        ("[h]:mm:ss", 1234.56, "29629:26:24"),
+        ("mmss.0", 1234.56, "2624,0"),
+        ("dd/mm/yyyy", date, "13.10.2026"),
+        ("dd.mm.yyyy", date, "13.10.2026"),
+        ("mm/dd/yy", date, "10.13.26"),
+        ("d/m/yy", date, "13.10.26"),
+        ("dddd, mmmm d, yyyy", date, "Dienstag, Oktober 13, 2026"),
+        ("dddd, mmmm d, yyyy", 1234.56, "Montag, Mai 18, 1903"),
+        ("ddd", date, "Di"),
+        ("dddd", date, "Dienstag"),
+        ("mmm", date, "Okt"),
+        ("mmmm", date, "Oktober"),
+        ("mmmmm", date, "O"),
+        ("yyyy-mm-dd", date, "2026-10-13"),
+        ("hh:mm:ss.000", 1234.56, "13:26:24,000"),
+        ("[$-409]mmmm", date, "October"),
+        ("[$-407]mmmm", date, "Oktober"),
+        ("[$-409]m/d/yyyy", date, "10.13.2026"),
+        ("#,##0.00 [$€-407]", 1234.56, "1.234,56 €"),
+        // Excel's Long Date and Time formats carry the system tags.
+        ("[$-F800]dddd, mmmm dd, yyyy", date, "Dienstag, 13. Oktober 2026"),
+        ("[$-F800]dddd, mmmm dd, yyyy", 0.5, "Samstag, 0. Januar 1900"),
+        ("[$-F400]h:mm:ss AM/PM", date, "14:30:00"),
+    ] {
+        assert_eq!(g(code, n), shown, "{code} {n}");
+    }
+    // Every month and weekday name, short and long.
+    let months = [
+        "Jan Januar",
+        "Feb Februar",
+        "Mrz März",
+        "Apr April",
+        "Mai Mai",
+        "Jun Juni",
+        "Jul Juli",
+        "Aug August",
+        "Sep September",
+        "Okt Oktober",
+        "Nov November",
+        "Dez Dezember",
+    ];
+    for (m, names) in months.iter().enumerate() {
+        let serial = gridcraft_core::date::serial_from_ymd(S, 2026, m as i64 + 1, 1).unwrap();
+        assert_eq!(g("mmm mmmm", serial), *names);
+    }
+    let days = ["Fr Freitag", "Sa Samstag", "So Sonntag", "Mo Montag", "Di Dienstag", "Mi Mittwoch", "Do Donnerstag"];
+    for (d, names) in days.iter().enumerate() {
+        assert_eq!(g("ddd dddd", 46304.0 + d as f64), *names);
+    }
+    // Booleans and errors keep their canonical words here; the formula language translates them.
+    assert_eq!(format_value_in(&Value::Bool(true), &NumberFormat::general(), S, &de).text, "TRUE");
+    // Other separators keep the region's dates; en-US with separators keeps en-US dates.
+    let swiss = de.with_separators('.', '\'');
+    assert_eq!(format_value_in(&Value::Number(1234.5), &NumberFormat::parse("#,##0.00"), S, &swiss).text, "1'234.50");
+    let us_commas = NumberLocale::EN_US.with_separators(',', '.');
+    assert_eq!(format_value_in(&Value::Number(date), &NumberFormat::parse("m/d/yyyy"), S, &us_commas).text, "10/13/2026");
+    assert_eq!(format_value_in(&Value::Number(1234.5), &NumberFormat::parse("#,##0.00"), S, &us_commas).text, "1.234,50");
+    // The canonical locale draws exactly as `format_value`.
+    for code in ["General", "#,##0.00", "m/d/yyyy", "d-mmm-yy", "h:mm", "mmss.0", "dddd", "[$-407]mmmm"] {
+        for n in [0.0, 1234.56, date, -3.5] {
+            let v = Value::Number(n);
+            assert_eq!(
+                format_value_in(&v, &NumberFormat::parse(code), S, &NumberLocale::EN_US),
+                format_value(&v, &NumberFormat::parse(code), S),
+                "{code} {n}"
+            );
+        }
+    }
+    assert_eq!(format_general_fit_in(1234.5, 11, &de).as_deref(), Some("1234,5"));
+    // `TEXT()` stays en-US whatever the interface shows.
+    assert_eq!(text_function(&Value::Number(1234.5), "#,##0.00", S).unwrap(), "1,234.50");
 }

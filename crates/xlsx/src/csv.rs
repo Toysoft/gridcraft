@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use gridcraft_core::parse::parse_input;
 use gridcraft_core::{CellRef, MAX_COLS, MAX_ROWS, Value};
 use gridcraft_model::{Cell, NumFmt, Sheet, StyleId, Workbook};
 
@@ -46,7 +45,15 @@ pub fn decode_text(bytes: &[u8]) -> String {
 
 /// Picks comma, semicolon or tab: the candidate with the most consistent count per line
 /// (outside quotes) over the first non-blank lines. A candidate must appear on every such line, otherwise comma wins.
-pub fn sniff_delimiter(text: &str, quote: char) -> u8 {
+#[cfg(test)]
+pub(crate) fn sniff_delimiter(text: &str, quote: char) -> u8 {
+    sniff_delimiter_preferring(text, quote, None)
+}
+
+/// [`sniff_delimiter`], taking `preferred` whenever every line holds it. A reader whose numbers
+/// use a decimal comma prefers `;` (Excel splits on its list separator there), so `1,5;2,25` is
+/// two fields, not three.
+pub fn sniff_delimiter_preferring(text: &str, quote: char, preferred: Option<u8>) -> u8 {
     let mut best = (b',', 0usize, 0usize);
     for d in [',', ';', '\t'] {
         let mut counts = vec![];
@@ -80,6 +87,9 @@ pub fn sniff_delimiter(text: &str, quote: char) -> u8 {
         }
         let min = counts.iter().copied().min().unwrap_or(0);
         let total: usize = counts.iter().sum();
+        if min > 0 && preferred == Some(d as u8) {
+            return d as u8;
+        }
         if min > 0 && (min, total) > (best.1, best.2) {
             best = (d as u8, min, total);
         }
@@ -133,10 +143,29 @@ fn parse_records(text: &str, delim: char, quote: char, mut on_record: impl FnMut
     }
 }
 
+/// A field spelled as the formula language's boolean or error value (`WAHR`, `#NV`); the
+/// canonical words are left to the parser. English reads every field as `parse_input` does.
+fn local_word(field: &str, words: gridcraft_formula::FormulaLocale) -> Option<gridcraft_core::parse::Parsed> {
+    if words == gridcraft_formula::FormulaLocale::En {
+        return None;
+    }
+    let t = field.trim();
+    let same = |a: &str| a.chars().flat_map(char::to_uppercase).eq(t.chars().flat_map(char::to_uppercase));
+    let value = if same(words.boolean_name(true)) {
+        Value::Bool(true)
+    } else if same(words.boolean_name(false)) {
+        Value::Bool(false)
+    } else {
+        Value::Error(gridcraft_core::CellError::ALL.into_iter().find(|e| same(words.error_name(*e)))?)
+    };
+    Some(gridcraft_core::parse::Parsed { value, format: None })
+}
+
 pub fn read_csv(bytes: &[u8], opts: &CsvOptions) -> Result<Workbook, IoError> {
     let text = decode_text(bytes);
     let quote = if opts.quote == 0 { '"' } else { opts.quote as char };
-    let delim = if opts.delimiter == 0 { sniff_delimiter(&text, quote) } else { opts.delimiter } as char;
+    let preferred = (opts.number_locale.decimal == ',').then_some(b';');
+    let delim = if opts.delimiter == 0 { sniff_delimiter_preferring(&text, quote, preferred) } else { opts.delimiter } as char;
     if delim == quote {
         return Err(IoError::Format("the delimiter and quote character must differ".into()));
     }
@@ -147,6 +176,12 @@ pub fn read_csv(bytes: &[u8], opts: &CsvOptions) -> Result<Workbook, IoError> {
     let mut styles = std::mem::take(&mut wb.styles);
     let mut fmt_cache: Vec<(&'static str, StyleId)> = vec![];
     let mut row: u32 = 0;
+    // Comma-separated fields mean en-US numbers; other separators follow the reader's locale.
+    let (number_locale, words) = if delim == ',' {
+        (gridcraft_core::NumberLocale::EN_US, gridcraft_formula::FormulaLocale::En)
+    } else {
+        (opts.number_locale, opts.formula_locale)
+    };
     parse_records(&text, delim, quote, |rec| {
         if row >= MAX_ROWS {
             return false;
@@ -161,7 +196,7 @@ pub fn read_csv(bytes: &[u8], opts: &CsvOptions) -> Result<Workbook, IoError> {
             }
             let pos = CellRef::new(row, col as u32);
             let cell = if opts.parse_values {
-                let p = parse_input(&f, opts.date_system);
+                let p = local_word(&f, words).unwrap_or_else(|| gridcraft_core::parse::parse_input_in(&f, opts.date_system, &number_locale));
                 let style = match p.format {
                     Some(code) => match fmt_cache.iter().find(|(c, _)| *c == code) {
                         Some((_, id)) => *id,

@@ -1,30 +1,73 @@
-//! UI formula syntax boundary. Engine commands, control/API callers and XLSX keep English.
+//! UI formula and number syntax boundary. Engine commands, control/API callers and XLSX keep
+//! English formulas and en-US numbers; people type and see their language's.
+use gridcraft_engine::core::{CellError, Value};
+use gridcraft_engine::display::DisplayLocale;
 use gridcraft_engine::formula::{self, FormulaLocale, ParseError};
 use gridcraft_engine::model::Workbook;
 
-pub(crate) fn canonical(
+/// Typed input in canonical form: what `cell.set` takes as `input`, and the number format a
+/// constant takes when the cell's format is General (`autoFormat`): German `13.10.2026` is the
+/// serial `46308` with the short date format.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Entry {
+    pub text: String,
+    pub auto_format: Option<&'static str>,
+}
+
+impl Entry {
+    fn plain(text: impl Into<String>) -> Entry {
+        Entry { text: text.into(), auto_format: None }
+    }
+}
+
+/// Canonical text of a number that the engine reads back as exactly `n` (shortest round trip,
+/// never an exponent, which en-US input would also read).
+fn number_text(n: f64) -> String {
+    if n == 0.0 { "0".into() } else { format!("{n}") }
+}
+
+/// [`canonical`] for the text only (dialog fields, where no automatic format applies).
+pub(crate) fn canonical_text(
     text: &str,
-    locale: FormulaLocale,
+    locale: &DisplayLocale,
     wb: &Workbook,
     sheet: usize,
     cell: gridcraft_engine::core::CellRef,
 ) -> Result<String, ParseError> {
+    canonical(text, locale, wb, sheet, cell).map(|e| e.text)
+}
+
+/// What the user typed, in canonical syntax: formulas in English with `,` and `.`, constants in
+/// en-US (with the format their regional spelling picked), the formula language's booleans and
+/// error values in English. In a non-English interface the English words typed into a cell stay
+/// text, as in German Excel (`TRUE`, `#N/A`).
+pub(crate) fn canonical(
+    text: &str,
+    loc: &DisplayLocale,
+    wb: &Workbook,
+    sheet: usize,
+    cell: gridcraft_engine::core::CellRef,
+) -> Result<Entry, ParseError> {
+    let locale = loc.formula;
     // The editor hid the `_xludf.` prefixes of this cell's formula; confirming it unchanged keeps
     // the user-defined calls instead of binding them to the built-ins of the same name.
     if let Some(stored) = wb.sheet(sheet).and_then(|sh| sh.cell(cell)).filter(|c| c.formula.is_some()).map(|c| c.input_text())
         && has_udf_prefix(&stored)
         && text == display(&stored, locale, wb, sheet)
     {
-        return Ok(stored);
+        return Ok(Entry::plain(stored));
     }
-    if locale == FormulaLocale::En || wb.sheet(sheet).is_some_and(|sh| wb.styles.get(sh.style_id(cell)).num_fmt.as_str() == "@") {
-        return Ok(text.to_string());
+    if loc.is_canonical() || wb.sheet(sheet).is_some_and(|sh| wb.styles.get(sh.style_id(cell)).num_fmt.as_str() == "@") {
+        return Ok(Entry::plain(text));
     }
     // Same formula detection as the engine's `input_to_cell` (no trimming: " =1" is text).
     let body = text;
-    if body.starts_with('=')
-        || ((body.starts_with('+') || body.starts_with('-')) && body.chars().nth(1).is_some_and(|c| c.is_ascii_alphabetic() || c == '('))
-    {
+    let looks_like_formula = body.starts_with('=')
+        || ((body.starts_with('+') || body.starts_with('-')) && body.chars().nth(1).is_some_and(|c| c.is_ascii_alphabetic() || c == '('));
+    if looks_like_formula && locale == FormulaLocale::En {
+        return Ok(Entry::plain(text));
+    }
+    if looks_like_formula {
         let known = |name: &str| wb.name(name, sheet).is_some() || wb.table(name).is_some();
         // Match the engine's existing convenience for missing closing parentheses.
         let mut body = body.to_string();
@@ -36,15 +79,46 @@ pub(crate) fn canonical(
             body.push(')');
             expr = formula::parse_input(&body, locale, known);
         }
-        return Ok(format!("={}", formula::print(&expr?)));
+        return Ok(Entry::plain(format!("={}", formula::print(&expr?))));
     }
-    // Decimal-comma number entry follows the same preference, without rewriting text or dates.
-    let normalized = body.trim().replace(locale.decimal_separator(), ".");
-    let number = normalized.strip_suffix('%').unwrap_or(&normalized);
-    if number.parse::<f64>().is_ok_and(f64::is_finite) {
-        return Ok(normalized);
+    let canonical_value = |t: &str| gridcraft_engine::core::parse::parse_input(t, wb.date_system).value;
+    if locale != FormulaLocale::En && !text.starts_with('\'') {
+        // The formula language's booleans and errors (`WAHR`, `#NV`) are values; the English
+        // words are text there.
+        let t = text.trim();
+        let same = |word: &str| word.chars().flat_map(char::to_uppercase).eq(t.chars().flat_map(char::to_uppercase));
+        for b in [true, false] {
+            if same(locale.boolean_name(b)) {
+                return Ok(Entry::plain(if b { "TRUE" } else { "FALSE" }));
+            }
+        }
+        if let Some(e) = CellError::ALL.into_iter().find(|e| same(locale.error_name(*e))) {
+            return Ok(Entry::plain(e.as_str()));
+        }
+        if matches!(canonical_value(text), Value::Bool(_) | Value::Error(_)) {
+            return Ok(Entry::plain(format!("'{text}")));
+        }
     }
-    Ok(text.to_string())
+    if loc.number.is_canonical() {
+        // A formula language with a decimal comma but no observed regional format (Spanish,
+        // Portuguese, Russian) reads `1,5` as a number, without rewriting text or dates.
+        let normalized = body.trim().replace(locale.decimal_separator(), ".");
+        let number = normalized.strip_suffix('%').unwrap_or(&normalized);
+        if number.parse::<f64>().is_ok_and(f64::is_finite) {
+            return Ok(Entry::plain(normalized));
+        }
+        return Ok(Entry::plain(text));
+    }
+    let parsed = gridcraft_engine::core::parse::parse_input_in(text, wb.date_system, &loc.number);
+    Ok(match parsed.value {
+        Value::Number(n) => Entry { text: number_text(n), auto_format: parsed.format },
+        // Text in the regional format that en-US would read as a number or a date (`10/13/2026`,
+        // `$5`, `1,234.5` in German) is entered as text.
+        Value::Text(_) if !text.starts_with('\'') && !matches!(canonical_value(text), Value::Text(_) | Value::Empty) => {
+            Entry::plain(format!("'{text}"))
+        }
+        _ => Entry::plain(text),
+    })
 }
 
 pub(crate) fn display(text: &str, locale: FormulaLocale, wb: &Workbook, sheet: usize) -> String {
@@ -86,8 +160,8 @@ fn hide_udf_prefix(text: &str, locale: FormulaLocale) -> String {
     out
 }
 
-// Descriptions/signatures for the supported Spanish function table; untranslated functions
-// retain their English help. Parameter punctuation follows the same locale as entry.
+// Descriptions/signatures for common Spanish functions; other functions keep their English help
+// under their local name. Parameter punctuation follows the same locale as entry.
 const SPANISH_HELP: &[(&str, &str, &str)] = &[
     ("SUM", "SUMA(número1; [número2]; ...)", "Suma los números."),
     ("AVERAGE", "PROMEDIO(número1; [número2]; ...)", "Devuelve el promedio de los números."),
@@ -108,7 +182,11 @@ pub(crate) fn signature(name: &str, locale: FormulaLocale) -> Option<String> {
     {
         return Some((*signature).into());
     }
-    crate::formula_bar::function_signature(canonical).map(|s| s.replace(',', &locale.list_separator().to_string()))
+    let signature = crate::formula_bar::function_signature(canonical)?.replace(',', &locale.list_separator().to_string());
+    Some(match signature.strip_prefix(canonical) {
+        Some(params) if locale != FormulaLocale::En => format!("{}{params}", locale.function_name(canonical)),
+        _ => signature,
+    })
 }
 
 pub(crate) fn description(name: &str, locale: FormulaLocale) -> Option<String> {

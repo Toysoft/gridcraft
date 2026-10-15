@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 use gridcraft_core::{CellRef, RangeRef};
 use gridcraft_model::{Sheet, Workbook};
 
+use crate::display::DisplayLocale;
 use crate::{EngineError, Result};
 
 /// File formats GridCraft reads or writes.
@@ -55,8 +56,15 @@ pub fn open_bytes(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
 /// [`open_bytes`], first decrypting a password-protected workbook with `password`. Errors never
 /// quote the password.
 pub fn open_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>) -> Result<(Workbook, Vec<String>)> {
+    open_bytes_with_password_in(name, bytes, password, &DisplayLocale::CANONICAL)
+}
+
+/// [`open_bytes_with_password`] for a person working in `loc`: delimited text (CSV, TSV) is read
+/// in its regional format and formula language (`1,5`, `13.10.2026`, `WAHR` in German), unless
+/// the file separates fields with commas, which says it was written in en-US style.
+pub fn open_bytes_with_password_in(name: &str, bytes: &[u8], password: Option<&str>, loc: &DisplayLocale) -> Result<(Workbook, Vec<String>)> {
     if gridcraft_xlsx::sniff(bytes) != gridcraft_xlsx::Format::Encrypted {
-        let (mut wb, warnings) = open_plain(name, bytes)?;
+        let (mut wb, warnings) = open_plain(name, bytes, loc)?;
         fit_imported_rows(&mut wb);
         return Ok((wb, warnings));
     }
@@ -70,7 +78,7 @@ pub fn open_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>
     if gridcraft_xlsx::sniff(&plain) == gridcraft_xlsx::Format::Encrypted {
         return Err(EngineError::Other(format!("We can't open '{name}': the encrypted file is damaged (it holds another encrypted file).")));
     }
-    let (mut wb, mut warnings) = open_plain(name, &plain)?;
+    let (mut wb, mut warnings) = open_plain(name, &plain, loc)?;
     fit_imported_rows(&mut wb);
     warnings.insert(0, DECRYPTED_NOTICE.into());
     Ok((wb, warnings))
@@ -112,7 +120,7 @@ fn decrypt_message(name: &str, e: gridcraft_xlsx::DecryptError) -> String {
 }
 
 /// Parses bytes that aren't encrypted.
-fn open_plain(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
+fn open_plain(name: &str, bytes: &[u8], loc: &DisplayLocale) -> Result<(Workbook, Vec<String>)> {
     let kind = FileKind::from_path(name);
     let sniffed = gridcraft_xlsx::sniff(bytes);
     if sniffed == gridcraft_xlsx::Format::Xls {
@@ -153,7 +161,7 @@ fn open_plain(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
             Ok((wb, vec![]))
         }
         Some(FileKind::Tsv) => {
-            let opts = gridcraft_xlsx::CsvOptions { delimiter: b'\t', ..Default::default() };
+            let opts = gridcraft_xlsx::CsvOptions { delimiter: b'\t', number_locale: loc.number, formula_locale: loc.formula, ..Default::default() };
             let mut wb = gridcraft_xlsx::read_csv(bytes, &opts).map_err(|e| EngineError::Other(e.to_string()))?;
             // Tab is what makes it a .tsv/.txt; saved as .csv it gets the CSV default.
             wb.csv_delimiter = None;
@@ -161,7 +169,7 @@ fn open_plain(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
             Ok((wb, vec![]))
         }
         _ => {
-            let opts = gridcraft_xlsx::CsvOptions { delimiter: 0, ..Default::default() };
+            let opts = gridcraft_xlsx::CsvOptions { delimiter: 0, number_locale: loc.number, formula_locale: loc.formula, ..Default::default() };
             let mut wb = gridcraft_xlsx::read_csv(bytes, &opts).map_err(|e| EngineError::Other(e.to_string()))?;
             rename_first_sheet(&mut wb, name);
             Ok((wb, vec![]))
@@ -185,17 +193,35 @@ fn rename_first_sheet(wb: &mut Workbook, path: &str) {
 
 /// Encodes a workbook in the format chosen by `path`'s extension.
 pub fn save_bytes(wb: &Workbook, path: &str) -> Result<Vec<u8>> {
+    save_bytes_in(wb, path, &DisplayLocale::CANONICAL)
+}
+
+/// [`save_bytes`] for a person working in `loc`: CSV, TSV and web pages hold the values as that
+/// person sees them, and a new CSV separates fields with `;` where the decimal separator is `,`
+/// (Excel's list separator in such regions). Workbook formats are never localized.
+pub fn save_bytes_in(wb: &Workbook, path: &str, loc: &DisplayLocale) -> Result<Vec<u8>> {
     // An unknown or missing extension is refused rather than written as an XLSX under that name:
     // a typo like `.cvs` would otherwise produce a file no other app recognises.
     let Some(kind) = FileKind::from_path(path) else {
         let name = std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(path);
         return Err(EngineError::Other(format!("{name}: unknown file format. Save as .xlsx, .csv, .tsv, .json or .html.")));
     };
-    save_bytes_as(wb, path, kind)
+    save_bytes_as_in(wb, path, kind, loc)
 }
 
 /// Encodes a workbook as `kind`, whatever `path`'s extension says.
 pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8>> {
+    save_bytes_as_in(wb, path, kind, &DisplayLocale::CANONICAL)
+}
+
+/// The field separator of a new CSV in `loc`: `;` where numbers are written with a decimal comma
+/// (Excel uses the regional list separator, `;` in de-DE), `,` otherwise.
+pub fn csv_separator(loc: &DisplayLocale) -> u8 {
+    if loc.number.decimal == ',' { b';' } else { b',' }
+}
+
+/// [`save_bytes_as`] for a person working in `loc` (see [`save_bytes_in`]).
+pub fn save_bytes_as_in(wb: &Workbook, path: &str, kind: FileKind, loc: &DisplayLocale) -> Result<Vec<u8>> {
     let sheet = wb.active_sheet;
     match kind {
         // The extension picks the package kind; only the macro-enabled kinds (.xlsm, .xltm) carry
@@ -207,10 +233,14 @@ pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8
         FileKind::Xlsb => Err(EngineError::Other("XLSB is supported for data import only. Save as .xlsx or another supported export format.".into())),
         FileKind::Ods => Err(EngineError::Other("ODS is supported for data import only. Save as .xlsx or another supported export format.".into())),
         // A workbook read from CSV keeps the separator it was read with (a `;` file stays `;`).
-        FileKind::Csv => wb.sheet(sheet).map(|sh| csv(wb, sh, wb.csv_delimiter.unwrap_or(b','))).transpose().map(Option::unwrap_or_default),
-        FileKind::Tsv => wb.sheet(sheet).map(|sh| csv(wb, sh, b'\t')).transpose().map(Option::unwrap_or_default),
+        FileKind::Csv => wb
+            .sheet(sheet)
+            .map(|sh| csv(wb, sh, wb.csv_delimiter.unwrap_or_else(|| csv_separator(loc)), loc))
+            .transpose()
+            .map(Option::unwrap_or_default),
+        FileKind::Tsv => wb.sheet(sheet).map(|sh| csv(wb, sh, b'\t', loc)).transpose().map(Option::unwrap_or_default),
         FileKind::Json => serde_json::to_vec_pretty(wb).map_err(|e| EngineError::Other(e.to_string())),
-        FileKind::Html => to_html(wb, sheet).map(String::into_bytes),
+        FileKind::Html => to_html_in(wb, sheet, loc).map(String::into_bytes),
     }
 }
 
@@ -231,7 +261,7 @@ pub fn source_dir(path: &str) -> Option<std::path::PathBuf> {
 /// Save As CSV/Text writes "the text and values as they are displayed in cells" with "all
 /// characters in each cell" (Microsoft Support, *Excel formatting and features that are not
 /// transferred to other file formats*): number formats applied, never column-width `#####`.
-fn csv(wb: &Workbook, sh: &Sheet, delimiter: u8) -> Result<Vec<u8>> {
+fn csv(wb: &Workbook, sh: &Sheet, delimiter: u8, loc: &DisplayLocale) -> Result<Vec<u8>> {
     gridcraft_xlsx::write_csv(sh, delimiter, |c| {
         // General's grid-width formatting rounds large identifiers to scientific notation.
         // Delimited files have no column width, so preserve the whole numeric value instead.
@@ -239,9 +269,10 @@ fn csv(wb: &Workbook, sh: &Sheet, delimiter: u8) -> Result<Vec<u8>> {
             && let gridcraft_core::Value::Number(number) = sh.value(c)
             && number.is_finite()
         {
-            number.to_string()
+            let text = number.to_string();
+            if loc.number.decimal == '.' { text } else { text.replace('.', loc.number.decimal.encode_utf8(&mut [0; 4])) }
         } else {
-            crate::display::value_text(wb, sh, c)
+            crate::display::value_text_in(wb, sh, c, loc)
         }
     })
     .map_err(|e| EngineError::Other(e.to_string()))
@@ -359,6 +390,11 @@ const HTML_EXPORT_MAX_ROWS: u32 = 100_001;
 
 /// A sheet as a standalone HTML table (Save as Web Page).
 pub fn to_html(wb: &Workbook, sheet: usize) -> Result<String> {
+    to_html_in(wb, sheet, &DisplayLocale::CANONICAL)
+}
+
+/// [`to_html`] with the cells as a person working in `loc` sees them.
+pub fn to_html_in(wb: &Workbook, sheet: usize, loc: &DisplayLocale) -> Result<String> {
     let Some(sh) = wb.sheet(sheet) else { return Ok(String::new()) };
     let mut out = String::new();
     let _ = write!(
@@ -390,7 +426,7 @@ pub fn to_html(wb: &Workbook, sheet: usize) -> Result<String> {
                     .find(|m| m.start == c)
                     .map(|m| format!(" rowspan=\"{}\" colspan=\"{}\"", m.height(), m.width()))
                     .unwrap_or_default();
-                let _ = write!(out, "<td style=\"{css}\"{span}>{}</td>", esc(&crate::display::cell_text(wb, sh, c)));
+                let _ = write!(out, "<td style=\"{css}\"{span}>{}</td>", esc(&crate::display::cell_text_in(wb, sheet, c, loc)));
             }
             out.push_str("</tr>");
         }

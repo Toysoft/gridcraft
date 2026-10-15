@@ -185,19 +185,27 @@ pub(crate) fn dispatch(app: &mut SheetApp, ctx: &egui::Context, key: Key, physic
                 .map(|d| {
                     let now = gridcraft_engine::core::date::serial_in_system(d.wb.date_system, gridcraft_engine::calc::now_serial());
                     let (value, format) = if shortcut == Shortcut::Date { (now.floor(), "m/d/yyyy") } else { (now.fract(), "h:mm AM/PM") };
-                    gridcraft_engine::display::format(&gridcraft_engine::core::Value::Number(value), format, &d.wb).text
+                    gridcraft_engine::display::format_in(&gridcraft_engine::core::Value::Number(value), format, &d.wb, &app.display_locale()).text
                 })
                 .unwrap_or_default();
             edit_with(app, text);
         }
         Shortcut::FormulaAbove | Shortcut::ValueAbove => {
             let Some(above) = active.row.checked_sub(1).map(|r| CellRef::new(r, active.col)) else { return true };
+            // Typed into the editor, so in the interface's syntax (`=SUMME(A1;2,5)`, `1,5`).
+            let loc = app.display_locale();
             let text = if shortcut == Shortcut::FormulaAbove {
-                app.session.active().map(|d| gridcraft_engine::display::edit_text(&d.wb, sh, above)).unwrap_or_default()
+                app.session
+                    .active()
+                    .map(|d| match sh.cell(above) {
+                        Some(c) if c.formula.is_some() => crate::formula_locale::display(&c.input_text(), loc.formula, &d.wb, d.wb.active_sheet),
+                        _ => gridcraft_engine::display::edit_text_in(&d.wb, sh, above, &loc),
+                    })
+                    .unwrap_or_default()
             } else {
                 app.session
                     .active()
-                    .and_then(|d| sh.value_ref(above).map(|v| gridcraft_engine::display::format(v, "General", &d.wb).text))
+                    .and_then(|d| sh.value_ref(above).map(|v| gridcraft_engine::display::format_in(v, "General", &d.wb, &loc).text))
                     .unwrap_or_default()
             };
             edit_with(app, text);

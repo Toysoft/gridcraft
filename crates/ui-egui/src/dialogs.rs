@@ -795,8 +795,126 @@ impl Dialog {
             }
             _ => return None,
         };
+        let mut d = d;
+        show_typed_fields(app, &mut d);
         Some(d)
     }
+}
+
+/// What a form field holding typed input is: shown in the interface's syntax (German
+/// `=SUMME(A1;2,5)`, `1,5`, `a;b;c`), sent canonical.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Typed {
+    /// A formula, with or without its `=` (a rule's condition, a calculated field).
+    Formula,
+    /// `=formula`, a number, or text (a bound, a name's reference).
+    Value,
+    /// A list validation's source: `=range` or items separated by the list separator.
+    Source,
+}
+
+/// The fields of a form that hold typed input, and what they hold.
+fn typed_fields(d: &Dialog) -> Vec<(&'static str, Typed)> {
+    match d.name.as_str() {
+        "defineName" => vec![("refersTo", Typed::Value)],
+        "dataValidation" => match d.values.get("type").and_then(Json::as_str) {
+            Some("list") => vec![("formula1", Typed::Source)],
+            Some("custom") => vec![("formula1", Typed::Formula)],
+            _ => vec![("formula1", Typed::Value), ("formula2", Typed::Value)],
+        },
+        "cfQuick" => vec![("value", Typed::Value), ("value2", Typed::Value), ("formula", Typed::Formula)],
+        "pivotCalculatedField" => vec![("formula", Typed::Formula)],
+        _ => vec![],
+    }
+}
+
+/// A list validation's items (no `=`, not a reference or a name).
+fn is_item_list(text: &str) -> bool {
+    !text.starts_with('=')
+        && (text.starts_with('"')
+            || gridcraft_engine::formula::parse(text)
+                .map_or(true, |e| !matches!(e, gridcraft_engine::formula::Expr::Ref(_) | gridcraft_engine::formula::Expr::Name(_))))
+}
+
+/// Canonical typed input as the interface shows it.
+fn show_typed(app: &SheetApp, kind: Typed, text: &str) -> String {
+    let loc = app.display_locale();
+    if loc.is_canonical() || text.is_empty() {
+        return text.to_string();
+    }
+    let Some(doc) = app.session.active() else { return text.to_string() };
+    let formula = |text: &str| {
+        let (eq, body) = text.strip_prefix('=').map_or((false, text), |b| (true, b));
+        let shown = crate::formula_locale::display(&format!("={body}"), loc.formula, &doc.wb, doc.wb.active_sheet);
+        if eq { shown } else { shown.strip_prefix('=').map(str::to_string).unwrap_or(shown) }
+    };
+    match kind {
+        Typed::Formula => formula(text),
+        Typed::Source if is_item_list(text) => text.replace(',', &loc.formula.list_separator().to_string()),
+        Typed::Source => formula(text),
+        Typed::Value if text.starts_with('=') => formula(text),
+        Typed::Value => match gridcraft_engine::core::parse::parse_input(text, doc.wb.date_system) {
+            parsed if parsed.format.is_none() && matches!(parsed.value, gridcraft_engine::core::Value::Number(_)) => {
+                text.replace('.', &loc.number.decimal.to_string())
+            }
+            _ => text.to_string(),
+        },
+    }
+}
+
+/// Typed input in the interface's syntax, made canonical for the command.
+fn canonical_typed(app: &SheetApp, kind: Typed, text: &str) -> Result<String, String> {
+    let loc = app.display_locale();
+    if loc.is_canonical() || text.is_empty() {
+        return Ok(text.to_string());
+    }
+    let Some(doc) = app.session.active() else { return Ok(text.to_string()) };
+    let (sheet, cell) = (doc.wb.active_sheet, doc.selection.active);
+    let formula = |text: &str| -> Result<String, String> {
+        let (eq, body) = text.strip_prefix('=').map_or((false, text), |b| (true, b));
+        let canonical = crate::formula_locale::canonical_text(&format!("={body}"), &loc, &doc.wb, sheet, cell).map_err(|e| e.to_string())?;
+        Ok(if eq { canonical } else { canonical.strip_prefix('=').map(str::to_string).unwrap_or(canonical) })
+    };
+    match kind {
+        Typed::Formula => formula(text),
+        Typed::Source if text.starts_with('=') => formula(text),
+        Typed::Source => Ok(text.split(loc.formula.list_separator()).collect::<Vec<_>>().join(",")),
+        Typed::Value if text.starts_with('=') => formula(text),
+        Typed::Value => {
+            let entry = crate::formula_locale::canonical(text, &loc, &doc.wb, sheet, cell).map_err(|e| e.to_string())?;
+            // A bound is a value, never a forced text: `'` only matters in a cell.
+            Ok(entry.text.strip_prefix('\'').map(str::to_string).unwrap_or(entry.text))
+        }
+    }
+}
+
+/// Shows a form's typed fields in the interface's syntax (when it opens).
+fn show_typed_fields(app: &SheetApp, d: &mut Dialog) {
+    for (key, kind) in typed_fields(d) {
+        if let Some(text) = d.values.get(key).and_then(Json::as_str) {
+            let shown = show_typed(app, kind, text);
+            d.values.insert(key.into(), json!(shown));
+        }
+    }
+}
+
+/// A form's values with its typed fields made canonical, as its command takes them. Both OK and
+/// `ui.dialog.confirm` send these: dialog fields hold what a person types.
+pub(crate) fn canonical_values(app: &SheetApp, d: &Dialog) -> Result<Map<String, Json>, String> {
+    let mut values = d.values.clone();
+    for (key, kind) in typed_fields(d) {
+        if let Some(text) = d.values.get(key).and_then(Json::as_str) {
+            values.insert(key.into(), json!(canonical_typed(app, kind, text)?));
+        }
+    }
+    Ok(values)
+}
+
+/// [`build_params`] from [`canonical_values`].
+fn command_params(app: &SheetApp, d: &Dialog) -> Result<Json, String> {
+    let mut canonical = d.clone();
+    canonical.values = canonical_values(app, d)?;
+    Ok(build_params(&canonical))
 }
 
 /// Initial values of the Data Validation form: the rule stored on the active cell, so OK without
@@ -1257,8 +1375,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         confirm = false;
     }
     if confirm && let Some(cmd) = d.command {
-        let params = build_params(&d);
-        match app.run(cmd, params) {
+        match command_params(app, &d).and_then(|params| app.run(cmd, params)) {
             Ok(r) => {
                 open = false;
                 if d.name == "solver" {
@@ -1557,7 +1674,11 @@ fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: 
                     }
                 }
                 cols[1].label(egui::RichText::new(lang.tr("Sample")).strong());
-                let preview = app.session.active().map(|doc| gridcraft_engine::display::format(&sample, &code, &doc.wb).text).unwrap_or_default();
+                let preview = app
+                    .session
+                    .active()
+                    .map(|doc| gridcraft_engine::display::format_in(&sample, &code, &doc.wb, &app.display_locale()).text)
+                    .unwrap_or_default();
                 cols[1].label(egui::RichText::new(preview).font(theme::ui_font(15.0)));
                 cols[1].add_space(8.0);
                 cols[1].label(lang.tr("Type (custom format code):"));
@@ -1753,16 +1874,21 @@ fn insert_function(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confir
     });
     let locale = app.ui.language.formula_locale();
     let list = gridcraft_engine::cmd::formulas::function_list();
-    let q = d.search.to_ascii_lowercase();
-    let hits: Vec<&Json> = list
+    // Unicode lower case: local names and searches are not ASCII (`zählenwenn`, `сумм`).
+    let q = d.search.to_lowercase();
+    let mut hits: Vec<&Json> = list
         .iter()
         .filter(|f| {
             q.is_empty()
-                || f["name"].as_str().is_some_and(|n| locale.function_name(n).to_ascii_lowercase().contains(&q))
-                || f["description"].as_str().is_some_and(|n| n.to_ascii_lowercase().contains(&q))
+                || f["name"].as_str().is_some_and(|n| locale.function_name(n).to_lowercase().contains(&q))
+                || f["description"].as_str().is_some_and(|n| n.to_lowercase().contains(&q))
         })
-        .take(300)
         .collect();
+    if locale != gridcraft_engine::formula::FormulaLocale::En {
+        // The list is sorted by English name; list it by the name shown.
+        hits.sort_by_cached_key(|&f| locale.function_name(f["name"].as_str().unwrap_or("")));
+    }
+    hits.truncate(300);
     egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
         for (i, f) in hits.iter().enumerate() {
             let name = locale.function_name(f["name"].as_str().unwrap_or(""));
@@ -2014,7 +2140,7 @@ fn name_manager(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, open: &mu
                     d.list_index = i;
                 }
                 ui.label(n.get("value").map(|v| v.to_string()).unwrap_or_default().chars().take(30).collect::<String>());
-                ui.label(field(n, "refersTo"));
+                ui.label(show_typed(app, Typed::Value, &field(n, "refersTo")));
                 ui.label(field(n, "scope"));
                 ui.end_row();
             }
