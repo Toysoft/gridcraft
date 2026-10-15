@@ -1172,6 +1172,15 @@ fn trim_references() {
 }
 
 #[test]
+fn formula_language_tables_only_name_functions_the_engine_knows() {
+    // A typo'd canonical name in a language table would turn a valid local name into #NAME?.
+    for locale in gridcraft_formula::FormulaLocale::ALL {
+        let unknown: Vec<&str> = locale.translations().iter().map(|(en, _)| *en).filter(|en| !crate::eval::is_known_function(en)).collect();
+        assert!(unknown.is_empty(), "{locale:?}: {unknown:?}");
+    }
+}
+
+#[test]
 fn cell_width_is_the_column_width_dialog_value_rounded() {
     // #735: Excel 365 values. Widths in px as `home.columnWidth {"chars"}` sets them
     // (chars * 7 + 5): 10.71 -> 80, 12 -> 89, 10.57 -> 79, 2.86 -> 25; B keeps the default 8.43 (64).
