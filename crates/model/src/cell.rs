@@ -17,6 +17,14 @@ pub struct Formula {
     /// Legacy array formula (Ctrl+Shift+Enter) covering this range; the formula lives in the
     /// top-left cell.
     pub array: Option<RangeRef>,
+    /// An ordinary formula imported from a file must keep its implicit-intersection semantics
+    /// when exported, even if export-time analysis would promote a newly entered formula.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub preserve_scalar: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl Formula {
@@ -25,12 +33,12 @@ impl Formula {
     pub fn new(text: &str) -> Formula {
         let body = text.strip_prefix('=').unwrap_or(text);
         match gridcraft_formula::parse(body) {
-            Ok(e) => Formula { text: gridcraft_formula::print(&e), expr: Some(Arc::new(e)), array: None },
-            Err(_) => Formula { text: body.to_string(), expr: None, array: None },
+            Ok(e) => Formula { text: gridcraft_formula::print(&e), expr: Some(Arc::new(e)), array: None, preserve_scalar: false },
+            Err(_) => Formula { text: body.to_string(), expr: None, array: None, preserve_scalar: false },
         }
     }
     pub fn from_expr(e: Expr) -> Formula {
-        Formula { text: gridcraft_formula::print(&e), expr: Some(Arc::new(e)), array: None }
+        Formula { text: gridcraft_formula::print(&e), expr: Some(Arc::new(e)), array: None, preserve_scalar: false }
     }
     /// The parsed expression, re-parsing after deserialization.
     pub fn expr(&self) -> Option<Expr> {
