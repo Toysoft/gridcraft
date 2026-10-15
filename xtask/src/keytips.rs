@@ -12,6 +12,10 @@ use std::path::Path;
 
 const TABS: &[&str] = &["Home", "Insert", "Draw", "Page Layout", "Formulas", "Data", "Review", "View", "Automate"];
 
+/// Contextual tabs: they show only while their object is selected, so their sequence switches
+/// to them only then (a blank workbook stays on Home).
+const CONTEXTUAL_TABS: &[&str] = &["PivotTable Analyze", "PivotTable Design"];
+
 /// Commands whose empty-params behaviour depends on the host machine (e.g. the
 /// system dictionary). These are never probed; their tests assert "invoked
 /// something observable" so the checked-in file stays byte-identical everywhere.
@@ -134,8 +138,8 @@ fn parse_and_probe(source: &str) -> Result<(Vec<Entry>, Probe), String> {
         }
         match kind.as_str() {
             "tab" => {
-                if target.is_empty() || !TABS.contains(&target.as_str()) {
-                    return Err(format!("{at}: tab target {target:?} is not one of {TABS:?}"));
+                if target.is_empty() || !(TABS.contains(&target.as_str()) || CONTEXTUAL_TABS.contains(&target.as_str())) {
+                    return Err(format!("{at}: tab target {target:?} is not one of {TABS:?} or {CONTEXTUAL_TABS:?}"));
                 }
             }
             "command" | "dialog" | "control" => {
@@ -260,6 +264,11 @@ fn render_tests(entries: &[Entry], probe: &Probe) -> String {
     let mut out = String::from(HEADER);
     for e in entries {
         let body = match e.kind.as_str() {
+            "tab" if CONTEXTUAL_TABS.contains(&e.target.as_str()) => format!(
+                "sequence(&mut h, {seq:?}, false);\n    assert_eq!(h.state().ui.ribbon_tab, \"Home\", \"{seq} must not switch to the hidden {tab} tab\");",
+                seq = e.seq,
+                tab = e.target,
+            ),
             "tab" => format!(
                 "sequence(&mut h, {seq:?}, false);\n    assert_eq!(h.state().ui.ribbon_tab, {tab:?}, \"{seq} must switch to the {tab} tab\");",
                 seq = e.seq,

@@ -2446,6 +2446,20 @@
    "note": "containment(Change Chart Type)"
   },
   {
+   "seq": "JT",
+   "kind": "tab",
+   "target": "PivotTable Analyze",
+   "excel": "PivotTable Analyze tab",
+   "note": "Contextual: only while the active cell is in a PivotTable (Table Design's JT letters follow otherwise)."
+  },
+  {
+   "seq": "JY",
+   "kind": "tab",
+   "target": "PivotTable Design",
+   "excel": "PivotTable Design tab",
+   "note": "Contextual: only while the active cell is in a PivotTable."
+  },
+  {
    "seq": "JTS",
    "kind": "command",
    "target": "table.style",

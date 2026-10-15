@@ -2064,14 +2064,11 @@ fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &
             return;
         }
         // Point mode while editing a formula: clicking inserts a reference.
+        let getpivotdata = app.session.prefs.generate_get_pivot_data;
         if let Some(ed) = app.editor.as_mut()
             && ed.can_point()
         {
-            let sheet_name = (ed.sheet != wb.active_sheet).then(|| sh.name.clone());
-            let r = match sheet_name {
-                Some(n) => format!("{}!{}", gridcraft_engine::formula::quote_sheet(&n), c.a1()),
-                None => c.a1(),
-            };
+            let r = point_text(getpivotdata, wb, sh, ed, c);
             ed.insert_ref(&r);
             ed.request_focus = true;
             ed.point_cell = Some(c);
@@ -2340,18 +2337,35 @@ fn point_header(app: &mut SheetApp, wb: &Workbook, sh: &Sheet, range: RangeRef) 
     true
 }
 
+/// What point mode writes for cell `c` of the sheet shown (`sh`): with Generate GetPivotData on,
+/// a value of a PivotTable becomes its GETPIVOTDATA formula, as in Excel; anything else is the
+/// cell's reference, with its sheet when the formula is on another one.
+fn point_text(getpivotdata: bool, wb: &Workbook, sh: &Sheet, ed: &EditState, c: CellRef) -> String {
+    if getpivotdata && let Some(f) = gridcraft_engine::pivot::getpivotdata_formula(wb, ed.sheet, wb.active_sheet, c, ed.locale) {
+        return f;
+    }
+    if ed.sheet != wb.active_sheet { format!("{}!{}", gridcraft_engine::formula::quote_sheet(&sh.name), c.a1()) } else { c.a1() }
+}
+
 fn select_to_pointer(app: &mut SheetApp, geo: &Geo, sh: &Sheet, wb: &Workbook, p: Pos2) {
     let cell = CellRef::new(
         geo.row_at(sh, p.y.clamp(geo.cells.top() + 1.0, geo.cells.bottom() - 1.0)),
         geo.col_at(sh, p.x.clamp(geo.cells.left() + 1.0, geo.cells.right() - 1.0)),
     );
+    let getpivotdata = app.session.prefs.generate_get_pivot_data;
     if let Some(ed) = app.editor.as_mut()
         && ed.point.is_some()
     {
         if let Some(start) = ed.point_cell {
             let range = RangeRef::new(start, cell);
-            let text = if range.is_single() { range.start.a1() } else { range.a1() };
-            let text = if ed.sheet != wb.active_sheet { format!("{}!{text}", gridcraft_engine::formula::quote_sheet(&sh.name)) } else { text };
+            // Dragging over several cells writes their range; back on one cell, what a click writes.
+            let text = if range.is_single() {
+                point_text(getpivotdata, wb, sh, ed, start)
+            } else if ed.sheet != wb.active_sheet {
+                format!("{}!{}", gridcraft_engine::formula::quote_sheet(&sh.name), range.a1())
+            } else {
+                range.a1()
+            };
             ed.insert_ref(&text);
             ed.point_cell = Some(start);
         }
@@ -2942,10 +2956,14 @@ pub fn point_move(app: &mut SheetApp, ed: &mut EditState, dr: i64, dc: i64, exte
             })
             .unwrap_or(from);
         RangeRef::new(anchor, to).a1()
+    } else if app.session.prefs.generate_get_pivot_data
+        && let Some(f) = gridcraft_engine::pivot::getpivotdata_formula(&d.wb, ed.sheet, d.wb.active_sheet, to, ed.locale)
+    {
+        // A value of a PivotTable, as a click on it writes.
+        f
     } else {
         to.a1()
     };
-    let _ = d;
     ed.insert_ref(&text);
     ed.point_cell = Some(to);
     app.grid.ensure_visible = true;

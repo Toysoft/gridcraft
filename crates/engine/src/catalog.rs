@@ -300,6 +300,7 @@ pub const CATALOG: &[(&str, &str, &str, &str)] = &[
     ("chart.shapeFill", "Format", "Shape Styles", "Shape Fill"),
     ("chart.shapeOutline", "Format", "Shape Styles", "Shape Outline"),
     // PivotTable Analyze / Design
+    ("pivot.generateGetPivotData", "PivotTable Analyze", "PivotTable", "Generate GetPivotData"),
     ("pivot.fieldList", "PivotTable Analyze", "Show", "Field List"),
     ("pivot.refresh", "PivotTable Analyze", "Data", "Refresh"),
     ("pivot.changeSource", "PivotTable Analyze", "Data", "Change Data Source"),
@@ -316,7 +317,9 @@ pub const CATALOG: &[(&str, &str, &str, &str)] = &[
     ("pivot.sort", "PivotTable Analyze", "Sort", "Sort"),
     ("pivot.group", "PivotTable Analyze", "Group", "Group Field"),
     ("pivot.collapse", "PivotTable Analyze", "Active Field", "Collapse Field"),
-    ("pivot.delete", "PivotTable Analyze", "Actions", "Clear All"),
+    ("pivot.clearAll", "PivotTable Analyze", "Actions", "Clear All"),
+    ("pivot.clearFilters", "PivotTable Analyze", "Actions", "Clear Filters"),
+    ("pivot.delete", "PivotTable Analyze", "Actions", "Delete PivotTable"),
 ];
 
 /// Distinct catalog ids.

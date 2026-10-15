@@ -7,9 +7,11 @@
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use gridcraft_core::date::datetime_from_serial;
 use gridcraft_core::{CellError, CellRef, MAX_COLS, MAX_ROWS, RangeRef, Value};
+use gridcraft_formula::FormulaLocale;
 use gridcraft_model::*;
 
 use crate::pivot_calc::CalcSet;
@@ -511,6 +513,8 @@ pub struct Output {
     pub chart_cols: Vec<(u32, String)>,
     /// Grid column holding the innermost row labels (`None` without row fields).
     pub label_col: Option<u32>,
+    /// What each line and data column stands for (GETPIVOTDATA reads it).
+    pub report: PivotReport,
 }
 
 impl Output {
@@ -1057,6 +1061,7 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
             chart_rows: vec![],
             chart_cols: vec![],
             label_col: None,
+            report: PivotReport::default(),
         });
     }
 
@@ -1081,6 +1086,8 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
     };
 
     // ---- header rows
+    // The report row of each column field's item labels.
+    let mut col_label_rows: Vec<u32> = Vec::new();
     if cols.is_empty() {
         let r = g.push_row(RowKind::Header)?;
         row_header(&mut g, r);
@@ -1103,6 +1110,7 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
         }
         let levels = cols.len() + usize::from(k > 1 && !on_rows);
         let first_level = g.rows.len();
+        col_label_rows = (0..cols.len()).map(|lv| (first_level + lv) as u32).collect();
         for _ in 0..levels {
             g.push_row(RowKind::Header)?;
         }
@@ -1230,6 +1238,7 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
     } else {
         Some(row_levels.saturating_sub(1) as u32)
     };
+    let mut report_rows: Vec<ReportKey> = Vec::new();
     for line in &lines {
         let rk = match line.kind {
             LineKind::Item(b) => RowKind::Item(b),
@@ -1251,6 +1260,7 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
         if !line.values {
             continue;
         }
+        report_rows.push(ReportKey { offset: r as u32, data: line.vi.map(|v| v as u32), items: key_items(&line.path, rows.len()) });
         let rp = line.path.as_slice();
         for (j, (si, col_vi)) in data_cols.iter().enumerate() {
             let line_vi = col_vi.or(line.vi);
@@ -1300,21 +1310,60 @@ pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Out
             g.set(r, l + j, shown, ck.1, 0, data_fmt.get(*vi).cloned().flatten());
         }
     }
-    Ok(Output { width: g.width as u32, grid: g.rows, row_kinds: g.kinds, body_offset, chart_rows, chart_cols, label_col })
+    let report_cols: Vec<ReportKey> = data_cols
+        .iter()
+        .enumerate()
+        .filter_map(|(j, (si, vi))| {
+            let spec = specs.get(*si)?;
+            Some(ReportKey { offset: (l + j) as u32, data: vi.map(|v| v as u32), items: key_items(&spec.path, cols.len()) })
+        })
+        .collect();
+    let field = |(c, f): &(usize, &PivotField), fi: &FieldItems| ReportField {
+        name: src.headers.get(*c).cloned().unwrap_or_else(|| f.source_col.clone()),
+        dates: f.date_group == PivotDateGroup::None && src.dates.get(*c).copied().unwrap_or(false),
+        items: fi.items.iter().map(|it| ReportItem { value: it.value.clone(), label: it.label.clone() }).collect(),
+    };
+    let report = PivotReport {
+        data_fields: vals.iter().map(|(_, v)| ReportDataField { name: v.name.clone(), source: v.source_col.clone() }).collect(),
+        row_fields: rows.iter().zip(ctx.row_items.iter()).map(|(f, fi)| field(f, fi)).collect(),
+        col_fields: cols.iter().zip(col_items.iter()).map(|(f, fi)| field(f, fi)).collect(),
+        page_fields: shown_filters
+            .iter()
+            .map(|&&(c, f, _, _)| {
+                let one = match &f.selected {
+                    Some(v) if v.len() == 1 => v.first().cloned(),
+                    _ => None,
+                };
+                (src.headers.get(c).cloned().unwrap_or_default(), one)
+            })
+            .collect(),
+        rows: report_rows,
+        cols: report_cols,
+        col_label_rows,
+        label_cols: l as u32,
+        compact,
+    };
+    Ok(Output { width: g.width as u32, grid: g.rows, row_kinds: g.kinds, body_offset, chart_rows, chart_cols, label_col, report })
+}
+
+/// A line's or column's item path as one entry per field of its axis (`None`: a total).
+fn key_items(path: &[u32], fields: usize) -> Vec<Option<u32>> {
+    (0..fields).map(|i| path.get(i).copied()).collect()
 }
 
 // ---------------------------------------------------------------- styling and writing
 
 /// Colours for a PivotTable style name (our own palette, keyed by the familiar
-/// `PivotStyleLight1…28 / Medium1…28 / Dark1…28` names).
-struct Look {
-    header_fill: Color,
-    header_font: Color,
-    line: Color,
-    filter_fill: Color,
+/// `PivotStyleLight1…28 / Medium1…28 / Dark1…28` names). The PivotTable Styles gallery draws
+/// its swatches from it.
+pub struct Look {
+    pub header_fill: Color,
+    pub header_font: Color,
+    pub line: Color,
+    pub filter_fill: Color,
 }
 
-fn look(style: &str) -> Look {
+pub fn look(style: &str) -> Look {
     let rest = style.strip_prefix("PivotStyle").unwrap_or(style);
     let (fam, n) = ["Light", "Medium", "Dark"]
         .iter()
@@ -1489,6 +1538,7 @@ pub fn refresh(wb: &mut Workbook, sheet: usize, idx: usize, replace: bool) -> Re
     }
     if let Some(p) = shm.pivots.get_mut(idx) {
         p.last_range = Some(area);
+        p.report = PivotReportIndex(Some(Arc::new(out.report.clone())));
     }
     let sheet_name = shm.name.clone();
     rebind_charts(wb, &sheet_name, &pt.name, origin, &out);
@@ -1597,7 +1647,86 @@ pub fn clear_output(wb: &mut Workbook, sheet: usize, idx: usize) {
     shm.take_cells(r);
     if let Some(p) = shm.pivots.get_mut(idx) {
         p.last_range = None;
+        p.report = PivotReportIndex::default();
     }
+}
+
+/// Indexes the reports of PivotTables read from a file: their cells are on the sheet, but no
+/// report was written in this session. A PivotTable is indexed only when its report, computed
+/// again, has its values exactly where the sheet has them; until a refresh, GETPIVOTDATA gives
+/// `#REF!` for one whose report doesn't match (a stale or differently laid out file).
+pub fn index_reports(wb: &mut Workbook) {
+    let mut found: Vec<(usize, usize, PivotReport)> = Vec::new();
+    for (si, sh) in wb.sheets.iter().enumerate() {
+        for (pi, pt) in sh.pivots.iter().enumerate() {
+            let Some(area) = pt.last_range else { continue };
+            if pt.report.get().is_some() {
+                continue;
+            }
+            let Ok(out) = compute(wb, pt, si) else { continue };
+            if out.height().max(1) != area.height() || out.width.max(1) != area.width() || !report_matches(sh, area.start, &out) {
+                continue;
+            }
+            found.push((si, pi, out.report));
+        }
+    }
+    for (si, pi, report) in found {
+        if let Some(p) = wb.sheet_mut(si).and_then(|sh| sh.pivots.get_mut(pi)) {
+            p.report = PivotReportIndex(Some(Arc::new(report)));
+        }
+    }
+}
+
+/// Whether every value cell of a computed report holds, on the sheet, the value it computes.
+fn report_matches(sh: &Sheet, origin: CellRef, out: &Output) -> bool {
+    let same = |a: &Value, b: &Value| match (a, b) {
+        (Value::Number(x), Value::Number(y)) => (x - y).abs() <= 1e-9 * x.abs().max(y.abs()).max(1.0),
+        _ => a == b,
+    };
+    out.report.rows.iter().all(|r| {
+        out.report.cols.iter().all(|c| {
+            let (Some(row), Some(col)) = (origin.row.checked_add(r.offset), origin.col.checked_add(c.offset)) else { return false };
+            same(&out.value(r.offset as usize, c.offset as usize), &sh.value(CellRef::new(row, col)))
+        })
+    })
+}
+
+// ---------------------------------------------------------------- GETPIVOTDATA
+
+/// The formula (without `=`) Excel's Generate GetPivotData writes for a value cell of a
+/// PivotTable: `GETPIVOTDATA("Sum of Sales",$A$3,"Region","East")`, naming the value field by its
+/// caption, the PivotTable by its top-left cell and each row and column item of the cell. Dates
+/// are written with DATE. `None` when `cell` on `sheet` isn't a value cell of a report. The
+/// formula is for a cell on `from_sheet`, in `locale`'s syntax.
+pub fn getpivotdata_formula(wb: &Workbook, from_sheet: usize, sheet: usize, cell: CellRef, locale: FormulaLocale) -> Option<String> {
+    let sh = wb.sheet(sheet)?;
+    let pt = sh.pivots.iter().find(|p| p.last_range.is_some_and(|r| r.contains(cell)))?;
+    let origin = pt.last_range?.start;
+    let report = pt.report.get()?;
+    let (data, pairs) = report.value_cell(cell.row.checked_sub(origin.row)?, cell.col.checked_sub(origin.col)?)?;
+    let sep = locale.list_separator();
+    let text = |t: &str| format!("\"{}\"", t.replace('"', "\"\""));
+    let number = |n: f64| {
+        let t = gridcraft_core::number_to_text(n);
+        if locale.decimal_separator() == '.' { t } else { t.replace('.', &locale.decimal_separator().to_string()) }
+    };
+    let anchor = format!("${}${}", gridcraft_core::col_to_letters(pt.anchor.col), u64::from(pt.anchor.row) + 1);
+    let target = if sheet == from_sheet { anchor } else { format!("{}!{anchor}", quote_sheet(&sh.name)) };
+    let mut out = format!("{}({}{sep}{target}", locale.function_name("GETPIVOTDATA"), text(&report.data_fields.get(data as usize)?.name));
+    for (field, item) in pairs {
+        let literal = match &item.value {
+            Value::Number(n) if field.dates && n.fract() == 0.0 => match datetime_from_serial(wb.date_system, *n) {
+                Some(d) => format!("{}({}{sep}{}{sep}{})", locale.function_name("DATE"), d.year, d.month, d.day),
+                None => number(*n),
+            },
+            Value::Number(n) => number(*n),
+            Value::Bool(b) => locale.function_name(if *b { "TRUE" } else { "FALSE" }).to_string(),
+            _ => text(&item.label),
+        };
+        out.push_str(&format!("{sep}{}{sep}{literal}", text(&field.name)));
+    }
+    out.push(')');
+    Some(out)
 }
 
 #[cfg(test)]

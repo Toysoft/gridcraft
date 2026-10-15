@@ -119,6 +119,8 @@ const UNDO_LIMIT: usize = 100;
 
 impl DocState {
     pub fn new(mut wb: Workbook, path: Option<String>, title: String) -> DocState {
+        // GETPIVOTDATA reads the reports of PivotTables that came with the file.
+        pivot::index_reports(&mut wb);
         let mut calc = Calc::new();
         calc.recalc_all(&mut wb);
         let wb = Arc::new(wb);
@@ -199,6 +201,10 @@ pub struct Prefs {
     pub user_dictionary: Vec<String>,
     /// View › Show › Formula Bar (an application option in Excel, not saved in the file).
     pub formula_bar: bool,
+    /// PivotTable Analyze › Options › Generate GetPivotData (File › Options › Formulas › Use
+    /// GetPivotData functions for PivotTable references): pointing at a value of a PivotTable
+    /// while typing a formula inserts GETPIVOTDATA instead of the cell's reference.
+    pub generate_get_pivot_data: bool,
 }
 
 impl Default for Prefs {
@@ -213,6 +219,7 @@ impl Default for Prefs {
             r1c1: false,
             user_dictionary: vec![],
             formula_bar: true,
+            generate_get_pivot_data: true,
         }
     }
 }

@@ -188,6 +188,28 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             delete
         ),
+        cmd!(query "pivot.generateGetPivotData", "Generate GetPivotData", ["PivotTable Analyze", "PivotTable", "Options"], None, "{on?: bool} (toggles without it) → {on}: pointing at a PivotTable value while typing a formula inserts GETPIVOTDATA (an application setting, on by default)", always, |s, p| {
+            s.prefs.generate_get_pivot_data = bool_param(p, "on").unwrap_or(!s.prefs.generate_get_pivot_data);
+            Ok(json!({"on": s.prefs.generate_get_pivot_data}))
+        }),
+        cmd!(
+            "pivot.clearAll",
+            "Clear All",
+            ["PivotTable Analyze", "Actions", "Clear"],
+            None,
+            "{pivot?, replace?} takes every field out of Rows, Columns, Values and Filters (the PivotTable stays, empty; calculated fields and layout options are kept)",
+            has_doc,
+            clear_all
+        ),
+        cmd!(
+            "pivot.clearFilters",
+            "Clear Filters",
+            ["PivotTable Analyze", "Actions", "Clear"],
+            None,
+            "{pivot?, replace?} shows every item again: report filters go back to (All) and hidden items of row and column fields come back",
+            has_doc,
+            clear_filters
+        ),
     ]
 }
 
@@ -1377,6 +1399,33 @@ fn delete(s: &mut Session, p: &Json) -> Result<Json> {
     })
 }
 
+/// PivotTable Analyze › Clear › Clear All: an empty PivotTable on the same source, as Excel
+/// leaves it. Calculated fields are definitions rather than layout, so they stay available.
+fn clear_all(s: &mut Session, p: &Json) -> Result<Json> {
+    update(s, p, |pt, _, _| {
+        pt.rows.clear();
+        pt.columns.clear();
+        pt.values.clear();
+        pt.filters.clear();
+        pt.values_on_rows = false;
+        pt.values_position = None;
+        Ok(json!({}))
+    })
+}
+
+/// PivotTable Analyze › Clear › Clear Filters: report filters show (All) again and row and
+/// column fields lose their hidden-items filters.
+fn clear_filters(s: &mut Session, p: &Json) -> Result<Json> {
+    update(s, p, |pt, _, _| {
+        let axes: Vec<String> = pt.rows.iter().chain(pt.columns.iter()).map(|f| f.source_col.to_ascii_lowercase()).collect();
+        pt.filters.retain(|f| !axes.contains(&f.source_col.to_ascii_lowercase()));
+        for f in &mut pt.filters {
+            f.selected = None;
+        }
+        Ok(json!({}))
+    })
+}
+
 // ---------------------------------------------------------------- PivotChart
 
 /// The PivotTable a PivotChart call targets: `pivot` may also be a cell of its report.
@@ -2307,5 +2356,45 @@ mod tests {
         s.execute("pivot.collapse", json!({"field": "Grp"})).unwrap();
         // 64 Sub items under the collapsed "g" show as one column group: (1 + grand total) x 256 columns fit.
         s.execute("pivot.addField", json!({"field": "Sub", "area": "columns"})).unwrap();
+    }
+
+    #[test]
+    fn generate_getpivotdata_is_a_setting_on_by_default() {
+        let mut s = Session::new();
+        assert!(s.prefs.generate_get_pivot_data);
+        assert_eq!(s.execute("pivot.generateGetPivotData", json!({})).unwrap()["on"], false);
+        assert_eq!(s.execute("pivot.generateGetPivotData", json!({"on": true})).unwrap()["on"], true);
+        assert!(s.journal.is_empty(), "a setting, not an edit of the workbook");
+        // A prefs.json saved before the setting existed keeps it on.
+        let old: crate::Prefs = serde_json::from_str(r#"{"userName": "Ann"}"#).unwrap();
+        assert!(old.generate_get_pivot_data);
+    }
+
+    #[test]
+    fn clear_all_leaves_an_empty_pivottable_and_clear_filters_shows_every_item() {
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region", "Product"], "values": ["Sales"], "filters": ["Date"]})).unwrap();
+        s.execute("pivot.filter", json!({"field": "Product", "selected": ["Apples"]})).unwrap();
+        s.execute("pivot.filter", json!({"field": "Date", "selected": ["1/15/2026"]})).unwrap();
+        let p = pt(&s);
+        assert_eq!(p.filters.len(), 2);
+        s.execute("pivot.clearFilters", json!({})).unwrap();
+        let p = pt(&s);
+        // The report filter stays, showing (All); the row field's hidden items are gone.
+        assert_eq!(p.filters.len(), 1);
+        assert_eq!(p.filters[0].source_col, "Date");
+        assert_eq!(p.filters[0].selected, None);
+        let gt = find_row(&s, "Grand Total").unwrap();
+        assert_eq!(val(&s, &CellRef::new(gt, 1).a1()), Value::Number(TOTAL));
+        // Clear All keeps the PivotTable, now empty, and is one undo step.
+        s.execute("pivot.calculatedField", json!({"name": "Tax", "formula": "=Sales*0.1", "values": false})).unwrap();
+        s.execute("pivot.clearAll", json!({})).unwrap();
+        let p = pt(&s);
+        assert!(p.rows.is_empty() && p.columns.is_empty() && p.values.is_empty() && p.filters.is_empty());
+        assert_eq!(p.calculated_fields.len(), 1);
+        assert!(text(&s, "A3").starts_with("PivotTable1"), "{}", text(&s, "A3"));
+        assert_eq!(s.doc().unwrap().wb.active().unwrap().pivots.len(), 1);
+        s.execute("edit.undo", json!({})).unwrap();
+        assert_eq!(pt(&s).rows.len(), 2);
     }
 }

@@ -10,6 +10,8 @@ use crate::keytips::keytip_table;
 use crate::theme::{self, Tokens};
 use crate::widgets::{big_button, color_palette, icon_button, small_button, split_button, toggle_button};
 
+pub mod pivot_tabs;
+
 pub const TABS: &[&str] = &["Home", "Insert", "Draw", "Page Layout", "Formulas", "Data", "Review", "View", "Automate"];
 
 /// macOS draws the window into the title bar (`with_fullsize_content_view`) and AppKit paints the
@@ -179,6 +181,12 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                     file_menu(app, ui);
                     let mut tabs: Vec<&str> = TABS.to_vec();
                     let ctx_tabs = contextual_tabs(app);
+                    // Leaving the PivotTable takes its tabs away: the ribbon goes back to Home.
+                    if [pivot_tabs::ANALYZE, pivot_tabs::DESIGN].contains(&app.ui.ribbon_tab.as_str())
+                        && !ctx_tabs.contains(&app.ui.ribbon_tab.as_str())
+                    {
+                        app.ui.ribbon_tab = "Home".into();
+                    }
                     tabs.extend(ctx_tabs.iter());
                     for tab in tabs {
                         let active = app.ui.ribbon_tab == tab;
@@ -245,6 +253,8 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                             "Automate" => automate(app, ui),
                             "Table Design" => table_design(app, ui),
                             "Chart Design" => chart_design(app, ui),
+                            pivot_tabs::ANALYZE => pivot_tabs::analyze(app, ui),
+                            pivot_tabs::DESIGN => pivot_tabs::design(app, ui),
                             crate::paper_view::TAB => crate::paper_view::ribbon_tab(app, ui),
                             _ => home(app, ui),
                         }
@@ -277,13 +287,18 @@ fn theme_choices(app: &mut SheetApp, ui: &mut Ui) {
     }
 }
 
-fn contextual_tabs(app: &SheetApp) -> Vec<&'static str> {
+/// The contextual tabs to show after the fixed ones: they come and go with what's selected.
+pub(crate) fn contextual_tabs(app: &SheetApp) -> Vec<&'static str> {
     let mut v = Vec::new();
     if let Some(d) = app.session.active()
         && let Some(sh) = d.wb.active()
     {
         if sh.table_at(d.selection.active).is_some() {
             v.push("Table Design");
+        }
+        if crate::pivot_pane::at_active_cell(app).is_some() {
+            v.push(pivot_tabs::ANALYZE);
+            v.push(pivot_tabs::DESIGN);
         }
         if app.selected_chart.is_some_and(|id| sh.charts.iter().any(|c| c.id == id)) {
             v.push("Chart Design");

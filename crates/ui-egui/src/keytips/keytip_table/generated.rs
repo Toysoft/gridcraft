@@ -359,7 +359,9 @@ pub const SEQUENCES: &[(&str, Entry)] = &[
     ("JAM", Entry::Finish(Action::Command("chart.formatSelection"))), // Excel: Chart format: Format Selection pane; containment(Format Selection)
     ("JCA", Entry::Finish(Action::Command("chart.addElement"))),    // Excel: Chart: Add Chart Element; containment(Add Chart Element)
     ("JCC", Entry::Finish(Action::Command("chart.changeType"))),    // Excel: Chart: Change Chart Type; containment(Change Chart Type)
-    ("JTS", Entry::Finish(Action::Command("table.style"))),         // Excel: Table: table style
+    ("JT", Entry::Tab("PivotTable Analyze")), // Excel: PivotTable Analyze tab; Contextual: only while the active cell is in a PivotTable (Table Design's JT letters follow otherwise).
+    ("JY", Entry::Tab("PivotTable Design")),  // Excel: PivotTable Design tab; Contextual: only while the active cell is in a PivotTable.
+    ("JTS", Entry::Finish(Action::Command("table.style"))), // Excel: Table: table style
     ("JTV", Entry::Finish(Action::Command("table.summarizePivot"))), // Excel: Table: Summarize with PivotTable; containment(Summarize with PivotTable)
     ("FA", Entry::Finish(Action::Command("file.saveAs"))), // Excel: Save / Save As page; fires immediately in Excel; deeper aliases dropped as unreachable
     ("FC", Entry::Finish(Action::Command("file.close"))),  // Excel: Close workbook

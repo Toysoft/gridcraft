@@ -3,21 +3,32 @@
 //! with move/remove menus. Everything runs `pivot.*` commands.
 
 use egui::{Color32, Ui, vec2};
+use gridcraft_engine::model::PivotTable;
 use serde_json::{Value as Json, json};
 
 use crate::SheetApp;
 use crate::i18n;
 use crate::theme::{self, Tokens};
 
-/// Whether the active cell is inside a pivot report (so the pane should show).
-pub fn active_pivot(app: &SheetApp) -> Option<String> {
+/// The PivotTable whose report holds the active cell (or whose anchor it is): the pane and the
+/// PivotTable Analyze and Design tabs show while there is one.
+pub fn at_active_cell(app: &SheetApp) -> Option<&PivotTable> {
     let d = app.session.active()?;
     let sh = d.wb.active()?;
     let a = d.selection.active;
-    sh.pivots.iter().find(|p| p.last_range.is_some_and(|r| r.contains(a)) || p.anchor == a).map(|p| p.name.clone())
+    sh.pivots.iter().find(|p| p.last_range.is_some_and(|r| r.contains(a)) || p.anchor == a)
+}
+
+/// Whether the active cell is inside a pivot report (so the pane should show).
+pub fn active_pivot(app: &SheetApp) -> Option<String> {
+    at_active_cell(app).map(|p| p.name.clone())
 }
 
 pub fn show(app: &mut SheetApp, ui: &mut Ui) {
+    // PivotTable Analyze › Show › Field List hides the pane.
+    if !app.ui.pivot_field_list {
+        return;
+    }
     let Some(name) = active_pivot(app) else { return };
     let t = Tokens::get(ui.ctx());
     let lang = i18n::current(ui.ctx());

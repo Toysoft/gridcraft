@@ -135,6 +135,14 @@ mod tests {
     }
 
     #[test]
+    fn getpivotdata_has_no_prefix() {
+        // GETPIVOTDATA dates from Excel 2000: files name it as it is, both ways.
+        let f = r#"GETPIVOTDATA("Sum of Sales",Sheet2!$A$3,"Date",DATE(2026,1,15))"#;
+        assert_eq!(to_file(&Formula::new(f)), f);
+        assert_eq!(from_file(f), f);
+    }
+
+    #[test]
     fn implicit_intersection() {
         assert_eq!(to_file(&Formula::new("SUM(@A1:A3*B1:B3)")), "SUM(_xlfn.SINGLE(A1:A3)*B1:B3)");
         assert_eq!(to_file(&Formula::new("@A1:A3*2")), "_xlfn.SINGLE(A1:A3)*2");

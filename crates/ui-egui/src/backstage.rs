@@ -994,6 +994,12 @@ fn options(app: &mut SheetApp, ui: &mut Ui) {
     }
     ui.add_space(6.0);
     dim(ui, lang.tr("Calculation settings are saved with the workbook."));
+    ui.add_space(12.0);
+    ui.label(lang.tr("Working with formulas"));
+    let mut getpivotdata = app.session.prefs.generate_get_pivot_data;
+    if ui.checkbox(&mut getpivotdata, lang.tr("Use GetPivotData functions for PivotTable references")).changed() {
+        app.run_or_alert("pivot.generateGetPivotData", json!({"on": getpivotdata}));
+    }
 }
 
 #[cfg(test)]
