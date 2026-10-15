@@ -759,10 +759,14 @@ fn solid_bar_ext(priority: u32) -> String {
 }
 
 /// The x14 rule a solid data bar's `cfRule` links to (it holds the fill); `None` for other rules.
+/// GridCraft draws negative values in the bar's colour from the low end, with no axis; the x14
+/// defaults are an automatic axis and a separate negative colour, so both are written out.
 fn solid_bar_x14(cf: &CondFormat, priority: u32) -> Option<String> {
     let CfRule::DataBar { min, max, gradient: false, .. } = &cf.rule else { return None };
     let (id, lo, hi) = (solid_bar_id(priority), x14_cfvo(min), x14_cfvo(max));
-    Some(format!("<x14:cfRule type=\"dataBar\" id=\"{id}\"><x14:dataBar gradient=\"0\">{lo}{hi}</x14:dataBar></x14:cfRule>"))
+    Some(format!(
+        "<x14:cfRule type=\"dataBar\" id=\"{id}\"><x14:dataBar gradient=\"0\" negativeBarColorSameAsPositive=\"1\" axisPosition=\"none\">{lo}{hi}</x14:dataBar></x14:cfRule>"
+    ))
 }
 
 /// An x14 `cfvo`: unlike the 2006 one it has no `val` attribute, the value is an `xm:f` child.

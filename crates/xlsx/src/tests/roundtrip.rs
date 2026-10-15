@@ -1279,6 +1279,8 @@ fn solid_data_bar_survives_with_sparklines_and_gradient_neighbours() {
     // Both solid bars sit in the one x14 conditional format extension, under its MS-XLSX uri.
     assert_eq!(xml.matches("<ext uri=\"{78C0D931-6437-407d-A8EE-F0AAD7539E65}\"").count(), 1, "{xml}");
     assert_eq!(xml.matches("<x14:cfRule type=\"dataBar\"").count(), 2, "{xml}");
+    // As drawn here: negatives in the bar's colour, no axis (Excel's x14 defaults differ), and read back without a warning.
+    assert_eq!(xml.matches("<x14:dataBar gradient=\"0\" negativeBarColorSameAsPositive=\"1\" axisPosition=\"none\">").count(), 2, "{xml}");
     let (back, rep) = read_xlsx(&bytes).unwrap();
     assert!(rep.warnings.is_empty(), "{:?}", rep.warnings);
     let b = &back.sheets[0];

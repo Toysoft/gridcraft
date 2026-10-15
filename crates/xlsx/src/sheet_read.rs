@@ -698,8 +698,14 @@ fn read_x14_cf(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
                 match (sheet.cond_formats.get_mut(n), r.child("dataBar")) {
                     (Some(CondFormat { rule: CfRule::DataBar { gradient, .. }, .. }), Some(db)) => {
                         *gradient = db.flag("gradient", true);
-                        // Only the fill style is modelled; borders, lengths, axis or negative colours are lost.
-                        if db.attrs.iter().any(|(k, _)| k != "gradient") || db.children.iter().any(|k| k.name != "cfvo") {
+                        // Only the fill style is modelled, with negatives in the bar's colour and no axis;
+                        // borders, lengths, other axis positions or negative colours are lost.
+                        let modelled = |k: &str, v: &str| {
+                            k == "gradient"
+                                || (k == "axisPosition" && v == "none")
+                                || (k == "negativeBarColorSameAsPositive" && matches!(v, "1" | "true"))
+                        };
+                        if db.attrs.iter().any(|(k, v)| !modelled(k, v)) || db.children.iter().any(|k| k.name != "cfvo") {
                             cx.warn(format!("Excel 2010 conditional format extension \"{ty}\" was partly skipped (only its solid fill is kept)"));
                         }
                     }
