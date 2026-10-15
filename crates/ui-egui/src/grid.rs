@@ -2567,7 +2567,7 @@ fn select_ranges(app: &mut SheetApp, r: RangeRef, add: bool, active: CellRef) {
 /// Grid keyboard handling when no text field has focus.
 fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo: &Geo, sh: &Sheet) {
     // Focus left on an editor that no longer exists goes back to the grid.
-    let stale = [egui::Id::new("gridcraft.cell_editor"), egui::Id::new("gridcraft.formula_bar"), crate::text_box::editor_id()];
+    let stale = [app.widget_id("gridcraft.cell_editor"), app.widget_id("gridcraft.formula_bar"), crate::text_box::editor_id(app)];
     let editing = app.editor.is_some() || app.text_box_editor.is_some();
     if !editing && ctx.memory(|m| m.focused()).is_some_and(|f| stale.contains(&f)) {
         resp.request_focus();
@@ -2721,7 +2721,7 @@ fn in_cell_editor(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, sh: &Sheet, 
     let painter = ui.painter().with_clip_rect(clip);
     painter.rect_filled(erect, 0.0, fill);
     painter.rect_stroke(erect.expand(1.0), 0.0, Stroke::new(2.0, Tokens::get(ui.ctx()).sel_border), StrokeKind::Middle);
-    let id = egui::Id::new("gridcraft.cell_editor");
+    let id = app.widget_id("gridcraft.cell_editor");
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(erect.shrink2(vec2(2.0, 1.0))));
     child.set_clip_rect(clip);
     crate::formula_bar::editor_widget(app, &mut child, id, font, false, erect.width() - 4.0);
@@ -2766,10 +2766,10 @@ fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool)
     }
     let wb = app.session.active().map(|d| d.wb.clone()).unwrap_or(wb);
     let values = gridcraft_engine::cmd::data::filter_values(&wb, si, col);
-    let key = egui::Id::new(("filter_sel", col));
-    let search_key = egui::Id::new(("filter_search", col));
+    let key = app.widget_id(("filter_sel", col));
+    let search_key = app.widget_id(("filter_search", col));
     let mut close = false;
-    let area = egui::Area::new(egui::Id::new("filter_menu")).fixed_pos(at + vec2(-180.0, 10.0)).order(egui::Order::Foreground);
+    let area = egui::Area::new(app.widget_id("filter_menu")).fixed_pos(at + vec2(-180.0, 10.0)).order(egui::Order::Foreground);
     let response = area.show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_width(230.0);
@@ -2844,7 +2844,7 @@ fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool)
 fn context_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
     let Some(at) = app.grid.context_menu else { return };
     let mut close = false;
-    let resp = egui::Area::new(egui::Id::new("cell_context")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+    let resp = egui::Area::new(app.widget_id("cell_context")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_min_width(200.0);
             let insert_copied = insert_copied_item(app);
@@ -2991,7 +2991,7 @@ pub(crate) fn paint_overlays(
     {
         let r = geo.cell_rect(sh, sel.active);
         let (at, pivot) = (geo.mirror_pos(pos2(r.left() + 8.0, r.bottom() + 6.0)), if geo.rtl { Align2::RIGHT_TOP } else { Align2::LEFT_TOP });
-        egui::Area::new(egui::Id::new("dv_input")).fixed_pos(at).pivot(pivot).order(egui::Order::Tooltip).interactable(false).show(ui.ctx(), |ui| {
+        egui::Area::new(app.widget_id("dv_input")).fixed_pos(at).pivot(pivot).order(egui::Order::Tooltip).interactable(false).show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style()).fill(Color32::from_rgb(0xFF, 0xFF, 0xE1)).show(ui, |ui| {
                 ui.set_max_width(220.0);
                 if !dv.input_title.is_empty() {
@@ -3016,7 +3016,7 @@ pub(crate) fn paint_overlays(
         let at = pos2(r.right() + 10.0, r.top());
         p.line_segment([r.right_top(), at + vec2(0.0, 6.0)], Stroke::new(1.0, Color32::from_gray(90)));
         let (at, pivot) = (geo.mirror_pos(at), if geo.rtl { Align2::RIGHT_TOP } else { Align2::LEFT_TOP });
-        egui::Area::new(egui::Id::new(("note", c.row, c.col))).fixed_pos(at).pivot(pivot).order(egui::Order::Tooltip).interactable(false).show(
+        egui::Area::new(app.widget_id(("note", c.row, c.col))).fixed_pos(at).pivot(pivot).order(egui::Order::Tooltip).interactable(false).show(
             ui.ctx(),
             |ui| {
                 egui::Frame::popup(ui.style()).fill(if cm.threaded { Color32::WHITE } else { Color32::from_rgb(0xFF, 0xFF, 0xE1) }).show(ui, |ui| {
@@ -3036,7 +3036,7 @@ pub(crate) fn paint_overlays(
         && app.editor.is_none()
     {
         let tip = h.tooltip.clone().unwrap_or_else(|| format!("{}\nClick once to follow. Click and hold to select this cell.", h.target));
-        egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), egui::Id::new("link_tip"), egui::PopupAnchor::Pointer).show(|ui| {
+        egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), app.widget_id("link_tip"), egui::PopupAnchor::Pointer).show(|ui| {
             ui.label(tip);
         });
     }
@@ -3083,7 +3083,7 @@ fn list_picker(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool)
     let r = geo.cell_rect(sh, c);
     let (at, pivot) = (geo.mirror_pos(r.left_bottom()), if geo.rtl { Align2::RIGHT_TOP } else { Align2::LEFT_TOP });
     let mut close = false;
-    let response = egui::Area::new(egui::Id::new("dv_list")).fixed_pos(at).pivot(pivot).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+    let response = egui::Area::new(app.widget_id("dv_list")).fixed_pos(at).pivot(pivot).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).inner_margin(2.0).show(ui, |ui| {
             ui.set_min_width(r.width().max(100.0));
             egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
@@ -3104,7 +3104,7 @@ fn list_picker(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_open: bool)
 fn header_menu(app: &mut SheetApp, ui: &mut egui::Ui, was_open: bool) {
     let Some((at, rows)) = app.grid.header_menu else { return };
     let mut close = false;
-    let response = egui::Area::new(egui::Id::new("header_menu")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+    let response = egui::Area::new(app.widget_id("header_menu")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.set_min_width(190.0);
             let insert_copied = insert_copied_item(app);

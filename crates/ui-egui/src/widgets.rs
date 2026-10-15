@@ -273,7 +273,7 @@ pub fn color_palette(ui: &mut Ui, theme_colors: &[u32; 12], none_label: &str) ->
 pub fn message_box(app: &mut SheetApp, ctx: &egui::Context) {
     let Some((title, msg)) = app.message.clone() else { return };
     let mut close = false;
-    egui::Modal::new(egui::Id::new("message_box")).show(ctx, |ui| {
+    egui::Modal::new(app.widget_id("message_box")).show(ctx, |ui| {
         ui.set_width(380.0);
         ui.horizontal(|ui| {
             let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
@@ -303,7 +303,7 @@ pub fn toast(app: &mut SheetApp, ctx: &egui::Context) {
         return;
     }
     let Some(rect) = app.grid.rect else { return };
-    egui::Area::new(egui::Id::new("toast")).fixed_pos(pos2(rect.center().x - 160.0, rect.bottom() - 48.0)).order(egui::Order::Tooltip).show(
+    egui::Area::new(app.widget_id("toast")).fixed_pos(pos2(rect.center().x - 160.0, rect.bottom() - 48.0)).order(egui::Order::Tooltip).show(
         ctx,
         |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
@@ -326,7 +326,7 @@ pub fn notice_bar(app: &mut SheetApp, ui: &mut Ui) {
     };
     let mut dismiss = false;
     let mut action: Option<(String, String)> = None;
-    egui::Panel::top("notice_bar").frame(egui::Frame::NONE.fill(bg).inner_margin(egui::Margin::symmetric(12, 0))).show(ui, |ui| {
+    egui::Panel::top(app.widget_id("notice_bar")).frame(egui::Frame::NONE.fill(bg).inner_margin(egui::Margin::symmetric(12, 0))).show(ui, |ui| {
         // Bottom border as a 1px strip spanning the bar.
         let bar = ui.max_rect();
         ui.painter().rect_stroke(bar, 0.0, Stroke::new(1.0, border), StrokeKind::Inside);

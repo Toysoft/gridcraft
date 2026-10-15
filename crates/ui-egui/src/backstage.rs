@@ -156,7 +156,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let mut out = Outcome::default();
     let (nav_bg, nav_text, nav_sel) =
         if t.dark { (t.accent_soft, t.text, Color32::from_white_alpha(30)) } else { (t.accent, Color32::WHITE, Color32::from_black_alpha(46)) };
-    egui::Panel::left("backstage_nav")
+    egui::Panel::left(app.widget_id("backstage_nav"))
         .exact_size(NAV_W)
         .resizable(false)
         .frame(egui::Frame::NONE.fill(nav_bg).inner_margin(egui::Margin { left: 0, right: 0, top: 10, bottom: 10 }))

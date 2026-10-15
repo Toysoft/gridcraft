@@ -38,7 +38,7 @@ const _: () = assert!(TITLE_CONTROL_H < TITLE_BAR_H, "title-bar controls keep a 
 pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let ch = TITLE_CONTROL_H;
-    egui::Panel::top("title_bar").exact_size(TITLE_BAR_H).frame(egui::Frame::NONE.fill(t.window)).show(ui, |ui| {
+    egui::Panel::top(app.widget_id("title_bar")).exact_size(TITLE_BAR_H).frame(egui::Frame::NONE.fill(t.window)).show(ui, |ui| {
         let rect = ui.max_rect();
         // Dragging the empty title area moves the window.
         let bg = ui.interact(rect, ui.id().with("drag_title"), Sense::click_and_drag());
@@ -166,7 +166,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let collapsed = app.ui.ribbon_collapsed;
     let h = if collapsed { 34.0 } else { 34.0 + 92.0 };
-    egui::Panel::top("ribbon")
+    egui::Panel::top(app.widget_id("ribbon"))
         .exact_size(h)
         .frame(egui::Frame::NONE.fill(t.window).inner_margin(egui::Margin { left: 10, right: 10, top: 0, bottom: 6 }))
         .show(ui, |ui| {
@@ -324,7 +324,7 @@ fn act(app: &mut SheetApp, id: &str, params: serde_json::Value) {
 fn keytip(app: &SheetApp, ui: &Ui, sequence: &str, at: egui::Pos2) {
     let Some(rest) = app.keytips.prefix().and_then(|prefix| sequence.strip_prefix(prefix)).filter(|s| !s.is_empty()) else { return };
     let t = Tokens::get(ui.ctx());
-    let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("ribbon_keytips"))).with_clip_rect(ui.clip_rect());
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, app.widget_id("ribbon_keytips"))).with_clip_rect(ui.clip_rect());
     let text = painter.layout_no_wrap(rest.into(), theme::ui_bold(10.5), t.text);
     let rect = Rect::from_center_size(at, text.size() + vec2(7.0, 3.0));
     painter.rect_filled(rect, 2.0, t.input_bg);
@@ -2275,7 +2275,7 @@ fn table_design(app: &mut SheetApp, ui: &mut Ui) {
     };
     ui.vertical(|ui| {
         ui.label(egui::RichText::new("Table Name:").small());
-        let field = egui::Id::new(("gridcraft.table_name", &tname));
+        let field = app.widget_id(("gridcraft.table_name", &tname));
         if let Some(name) = crate::widgets::committed_text(ui, field, &tname, Some(120.0))
             && name != tname
         {
