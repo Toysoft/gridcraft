@@ -7,8 +7,10 @@
 //! widths, row heights, defined names, print areas, print titles and the calculation settings
 //! (mode, iteration, precision as displayed). Everything else (fonts, fills, borders, charts,
 //! pictures, comments, conditional formats, validation, macros) is skipped with a warning.
-//! Encrypted workbooks and pre-BIFF8 versions are refused.
+//! Workbooks encrypted with RC4 are read with their password ([`read_xls_with_password`]);
+//! other encryption and pre-BIFF8 versions are refused.
 
+pub(crate) mod crypt;
 mod formula;
 mod ftab;
 mod records;
@@ -45,9 +47,8 @@ pub(crate) fn invalid(msg: impl Into<String>) -> IoError {
     IoError::Format(format!("XLS: {}", msg.into()))
 }
 
-/// The message for an encrypted workbook (a FilePass record).
-const ENCRYPTED: &str =
-    "this .xls workbook is password-protected (encrypted). GridCraft can't open encrypted .xls files; remove the password in Excel and try again.";
+/// The message for an encrypted workbook (a FilePass record) read without a password.
+const ENCRYPTED: &str = "this .xls workbook is password-protected (encrypted); it opens only with its password.";
 
 /// Whether the bytes are a compound file holding an Excel workbook stream (BIFF8 `Workbook`
 /// or BIFF5 `Book`).
@@ -127,15 +128,29 @@ struct Globals {
     precision_as_displayed: bool,
 }
 
-/// Reads an Excel 97-2003 workbook. Inspect the report's warnings for what was skipped.
+/// Reads an Excel 97-2003 workbook. Inspect the report's warnings for what was skipped. An
+/// encrypted workbook needs [`read_xls_with_password`].
 pub fn read_xls(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
-    read_xls_with(bytes, Budget::default())
+    read_xls_with(bytes, Budget::default(), None)
 }
 
-/// [`read_xls`] with an explicit resource budget.
-pub(crate) fn read_xls_with(bytes: &[u8], mut budget: Budget) -> Result<(Workbook, ReadReport), IoError> {
+/// [`read_xls`], decrypting an encrypted workbook with `password` first. Why it couldn't be
+/// decrypted (a wrong password, an unsupported scheme) is an [`IoError::Decrypt`].
+pub fn read_xls_with_password(bytes: &[u8], password: &str) -> Result<(Workbook, ReadReport), IoError> {
+    read_xls_with(bytes, Budget::default(), Some(password))
+}
+
+/// Whether the bytes are an `.xls` workbook encrypted with a password (its globals hold a
+/// FilePass record).
+pub fn is_encrypted_xls(bytes: &[u8]) -> bool {
+    let Ok(cf) = Compound::open(bytes) else { return false };
+    cf.root_stream("Workbook").ok().flatten().is_some_and(|s| crypt::filepass(&s).is_some())
+}
+
+/// [`read_xls`] with an explicit resource budget, and a password for an encrypted workbook.
+pub(crate) fn read_xls_with(bytes: &[u8], mut budget: Budget, password: Option<&str>) -> Result<(Workbook, ReadReport), IoError> {
     let cf = Compound::open(bytes).map_err(invalid)?;
-    let stream = match cf.root_stream("Workbook").map_err(invalid)? {
+    let mut stream = match cf.root_stream("Workbook").map_err(invalid)? {
         Some(s) => s,
         None => {
             if cf.has_root_stream("Book") {
@@ -144,6 +159,10 @@ pub(crate) fn read_xls_with(bytes: &[u8], mut budget: Budget) -> Result<(Workboo
             return Err(invalid("the file has no Workbook stream, so it is not an Excel workbook"));
         }
     };
+    if crypt::filepass(&stream).is_some() {
+        let Some(password) = password else { return Err(invalid(ENCRYPTED)) };
+        crypt::decrypt(&mut stream, password).map_err(IoError::Decrypt)?;
+    }
     let mut report = ReadReport::default();
     let g = globals(&stream, &mut budget, &mut report)?;
 
@@ -233,7 +252,8 @@ fn globals(stream: &[u8], budget: &mut Budget, report: &mut ReadReport) -> Resul
         let mut c = Cursor::new(&rec.parts);
         match rec.id {
             EOF => break,
-            0x002F => return Err(invalid(ENCRYPTED)),
+            // Only reached once the stream was decrypted.
+            crypt::FILEPASS => {}
             0x0085 => {
                 if g.sheets.len() >= MAX_SHEETS {
                     return Err(IoError::TooLarge("XLS: too many sheets".into()));

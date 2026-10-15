@@ -393,6 +393,51 @@ fn refuses_encrypted_old_and_foreign_files() {
 }
 
 #[test]
+fn rc4_encrypted_workbooks_read_with_their_password() {
+    use crate::{DecryptError, is_encrypted_xls, read_xls_with_password};
+    let plain = compound("Workbook", &sample(false));
+    let file = compound("Workbook", &crate::xls::crypt::encrypt(&sample(false), "VelvetSweatshop"));
+    assert_eq!(sniff(&file), Format::Xls);
+    assert!(is_encrypted_xls(&file) && !is_encrypted_xls(&plain));
+    assert!(read_xls(&file).unwrap_err().to_string().contains("password-protected"));
+    assert!(matches!(read_xls_with_password(&file, "velvetsweatshop"), Err(IoError::Decrypt(DecryptError::WrongPassword))));
+    let (wb, _) = read_xls_with_password(&file, "VelvetSweatshop").unwrap();
+    let (expected, _) = read_xls(&plain).unwrap();
+    assert_eq!(wb.sheets.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Sheet1", "Data"]);
+    assert_eq!(v(&wb, 0, "D1"), Value::from("Wörld"));
+    assert_eq!(ftext(&wb, "B3").as_deref(), Some("SUM(B1:C1)"));
+    assert_eq!(v(&wb, 1, "A1"), Value::Number(7.0));
+    assert_eq!(wb.sheets[0].cells, expected.sheets[0].cells);
+    // A password-free workbook ignores the password.
+    assert!(read_xls_with_password(&plain, "x").is_ok());
+
+    // A sheet over several 1024-byte blocks, with records straddling the boundaries.
+    let boundsheet = |pos: u32| rec(0x0085, &cat(&[&pos.to_le_bytes(), &[0, 0, 4, 0], b"Long"]));
+    let globals = |pos: u32| cat(&[&bof(0x0005), &boundsheet(pos), &eof()]);
+    let mut stream = globals(globals(0).len() as u32);
+    stream.extend(bof(0x0010));
+    for r in 0..500u16 {
+        stream.extend(rec(0x0203, &cat(&[&cell(r, 0, 0), &f64::from(r).to_le_bytes()])));
+    }
+    stream.extend(eof());
+    let file = compound("Workbook", &crate::xls::crypt::encrypt(&stream, "a longer pass"));
+    let (wb, _) = read_xls_with_password(&file, "a longer pass").unwrap();
+    for r in [0u32, 56, 57, 499] {
+        assert_eq!(wb.sheets[0].value(CellRef::new(r, 0)), Value::Number(f64::from(r)), "row {r}");
+    }
+
+    // Schemes no password opens are said as such.
+    let with_filepass = |payload: &[u8]| compound("Workbook", &cat(&[&bof(0x0005), &rec(0x002F, payload), &eof()]));
+    let unsupported = |payload: &[u8]| match read_xls_with_password(&with_filepass(payload), "x") {
+        Err(IoError::Decrypt(DecryptError::Unsupported(s))) => s,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(unsupported(&[0, 0, 0x34, 0x12, 0x78, 0x56]), "XOR obfuscation");
+    assert_eq!(unsupported(&cat(&[&[1, 0, 4, 0, 2, 0], &[0; 64]])), "RC4 CryptoAPI");
+    assert!(matches!(read_xls_with_password(&with_filepass(&[1, 0, 1, 0, 1, 0, 9]), "x"), Err(IoError::Decrypt(DecryptError::Malformed(_)))));
+}
+
+#[test]
 fn hostile_xls_input_never_panics_or_hangs() {
     let stream = sample(false);
     let good = compound("Workbook", &stream);
@@ -478,8 +523,8 @@ fn sheets_share_one_record_budget() {
     stream.extend(eof());
     let file = compound("Workbook", &stream);
     // About n × 2,000 records in all: over a 100,000 shared allowance, though each sheet alone fits.
-    assert!(matches!(crate::xls::read_xls_with(&file, crate::xls::Budget::with_max_records(100_000)), Err(IoError::TooLarge(_))));
-    assert!(crate::xls::read_xls_with(&file, crate::xls::Budget::with_max_records(10_000_000)).is_ok());
+    assert!(matches!(crate::xls::read_xls_with(&file, crate::xls::Budget::with_max_records(100_000), None), Err(IoError::TooLarge(_))));
+    assert!(crate::xls::read_xls_with(&file, crate::xls::Budget::with_max_records(10_000_000), None).is_ok());
 
     // Two sheets at the same offset are refused outright.
     let mut dup = bof(0x0005);

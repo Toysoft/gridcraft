@@ -57,7 +57,9 @@ document text. The choice is saved in `ui.json`; with nothing saved the desktop 
 system language.
 
 `{command: "file.open", params: {path: "Secret.xlsx", password: "…"}}` opens a password-protected
-workbook (Agile or Standard encryption). Without `password` it returns an error containing
+workbook (Agile or Standard encryption, or RC4 for `.xls`). Without `password` it first tries
+Excel's default password (`VelvetSweatshop`, which Excel uses for read-only workbooks) and opens
+the workbook if that works, as Excel does; otherwise it returns an error containing
 "is password-protected. Enter its password to open it." and never opens a dialog; a wrong
 password returns "The password is incorrect." The password is left out of the journal and never
 quoted in an error. The opened workbook has no save path, so Save asks where to save it, without

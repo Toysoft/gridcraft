@@ -43,6 +43,9 @@ impl FileKind {
 pub const PASSWORD_REQUIRED: &str = "is password-protected. Enter its password to open it.";
 /// The error for a wrong password contains this.
 pub const WRONG_PASSWORD: &str = "The password is incorrect.";
+/// The password Excel encrypts with when the user gave none (a workbook saved as read-only, for
+/// example). Excel tries it before asking, so the user never learns there is one.
+pub const DEFAULT_PASSWORD: &str = "VelvetSweatshop";
 /// The first open warning of a workbook decrypted with its password.
 pub const DECRYPTED_NOTICE: &str = "This workbook was password-protected. GridCraft saves it without the password.";
 
@@ -55,23 +58,49 @@ pub fn open_bytes(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
 /// [`open_bytes`], first decrypting a password-protected workbook with `password`. Errors never
 /// quote the password.
 pub fn open_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>) -> Result<(Workbook, Vec<String>)> {
-    if gridcraft_xlsx::sniff(bytes) != gridcraft_xlsx::Format::Encrypted {
-        let (mut wb, warnings) = open_plain(name, bytes)?;
-        fit_imported_rows(&mut wb);
-        return Ok((wb, warnings));
-    }
-    // A scheme no password opens is said straight away, rather than after asking for one.
+    let (mut wb, warnings) = match gridcraft_xlsx::sniff(bytes) {
+        gridcraft_xlsx::Format::Encrypted => open_encrypted(name, password, |password| {
+            let plain = gridcraft_xlsx::decrypt(bytes, password)?;
+            if gridcraft_xlsx::sniff(&plain) == gridcraft_xlsx::Format::Encrypted {
+                return Ok(Err(EngineError::Other(format!(
+                    "We can't open '{name}': the encrypted file is damaged (it holds another encrypted file)."
+                ))));
+            }
+            Ok(open_plain(name, &plain))
+        }),
+        gridcraft_xlsx::Format::Xls if gridcraft_xlsx::is_encrypted_xls(bytes) => {
+            open_encrypted(name, password, |password| match gridcraft_xlsx::read_xls_with_password(bytes, password) {
+                Ok((wb, report)) => Ok(Ok((wb, report.warnings))),
+                Err(gridcraft_xlsx::IoError::Decrypt(e)) => Err(e),
+                Err(e) => Ok(Err(EngineError::Other(format!("We can't open '{name}': {e}")))),
+            })
+        }
+        _ => open_plain(name, bytes),
+    }?;
+    fit_imported_rows(&mut wb);
+    Ok((wb, warnings))
+}
+
+/// Opens an encrypted workbook with `open`, which decrypts and reads it with a password: its
+/// outer error is about decrypting, its inner one about reading what was decrypted. With no
+/// password, Excel's default one is tried first, as Excel does, before asking for one.
+fn open_encrypted(
+    name: &str,
+    password: Option<&str>,
+    open: impl Fn(&str) -> std::result::Result<Result<(Workbook, Vec<String>)>, gridcraft_xlsx::DecryptError>,
+) -> Result<(Workbook, Vec<String>)> {
     let decrypt_error = |e: gridcraft_xlsx::DecryptError| EngineError::Other(decrypt_message(name, e));
     let Some(password) = password else {
-        gridcraft_xlsx::check_encryption(bytes).map_err(decrypt_error)?;
-        return Err(EngineError::Other(format!("'{name}' {PASSWORD_REQUIRED}")));
+        // A scheme no password opens is said straight away (`open` checks the scheme before
+        // the password), rather than after asking for one. Opened with the default password,
+        // the workbook gets no decrypted-workbook notice: nobody set a password.
+        return match open(DEFAULT_PASSWORD) {
+            Ok(opened) => opened,
+            Err(gridcraft_xlsx::DecryptError::WrongPassword) => Err(EngineError::Other(format!("'{name}' {PASSWORD_REQUIRED}"))),
+            Err(e) => Err(decrypt_error(e)),
+        };
     };
-    let plain = gridcraft_xlsx::decrypt(bytes, password).map_err(decrypt_error)?;
-    if gridcraft_xlsx::sniff(&plain) == gridcraft_xlsx::Format::Encrypted {
-        return Err(EngineError::Other(format!("We can't open '{name}': the encrypted file is damaged (it holds another encrypted file).")));
-    }
-    let (mut wb, mut warnings) = open_plain(name, &plain)?;
-    fit_imported_rows(&mut wb);
+    let (wb, mut warnings) = open(password).map_err(decrypt_error)??;
     warnings.insert(0, DECRYPTED_NOTICE.into());
     Ok((wb, warnings))
 }
@@ -638,6 +667,25 @@ mod tests {
             let msg = open_bytes_with_password("secret.xlsx", &file, password).unwrap_err().to_string();
             assert!(msg.contains("damaged") && !msg.contains(PASSWORD_REQUIRED), "got: {msg}");
         }
+    }
+
+    #[test]
+    fn encrypted_xls_opens_with_the_default_or_its_own_password() {
+        let a1 = |wb: &Workbook| wb.sheets[0].value(CellRef::new(0, 0));
+        // Excel's default password: opened without asking, and without the decrypted notice.
+        let file = gridcraft_xlsx::testing::encrypt_xls_workbook(DEFAULT_PASSWORD);
+        let (wb, warnings) = open_bytes("readonly.xls", &file).unwrap();
+        assert_eq!(a1(&wb), gridcraft_core::Value::Number(42.0));
+        assert!(!warnings.iter().any(|w| w == DECRYPTED_NOTICE), "{warnings:?}");
+        // A password of the user's own: asked for, checked, then opened with the notice.
+        let file = gridcraft_xlsx::testing::encrypt_xls_workbook("synthetic-pw-7251");
+        let msg = open_bytes("secret.xls", &file).unwrap_err().to_string();
+        assert!(msg.contains(PASSWORD_REQUIRED), "got: {msg}");
+        let msg = open_bytes_with_password("secret.xls", &file, Some("nope")).unwrap_err().to_string();
+        assert!(msg.contains(WRONG_PASSWORD), "got: {msg}");
+        let (wb, warnings) = open_bytes_with_password("secret.xls", &file, Some("synthetic-pw-7251")).unwrap();
+        assert_eq!(a1(&wb), gridcraft_core::Value::Number(42.0));
+        assert_eq!(warnings[0], DECRYPTED_NOTICE);
     }
 
     #[test]
