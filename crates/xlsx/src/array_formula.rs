@@ -154,7 +154,9 @@ impl Scan<'_> {
             "INDEX" => {
                 let row = args.get(1);
                 let col = args.get(2);
-                !row.is_some_and(positive) || col.is_some_and(|e| !positive(e)) || (col.is_none() && !args.first().is_some_and(single_column))
+                let row_positive = row.is_some_and(|e| positive_index(e, shapes.get(1).copied()));
+                let col_positive = col.is_some_and(|e| positive_index(e, shapes.get(2).copied()));
+                !row_positive || col.is_some_and(|_| !col_positive) || (col.is_none() && !args.first().is_some_and(single_column))
             }
             "ROW" | "COLUMN" => {
                 affected |= first_array && !array_context;
@@ -185,6 +187,11 @@ impl Scan<'_> {
 
 fn positive(e: &Expr) -> bool {
     matches!(e, Expr::Number(n) if *n >= 1.0)
+}
+
+fn positive_index(e: &Expr, shape: Option<Shape>) -> bool {
+    // MATCH returns a one-based position or an error, never INDEX's zero "whole row" selector.
+    positive(e) || (matches!(e, Expr::Call(name, _) if matches!(name.as_str(), "MATCH" | "XMATCH")) && shape.is_some_and(|s| !s.array))
 }
 
 fn one(e: &Expr) -> bool {

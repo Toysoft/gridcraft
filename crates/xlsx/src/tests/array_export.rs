@@ -162,6 +162,47 @@ fn scalar_formulas_constants_and_legacy_cse_do_not_require_dynamic_metadata() {
 }
 
 #[test]
+fn legacy_index_match_formulas_remain_scalar_after_xlsx_roundtrip() {
+    let source = super::minimal(
+        r#"<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c><c r="B1"><v>0.1</v></c><c r="D1" t="inlineStr"><is><t>c</t></is></c><c r="E1" t="inlineStr"><is><t>x</t></is></c><c r="F1"><f>INDEX($B$1:$B$3,MATCH(D1,$A$1:$A$3,0))</f><v>0.7</v></c><c r="F3" t="str"><f>IF(E1=&quot;&quot;,&quot;&quot;,INDEX($B$1:$B$3,MATCH(D1,$A$1:$A$3,0)))</f><v>0.7</v></c><c r="F5"><f>VLOOKUP(D1,$A$1:$B$3,2,FALSE)</f><v>0.7</v></c><c r="F6"><f>SUM($B$1:$B$3)</f><v>1.2</v></c><c r="F7"><f>MATCH(D1,$A$1:$A$3,0)</f><v>3</v></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>b</t></is></c><c r="B2"><v>0.4</v></c><c r="F2"><f>IFERROR(INDEX($B$1:$B$3,MATCH(D1,$A$1:$A$3,0)),0)</f><v>0.7</v></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>c</t></is></c><c r="B3"><v>0.7</v></c></row></sheetData>"#,
+        &[],
+        "",
+        "",
+    );
+    let (opened, _) = read_xlsx(&source).unwrap();
+    let saved = write_xlsx(&opened).unwrap();
+    let mut pkg = Package::open(&saved).unwrap();
+    let sheet = pkg.read_xml("xl/worksheets/sheet1.xml").unwrap().unwrap();
+
+    for address in ["F1", "F2", "F3", "F5", "F6", "F7"] {
+        assert_scalar(&sheet, address);
+    }
+}
+
+#[test]
+fn shared_legacy_index_match_formulas_remain_scalar_after_xlsx_roundtrip() {
+    let mut body = String::from("<sheetData>");
+    for row in 16..=39 {
+        let formula = if row == 16 {
+            format!(r#"<f t="shared" ref="F16:F39" si="0">IF(E{row}="","",IFERROR(INDEX($B$1:$B$3,MATCH(D{row},$A$1:$A$3,0)),0))</f>"#)
+        } else {
+            r#"<f t="shared" si="0"/>"#.to_string()
+        };
+        body.push_str(&format!(r#"<row r="{row}"><c r="F{row}">{formula}<v>0.7</v></c></row>"#));
+    }
+    body.push_str("</sheetData>");
+    let source = super::minimal(&body, &[], "", "");
+    let (opened, _) = read_xlsx(&source).unwrap();
+    let saved = write_xlsx(&opened).unwrap();
+    let mut pkg = Package::open(&saved).unwrap();
+    let sheet = pkg.read_xml("xl/worksheets/sheet1.xml").unwrap().unwrap();
+
+    for row in 16..=39 {
+        assert_scalar(&sheet, &format!("F{row}"));
+    }
+}
+
+#[test]
 fn calculated_table_column_keeps_formula_and_cell_value() {
     let mut wb = Workbook::new();
     let sh = wb.sheet_mut(0).unwrap();
@@ -304,6 +345,11 @@ fn implicit_intersection_metadata_respects_function_argument_context() {
             ("SQRT(INDIRECT(A1))", true),
             ("INDEX(A1:B3,1,1)", false),
             ("INDEX(A1:A3,1)", false),
+            ("INDEX(A1:A3,MATCH(D1,A1:A3,0))", false),
+            ("IFERROR(INDEX(A1:A3,MATCH(D1,A1:A3,0)),0)", false),
+            ("IF(E1=\"\",\"\",INDEX(A1:A3,MATCH(D1,A1:A3,0)))", false),
+            ("INDEX(A1:B3,MATCH(D1,A1:A3,0),MATCH(E1,A1:B1,0))", false),
+            ("INDEX(A1:B3,MATCH(D1,A1:A3,0))", true),
             ("SUM(INDEX(A1:B3,0,1))", false),
             ("SQRT(INDEX(A1:B3,0,1))", true),
             ("SUM(ROW(A1:A3))", true),
