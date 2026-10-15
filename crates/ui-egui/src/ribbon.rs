@@ -1897,6 +1897,17 @@ fn data(app: &mut SheetApp, ui: &mut Ui) {
         app.open_dialog("fromDatabase", json!({}));
     }
     sep(ui);
+    let ra = big_button(ui, Icon::Redo, "Refresh\nAll", "Refresh all database tables and PivotTables in the workbook", false);
+    control_keytip(app, ui, &ra, "data.refreshAll");
+    if ra.clicked() {
+        crate::refresh_all(app);
+    }
+    let rf = big_button(ui, Icon::Redo, "Refresh", "Run the query of the selected database table (or PivotTable) again", false);
+    control_keytip(app, ui, &rf, "data.refresh");
+    if rf.clicked() {
+        act(app, "data.refresh", json!({}));
+    }
+    sep(ui);
     ui.vertical(|ui| {
         let __k = small_button(ui, Icon::SortAsc, "", "Sort A to Z", false);
         control_keytip(app, ui, &__k, "data.sortAscending");

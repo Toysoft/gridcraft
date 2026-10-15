@@ -406,6 +406,7 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
         wb_rels.add("vbaProject", "vbaProject.bin");
         out.part("xl/vbaProject.bin", Some(CT_VBA), data.clone());
     }
+    crate::db_queries::write(wb, &mut wb_rels, &mut out);
     out.part("xl/_rels/workbook.xml.rels", None, wb_rels.xml().into_bytes());
 
     // Document properties.

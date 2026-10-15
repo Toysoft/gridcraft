@@ -2187,7 +2187,7 @@ fn keytip_aro_() {
 fn keytip_arr_() {
     let mut h = harness(blank());
     sequence(&mut h, "ARR", false);
-    assert!(h.state().message.is_some() || h.state().toast.is_some(), "ARR must invoke pivot.refresh and surface its missing-params error");
+    assert!(h.state().message.is_some() || h.state().toast.is_some(), "ARR must invoke data.refresh and surface its missing-params error");
 }
 
 #[test]

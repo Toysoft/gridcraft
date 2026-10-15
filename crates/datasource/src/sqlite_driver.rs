@@ -83,6 +83,7 @@ mod tests {
             query: q.into(),
             max_rows,
             timeout_secs: 5,
+            op: gridcraft_engine::datasource::DbOp::Query,
         }
     }
 
@@ -134,5 +135,21 @@ mod tests {
         let started = Instant::now();
         assert!(run(&r).is_err());
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn lists_tables_and_columns() {
+        use gridcraft_engine::datasource::DbOp;
+        let (path, c) = db();
+        c.execute_batch("CREATE VIEW v AS SELECT id FROM t;").unwrap();
+        drop(c);
+        let tables = crate::run(&DbRequest { op: DbOp::Tables, ..req(&path, "", 100) }).unwrap();
+        let names: Vec<(DbValue, DbValue)> = tables.rows.iter().map(|r| (r[1].clone(), r[2].clone())).collect();
+        assert_eq!(names, [(DbValue::Text("t".into()), DbValue::Text("TABLE".into())), (DbValue::Text("v".into()), DbValue::Text("VIEW".into()))]);
+        let cols = crate::run(&DbRequest { op: DbOp::Columns { schema: None, table: "t".into() }, ..req(&path, "", 100) }).unwrap();
+        assert_eq!(cols.rows.len(), 7);
+        assert_eq!(cols.rows[1], vec![DbValue::Text("name".into()), DbValue::Text("TEXT".into())]);
+        let q = gridcraft_engine::datasource::select_sql("sqlite", None, "t", &["id".into(), "name".into()]);
+        assert_eq!(crate::run(&req(&path, &q, 100)).unwrap().columns, ["id", "name"]);
     }
 }

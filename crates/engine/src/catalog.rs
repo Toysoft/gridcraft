@@ -197,6 +197,7 @@ pub const CATALOG: &[(&str, &str, &str, &str)] = &[
     ("data.fromDatabase", "Data", "Get & Transform Data", "From Database"),
     ("data.fromTableRange", "Data", "Get & Transform Data", "From Table/Range"),
     ("data.refreshAll", "Data", "Queries & Connections", "Refresh All"),
+    ("data.refresh", "Data", "Queries & Connections", "Refresh"),
     ("data.queriesConnections", "Data", "Queries & Connections", "Queries & Connections"),
     ("data.stocks", "Data", "Data Types", "Stocks"),
     ("data.geography", "Data", "Data Types", "Geography"),

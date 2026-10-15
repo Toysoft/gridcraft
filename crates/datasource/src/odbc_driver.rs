@@ -1,8 +1,9 @@
 //! ODBC through the system driver manager (`odbc` feature): SQL Server, Oracle, DB2, Access…
 //! whatever drivers the machine has.
 
-use gridcraft_engine::datasource::{DbRequest, DbTable, DbValue};
+use gridcraft_engine::datasource::{DbOp, DbRequest, DbTable, DbValue};
 use odbc_api::buffers::TextRowSet;
+use odbc_api::parameter::VarCharArray;
 use odbc_api::{ConnectionOptions, Cursor, DataType, ResultSetMetadata};
 
 /// Rows fetched per round trip.
@@ -23,6 +24,31 @@ pub fn run(req: &DbRequest) -> Result<DbTable, String> {
     let conn = env
         .connect_with_connection_string(&conn_str, ConnectionOptions { login_timeout_sec: Some(timeout), ..Default::default() })
         .map_err(|e| format!("Could not connect through ODBC: {}", crate::redact(&e.to_string())))?;
+    let text = |v: &VarCharArray<128>| v.as_str().ok().flatten().unwrap_or("").to_string();
+    let text255 = |v: &VarCharArray<255>| v.as_str().ok().flatten().unwrap_or("").to_string();
+    match &req.op {
+        DbOp::Query => {}
+        DbOp::Tables => {
+            let rows = conn.tables("", "", "", "TABLE,VIEW").map_err(|e| format!("ODBC: {e}"))?;
+            let mut table = DbTable { columns: vec!["schema".into(), "name".into(), "type".into()], rows: Vec::new(), truncated: false };
+            for r in rows {
+                let r = r.map_err(|e| format!("ODBC: {e}"))?;
+                let t = |s: String| DbValue::Text(s);
+                table.rows.push(vec![t(text(&r.schema)), t(text255(&r.table)), t(text255(&r.table_type))]);
+            }
+            return Ok(table);
+        }
+        DbOp::Columns { schema, table: name } => {
+            let rows = conn.columns("", schema.as_deref().unwrap_or(""), name, "").map_err(|e| format!("ODBC: {e}"))?;
+            let mut table = DbTable { columns: vec!["name".into(), "type".into()], rows: Vec::new(), truncated: false };
+            for r in rows {
+                let r = r.map_err(|e| format!("ODBC: {e}"))?;
+                let ty = r.type_name.as_str().ok().flatten().unwrap_or("").to_string();
+                table.rows.push(vec![DbValue::Text(text255(&r.column_name)), DbValue::Text(ty)]);
+            }
+            return Ok(table);
+        }
+    }
     let Some(mut cursor) = conn.execute(&req.query, (), Some(timeout as usize)).map_err(|e| format!("ODBC: {e}"))? else {
         return Ok(DbTable::default());
     };
@@ -101,6 +127,7 @@ mod tests {
             query: "SELECT 1".into(),
             max_rows: 10,
             timeout_secs: 2,
+            op: gridcraft_engine::datasource::DbOp::Query,
         };
         let e = run(&req).unwrap_err();
         assert!(!e.contains("{x}"), "{e}");

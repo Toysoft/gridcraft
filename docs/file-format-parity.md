@@ -66,8 +66,9 @@ and repair-free opening remain unverified.
 Excel's Get Data reaches files (Excel, CSV, XML, JSON, PDF, Parquet, folders), databases (SQL
 Server, Access, ODBC, …), web pages, SharePoint and online services, through Power Query.
 GridCraft imports CSV/TSV, JSON and HTML tables, and the result of one SQL query from PostgreSQL,
-MySQL/MariaDB, SQLite or ODBC (Data ▸ From Database, desktop and CLI), with no query editor, no saved
-connections and no refresh. Counted under features (Get & Transform, ~10% ready), not here.
+MySQL/MariaDB, SQLite or ODBC (Data ▸ From Database, desktop and CLI). The imported table keeps its
+query in `customXml/gridcraftDbQueries.xml` (never a password; Excel keeps the part), so Data ▸ Refresh
+runs it again; no query editor. Counted under features (Get & Transform, ~10% ready), not here.
 
 ## Work (76–114 h)
 

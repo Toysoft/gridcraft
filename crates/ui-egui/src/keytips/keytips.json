@@ -2000,9 +2000,9 @@
   {
    "seq": "ARR",
    "kind": "command",
-   "target": "pivot.refresh",
+   "target": "data.refresh",
    "excel": "Refresh",
-   "note": ""
+   "note": "the database table at the selection, or the PivotTable"
   },
   {
    "seq": "ARS",

@@ -8,7 +8,8 @@
 
 use std::sync::Arc;
 
-use gridcraft_engine::datasource::{DataSource, DbRequest, DbTable, DbValue};
+pub use gridcraft_engine::datasource::redact;
+use gridcraft_engine::datasource::{DataSource, DbOp, DbRequest, DbTable, DbValue, catalog_sql};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod mysql_driver;
@@ -26,7 +27,11 @@ pub fn provider() -> DataSource {
 
 /// Runs `req` with its driver.
 pub fn run(req: &DbRequest) -> Result<DbTable, String> {
-    log::info!("data.fromDatabase: {} query on {}", req.driver, redact(&req.connection));
+    log::info!("data.fromDatabase: {} {:?} on {}", req.driver, req.op, redact(&req.connection));
+    // Tables and columns come from the catalog views, so those drivers only ever run SQL.
+    if let Some(sql) = catalog_sql(&req.driver, &req.op) {
+        return run(&DbRequest { query: sql, op: DbOp::Query, ..req.clone() });
+    }
     match req.driver.as_str() {
         #[cfg(not(target_arch = "wasm32"))]
         "postgres" => postgres_driver::run(req),
@@ -40,38 +45,6 @@ pub fn run(req: &DbRequest) -> Result<DbTable, String> {
         "odbc" => Err("ODBC support was not compiled into this build.".into()),
         other => Err(format!("Unknown database driver `{other}`.")),
     }
-}
-
-/// The connection without anything that looks like a password, for logs and messages.
-pub fn redact(connection: &str) -> String {
-    // URL form: scheme://user:password@host
-    if let Some((scheme, rest)) = connection.split_once("://")
-        && let Some((auth, host)) = rest.split_once('@')
-        && let Some((user, _)) = auth.split_once(':')
-    {
-        return format!("{scheme}://{user}:***@{host}");
-    }
-    // Key-value form (ODBC `PWD=…;`, libpq `password=… `): blank out each secret value.
-    let lower = connection.to_ascii_lowercase();
-    let mut out = String::with_capacity(connection.len());
-    let mut i = 0;
-    while i < connection.len() {
-        let hit = ["pwd=", "password="].iter().find(|k| lower[i..].starts_with(**k) && (i == 0 || lower[..i].ends_with([';', ' ', '\t'])));
-        match hit {
-            Some(k) => {
-                out.push_str(&connection[i..i + k.len()]);
-                out.push_str("***");
-                i += k.len();
-                i += connection[i..].find([';', ' ', '\t']).unwrap_or(connection.len() - i);
-            }
-            None => {
-                let ch = connection[i..].chars().next().unwrap_or(' ');
-                out.push(ch);
-                i += ch.len_utf8();
-            }
-        }
-    }
-    out
 }
 
 /// Text in ISO forms (`2024-01-05`, `2024-01-05 10:30:00.5`, `2024-01-05T10:30:00`, `10:30:00`) as a
@@ -147,6 +120,7 @@ mod tests {
             query: "q".into(),
             max_rows: 10,
             timeout_secs: 1,
+            op: DbOp::Query,
         };
         assert!(run(&req).is_err());
         #[cfg(not(feature = "odbc"))]

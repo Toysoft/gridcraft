@@ -296,7 +296,7 @@ pub const SEQUENCES: &[(&str, Entry)] = &[
     ("ARA", Entry::Finish(Action::Command("data.refreshAll"))),      // Excel: Refresh All
     ("ARC", Entry::Finish(Action::Pending("data.cancelRefresh"))),   // pending; Excel: Cancel Refresh; gap #12; reserved until the command lands
     ("ARO", Entry::Finish(Action::Pending("data.connectionProperties"))), // pending; Excel: Connection Properties; gap #12; reserved until the command lands
-    ("ARR", Entry::Finish(Action::Command("pivot.refresh"))),             // Excel: Refresh
+    ("ARR", Entry::Finish(Action::Command("data.refresh"))),              // Excel: Refresh; the database table at the selection, or the PivotTable
     ("ARS", Entry::Finish(Action::Pending("data.refreshStatus"))),        // pending; Excel: Refresh Status; gap #12; reserved until the command lands
     ("ASA", Entry::Finish(Action::Command("data.sortAscending"))),        // Excel: Sort A to Z
     ("ASD", Entry::Finish(Action::Command("data.sortDescending"))),       // Excel: Sort Z to A

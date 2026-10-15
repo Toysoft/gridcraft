@@ -200,6 +200,8 @@ pub struct Prefs {
     pub user_dictionary: Vec<String>,
     /// View › Show › Formula Bar (an application option in Excel, not saved in the file).
     pub formula_bar: bool,
+    /// Saved connections of Data › From Database (no passwords).
+    pub db_connections: Vec<datasource::ConnectionProfile>,
 }
 
 impl Default for Prefs {
@@ -214,6 +216,7 @@ impl Default for Prefs {
             r1c1: false,
             user_dictionary: vec![],
             formula_bar: true,
+            db_connections: vec![],
         }
     }
 }
@@ -260,6 +263,9 @@ pub struct Session {
     /// Host-provided database access for `data.fromDatabase` (desktop app, CLI); `None` on the
     /// web and in hosts without drivers.
     pub data_source: Option<datasource::DataSource>,
+    /// Database passwords given this session, by driver, connection and user, so Refresh doesn't
+    /// ask again. Never saved or journaled.
+    pub db_passwords: std::collections::HashMap<String, String>,
 }
 
 impl Session {

@@ -1046,3 +1046,28 @@ impl Default for PivotTable {
         }
     }
 }
+
+// ---------------------------------------------------------------- database queries
+
+/// The query behind a table imported with Data › From Database, kept so Refresh can run it
+/// again. Never holds a password.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DbQuery {
+    /// The [`Table::id`] the result fills.
+    pub table_id: u32,
+    /// `postgres`, `mysql`, `sqlite` or `odbc`.
+    pub driver: String,
+    /// URL, file path or ODBC connection string, without the password.
+    pub connection: String,
+    pub user: Option<String>,
+    pub query: String,
+    /// The import asked for a password, so Refresh needs one too.
+    pub password_required: bool,
+    /// Row limit of the import (`None` = as many as the sheet holds).
+    pub max_rows: Option<usize>,
+    pub timeout_secs: Option<u64>,
+}
+
+/// Most database queries a workbook keeps.
+pub const MAX_DB_QUERIES: usize = 1024;
