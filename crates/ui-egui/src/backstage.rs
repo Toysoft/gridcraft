@@ -120,8 +120,13 @@ pub struct Backstage {
 
 /// Save As file types: (extension, label). The first is the workbook itself; the others are
 /// exports that leave the workbook's own file and unsaved state alone.
-pub const SAVE_TYPES: [(&str, &str); 4] =
-    [("xlsx", "Excel Workbook (*.xlsx)"), ("csv", "CSV UTF-8 (Comma delimited) (*.csv)"), ("html", "Web Page (*.html)"), ("pdf", "PDF (*.pdf)")];
+pub const SAVE_TYPES: [(&str, &str); 5] = [
+    ("xlsx", "Excel Workbook (*.xlsx)"),
+    ("ods", "OpenDocument Spreadsheet (*.ods)"),
+    ("csv", "CSV UTF-8 (Comma delimited) (*.csv)"),
+    ("html", "Web Page (*.html)"),
+    ("pdf", "PDF (*.pdf)"),
+];
 
 impl Backstage {
     pub fn new(page: Page) -> Backstage {
@@ -860,6 +865,7 @@ fn export(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
     for (fmt, icon, title, detail) in [
         ("csv", Icon::TextColumns, "CSV (Comma delimited)", "Save the active sheet as comma-separated text."),
         ("html", Icon::Link, "Web Page (.html)", "Save the workbook as a web page."),
+        ("ods", Icon::Table, "OpenDocument Spreadsheet (.ods)", "Save the workbook as an OpenDocument spreadsheet."),
     ] {
         if action_row(ui, icon, lang.tr(title), lang.tr(detail)).clicked() && export_as(app, fmt) {
             out.close = true;
@@ -867,7 +873,7 @@ fn export(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
     }
 }
 
-/// Exports the active workbook as `pdf`, `csv` or `html`: through the save picker on the desktop,
+/// Exports the active workbook as `pdf`, `csv`, `html` or `ods`: through the save picker on the desktop,
 /// as a browser download on the web. Returns whether a file was written or handed over.
 pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
     if !app.commit_edit(0, 0, false, false) {
@@ -877,6 +883,7 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
         "pdf" => "file.exportPdf",
         "csv" => "file.exportCsv",
         "html" => "file.exportHtml",
+        "ods" => "file.exportOds",
         _ => return false,
     };
     let title = app.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1".into());

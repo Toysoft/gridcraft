@@ -381,6 +381,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Excel Workbook (*.xlsx)" => "Excel 통합 문서 (*.xlsx)",
         "CSV UTF-8 (Comma delimited) (*.csv)" => "CSV UTF-8(쉼표로 분리) (*.csv)",
         "Web Page (*.html)" => "웹 페이지 (*.html)",
+        "OpenDocument Spreadsheet (*.ods)" => "OpenDocument 스프레드시트 (*.ods)",
         "PDF (*.pdf)" => "PDF 파일 (*.pdf)",
         "Download" => "다운로드",
         "A CSV file, web page or PDF is a copy: the workbook keeps its own file." => {
@@ -402,6 +403,8 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Save the active sheet as comma-separated text." => "활성 시트를 쉼표로 구분된 텍스트로 저장합니다.",
         "Web Page (.html)" => "웹 페이지(.html)",
         "Save the workbook as a web page." => "통합 문서를 웹 페이지로 저장합니다.",
+        "OpenDocument Spreadsheet (.ods)" => "OpenDocument 스프레드시트(.ods)",
+        "Save the workbook as an OpenDocument spreadsheet." => "통합 문서를 OpenDocument 스프레드시트로 저장합니다.",
         "Options|General" => "일반",
         "Options|Save" => "저장",
         "Show formula bar" => "수식 입력줄 표시",

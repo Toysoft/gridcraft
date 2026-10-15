@@ -373,6 +373,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Excel Workbook (*.xlsx)" => "Excel radna sveska (*.xlsx)",
         "CSV UTF-8 (Comma delimited) (*.csv)" => "CSV UTF-8 (odvojeno zapetama) (*.csv)",
         "Web Page (*.html)" => "Veb stranica (*.html)",
+        "OpenDocument Spreadsheet (*.ods)" => "OpenDocument unakrsna tabela (*.ods)",
         "PDF (*.pdf)" => "PDF (*.pdf)",
         "Download" => "Preuzmi",
         "A CSV file, web page or PDF is a copy: the workbook keeps its own file." => {
@@ -394,6 +395,8 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Save the active sheet as comma-separated text." => "Sačuvaj aktivni list kao tekst odvojen zapetama.",
         "Web Page (.html)" => "Veb stranica (.html)",
         "Save the workbook as a web page." => "Sačuvaj radnu svesku kao veb stranicu.",
+        "OpenDocument Spreadsheet (.ods)" => "OpenDocument unakrsna tabela (.ods)",
+        "Save the workbook as an OpenDocument spreadsheet." => "Sačuvaj radnu svesku kao OpenDocument unakrsnu tabelu.",
         "Options|General" => "Opcije|Opšte",
         "Options|Save" => "Opcije|Sačuvaj",
         "Show formula bar" => "Prikaži traku formule",

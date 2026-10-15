@@ -381,6 +381,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Excel Workbook (*.xlsx)" => "Книга Excel (*.xlsx)",
         "CSV UTF-8 (Comma delimited) (*.csv)" => "CSV UTF-8 (разделитель — запятая) (*.csv)",
         "Web Page (*.html)" => "Веб-страница (*.html)",
+        "OpenDocument Spreadsheet (*.ods)" => "Электронная таблица OpenDocument (*.ods)",
         "PDF (*.pdf)" => "Файл PDF (*.pdf)",
         "Download" => "Скачать",
         "A CSV file, web page or PDF is a copy: the workbook keeps its own file." => {
@@ -402,6 +403,8 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         "Save the active sheet as comma-separated text." => "Сохранить активный лист как текст с разделителями-запятыми.",
         "Web Page (.html)" => "Веб-страница (.html)",
         "Save the workbook as a web page." => "Сохранить книгу как веб-страницу.",
+        "OpenDocument Spreadsheet (.ods)" => "Электронная таблица OpenDocument (.ods)",
+        "Save the workbook as an OpenDocument spreadsheet." => "Сохранить книгу как электронную таблицу OpenDocument.",
         "Options|General" => "Общие",
         "Options|Save" => "Сохранение",
         "Show formula bar" => "Показывать строку формул",
