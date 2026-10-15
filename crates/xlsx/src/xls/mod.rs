@@ -455,7 +455,7 @@ impl SheetState<'_> {
             Ok(e) => {
                 let text = gridcraft_formula::print(&e);
                 let mut f = Formula::new(&text);
-                if f.expr.is_none() {
+                if f.parsed_ref().is_none() {
                     self.unsupported("syntax GridCraft can't parse yet");
                     return;
                 }

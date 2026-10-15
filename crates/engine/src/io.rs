@@ -55,10 +55,18 @@ pub fn open_bytes(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
 /// [`open_bytes`], first decrypting a password-protected workbook with `password`. Errors never
 /// quote the password.
 pub fn open_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>) -> Result<(Workbook, Vec<String>)> {
+    open_bytes_with_plan(name, bytes, password).map(|(wb, warnings, _)| (wb, warnings))
+}
+
+/// [`open_bytes_with_password`], with what to recalculate (see [`crate::DocState::opened`]): for
+/// an XLSX file whose cached values can stand, the formulas whose values it didn't keep; `None`
+/// (everything) for other formats and for files that ask for a full recalculation.
+pub fn open_bytes_with_plan(name: &str, bytes: &[u8], password: Option<&str>) -> Result<(Workbook, Vec<String>, Option<Vec<gridcraft_calc::Key>>)> {
     if gridcraft_xlsx::sniff(bytes) != gridcraft_xlsx::Format::Encrypted {
-        let (mut wb, warnings) = open_plain(name, bytes)?;
+        let (mut wb, warnings, stale) = open_plain(name, bytes)?;
         fit_imported_rows(&mut wb);
-        return Ok((wb, warnings));
+        share_formulas(&mut wb);
+        return Ok((wb, warnings, stale));
     }
     // A scheme no password opens is said straight away, rather than after asking for one.
     let decrypt_error = |e: gridcraft_xlsx::DecryptError| EngineError::Other(decrypt_message(name, e));
@@ -70,10 +78,11 @@ pub fn open_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>
     if gridcraft_xlsx::sniff(&plain) == gridcraft_xlsx::Format::Encrypted {
         return Err(EngineError::Other(format!("We can't open '{name}': the encrypted file is damaged (it holds another encrypted file).")));
     }
-    let (mut wb, mut warnings) = open_plain(name, &plain)?;
+    let (mut wb, mut warnings, stale) = open_plain(name, &plain)?;
     fit_imported_rows(&mut wb);
+    share_formulas(&mut wb);
     warnings.insert(0, DECRYPTED_NOTICE.into());
-    Ok((wb, warnings))
+    Ok((wb, warnings, stale))
 }
 
 /// Excel auto-fits rows to their tallest font when opening a file: rows without a user-set
@@ -100,6 +109,32 @@ fn fit_imported_rows(wb: &mut Workbook) {
     }
 }
 
+/// Shares the formulas of a loaded workbook that are the same relative to their cells (filled
+/// blocks): many files don't mark them, and a filled block then parses once and is held once.
+/// The keys are worked out on every processor.
+fn share_formulas(wb: &mut Workbook) {
+    for si in 0..wb.sheets.len() {
+        let Some(sh) = wb.sheets.get(si) else { continue };
+        // Formulas that already share a parse (the reader shares filled columns and the file's
+        // shared formulas) are left alone.
+        let formulas: Vec<(gridcraft_core::CellRef, std::sync::Arc<gridcraft_model::Formula>)> =
+            sh.cells.iter().filter_map(|(c, cell)| cell.formula.clone().filter(|f| !f.is_shared()).map(|f| (c, f))).collect();
+        if formulas.len() < 2 {
+            continue;
+        }
+        let keys = gridcraft_calc::par::filter_map(&formulas, |(c, f)| Some(gridcraft_model::FormulaSharer::key(*c, f)));
+        let mut sharer = gridcraft_model::FormulaSharer::default();
+        let Some(sheet) = wb.sheet_mut(si) else { continue };
+        for ((c, f), key) in formulas.into_iter().zip(keys) {
+            if let Some(shared) = sharer.share_existing(si, c, &f, key)
+                && let Some(cell) = sheet.cells.get_mut(c)
+            {
+                cell.formula = Some(shared);
+            }
+        }
+    }
+}
+
 /// What to tell the user when an encrypted workbook can't be decrypted. Never quotes the password.
 fn decrypt_message(name: &str, e: gridcraft_xlsx::DecryptError) -> String {
     match e {
@@ -112,12 +147,12 @@ fn decrypt_message(name: &str, e: gridcraft_xlsx::DecryptError) -> String {
 }
 
 /// Parses bytes that aren't encrypted.
-fn open_plain(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
+fn open_plain(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>, Option<Vec<gridcraft_calc::Key>>)> {
     let kind = FileKind::from_path(name);
     let sniffed = gridcraft_xlsx::sniff(bytes);
     if sniffed == gridcraft_xlsx::Format::Xls {
         let (wb, report) = gridcraft_xlsx::read_xls(bytes).map_err(|e| EngineError::Other(format!("We can't open '{name}': {e}")))?;
-        return Ok((wb, report.warnings));
+        return Ok((wb, report.warnings, None));
     }
     if sniffed == gridcraft_xlsx::Format::LegacyBinary {
         return Err(EngineError::Other(format!(
@@ -136,12 +171,12 @@ fn open_plain(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
     if let Some(import) = import {
         let read = if import == FileKind::Ods { gridcraft_xlsx::read_ods } else { gridcraft_xlsx::read_xlsb };
         let (wb, report) = read(bytes).map_err(|e| EngineError::Other(format!("We can't import '{name}': {e}")))?;
-        return Ok((wb, report.warnings));
+        return Ok((wb, report.warnings, None));
     }
     // Text named `.xlsx` is read as text.
     if sniffed == gridcraft_xlsx::Format::Xlsx || (kind == Some(FileKind::Xlsx) && sniffed != gridcraft_xlsx::Format::Csv) {
         let (wb, report) = gridcraft_xlsx::read_xlsx(bytes).map_err(|e| EngineError::Other(format!("We can't open '{name}': {e}")))?;
-        return Ok((wb, report.warnings));
+        return Ok((wb, report.warnings, report.recalc));
     }
     match kind {
         Some(FileKind::Json) => {
@@ -150,7 +185,7 @@ fn open_plain(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
             if wb.sheets.is_empty() {
                 wb = Workbook::new();
             }
-            Ok((wb, vec![]))
+            Ok((wb, vec![], None))
         }
         Some(FileKind::Tsv) => {
             let opts = gridcraft_xlsx::CsvOptions { delimiter: b'\t', ..Default::default() };
@@ -158,13 +193,13 @@ fn open_plain(name: &str, bytes: &[u8]) -> Result<(Workbook, Vec<String>)> {
             // Tab is what makes it a .tsv/.txt; saved as .csv it gets the CSV default.
             wb.csv_delimiter = None;
             rename_first_sheet(&mut wb, name);
-            Ok((wb, vec![]))
+            Ok((wb, vec![], None))
         }
         _ => {
             let opts = gridcraft_xlsx::CsvOptions { delimiter: 0, ..Default::default() };
             let mut wb = gridcraft_xlsx::read_csv(bytes, &opts).map_err(|e| EngineError::Other(e.to_string()))?;
             rename_first_sheet(&mut wb, name);
-            Ok((wb, vec![]))
+            Ok((wb, vec![], None))
         }
     }
 }

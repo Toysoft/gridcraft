@@ -7,11 +7,12 @@
 //! transitive closure of dependents; it is evaluated in topological order, with on-demand
 //! evaluation as a safety net for dynamic references. Cycles produce `#CIRC!` unless iterative
 //! calculation is on: then a formula read while it is being evaluated gives its previous value,
-//! and the formulas that read one are evaluated again until the loop settles
+//! and the formulas on and after the loop are evaluated again until it settles
 //! (`PassHost::iterate_loops`).
 
 use std::collections::{BTreeSet, VecDeque};
 use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::Arc;
 
 /// A fast, non-cryptographic hasher for cell keys (FxHash-style multiply-rotate).
 #[derive(Default, Clone, Copy)]
@@ -44,25 +45,91 @@ use gridcraft_core::{Array, CellError, CellRef, RangeRef, Value};
 use gridcraft_formula::Expr;
 use gridcraft_model::{CalcMode, Workbook};
 
-use crate::eval::{Area, Evaluator, Host, precedents};
+use crate::eval::{Area, Evaluator, Host, precedents_shifted};
 
 pub type Key = (usize, CellRef);
 
+/// A formula to evaluate: its (possibly shared) expression and its offset from where that was
+/// parsed (see `Formula::parsed`).
+type Parsed = (Arc<Expr>, (i64, i64));
+
+fn parsed(f: &gridcraft_model::Formula) -> Option<Parsed> {
+    f.parsed().map(|(e, (r, c))| (e, (i64::from(r), i64::from(c))))
+}
+
 #[derive(Clone, Debug, Default)]
 struct Node {
-    areas: Vec<Area>,
+    areas: Box<[Area]>,
     dynamic: bool,
+}
+
+impl Node {
+    fn new(areas: Vec<Area>, dynamic: bool) -> Node {
+        Node { areas: areas.into_boxed_slice(), dynamic }
+    }
+}
+
+/// The formulas that read one cell. Nearly every cell is read by one formula (`A2*B2` filled
+/// down), which is kept inline; a separate set is allocated only for cells read by several.
+#[derive(Clone, Debug)]
+enum Deps {
+    One(Key),
+    Many(Box<HashSet<Key>>),
+}
+
+impl Deps {
+    fn insert(&mut self, k: Key) {
+        match self {
+            Deps::One(x) if *x == k => {}
+            Deps::One(x) => {
+                let mut set = HashSet::default();
+                set.insert(*x);
+                set.insert(k);
+                *self = Deps::Many(Box::new(set));
+            }
+            Deps::Many(set) => {
+                set.insert(k);
+            }
+        }
+    }
+
+    /// Removes `k`; returns whether no formula is left.
+    fn remove(&mut self, k: &Key) -> bool {
+        match self {
+            Deps::One(x) => x == k,
+            Deps::Many(set) => {
+                set.remove(k);
+                if set.len() == 1
+                    && let Some(&last) = set.iter().next()
+                {
+                    *self = Deps::One(last);
+                }
+                set_is_empty(self)
+            }
+        }
+    }
+
+    fn for_each(&self, mut f: impl FnMut(Key)) {
+        match self {
+            Deps::One(x) => f(*x),
+            Deps::Many(set) => set.iter().copied().for_each(f),
+        }
+    }
+}
+
+fn set_is_empty(d: &Deps) -> bool {
+    matches!(d, Deps::Many(set) if set.is_empty())
 }
 
 /// Ranges wider than this many columns go to the per-sheet wide index instead of per-column ones.
 const WIDE: u32 = 64;
 
-/// Insertions an [`Intervals`] keeps aside (scanned by every query) before merging them in.
-const PENDING: usize = 32;
-
 /// Formula evaluations iterative calculation may spend on one recalculation (passes × formulas
 /// evaluated again), however high Maximum Iterations is.
 const MAX_ITERATION_WORK: usize = 10_000_000;
+
+/// Insertions an [`Intervals`] keeps aside (scanned by every query) before merging them in.
+const PENDING: usize = 32;
 
 /// Row intervals `[r0, r1]`, each with a payload, answering "which intervals overlap rows
 /// `a..=b`?" in O(log n + k).
@@ -190,7 +257,7 @@ impl<T: Copy + Ord> Intervals<T> {
 pub struct Graph {
     nodes: HashMap<Key, Node>,
     /// single cell → dependents
-    cell_deps: HashMap<Key, HashSet<Key>>,
+    cell_deps: HashMap<Key, Deps>,
     /// (sheet, col) → row intervals of the ranges (up to `WIDE` columns) that cover the column
     col_deps: HashMap<(usize, u32), Intervals<Key>>,
     /// sheet → row intervals of wider ranges, with their columns: (first, last, dependent)
@@ -237,7 +304,12 @@ impl Graph {
         self.remove(k);
         let (cells, cols, wide) = Self::entries(&node.areas);
         for c in cells {
-            self.cell_deps.entry(c).or_default().insert(k);
+            match self.cell_deps.entry(c) {
+                std::collections::hash_map::Entry::Occupied(mut e) => e.get_mut().insert(k),
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(Deps::One(k));
+                }
+            }
         }
         for (s, c, r0, r1) in cols {
             self.col_deps.entry((s, c)).or_default().insert(r0, r1, k);
@@ -257,11 +329,10 @@ impl Graph {
         let Some(old) = self.nodes.remove(&k) else { return };
         let (cells, cols, wide) = Self::entries(&old.areas);
         for c in cells {
-            if let Some(v) = self.cell_deps.get_mut(&c) {
-                v.remove(&k);
-                if v.is_empty() {
-                    self.cell_deps.remove(&c);
-                }
+            if let Some(v) = self.cell_deps.get_mut(&c)
+                && v.remove(&k)
+            {
+                self.cell_deps.remove(&c);
             }
         }
         for (s, c, r0, r1) in cols {
@@ -303,7 +374,7 @@ impl Graph {
     /// Formulas that read cell `c` of `sheet`.
     pub fn dependents(&self, sheet: usize, c: CellRef, out: &mut Vec<Key>) {
         if let Some(v) = self.cell_deps.get(&(sheet, c)) {
-            out.extend(v.iter().copied());
+            v.for_each(|k| out.push(k));
         }
         if let Some(v) = self.col_deps.get(&(sheet, c.col)) {
             v.query(c.row, c.row, &mut |k| out.push(*k));
@@ -322,13 +393,13 @@ impl Graph {
         if range.count() <= 4096 {
             for c in range.iter() {
                 if let Some(v) = self.cell_deps.get(&(sheet, c)) {
-                    out.extend(v.iter().copied());
+                    v.for_each(|k| out.push(k));
                 }
             }
         } else {
             for ((s, c), v) in &self.cell_deps {
                 if *s == sheet && range.contains(*c) {
-                    out.extend(v.iter().copied());
+                    v.for_each(|k| out.push(k));
                 }
             }
         }
@@ -357,7 +428,120 @@ impl Graph {
 
     /// Precedent areas of a formula cell (for Trace Precedents).
     pub fn precedents_of(&self, k: Key) -> Vec<Area> {
-        self.nodes.get(&k).map(|n| n.areas.clone()).unwrap_or_default()
+        self.nodes.get(&k).map(|n| n.areas.to_vec()).unwrap_or_default()
+    }
+
+    /// The order to evaluate `dirty` in, as levels: each formula after the dirty formulas its
+    /// static precedents cover (Kahn's algorithm), and the formulas of one level independent of
+    /// each other, so a level can be evaluated on several threads. Formulas that are ready at the
+    /// same time keep the order of `dirty`. Formulas on or behind a cycle come last (`rest`), in
+    /// the order of `dirty`; evaluating them finds the cycle.
+    ///
+    /// The edges come from [`Graph::dependents`], which reports a formula once per index entry of
+    /// its precedents that covers a cell, so a formula waits once for each such report and each
+    /// is released once. Edges between dirty formulas are kept in one flat list while they stay
+    /// within a budget of a few per formula; past it (many formulas over the same large range of
+    /// formulas) they are looked up again instead of stored.
+    pub fn levels(&self, dirty: &[Key]) -> Plan {
+        let mut index: HashMap<Key, usize> = HashMap::with_capacity_and_hasher(dirty.len(), Default::default());
+        let mut keys: Vec<Key> = Vec::with_capacity(dirty.len());
+        for &k in dirty {
+            if let std::collections::hash_map::Entry::Vacant(e) = index.entry(k) {
+                e.insert(keys.len());
+                keys.push(k);
+            }
+        }
+        let budget = keys.len().saturating_mul(8).saturating_add(1 << 20);
+        let mut waiting = vec![0usize; keys.len()];
+        let mut edges: Vec<usize> = Vec::new();
+        let mut starts: Vec<usize> = Vec::with_capacity(keys.len() + 1);
+        let mut stored = true;
+        let mut deps = Vec::new();
+        for &k in &keys {
+            starts.push(edges.len());
+            deps.clear();
+            self.dependents(k.0, k.1, &mut deps);
+            for d in &deps {
+                if let Some(&j) = index.get(d)
+                    && let Some(w) = waiting.get_mut(j)
+                {
+                    *w += 1;
+                    if stored {
+                        edges.push(j);
+                    }
+                }
+            }
+            if stored && edges.len() > budget {
+                stored = false;
+                edges = Vec::new();
+            }
+        }
+        starts.push(edges.len());
+        let mut order: Vec<Key> = Vec::with_capacity(keys.len());
+        let mut bounds: Vec<usize> = Vec::new();
+        let mut wave: Vec<usize> = (0..keys.len()).filter(|&i| waiting.get(i) == Some(&0)).collect();
+        let mut next: Vec<usize> = Vec::new();
+        let mut released: Vec<usize> = Vec::new();
+        while !wave.is_empty() {
+            for &i in &wave {
+                let Some(&k) = keys.get(i) else { continue };
+                order.push(k);
+                released.clear();
+                if stored {
+                    let (a, b) = (starts.get(i).copied().unwrap_or(0), starts.get(i + 1).copied().unwrap_or(0));
+                    released.extend(edges.get(a..b).unwrap_or(&[]));
+                } else {
+                    deps.clear();
+                    self.dependents(k.0, k.1, &mut deps);
+                    released.extend(deps.iter().filter_map(|d| index.get(d).copied()));
+                }
+                for &j in &released {
+                    if let Some(w) = waiting.get_mut(j)
+                        && *w > 0
+                    {
+                        *w -= 1;
+                        if *w == 0 {
+                            next.push(j);
+                        }
+                    }
+                }
+            }
+            bounds.push(order.len());
+            std::mem::swap(&mut wave, &mut next);
+            next.clear();
+        }
+        let leveled = order.len();
+        if leveled < keys.len() {
+            order.extend(keys.iter().zip(&waiting).filter(|(_, w)| **w > 0).map(|(k, _)| *k));
+        }
+        Plan { order, bounds, leveled }
+    }
+
+    /// [`Graph::levels`] as one sequence.
+    pub fn order(&self, dirty: &[Key]) -> Vec<Key> {
+        self.levels(dirty).order
+    }
+}
+
+/// An evaluation plan from [`Graph::levels`].
+#[derive(Clone, Debug, Default)]
+pub struct Plan {
+    order: Vec<Key>,
+    /// End of each level in `order`.
+    bounds: Vec<usize>,
+    /// Where the formulas on or behind cycles start in `order`.
+    leveled: usize,
+}
+
+impl Plan {
+    /// The levels, in order: no formula of a level reads another of the same level (statically).
+    pub fn levels(&self) -> impl Iterator<Item = &[Key]> {
+        let starts = std::iter::once(0).chain(self.bounds.iter().copied());
+        starts.zip(self.bounds.iter().copied()).filter_map(|(a, b)| self.order.get(a..b))
+    }
+    /// Formulas on or behind a cycle.
+    pub fn rest(&self) -> &[Key] {
+        self.order.get(self.leveled..).unwrap_or(&[])
     }
 }
 
@@ -371,82 +555,155 @@ pub struct Calc {
     /// Cells whose formulas have errors from cycles.
     pub circular: Vec<Key>,
     pub last_recalc_cells: usize,
+    /// Where a recalculation reports how far it has got (for a status bar while it runs on
+    /// another thread).
+    pub progress: Option<Arc<CalcProgress>>,
+    /// Formulas whose value is `#SPILL!`: an edit near one may unblock it. Kept up to date at
+    /// write-back (and by `rebuild`), so edits look at these instead of scanning the sheet.
+    spill_blocked: HashSet<Key>,
+}
+
+/// How far a recalculation has got: formulas evaluated out of those to evaluate (which grows
+/// when spills make more formulas dirty), and the threads it uses.
+#[derive(Debug, Default)]
+pub struct CalcProgress {
+    pub done: std::sync::atomic::AtomicUsize,
+    pub total: std::sync::atomic::AtomicUsize,
+    pub threads: std::sync::atomic::AtomicUsize,
 }
 
 impl Default for Calc {
     fn default() -> Self {
-        Calc { graph: Graph::default(), rng: 0x9E37_79B9_7F4A_7C15, fixed_now: None, circular: vec![], last_recalc_cells: 0 }
+        Calc {
+            graph: Graph::default(),
+            rng: 0x9E37_79B9_7F4A_7C15,
+            fixed_now: None,
+            circular: vec![],
+            last_recalc_cells: 0,
+            progress: None,
+            spill_blocked: HashSet::default(),
+        }
     }
+}
+
+/// What a pass has worked out so far: results, the formulas still to evaluate, new spills,
+/// shared ranges, used ranges. On a multi-threaded level the workers read the main thread's
+/// layer and each fills its own, merged back when the level is done.
+#[derive(Default)]
+struct Layer {
+    results: HashMap<Key, Value>,
+    pending: HashSet<Key>,
+    /// New spills found during the pass: anchor → array.
+    spills: HashMap<Key, Arc<Array>>,
+    /// Ranges read more than once in this pass, shared as one array (see `range_array`).
+    ranges: HashMap<(usize, RangeRef), SharedRange>,
+    /// Cells held in `ranges`.
+    shared_cells: usize,
+    /// Used range per sheet: the workbook doesn't change during a pass, and working it out walks
+    /// every row, so once per sheet rather than once per range read.
+    used: HashMap<usize, Option<RangeRef>>,
 }
 
 struct PassHost<'a> {
     wb: &'a Workbook,
-    exprs: &'a HashMap<Key, std::sync::Arc<Expr>>,
-    results: HashMap<Key, Value>,
-    pending: HashSet<Key>,
-    in_progress: HashSet<Key>,
-    /// New spills found during the pass: anchor → array.
-    spills: HashMap<Key, std::sync::Arc<Array>>,
-    /// Used range per sheet: the workbook doesn't change during a pass, and working it out walks
-    /// every row, so once per sheet rather than once per range read.
-    used: HashMap<usize, Option<RangeRef>>,
-    rng: &'a mut u64,
+    exprs: &'a HashMap<Key, Parsed>,
+    /// The main thread's layer, when this host is a worker thread on a multi-threaded level.
+    base: Option<&'a Layer>,
+    own: Layer,
+    /// Formulas being evaluated, or set aside until the pending cells they read are done (see
+    /// [`PassHost::settle`]): the formula being evaluated and those waiting for it. Reading one
+    /// of these is a circular reference; a formula only queued on the stack isn't one of them.
+    active: HashSet<Key>,
+    /// Pending cells the formula being evaluated read before they were done.
+    blocked: Vec<Key>,
+    /// The formulas set aside by [`PassHost::settle`] (kept to reuse its allocation).
+    stack: Vec<Key>,
+    lookups: gridcraft_functions::LookupCache,
+    /// Areas of spills a worker found: shared ranges of the main layer they land in are evicted
+    /// when the level is merged.
+    evict: Vec<(usize, RangeRef)>,
+    rng: u64,
     now: f64,
     cycle: bool,
     cycles: Vec<Key>,
-    depth: usize,
+    /// Reads of a formula set aside waiting for the reader (a circular reference), however they
+    /// were answered: what tells range reads their values aren't final.
+    circular_reads: usize,
     /// Iterative calculation: a circular reference reads the cell's previous value instead of
     /// giving `#CIRC!`.
     iterate: bool,
     /// Values from the previous iteration; cells not in it read their stored value.
     prev: HashMap<Key, Value>,
-    /// Formulas being evaluated, innermost last (kept only when iterating).
-    stack: Vec<Key>,
     /// Formulas found on a circular reference (when iterating).
     members: HashSet<Key>,
-    /// Results that read a previous value, directly or through other formulas.
-    tainted: HashSet<Key>,
-    /// Whether the formula being evaluated has read a previous value.
-    taint: bool,
 }
 
-impl<'a> PassHost<'a> {
-    fn new(wb: &'a Workbook, exprs: &'a HashMap<Key, std::sync::Arc<Expr>>, rng: &'a mut u64, now: f64) -> Self {
-        PassHost {
-            wb,
-            exprs,
-            results: HashMap::with_capacity_and_hasher(exprs.len(), Default::default()),
-            pending: exprs.keys().copied().collect(),
-            in_progress: HashSet::default(),
-            spills: HashMap::default(),
-            used: HashMap::default(),
-            rng,
-            now,
-            cycle: false,
-            cycles: vec![],
-            depth: 0,
-            iterate: false,
-            prev: HashMap::default(),
-            stack: Vec::new(),
-            members: HashSet::default(),
-            tainted: HashSet::default(),
-            taint: false,
-        }
+/// How often a range has been read in a pass, and its shared array once it is shared.
+#[derive(Default)]
+struct SharedRange {
+    reads: u32,
+    array: Option<Arc<Array>>,
+}
+
+/// Ranges smaller than this are rebuilt for every read: sharing them saves little.
+const MIN_SHARED_CELLS: usize = 64;
+/// Cells shared per pass at most (as many as a dozen full columns).
+const SHARED_CELLS_BUDGET: usize = 1 << 24;
+/// Levels with fewer formulas than this are evaluated on one thread: starting threads would cost
+/// more than they save.
+const PARALLEL_MIN: usize = 512;
+/// Formulas a worker takes from a level at a time.
+const CHUNK: usize = 32;
+/// Formulas of a multi-threaded level evaluated first on the main thread, so the ranges and
+/// lookup indexes they share are built once and every worker starts with them.
+const WARM_UP: usize = 64;
+
+/// What a worker thread worked out on one level.
+struct WorkerOut {
+    results: HashMap<Key, Value>,
+    spills: HashMap<Key, Arc<Array>>,
+    evict: Vec<(usize, RangeRef)>,
+    /// Formulas that read a cell still pending in the level: the main thread finishes them.
+    deferred: Vec<Key>,
+    cycle: bool,
+    cycles: Vec<Key>,
+}
+
+/// Calculation threads for `calc`: one on wasm, when multi-threaded calculation is off, or when
+/// the machine has one processor; else the manual count or every processor, at most 64.
+pub fn thread_count(calc: &gridcraft_model::CalcSettings) -> usize {
+    if cfg!(target_arch = "wasm32") || !calc.multi_threaded {
+        return 1;
     }
+    let n = if calc.threads > 0 { calc.threads as usize } else { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) };
+    n.clamp(1, 64)
+}
+
+/// Whether `e` draws random numbers: such formulas share one generator, so they are evaluated in
+/// order on the main thread (Excel too keeps some functions off its calculation threads).
+fn uses_random(e: &Expr) -> bool {
+    let mut found = false;
+    e.walk(&mut |x| {
+        if let Expr::Call(n, _) = x
+            && matches!(n.as_str(), "RAND" | "RANDBETWEEN" | "RANDARRAY")
+        {
+            found = true;
+        }
+    });
+    found
 }
 
 /// Whether an array result at `k` can't spill: it is in a table, or its area runs off the sheet,
 /// overlaps merged cells, holds other cells, or another formula's spill (unless that formula is
 /// recalculated in this pass, and so may spill elsewhere now).
-fn spill_blocked(host: &PassHost<'_>, (sheet, anchor): Key, a: &Array) -> bool {
-    let Some(sh) = host.wb.sheet(sheet) else { return false };
+fn spill_blocked(wb: &Workbook, exprs: &HashMap<Key, Parsed>, (sheet, anchor): Key, a: &Array) -> bool {
+    let Some(sh) = wb.sheet(sheet) else { return false };
     let end =
         CellRef::new(anchor.row.saturating_add((a.rows as u32).saturating_sub(1)), anchor.col.saturating_add((a.cols as u32).saturating_sub(1)));
     let range = RangeRef::new(anchor, end);
     let own = sh.spill_ranges.get(&anchor);
     let spilled_over = |c: CellRef| {
-        !own.is_some_and(|o| o.contains(c))
-            && sh.spill_ranges.iter().any(|(o, r)| *o != anchor && r.contains(c) && !host.exprs.contains_key(&(sheet, *o)))
+        !own.is_some_and(|o| o.contains(c)) && sh.spill_ranges.iter().any(|(o, r)| *o != anchor && r.contains(c) && !exprs.contains_key(&(sheet, *o)))
     };
     end.row >= gridcraft_core::MAX_ROWS
         || end.col >= gridcraft_core::MAX_COLS
@@ -456,69 +713,137 @@ fn spill_blocked(host: &PassHost<'_>, (sheet, anchor): Key, a: &Array) -> bool {
         || sh.spill.range(range.start..=range.end).any(|(c, _)| range.contains(*c) && spilled_over(*c))
 }
 
-impl PassHost<'_> {
-    fn compute(&mut self, k: Key) -> Value {
-        if let Some(v) = self.results.get(&k) {
-            let v = v.clone();
-            if self.iterate && self.tainted.contains(&k) {
-                self.taint = true;
-            }
-            return v;
+impl<'a> PassHost<'a> {
+    fn new(wb: &'a Workbook, exprs: &'a HashMap<Key, Parsed>, now: f64, rng: u64, base: Option<&'a Layer>) -> Self {
+        PassHost {
+            wb,
+            exprs,
+            base,
+            own: Layer::default(),
+            active: HashSet::default(),
+            blocked: Vec::new(),
+            stack: Vec::new(),
+            lookups: Default::default(),
+            evict: Vec::new(),
+            rng,
+            now,
+            cycle: false,
+            cycles: vec![],
+            circular_reads: 0,
+            iterate: false,
+            prev: HashMap::default(),
+            members: HashSet::default(),
         }
-        let Some(expr) = self.exprs.get(&k) else {
-            return self.wb.sheet(k.0).map(|s| s.value(k.1)).unwrap_or_default();
+    }
+
+    fn result(&self, k: &Key) -> Option<&Value> {
+        self.own.results.get(k).or_else(|| self.base.and_then(|b| b.results.get(k)))
+    }
+
+    fn is_pending(&self, k: &Key) -> bool {
+        self.own.pending.contains(k) || self.base.is_some_and(|b| b.pending.contains(k)) && !self.own.results.contains_key(k)
+    }
+
+    fn spill(&self, k: &Key) -> Option<&Arc<Array>> {
+        self.own.spills.get(k).or_else(|| self.base.and_then(|b| b.spills.get(k)))
+    }
+
+    fn all_spills(&self) -> impl Iterator<Item = (&Key, &Arc<Array>)> {
+        self.own.spills.iter().chain(self.base.into_iter().flat_map(|b| b.spills.iter()))
+    }
+
+    /// The value of `root`, evaluating it first if it is pending, together with every pending
+    /// formula it turns out to read, without recursing: a formula that reads a pending cell is
+    /// set aside on a stack, the cells it read go on top, and it is evaluated again once they are
+    /// done. A cell read while it is set aside is part of a cycle (`#CIRC!`); a cell that is only
+    /// queued on the stack (another formula set aside read it too) is evaluated first instead.
+    /// Chains of any length cost heap, not call stack.
+    fn settle(&mut self, root: Key) -> Value {
+        if let Some(v) = self.result(&root) {
+            return v.clone();
+        }
+        if !self.is_pending(&root) {
+            return self.wb.sheet(root.0).map(|s| s.value(root.1)).unwrap_or_default();
+        }
+        self.stack.clear();
+        self.stack.push(root);
+        while let Some(&k) = self.stack.last() {
+            // Queued twice (read by two formulas set aside) and done since.
+            if self.result(&k).is_some() || !self.is_pending(&k) {
+                self.stack.pop();
+                self.active.remove(&k);
+                continue;
+            }
+            self.active.insert(k);
+            if self.attempt(k) {
+                self.stack.pop();
+                self.active.remove(&k);
+            } else {
+                // `k` stays active, waiting; the cells it read go on top. Everything above it
+                // comes from what it reads, so an active formula is always one the formula on
+                // top is waiting for.
+                let mut blocked = std::mem::take(&mut self.blocked);
+                blocked.dedup();
+                self.stack.extend(blocked.iter().copied());
+                blocked.clear();
+                self.blocked = blocked;
+            }
+        }
+        self.result(&root).cloned().unwrap_or_default()
+    }
+
+    /// Evaluates pending formula `k` and records its result, or returns `false` (recording
+    /// nothing) when it read pending cells, listed in `blocked`.
+    fn attempt(&mut self, k: Key) -> bool {
+        self.blocked.clear();
+        // Borrowed, not cloned: the formulas of a filled block share one expression, and cloning
+        // it from every thread would contend on its reference count.
+        let exprs = self.exprs;
+        let Some((expr, shift)) = exprs.get(&k).map(|(e, s)| (&**e, *s)) else {
+            self.own.pending.remove(&k);
+            let v = self.wb.sheet(k.0).map(|s| s.value(k.1)).unwrap_or_default();
+            self.own.results.insert(k, v);
+            return true;
         };
-        if self.in_progress.contains(&k) || self.depth > 2000 {
-            self.cycle = true;
-            if self.iterate {
-                return self.circular_read(k);
-            }
-            self.cycles.push(k);
-            return Value::Error(CellError::Circ);
-        }
-        self.in_progress.insert(k);
-        self.depth += 1;
-        let outer_taint = std::mem::replace(&mut self.taint, false);
-        if self.iterate {
-            self.stack.push(k);
-        }
-        let expr = std::sync::Arc::clone(expr);
         let v = {
             let mut ev = Evaluator::new(self, k.0, k.1);
-            ev.value(&expr)
+            ev.shift = shift;
+            ev.value(expr)
         };
+        if !self.blocked.is_empty() {
+            return false;
+        }
         // A legacy array formula fills the range it was entered in.
         let legacy = self.wb.sheet(k.0).and_then(|s| s.cell(k.1)).and_then(|c| c.formula.as_ref()).and_then(|f| f.array);
         let v = match legacy {
             Some(range) => fit_to_range(v, range),
             None => v,
         };
-        self.depth -= 1;
-        self.in_progress.remove(&k);
-        self.pending.remove(&k);
-        if self.iterate {
-            self.stack.pop();
-            if self.taint {
-                self.tainted.insert(k);
-            } else {
-                self.tainted.remove(&k);
-            }
-        }
-        self.taint |= outer_taint;
+        self.own.pending.remove(&k);
         // A blank cell shows as 0 in a formula's result, inside an array as well (`=A1:A3`,
         // FILTER or SORT of a range with blanks). GROUPBY and PIVOTBY lay out blank cells
         // of their own, which stay blank.
-        let keep_blanks = matches!(&*expr, Expr::Call(n, _) if matches!(n.as_str(), "GROUPBY" | "PIVOTBY"));
+        let keep_blanks = matches!(expr, Expr::Call(n, _) if matches!(n.as_str(), "GROUPBY" | "PIVOTBY"));
         let v = match v {
             Value::Array(a) => {
                 let a = if keep_blanks || !a.data.iter().any(|x| matches!(x, Value::Empty)) {
                     a
                 } else {
                     let data = a.data.iter().map(|x| if matches!(x, Value::Empty) { Value::Number(0.0) } else { x.clone() }).collect();
-                    Array::new(a.rows, a.cols, data).map(std::sync::Arc::new).unwrap_or(a)
+                    Array::new(a.rows, a.cols, data).map(Arc::new).unwrap_or(a)
                 };
                 if a.rows > 1 || a.cols > 1 {
-                    self.spills.insert(k, a.clone());
+                    // Shared ranges the new spill lands in no longer hold what they read.
+                    let end = CellRef::new(
+                        k.1.row.saturating_add((a.rows as u32).saturating_sub(1)),
+                        k.1.col.saturating_add((a.cols as u32).saturating_sub(1)),
+                    );
+                    let area = RangeRef::new(k.1, end);
+                    evict_ranges(&mut self.own, k.0, area);
+                    if self.base.is_some() {
+                        self.evict.push((k.0, area));
+                    }
+                    self.own.spills.insert(k, a.clone());
                 }
                 a.data.first().cloned().unwrap_or_default()
             }
@@ -526,15 +851,41 @@ impl PassHost<'_> {
             v => v,
         };
         // An array that can't spill is #SPILL! for the formulas evaluated after it in this pass too.
-        let v = match self.spills.get(&k) {
-            Some(a) if spill_blocked(self, k, a) => {
-                self.spills.remove(&k);
+        let v = match self.own.spills.get(&k) {
+            Some(a) if spill_blocked(self.wb, self.exprs, k, a) => {
+                self.own.spills.remove(&k);
                 Value::Error(CellError::Spill)
             }
             _ => v,
         };
-        self.results.insert(k, v.clone());
-        v
+        self.own.results.insert(k, v);
+        true
+    }
+
+    /// Reading pending cell `k` from the formula being evaluated, and the value it reads for now.
+    /// If `k` is set aside (it waits for this formula) it is a circular reference: `#CIRC!`, or
+    /// with iterative calculation its previous value. Otherwise `k` is noted as blocking and the
+    /// formula will be evaluated again once `k` is done.
+    fn wait_for(&mut self, k: Key) -> Value {
+        if !self.active.contains(&k) {
+            self.blocked.push(k);
+            return Value::Empty;
+        }
+        self.cycle = true;
+        self.circular_reads += 1;
+        if !self.iterate {
+            self.cycles.push(k);
+            return Value::Error(CellError::Circ);
+        }
+        // The formulas set aside from `k` up wait for one another: the loop, whose changes decide
+        // when iteration stops (formulas only queued between them aren't on it).
+        match self.stack.iter().rposition(|s| *s == k) {
+            Some(i) => self.members.extend(self.stack.get(i..).unwrap_or_default().iter().copied().filter(|s| self.active.contains(s))),
+            None => {
+                self.members.insert(k);
+            }
+        }
+        self.previous(k)
     }
 
     /// A formula's previous value for iterative calculation: from the last iteration, else the
@@ -547,37 +898,41 @@ impl PassHost<'_> {
         if matches!(v, Value::Empty | Value::Error(CellError::Circ)) { Value::Number(0.0) } else { v }
     }
 
-    /// Reading `k` while it is being evaluated, with iterative calculation on: its previous value.
-    /// The formulas around the loop are the ones whose changes decide when iteration stops.
-    fn circular_read(&mut self, k: Key) -> Value {
-        self.taint = true;
-        match self.stack.iter().rposition(|s| *s == k) {
-            Some(i) => self.members.extend(self.stack.get(i..).unwrap_or_default().iter().copied()),
-            // Too deep to follow: the formula itself is watched.
-            None => {
-                self.members.insert(k);
-            }
-        }
-        self.previous(k)
-    }
-
     /// Iterative calculation, after a first pass over `order` that met circular references. The
-    /// formulas that read a previous value (the loops and what depends on them) are evaluated
-    /// again in the same order, each pass starting from the last one's values and reading what it
-    /// has already produced (Gauss-Seidel), until no formula on a loop changes by `max_change` or
-    /// more, or after `max_iterations` passes in all. Returns the number of passes.
-    fn iterate_loops(&mut self, order: &[Key], max_iterations: u32, max_change: f64) -> u32 {
-        let again: Vec<Key> = order.iter().copied().filter(|k| self.tainted.contains(k)).collect();
-        let set: HashSet<Key> = again.iter().copied().collect();
+    /// formulas on the loops and those that depend on them are evaluated again in the same order,
+    /// each pass starting from the last one's values and reading what it has already produced
+    /// (Gauss-Seidel), until no formula on a loop changes by `max_change` or more, or after
+    /// `max_iterations` passes in all. Returns the number of passes.
+    fn iterate_loops(&mut self, graph: &Graph, order: &[Key], max_iterations: u32, max_change: f64) -> u32 {
+        // What the loops reach, through static precedents and through any dynamic reference.
+        let mut reach: HashSet<Key> = HashSet::default();
+        let mut queue: Vec<Key> = self.members.iter().copied().collect();
+        queue.extend(graph.dynamic.iter().copied());
+        let mut deps = Vec::new();
+        while let Some(k) = queue.pop() {
+            if !reach.insert(k) {
+                continue;
+            }
+            deps.clear();
+            graph.dependents(k.0, k.1, &mut deps);
+            queue.extend(deps.iter().filter(|d| !reach.contains(d)));
+        }
+        let again: Vec<Key> = order.iter().copied().filter(|k| reach.contains(k) && self.exprs.contains_key(k)).collect();
         // Bounds the work whatever Maximum Iterations says.
         let max_passes = u32::try_from(MAX_ITERATION_WORK / again.len().max(1)).unwrap_or(u32::MAX).max(1);
         let mut passes = 1u32;
         while passes < max_iterations.min(max_passes) && !self.converged(max_change) {
-            self.prev = again.iter().filter_map(|k| self.results.remove(k).map(|v| (*k, v))).collect();
-            self.pending = set.clone();
-            self.spills.retain(|a, _| !set.contains(a));
+            self.prev = again.iter().filter_map(|k| self.own.results.remove(k).map(|v| (*k, v))).collect();
             for k in &again {
-                self.compute(*k);
+                self.own.pending.insert(*k);
+                self.own.spills.remove(k);
+            }
+            // Shared ranges and lookup indexes hold the last pass's values.
+            self.own.ranges.clear();
+            self.own.shared_cells = 0;
+            self.lookups = Default::default();
+            for &k in &again {
+                self.settle(k);
             }
             passes += 1;
         }
@@ -588,7 +943,7 @@ impl PassHost<'_> {
     /// logical and error values: not at all).
     fn converged(&self, max_change: f64) -> bool {
         self.members.iter().all(|k| {
-            let Some(new) = self.results.get(k) else { return true };
+            let Some(new) = self.own.results.get(k) else { return true };
             match (new, &self.previous(*k)) {
                 (Value::Number(a), Value::Number(b)) => {
                     let d = (a - b).abs();
@@ -597,6 +952,115 @@ impl PassHost<'_> {
                 (new, old) => new == old,
             }
         })
+    }
+
+    /// Evaluates one level of the plan: formulas that don't read each other's results (as far as
+    /// their static precedents tell). A large level is split across `threads` worker threads,
+    /// each reading this layer and writing its own; a formula that turns out to read a cell
+    /// still pending in the level (through a name, a table, INDIRECT) is handed back and
+    /// finished here, as are formulas that draw random numbers. The results are the same as on
+    /// one thread. If a worker can't start or fails, the level is evaluated on this thread.
+    fn run_level(&mut self, level: &[Key], threads: usize, progress: Option<&CalcProgress>) {
+        let report = |n: usize| {
+            if let Some(p) = progress {
+                p.done.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+            }
+        };
+        if threads <= 1 || level.len() < PARALLEL_MIN {
+            for chunk in level.chunks(256) {
+                for &k in chunk {
+                    self.settle(k);
+                }
+                report(chunk.len());
+            }
+            return;
+        }
+        let exprs = self.exprs;
+        let (random, mut parallel): (Vec<Key>, Vec<Key>) = level.iter().partition(|k| exprs.get(k).is_some_and(|(e, _)| uses_random(e)));
+        let warm = WARM_UP.min(parallel.len());
+        for k in parallel.drain(..warm) {
+            self.settle(k);
+        }
+        report(warm + random.len());
+        let base = std::mem::take(&mut self.own);
+        let (wb, now, rng) = (self.wb, self.now, self.rng);
+        let lookups = &self.lookups;
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let work = || {
+            let mut w = PassHost::new(wb, exprs, now, rng, Some(&base));
+            w.lookups = lookups.fork();
+            let mut deferred = Vec::new();
+            loop {
+                let i = next.fetch_add(CHUNK, std::sync::atomic::Ordering::Relaxed);
+                let Some(chunk) = parallel.get(i..parallel.len().min(i.saturating_add(CHUNK))) else { break };
+                if chunk.is_empty() {
+                    break;
+                }
+                for &k in chunk {
+                    w.active.insert(k);
+                    if !w.attempt(k) {
+                        deferred.push(k);
+                    }
+                    w.active.remove(&k);
+                }
+                report(chunk.len());
+            }
+            WorkerOut { results: w.own.results, spills: w.own.spills, evict: w.evict, deferred, cycle: w.cycle, cycles: w.cycles }
+        };
+        let mut outs = Vec::with_capacity(threads);
+        let mut failed = false;
+        std::thread::scope(|s| {
+            let mut handles = Vec::with_capacity(threads);
+            for _ in 0..threads.min(parallel.len().div_ceil(CHUNK)) {
+                match std::thread::Builder::new().name("gridcraft-calc".into()).spawn_scoped(s, work) {
+                    Ok(h) => handles.push(h),
+                    Err(_) => break,
+                }
+            }
+            failed = handles.is_empty();
+            for h in handles {
+                match h.join() {
+                    Ok(out) => outs.push(out),
+                    Err(_) => failed = true,
+                }
+            }
+        });
+        self.own = base;
+        if failed {
+            log::warn!("multi-threaded calculation failed; calculating the level on one thread");
+            for &k in level {
+                self.settle(k);
+            }
+            return;
+        }
+        // (Formulas handed back were counted with their chunk.)
+        let mut deferred = Vec::new();
+        for out in outs {
+            for (k, v) in out.results {
+                self.own.pending.remove(&k);
+                self.own.results.insert(k, v);
+            }
+            self.own.spills.extend(out.spills);
+            for (sheet, area) in out.evict {
+                evict_ranges(&mut self.own, sheet, area);
+            }
+            deferred.extend(out.deferred);
+            self.cycle |= out.cycle;
+            self.cycles.extend(out.cycles);
+        }
+        deferred.sort_by_key(|(s, c)| (*s, c.row, c.col));
+        for k in deferred.into_iter().chain(random) {
+            self.settle(k);
+        }
+    }
+}
+
+/// Drops the shared ranges of `layer` on `sheet` that `area` (a new spill) overlaps.
+fn evict_ranges(layer: &mut Layer, sheet: usize, area: RangeRef) {
+    let before = layer.ranges.len();
+    layer.ranges.retain(|(s, r), _| *s != sheet || !r.intersects(&area));
+    if layer.ranges.len() != before {
+        layer.shared_cells = layer.ranges.values().filter_map(|x| x.array.as_ref()).map(|a| a.data.len()).sum();
     }
 }
 
@@ -630,12 +1094,16 @@ impl Host for PassHost<'_> {
     }
     fn spill_range(&mut self, sheet: usize, anchor: CellRef) -> Option<RangeRef> {
         let k = (sheet, anchor);
-        if !(self.pending.contains(&k) || self.results.contains_key(&k)) {
+        let done = self.result(&k).is_some();
+        if !(done || self.is_pending(&k)) {
             return self.wb.sheet(sheet)?.spill_ranges.get(&anchor).copied();
         }
         // Recalculated in this pass: its new array, unless something blocks it (#SPILL!).
-        self.compute(k);
-        let arr = self.spills.get(&k)?;
+        if !done {
+            let _ = self.wait_for(k);
+            return None;
+        }
+        let arr = self.spill(&k)?;
         let end = CellRef::new(
             anchor.row.saturating_add((arr.rows as u32).saturating_sub(1)),
             anchor.col.saturating_add((arr.cols as u32).saturating_sub(1)),
@@ -650,17 +1118,18 @@ impl Host for PassHost<'_> {
     }
     fn cell_value(&mut self, sheet: usize, c: CellRef) -> Value {
         let k = (sheet, c);
-        if self.pending.contains(&k) || self.results.contains_key(&k) {
-            return self.compute(k);
+        if let Some(v) = self.result(&k) {
+            return v.clone();
+        }
+        if self.is_pending(&k) {
+            // Not done yet: the value is a placeholder, the reading formula is evaluated again.
+            return self.wait_for(k);
         }
         // A cell covered by a spill computed in this pass.
-        for (anchor, arr) in &self.spills {
+        for (anchor, arr) in self.all_spills() {
             if anchor.0 == sheet && c.row >= anchor.1.row && c.col >= anchor.1.col {
                 let (dr, dc) = ((c.row - anchor.1.row) as usize, (c.col - anchor.1.col) as usize);
                 if dr < arr.rows && dc < arr.cols {
-                    if self.iterate && self.tainted.contains(anchor) {
-                        self.taint = true;
-                    }
                     return arr.get(dr, dc).cloned().unwrap_or_default();
                 }
             }
@@ -672,7 +1141,7 @@ impl Host for PassHost<'_> {
         let mut out = vec![Value::Empty; h * w];
         let Some(sh) = self.wb.sheet(sheet) else { return out };
         // Sparse walk: only stored cells; formula cells that are (or were) dirty go through
-        // `compute`, constants are copied straight from the store.
+        // `cell_value`, constants are copied straight from the store.
         let mut formulas: Vec<(usize, CellRef)> = Vec::new();
         for (c, cell) in sh.cells.iter_range(range) {
             let i = (c.row - range.start.row) as usize * w + (c.col - range.start.col) as usize;
@@ -698,43 +1167,28 @@ impl Host for PassHost<'_> {
                 *slot = v;
             }
         }
-        if !self.spills.is_empty() {
-            let new: Vec<(usize, Value)> = self
-                .spills
-                .iter()
-                .filter(|(a, _)| a.0 == sheet)
-                .flat_map(|(a, arr)| {
-                    let mut v = Vec::new();
-                    for r in 0..arr.rows {
-                        for cc in 0..arr.cols {
-                            let c = CellRef::new(a.1.row.saturating_add(r as u32), a.1.col.saturating_add(cc as u32));
-                            if c != a.1 && range.contains(c) {
-                                v.push((
-                                    (c.row - range.start.row) as usize * w + (c.col - range.start.col) as usize,
-                                    arr.get(r, cc).cloned().unwrap_or_default(),
-                                ));
-                            }
+        let new: Vec<(usize, Value)> = self
+            .all_spills()
+            .filter(|(a, _)| a.0 == sheet)
+            .flat_map(|(a, arr)| {
+                let mut v = Vec::new();
+                for r in 0..arr.rows {
+                    for cc in 0..arr.cols {
+                        let c = CellRef::new(a.1.row.saturating_add(r as u32), a.1.col.saturating_add(cc as u32));
+                        if c != a.1 && range.contains(c) {
+                            v.push((
+                                (c.row - range.start.row) as usize * w + (c.col - range.start.col) as usize,
+                                arr.get(r, cc).cloned().unwrap_or_default(),
+                            ));
                         }
                     }
-                    v
-                })
-                .collect();
-            // Iterating: an array spilled by a formula that read a previous value.
-            if self.iterate
-                && self.spills.iter().any(|(a, arr)| {
-                    let end = CellRef::new(
-                        a.1.row.saturating_add((arr.rows as u32).saturating_sub(1)),
-                        a.1.col.saturating_add((arr.cols as u32).saturating_sub(1)),
-                    );
-                    a.0 == sheet && self.tainted.contains(a) && RangeRef::new(a.1, end).intersects(&range)
-                })
-            {
-                self.taint = true;
-            }
-            for (i, v) in new {
-                if let Some(slot) = out.get_mut(i) {
-                    *slot = v;
                 }
+                v
+            })
+            .collect();
+        for (i, v) in new {
+            if let Some(slot) = out.get_mut(i) {
+                *slot = v;
             }
         }
         out
@@ -742,17 +1196,23 @@ impl Host for PassHost<'_> {
     fn visit_range(&mut self, sheet: usize, range: RangeRef, f: &mut dyn FnMut(&Value) -> bool) -> bool {
         let wb = self.wb;
         let Some(sh) = wb.sheet(sheet) else { return false };
-        // Formula cells first, in row-major order like `range_values`: reading one calculates it
-        // and the pass remembers the value, so the walk below gets the same value again without
-        // this method holding any.
+        // Formula cells first, in row-major order like `range_values`: a done one is remembered by
+        // the pass, so the walk below gets the same value again without this method holding any.
+        // A pending one (or a cycle) leaves a placeholder and the reading formula is evaluated
+        // again once it is done (see `settle`): leave such blocks to `range_values`, since one may
+        // yet spill over cells the walk would pass as blank.
+        let (blocked, cycle) = (self.blocked.len(), self.circular_reads);
         for (c, cell) in sh.cells.iter_range(range) {
             if cell.formula.is_some() {
                 let _ = self.cell_value(sheet, c);
             }
         }
+        if self.blocked.len() > blocked || self.circular_reads > cycle {
+            return false;
+        }
         // Spilled values sit between the stored cells (and the formulas just calculated may have
         // produced some): leave such blocks to `range_values`.
-        if self.spills.keys().any(|a| a.0 == sheet) || sh.spill.range(range.start..=range.end).any(|(c, _)| range.contains(*c)) {
+        if self.all_spills().any(|(a, _)| a.0 == sheet) || sh.spill.range(range.start..=range.end).any(|(c, _)| range.contains(*c)) {
             return false;
         }
         for (c, cell) in sh.cells.iter_range(range) {
@@ -764,19 +1224,76 @@ impl Host for PassHost<'_> {
         true
     }
     fn used_range(&mut self, sheet: usize) -> Option<RangeRef> {
-        let wb = self.wb;
-        *self.used.entry(sheet).or_insert_with(|| wb.sheet(sheet).and_then(|s| s.used_range()))
+        if let Some(u) = self.own.used.get(&sheet).or_else(|| self.base.and_then(|b| b.used.get(&sheet))) {
+            return *u;
+        }
+        let u = self.wb.sheet(sheet).and_then(|s| s.used_range());
+        self.own.used.insert(sheet, u);
+        u
+    }
+    /// Shares a range from its second read on: a lookup table or `A:A` read by thousands of
+    /// formulas is built once, and lookups can index the one array. A range is shared only when
+    /// building it read no cell that wasn't done yet (no placeholder, no cycle), so it holds the
+    /// final values of the pass; a spill computed later in the pass that lands in it evicts it.
+    fn range_array(&mut self, sheet: usize, range: RangeRef) -> Value {
+        let (h, w) = (range.height() as usize, range.width() as usize);
+        let cells = h.saturating_mul(w);
+        let mut share = false;
+        if cells >= MIN_SHARED_CELLS {
+            if let Some(a) = self.base.and_then(|b| b.ranges.get(&(sheet, range))).and_then(|s| s.array.as_ref()) {
+                return Value::Array(Arc::clone(a));
+            }
+            let slot = self.own.ranges.entry((sheet, range)).or_default();
+            if let Some(a) = &slot.array {
+                return Value::Array(Arc::clone(a));
+            }
+            slot.reads = slot.reads.saturating_add(1);
+            share = slot.reads >= 2 && self.own.shared_cells.saturating_add(cells) <= SHARED_CELLS_BUDGET;
+        }
+        let (blocked, cycles) = (self.blocked.len(), self.circular_reads);
+        let data = self.range_values(sheet, range);
+        let Some(array) = Array::new(h, w, data) else { return Value::Error(CellError::Value) };
+        let array = Arc::new(array);
+        if share
+            && self.blocked.len() == blocked
+            && self.circular_reads == cycles
+            && let Some(slot) = self.own.ranges.get_mut(&(sheet, range))
+        {
+            slot.array = Some(Arc::clone(&array));
+            self.own.shared_cells += cells;
+        }
+        Value::Array(array)
+    }
+    fn share_range(&mut self, sheet: usize, range: RangeRef) -> bool {
+        let cells = (range.height() as usize).saturating_mul(range.width() as usize);
+        if cells < MIN_SHARED_CELLS {
+            return false;
+        }
+        if self.base.and_then(|b| b.ranges.get(&(sheet, range))).is_some_and(|s| s.array.is_some()) {
+            return true;
+        }
+        let fits = self.own.shared_cells.saturating_add(cells) <= SHARED_CELLS_BUDGET;
+        let slot = self.own.ranges.entry((sheet, range)).or_default();
+        if slot.array.is_some() || slot.reads >= 1 && fits {
+            return true;
+        }
+        // The first read walks the range; `range_array` shares it from the second on.
+        slot.reads = slot.reads.saturating_add(1);
+        false
+    }
+    fn lookup_cache(&mut self) -> Option<&mut gridcraft_functions::LookupCache> {
+        Some(&mut self.lookups)
     }
     fn now_serial(&self) -> f64 {
         self.now
     }
     fn random(&mut self) -> f64 {
         // xorshift64*
-        let mut x = *self.rng;
+        let mut x = self.rng;
         x ^= x >> 12;
         x ^= x << 25;
         x ^= x >> 27;
-        *self.rng = x;
+        self.rng = x;
         (x.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 11) as f64 / (1u64 << 53) as f64
     }
 }
@@ -793,24 +1310,94 @@ impl Calc {
         now_serial()
     }
 
-    /// Rebuilds the graph from scratch.
-    pub fn rebuild(&mut self, wb: &Workbook) {
-        self.graph = Graph::default();
-        for (si, sheet) in wb.sheets.iter().enumerate() {
-            for (c, cell) in sheet.cells.iter() {
-                if let Some(f) = &cell.formula
-                    && let Some(e) = f.expr()
-                {
-                    let (areas, dynamic) = precedents(wb, si, &e);
-                    self.graph.insert((si, c), Node { areas, dynamic });
+    /// Brings the graph from workbook `old` to `new` (an undo or redo step) by looking only at
+    /// the cells that differ, which the copy-on-write cell store finds band by band: undoing a
+    /// one-cell edit in a sheet of a million formulas touches one cell. When the sheets differ
+    /// (added, removed, renamed, moved), references resolve differently and the graph is
+    /// rebuilt.
+    pub fn sync(&mut self, old: &Workbook, new: &Workbook) {
+        let same_sheets = old.sheets.len() == new.sheets.len() && old.sheets.iter().zip(&new.sheets).all(|(a, b)| a.name == b.name);
+        if !same_sheets {
+            self.rebuild(new);
+            return;
+        }
+        let changed: Vec<(usize, CellRef)> = old
+            .sheets
+            .iter()
+            .zip(&new.sheets)
+            .enumerate()
+            .filter(|(_, (a, b))| !Arc::ptr_eq(a, b))
+            .flat_map(|(si, (a, b))| b.cells.diff(&a.cells).into_iter().map(move |c| (si, c)))
+            .collect();
+        // Most of the workbook changed (a sort, a structural edit): rebuilding, which works out
+        // precedents on every processor, is quicker than updating cell by cell.
+        if changed.len() > (self.graph.len() / 2).max(4096) {
+            self.rebuild(new);
+            return;
+        }
+        for (si, c) in changed {
+            if let Some(b) = new.sheets.get(si) {
+                let k = (si, c);
+                let cell = b.cell(c);
+                match cell.and_then(|x| x.formula.as_deref()).and_then(parsed) {
+                    Some((e, shift)) => {
+                        let (areas, dynamic) = precedents_shifted(new, si, &e, shift);
+                        self.graph.insert(k, Node::new(areas, dynamic));
+                        if cell.is_some_and(|x| x.value == Value::Error(CellError::Spill)) {
+                            self.spill_blocked.insert(k);
+                        } else {
+                            self.spill_blocked.remove(&k);
+                        }
+                    }
+                    None => {
+                        self.graph.remove(k);
+                        self.spill_blocked.remove(&k);
+                    }
                 }
             }
         }
         self.graph.settle();
     }
 
-    /// Recalculates every formula (F9 / Ctrl+Alt+F9, and after loading).
-    pub fn recalc_all(&mut self, wb: &mut Workbook) {
+    /// Rebuilds the graph from scratch.
+    pub fn rebuild(&mut self, wb: &Workbook) {
+        self.graph = Graph::default();
+        self.spill_blocked.clear();
+        // Sized once: growing the tables formula by formula rehashes them repeatedly and briefly
+        // holds two copies.
+        let formulas: Vec<(Key, &gridcraft_model::Cell)> = wb
+            .sheets
+            .iter()
+            .enumerate()
+            .flat_map(|(si, sh)| sh.cells.iter().filter(|(_, c)| c.formula.is_some()).map(move |(c, cell)| ((si, c), cell)))
+            .collect();
+        self.graph.nodes.reserve(formulas.len());
+        self.graph.cell_deps.reserve(formulas.len());
+        // Working out precedents is independent per formula (spread over threads); the indexes
+        // are filled on this thread.
+        let nodes = crate::par::filter_map(&formulas, |&(k, cell)| {
+            let f = cell.formula.as_deref()?;
+            let (areas, dynamic) = match f.parsed_ref() {
+                Some((e, (r, c))) => precedents_shifted(wb, k.0, e, (r.into(), c.into())),
+                None => {
+                    let (e, shift) = parsed(f)?;
+                    precedents_shifted(wb, k.0, &e, shift)
+                }
+            };
+            Some((k, Node::new(areas, dynamic), cell.value == Value::Error(CellError::Spill)))
+        });
+        for (k, node, blocked) in nodes {
+            self.graph.insert(k, node);
+            if blocked {
+                self.spill_blocked.insert(k);
+            }
+        }
+        self.graph.settle();
+    }
+
+    /// Rebuilds the graph and lays spills out afresh, and returns every formula, to recalculate
+    /// with [`Calc::run_dirty`].
+    pub fn prepare_all(&mut self, wb: &mut Workbook) -> Vec<Key> {
         self.rebuild(wb);
         // Spills are laid out again from the formulas where they are now (a structural edit moves
         // or deletes the formulas, not the values they spilled).
@@ -822,22 +1409,59 @@ impl Calc {
                 sh.spill_ranges.clear();
             }
         }
-        let all: Vec<Key> = self.graph.nodes.keys().copied().collect();
+        self.graph.nodes.keys().copied().collect()
+    }
+
+    /// Prepares a workbook just loaded with the values its file stored, as Excel does: the graph
+    /// is built and only `stale` (formulas whose stored values can't be used), the formulas that
+    /// depend on them, and the volatile and dynamic-reference ones are recalculated. Spills are
+    /// laid out by recalculating their anchors (which the reader lists in `stale`).
+    pub fn load(&mut self, wb: &mut Workbook, stale: &[Key]) {
+        self.rebuild(wb);
+        let dirty = self.dirty_closure(wb, stale);
+        self.run(wb, dirty, false);
+    }
+
+    /// Recalculates every formula (F9 / Ctrl+Alt+F9, and after loading).
+    pub fn recalc_all(&mut self, wb: &mut Workbook) {
+        let all = self.prepare_all(wb);
         self.run(wb, all, true);
+    }
+
+    /// Evaluates `dirty` (from [`Calc::prepare`] or [`Calc::prepare_all`]) and writes the results
+    /// back. The graph is only read, so this can run on a copy of the workbook on another thread.
+    pub fn run_dirty(&mut self, wb: &mut Workbook, dirty: Vec<Key>) {
+        self.run(wb, dirty, false);
     }
 
     /// Updates the graph for cells whose content changed and recalculates what depends on them.
     pub fn cells_changed(&mut self, wb: &mut Workbook, changed: &[Key]) {
+        let dirty = self.prepare(wb, changed);
+        if !dirty.is_empty() {
+            let t1 = prof_now();
+            let n = dirty.len();
+            self.run(wb, dirty, false);
+            if std::env::var_os("GRIDCRAFT_PROFILE").is_some() {
+                eprintln!("recalc: {n} cells, run {:.1} ms", prof_now() - t1);
+            }
+        }
+    }
+
+    /// Updates the graph for cells whose content changed and returns the formulas to
+    /// recalculate (for [`Calc::run_dirty`]). In manual calculation mode the edited formulas are
+    /// evaluated here and nothing is returned.
+    pub fn prepare(&mut self, wb: &mut Workbook, changed: &[Key]) -> Vec<Key> {
         let mut cleared: Vec<(usize, RangeRef)> = Vec::new();
         for &k in changed {
-            let formula = wb.sheet(k.0).and_then(|s| s.cell(k.1)).and_then(|c| c.formula.clone());
-            match formula.and_then(|f| f.expr()) {
-                Some(e) => {
-                    let (areas, dynamic) = precedents(wb, k.0, &e);
-                    self.graph.insert(k, Node { areas, dynamic });
+            let formula = wb.sheet(k.0).and_then(|s| s.cell(k.1)).and_then(|c| c.formula.as_deref()).and_then(parsed);
+            match formula {
+                Some((e, shift)) => {
+                    let (areas, dynamic) = precedents_shifted(wb, k.0, &e, shift);
+                    self.graph.insert(k, Node::new(areas, dynamic));
                 }
                 None => {
                     self.graph.remove(k);
+                    self.spill_blocked.remove(&k);
                     // A formula replaced by a constant (or cleared) takes its spilled values with it.
                     if let Some(sh) = wb.sheet_mut(k.0)
                         && let Some(r) = sh.spill_ranges.remove(&k.1)
@@ -861,36 +1485,49 @@ impl Calc {
             // Only the edited formulas themselves are evaluated.
             let own: Vec<Key> = changed.iter().copied().filter(|k| self.graph.nodes.contains_key(k)).collect();
             self.run(wb, own, false);
-            return;
+            return Vec::new();
         }
         let mut seeds: Vec<Key> = changed.to_vec();
         let mut emptied: Vec<Key> = Vec::new();
         // Typing into (or clearing) a cell a dynamic array spills over (or would spill over)
-        // re-evaluates the anchor, which may now be blocked or unblocked.
+        // re-evaluates the anchor, which may now be blocked or unblocked. Only the spill ranges
+        // that meet the edited area are checked cell by cell, and only formulas blocked now
+        // (`spill_blocked`, usually none) can be unblocked.
+        let mut boxes: Vec<(usize, RangeRef)> = Vec::new();
+        for &(si, c) in changed {
+            match boxes.iter_mut().find(|b| b.0 == si) {
+                Some(b) => b.1 = b.1.union(&RangeRef::new(c, c)),
+                None => boxes.push((si, RangeRef::new(c, c))),
+            }
+        }
+        let spilling: Vec<(usize, CellRef, RangeRef)> = boxes
+            .iter()
+            .filter_map(|(si, b)| Some((*si, b, wb.sheet(*si)?)))
+            .flat_map(|(si, b, sh)| sh.spill_ranges.iter().filter(|(_, r)| r.intersects(b)).map(move |(a, r)| (si, *a, *r)))
+            .collect();
+        let blocked: Vec<Key> = self.spill_blocked.iter().copied().collect();
         for &k in changed {
-            if let Some(sh) = wb.sheet(k.0) {
-                for (anchor, r) in &sh.spill_ranges {
-                    if *anchor != k.1 && r.contains(k.1) {
-                        seeds.push((k.0, *anchor));
-                    }
+            for &(si, anchor, r) in &spilling {
+                if si == k.0 && anchor != k.1 && r.contains(k.1) {
+                    seeds.push((si, anchor));
                 }
-                for (c, cell) in sh.cells.iter_range(RangeRef::new(CellRef::new(k.1.row.saturating_sub(64), k.1.col.saturating_sub(64)), k.1)) {
-                    if c != k.1 && cell.value == Value::Error(CellError::Spill) {
-                        seeds.push((k.0, c));
-                    }
+            }
+            for &(si, a) in &blocked {
+                if si == k.0 && a != k.1 && a.row <= k.1.row && a.col <= k.1.col && k.1.row - a.row <= 64 && k.1.col - a.col <= 64 {
+                    seeds.push((si, a));
                 }
-                if !sh.cells.has(k.1) {
-                    match emptied.iter_mut().find(|x| x.0 == k.0) {
-                        Some(x) => x.1 = CellRef::new(x.1.row.max(k.1.row), x.1.col.max(k.1.col)),
-                        None => emptied.push(k),
-                    }
+            }
+            if wb.sheet(k.0).is_some_and(|sh| !sh.cells.has(k.1)) {
+                match emptied.iter_mut().find(|x| x.0 == k.0) {
+                    Some(x) => x.1 = CellRef::new(x.1.row.max(k.1.row), x.1.col.max(k.1.col)),
+                    None => emptied.push(k),
                 }
             }
         }
         // An emptied cell can unblock an anchor any distance above or to the left of it.
         for (si, end) in emptied {
-            for &(s, c) in self.graph.nodes.keys() {
-                if s == si && c.row <= end.row && c.col <= end.col && wb.sheet(s).is_some_and(|sh| sh.value(c) == Value::Error(CellError::Spill)) {
+            for &(s, c) in &blocked {
+                if s == si && c.row <= end.row && c.col <= end.col {
                     seeds.push((s, c));
                 }
             }
@@ -906,12 +1543,10 @@ impl Calc {
         }
         let t0 = prof_now();
         let dirty = self.dirty_closure(wb, &seeds);
-        let t1 = prof_now();
-        let n = dirty.len();
-        self.run(wb, dirty, false);
         if std::env::var_os("GRIDCRAFT_PROFILE").is_some() {
-            eprintln!("recalc: {} seeds, closure {} cells {:.1} ms, run {:.1} ms", seeds.len(), n, t1 - t0, prof_now() - t1);
+            eprintln!("recalc: {} seeds, closure {} cells {:.1} ms", seeds.len(), dirty.len(), prof_now() - t0);
         }
+        dirty
     }
 
     fn dirty_closure(&self, _wb: &Workbook, seeds: &[Key]) -> Vec<Key> {
@@ -956,28 +1591,45 @@ impl Calc {
             }
             // Row-major order is a good topological guess; on-demand evaluation fixes the rest.
             dirty.sort_by_key(|(s, c)| (*s, c.row, c.col));
-            let mut exprs: HashMap<Key, std::sync::Arc<Expr>> = HashMap::with_capacity_and_hasher(dirty.len(), Default::default());
+            dirty.dedup();
+            let mut exprs: HashMap<Key, Parsed> = HashMap::with_capacity_and_hasher(dirty.len(), Default::default());
             for k in &dirty {
-                if let Some(e) = wb.sheet(k.0).and_then(|s| s.cell(k.1)).and_then(|c| c.formula.as_ref()).and_then(|f| f.expr_arc()) {
+                if let Some(e) = wb.sheet(k.0).and_then(|s| s.cell(k.1)).and_then(|c| c.formula.as_deref()).and_then(parsed) {
                     exprs.insert(*k, e);
                 }
             }
             let now = self.now();
-            let mut rng = self.rng;
+            // Iterative calculation reads previous values as it goes: one thread keeps that simple.
+            let threads = if wb.calc.iterative { 1 } else { thread_count(&wb.calc) };
             let tp = prof_now();
-            let (results, spills, cycles) = {
-                let mut host = PassHost::new(wb, &exprs, &mut rng, now);
+            let (results, spills, cycles, rng) = {
+                let mut host = PassHost::new(wb, &exprs, now, self.rng, None);
                 host.iterate = wb.calc.iterative;
-                for k in &dirty {
-                    host.compute(*k);
+                host.own.pending = exprs.keys().copied().collect();
+                host.own.results.reserve(dirty.len());
+                let plan = self.graph.levels(&dirty);
+                let progress = self.progress.as_deref();
+                if let Some(p) = progress {
+                    p.total.fetch_add(dirty.len(), std::sync::atomic::Ordering::Relaxed);
+                    p.threads.store(threads, std::sync::atomic::Ordering::Relaxed);
+                }
+                for level in plan.levels() {
+                    host.run_level(level, threads, progress);
+                }
+                for &k in plan.rest() {
+                    host.settle(k);
                 }
                 if host.iterate && !host.members.is_empty() {
-                    let passes = host.iterate_loops(&dirty, wb.calc.max_iterations, wb.calc.max_change);
+                    let order: Vec<Key> = plan.levels().flatten().chain(plan.rest()).copied().collect();
+                    let passes = host.iterate_loops(&self.graph, &order, wb.calc.max_iterations, wb.calc.max_change);
                     if std::env::var_os("GRIDCRAFT_PROFILE").is_some() {
-                        eprintln!("  iterative calculation: {} passes over {} formulas", passes, host.tainted.len());
+                        eprintln!("  iterative calculation: {passes} passes over {} loop formulas", host.members.len());
                     }
                 }
-                (host.results, host.spills, host.cycles)
+                if let Some(p) = progress {
+                    p.done.fetch_add(plan.rest().len(), std::sync::atomic::Ordering::Relaxed);
+                }
+                (host.own.results, host.own.spills, host.cycles, host.rng)
             };
             self.rng = rng;
             if std::env::var_os("GRIDCRAFT_PROFILE").is_some() {
@@ -989,11 +1641,21 @@ impl Calc {
             // Write back.
             let mut spill_changes: Vec<Key> = Vec::new();
             let mut freed: Vec<(usize, RangeRef)> = Vec::new();
-            for (k, v) in results {
-                let Some(sheet) = wb.sheet_mut(k.0) else { continue };
-                if let Some(cell) = sheet.cells.get_mut(k.1)
-                    && cell.value != v
-                {
+            // In row-major order (`dirty` is sorted), so the cell store is walked band by band;
+            // a cell is borrowed for writing (which copies its band if an undo step shares it) only
+            // when its value changed.
+            let mut results = results;
+            for k in &dirty {
+                let Some(v) = results.remove(k) else { continue };
+                if v == Value::Error(CellError::Spill) {
+                    self.spill_blocked.insert(*k);
+                } else if !self.spill_blocked.is_empty() {
+                    self.spill_blocked.remove(k);
+                }
+                if wb.sheet(k.0).and_then(|s| s.cells.get(k.1)).is_none_or(|cell| cell.value == v) {
+                    continue;
+                }
+                if let Some(cell) = wb.sheet_mut(k.0).and_then(|s| s.cells.get_mut(k.1)) {
                     cell.value = v;
                 }
             }
@@ -1023,6 +1685,7 @@ impl Calc {
                         if let Some(cell) = sheet.cells.get_mut(k.1) {
                             cell.value = Value::Error(CellError::Spill);
                         }
+                        self.spill_blocked.insert(*k);
                     } else {
                         for (i, c) in range.iter().enumerate() {
                             if c != k.1 {
@@ -1052,12 +1715,8 @@ impl Calc {
             }
             // An area a formula no longer spills over may unblock another formula's array.
             for (si, o) in freed {
-                for &(s, c) in self.graph.nodes.keys() {
-                    if s == si
-                        && c.row <= o.end.row
-                        && c.col <= o.end.col
-                        && wb.sheet(s).is_some_and(|sh| sh.value(c) == Value::Error(CellError::Spill))
-                    {
+                for &(s, c) in &self.spill_blocked {
+                    if s == si && c.row <= o.end.row && c.col <= o.end.col {
                         spill_changes.push((s, c));
                     }
                 }
@@ -1095,8 +1754,7 @@ pub fn evaluate(wb: &Workbook, sheet: usize, at: CellRef, formula: &str) -> Valu
 
 pub fn evaluate_expr(wb: &Workbook, sheet: usize, at: CellRef, expr: &Expr) -> Value {
     let exprs = HashMap::default();
-    let mut rng = 0x1234_5678_9ABC_DEF0u64;
-    let mut host = PassHost::new(wb, &exprs, &mut rng, now_serial());
+    let mut host = PassHost::new(wb, &exprs, now_serial(), 0x1234_5678_9ABC_DEF0, None);
     let mut ev = Evaluator::new(&mut host, sheet, at);
     ev.value(expr)
 }
@@ -1329,14 +1987,14 @@ pub(crate) mod tests {
         let mut exprs = HashMap::default();
         for (at, formula) in pending {
             let expr = gridcraft_formula::parse(formula.strip_prefix('=').unwrap_or(formula)).ok()?;
-            exprs.insert((0, CellRef::parse(at)?), std::sync::Arc::new(expr));
+            exprs.insert((0, CellRef::parse(at)?), (std::sync::Arc::new(expr), (0, 0)));
         }
 
         // A cell in `pending` is calculated the first time something reads it, which is the state
         // of a real pass partway through; `visit_range` has to cope with the formulas it reads
         // being calculated under it.
-        let mut rng = 1u64;
-        let mut host = PassHost::new(wb, &exprs, &mut rng, 0.0);
+        let mut host = PassHost::new(wb, &exprs, 0.0, 1, None);
+        host.own.pending = exprs.keys().copied().collect();
 
         let mut seen = Vec::new();
         host.visit_range(0, range, &mut |v| {

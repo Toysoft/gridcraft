@@ -126,6 +126,8 @@ pub struct Out {
     pub cell_pictures: crate::richdata::PicturesOut,
     /// Kept (pass-through) parts written so far.
     pub kept: crate::passthrough::KeptOut,
+    /// Shared formulas converted to file form once (see `fmla::to_file_shared`).
+    pub file_exprs: crate::fmla::FileExprs,
 }
 
 impl Out {
@@ -211,6 +213,7 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
         needs_calc: false,
         cell_pictures: Default::default(),
         kept: Default::default(),
+        file_exprs: Default::default(),
     };
     out.default_type("rels", "application/vnd.openxmlformats-package.relationships+xml");
     out.default_type("xml", "application/xml");
@@ -345,6 +348,12 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
     }
     if wb.calc.precision_as_displayed {
         w.push_str(" fullPrecision=\"0\"");
+    }
+    if !wb.calc.multi_threaded {
+        w.push_str(" concurrentCalc=\"0\"");
+    }
+    if wb.calc.threads > 0 {
+        let _ = write!(w, " concurrentManualCount=\"{}\"", wb.calc.threads);
     }
     if out.needs_calc {
         w.push_str(" fullCalcOnLoad=\"1\"");

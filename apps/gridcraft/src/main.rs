@@ -299,6 +299,8 @@ fn main() -> eframe::Result<()> {
     }
     let mut app = SheetApp::new(session, services());
     app.watch_desktop_theme();
+    // Long recalculations finish on another thread; the window keeps responding meanwhile.
+    app.session.set_background_calc(true);
     app.after_engine(); // Show warnings from the sample.
     let control_port = control_port;
     load_prefs(&mut app);

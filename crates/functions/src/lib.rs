@@ -77,6 +77,7 @@ pub(crate) mod text;
 pub(crate) mod util;
 
 pub use ets::Timeline;
+pub use lookup::LookupCache;
 pub use stat::{aggregate_values, aggregate_values_k};
 
 /// An evaluated argument. Ranges arrive as `Value::Array` (blank cells = `Value::Empty`) with
@@ -109,6 +110,11 @@ pub trait Ctx {
     /// for `record` (a row of `db` below its labels). `None` when that cell holds no formula or the
     /// criteria didn't come from a reference.
     fn computed_criterion(&mut self, _row: usize, _col: usize, _db: &Array, _record: usize) -> Option<bool> {
+        None
+    }
+    /// Where lookups keep the indexes they build over ranges searched again and again (see
+    /// [`LookupCache`]). `None`: every lookup scans.
+    fn lookup_cache(&mut self) -> Option<&mut LookupCache> {
         None
     }
 }

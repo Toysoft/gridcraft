@@ -30,6 +30,9 @@ pub struct Lambda {
     pub params: Vec<String>,
     pub body: Expr,
     pub env: Vec<(String, Ev)>,
+    /// The shift of the formula that wrote it (see [`Evaluator::shift`]): its body's references
+    /// move with that formula's, wherever it is called.
+    pub shift: (i64, i64),
 }
 
 #[derive(Clone, Debug)]
@@ -76,6 +79,23 @@ pub trait Host {
     fn visit_range(&mut self, _sheet: usize, _range: RangeRef, _f: &mut dyn FnMut(&Value) -> bool) -> bool {
         false
     }
+    /// Counts a read of a block (trimmed as [`Evaluator::area_value`] trims it) that an aggregate
+    /// could walk with [`Host::visit_range`]: `true` when the host holds a shared array for it,
+    /// or will build one on this read, so [`Host::range_array`] is the cheaper way to read it.
+    fn share_range(&mut self, _sheet: usize, _range: RangeRef) -> bool {
+        false
+    }
+    /// A block as an array (`range` already trimmed and within [`MAX_CELLS`]). Hosts can hand
+    /// every formula that reads the same range the same shared array.
+    fn range_array(&mut self, sheet: usize, range: RangeRef) -> Value {
+        let (h, w) = (range.height() as usize, range.width() as usize);
+        let data = self.range_values(sheet, range);
+        Array::new(h, w, data).map(Value::from).unwrap_or(Value::Error(CellError::Value))
+    }
+    /// Where lookup functions keep their indexes (see [`gridcraft_functions::LookupCache`]).
+    fn lookup_cache(&mut self) -> Option<&mut gridcraft_functions::LookupCache> {
+        None
+    }
 }
 
 pub struct Evaluator<'h> {
@@ -84,6 +104,10 @@ pub struct Evaluator<'h> {
     pub at: CellRef,
     env: Vec<(String, Ev)>,
     depth: usize,
+    /// The evaluated formula is a copy of a shared formula this far (rows, columns) from where
+    /// its expression was parsed: the relative parts of its own references move by it. Names,
+    /// INDIRECT text and the like are parsed on their own and are evaluated with no shift.
+    pub shift: (i64, i64),
 }
 
 struct FnCtx<'a, 'h> {
@@ -121,14 +145,18 @@ impl Ctx for FnCtx<'_, '_> {
                 _ => None,
             })
             .collect();
-        let mut ev = Evaluator { host: &mut *self.ev.host, sheet: area.sheet, at, env, depth: self.ev.depth };
+        // `expr_arc` already reads at the criteria cell, so no shift.
+        let mut ev = Evaluator { host: &mut *self.ev.host, sheet: area.sheet, at, env, depth: self.ev.depth, shift: (0, 0) };
         Some(matches!(ev.value(&shifted).scalar().to_bool(), Ok(true)))
+    }
+    fn lookup_cache(&mut self) -> Option<&mut gridcraft_functions::LookupCache> {
+        self.ev.host.lookup_cache()
     }
 }
 
 impl<'h> Evaluator<'h> {
     pub fn new(host: &'h mut dyn Host, sheet: usize, at: CellRef) -> Self {
-        Evaluator { host, sheet, at, env: Vec::new(), depth: 0 }
+        Evaluator { host, sheet, at, env: Vec::new(), depth: 0, shift: (0, 0) }
     }
 
     /// Evaluates to a value (references are dereferenced; multi-cell → array).
@@ -150,6 +178,14 @@ impl<'h> Evaluator<'h> {
     }
 
     pub fn reference_areas(&self, r: &Reference) -> Result<Vec<Area>, CellError> {
+        let moved;
+        let r = if self.shift == (0, 0) {
+            r
+        } else {
+            // Copied off the sheet: `#REF!`, as the copy's own text says.
+            moved = gridcraft_formula::adjust::shift_ref(r, self.shift.0, self.shift.1).ok_or(CellError::Ref)?;
+            &moved
+        };
         let range = r.range();
         Ok(self.resolve_sheet(&r.sheet)?.into_iter().map(|sheet| Area { sheet, range }).collect())
     }
@@ -171,16 +207,19 @@ impl<'h> Evaluator<'h> {
         if a.range.is_single() {
             return self.host.cell_value(a.sheet, a.range.start);
         }
-        // A reference keeps its size, so the array has its shape and its blanks count
-        // (`=A1:A10`, `SUMPRODUCT(--(A1:A10=""))`).
-        let cells = u64::from(a.range.height()) * u64::from(a.range.width());
-        let range = if cells > FULL_SIZE_CELLS { self.trim(a) } else { a.range };
-        let (h, w) = (range.height() as usize, range.width() as usize);
-        if (h as u64) * (w as u64) > MAX_CELLS {
+        let range = self.array_range(a);
+        if u64::from(range.height()) * u64::from(range.width()) > MAX_CELLS {
             return Value::Error(CellError::Num);
         }
-        let data = self.host.range_values(a.sheet, range);
-        Array::new(h, w, data).map(Value::from).unwrap_or(Value::Error(CellError::Value))
+        self.host.range_array(a.sheet, range)
+    }
+
+    /// The block [`Evaluator::area_value`] reads for `a`. A reference keeps its size, so the array
+    /// has its shape and its blanks count (`=A1:A10`, `SUMPRODUCT(--(A1:A10=""))`); only a huge
+    /// one is trimmed to the used range.
+    fn array_range(&mut self, a: &Area) -> RangeRef {
+        let cells = u64::from(a.range.height()) * u64::from(a.range.width());
+        if cells > FULL_SIZE_CELLS { self.trim(a) } else { a.range }
     }
 
     /// Trims the bottom/right of an area to the sheet's used range (keeps the top-left so
@@ -280,11 +319,13 @@ impl<'h> Evaluator<'h> {
                     } else {
                         expr
                     };
-                    let saved = self.sheet;
-                    // Unqualified references in a name refer to the scope sheet.
+                    let saved = (self.sheet, self.shift);
+                    // Unqualified references in a name refer to the scope sheet; the name's
+                    // references don't move with the formula using it.
                     self.sheet = scope;
+                    self.shift = (0, 0);
                     let r = self.eval(&expr);
-                    self.sheet = saved;
+                    (self.sheet, self.shift) = saved;
                     r
                 }
                 Err(_) => err(CellError::Name),
@@ -769,7 +810,7 @@ impl<'h> Evaluator<'h> {
                     }
                 }
                 let Some(body) = args.last() else { return err(CellError::Value) };
-                Ev::L(Arc::new(Lambda { params, body: body.clone(), env: self.env.clone() }))
+                Ev::L(Arc::new(Lambda { params, body: body.clone(), env: self.env.clone(), shift: self.shift }))
             }
             "ISOMITTED" => {
                 let r = matches!(args.first(), Some(Expr::Name(n)) if self.env.iter().rev().find(|(k, _)| k.eq_ignore_ascii_case(n)).is_some_and(|(_, v)| matches!(v, Ev::V(Value::Empty))));
@@ -882,7 +923,13 @@ impl<'h> Evaluator<'h> {
 
     /// Adds one area to `acc`; `Err` is the result the function ends with.
     fn aggregate_area(&mut self, kind: Agg, a: &Area, acc: &mut Acc) -> Result<(), Ev> {
-        if !a.range.is_single() {
+        // A range many formulas aggregate (`SUM(A:A)` filled down) is read once as a shared
+        // array; other ranges are walked in place.
+        let shared = !a.range.is_single() && {
+            let range = self.array_range(a);
+            self.host.share_range(a.sheet, range)
+        };
+        if !a.range.is_single() && !shared {
             let mut error = None;
             let walked = self.host.visit_range(a.sheet, a.range, &mut |v| match acc.add_cell(kind, v) {
                 Ok(()) => true,
@@ -943,9 +990,11 @@ impl<'h> Evaluator<'h> {
 
     fn call_lambda_values(&mut self, l: &Lambda, bound: Vec<(String, Ev)>) -> Ev {
         let saved = std::mem::replace(&mut self.env, l.env.clone());
+        let saved_shift = std::mem::replace(&mut self.shift, l.shift);
         self.env.extend(bound);
         let r = self.eval(&l.body);
         self.env = saved;
+        self.shift = saved_shift;
         r
     }
 
@@ -988,7 +1037,7 @@ impl<'h> Evaluator<'h> {
         if let Some(f) = e.and_then(|x| self.function_by_name(x)) {
             let params: Vec<String> = (0..arity).map(|i| format!("_xleta.{i}")).collect();
             let body = Expr::Call(f, params.iter().map(|p| Expr::Name(p.clone())).collect());
-            return Some(Arc::new(Lambda { params, body, env: Vec::new() }));
+            return Some(Arc::new(Lambda { params, body, env: Vec::new(), shift: (0, 0) }));
         }
         match e.map(|x| self.eval(x)) {
             Some(Ev::L(l)) => Some(l),
@@ -1179,10 +1228,16 @@ impl<'h> Evaluator<'h> {
         };
         match gridcraft_formula::parse(&text) {
             Ok(Expr::Ref(_)) if !a1_ok => err(CellError::Ref),
-            Ok(e @ (Expr::Ref(_) | Expr::Name(_) | Expr::Struct(_))) => match self.eval(&e) {
-                r @ Ev::R(_) => r,
-                _ => err(CellError::Ref),
-            },
+            Ok(e @ (Expr::Ref(_) | Expr::Name(_) | Expr::Struct(_))) => {
+                // INDIRECT's text names cells as they are: no shift.
+                let saved = std::mem::take(&mut self.shift);
+                let r = self.eval(&e);
+                self.shift = saved;
+                match r {
+                    r @ Ev::R(_) => r,
+                    _ => err(CellError::Ref),
+                }
+            }
             _ => err(CellError::Ref),
         }
     }
@@ -1734,8 +1789,23 @@ pub fn resized_sum_range(sum: RangeRef, height: u32, width: u32) -> RangeRef {
 /// Collects the static references of an expression with their sheets resolved; `dynamic` is
 /// set when the formula uses INDIRECT/OFFSET/names/tables whose targets can change.
 pub fn precedents(wb: &Workbook, sheet: usize, e: &Expr) -> (Vec<Area>, bool) {
+    precedents_shifted(wb, sheet, e, (0, 0))
+}
+
+/// [`precedents`] of a shared formula's copy `shift` (rows, columns) away from where `e` was
+/// parsed: the relative parts of its references move by it (references copied off the sheet
+/// read nothing).
+pub fn precedents_shifted(wb: &Workbook, sheet: usize, e: &Expr, shift: (i64, i64)) -> (Vec<Area>, bool) {
     let mut out = Vec::new();
     let mut dynamic = false;
+    fn shifted(r: &Reference, shift: (i64, i64)) -> Option<std::borrow::Cow<'_, Reference>> {
+        if shift == (0, 0) {
+            Some(std::borrow::Cow::Borrowed(r))
+        } else {
+            gridcraft_formula::adjust::shift_ref(r, shift.0, shift.1).map(std::borrow::Cow::Owned)
+        }
+    }
+    let moved = |r| shifted(r, shift);
     let push = |out: &mut Vec<Area>, r: &Reference, range: RangeRef| match &r.sheet {
         SheetSel::Current => out.push(Area { sheet, range }),
         SheetSel::Named(n) => {
@@ -1752,13 +1822,19 @@ pub fn precedents(wb: &Workbook, sheet: usize, e: &Expr) -> (Vec<Area>, bool) {
         }
     };
     e.walk(&mut |x| match x {
-        Expr::Ref(r) => push(&mut out, r, r.range()),
+        Expr::Ref(r) => {
+            if let Some(r) = moved(r) {
+                push(&mut out, &r, r.range());
+            }
+        }
         // The cells SUMIF/AVERAGEIF really read from the sum range (see `resized_sum_range`); when
         // the criteria range's size isn't known statically, recalculate the formula every time.
         Expr::Call(n, args) if resizes_sum_range(n, args.len()) => match (args.first(), args.get(2)) {
             (Some(Expr::Ref(c)), Some(Expr::Ref(s))) => {
-                let (crit, sum) = (c.range(), s.range());
-                push(&mut out, s, resized_sum_range(sum, crit.height(), crit.width()));
+                if let (Some(c), Some(s)) = (moved(c), moved(s)) {
+                    let (crit, sum) = (c.range(), s.range());
+                    push(&mut out, &s, resized_sum_range(sum, crit.height(), crit.width()));
+                }
             }
             (_, Some(Expr::Number(_) | Expr::Text(_) | Expr::Bool(_) | Expr::Error(_) | Expr::Array(_) | Expr::Missing)) => {}
             _ => dynamic = true,
@@ -1773,8 +1849,8 @@ pub fn precedents(wb: &Workbook, sheet: usize, e: &Expr) -> (Vec<Area>, bool) {
         // A range ending in a function's result (`A1:INDEX(B1:B9,n)`) covers the cells between
         // the references inside it, not only those references.
         Expr::Binary(BinOp::Range, a, b) if !matches!((&**a, &**b), (Expr::Ref(_), Expr::Ref(_))) => {
-            let mut inner = precedents(wb, sheet, a).0;
-            inner.extend(precedents(wb, sheet, b).0);
+            let mut inner = precedents_shifted(wb, sheet, a, shift).0;
+            inner.extend(precedents_shifted(wb, sheet, b, shift).0);
             let mut boxes: Vec<Area> = Vec::new();
             for area in inner {
                 match boxes.iter_mut().find(|x| x.sheet == area.sheet) {

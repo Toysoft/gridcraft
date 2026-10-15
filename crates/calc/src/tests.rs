@@ -1114,6 +1114,38 @@ fn sum_count_average_follow_edits_inside_the_range() {
 }
 
 #[test]
+fn aggregates_over_a_shared_range_match_the_walked_one() {
+    // The first SUM(A:A) walks the column in place; the later ones read the pass's shared array.
+    // Both must treat text, logicals, blanks and errors alike.
+    let mut t = T::new();
+    for r in 1..=200u32 {
+        let v = match r % 5 {
+            0 => Value::from("text"),
+            1 => Value::Bool(true),
+            2 => continue,
+            _ => Value::Number(f64::from(r)),
+        };
+        t.wb.sheet_mut(0).unwrap().cells.set(c(&format!("A{r}")), Cell::value(v));
+    }
+    let formulas = ["=SUM(A:A)", "=COUNT(A:A)", "=AVERAGE(A:A)", "=SUM(A1:A200)"];
+    t.load((1..=50).flat_map(|r| formulas.iter().enumerate().map(move |(i, f)| (format!("{}{r}", ["C", "D", "E", "F"][i]), f.to_string()))));
+    let want_sum: f64 = (1..=200).filter(|r| matches!(r % 5, 3 | 4)).map(f64::from).sum();
+    let want_count = (1..=200).filter(|r| matches!(r % 5, 3 | 4)).count() as f64;
+    for r in 1..=50 {
+        assert_eq!(t.num(&format!("C{r}")), want_sum, "C{r}");
+        assert_eq!(t.num(&format!("D{r}")), want_count, "D{r}");
+        assert_eq!(t.num(&format!("E{r}")), want_sum / want_count, "E{r}");
+        assert_eq!(t.num(&format!("F{r}")), want_sum, "F{r}");
+    }
+    // An error in the range is the result of every one of them.
+    t.set("A7", "=1/0");
+    for r in [1, 2, 50] {
+        assert_eq!(t.get(&format!("C{r}")), Value::Error(CellError::Div0), "C{r}");
+        assert_eq!(t.get(&format!("F{r}")), Value::Error(CellError::Div0), "F{r}");
+    }
+}
+
+#[test]
 fn visit_range_declines_when_a_formula_in_the_block_spills_into_it() {
     // The sheet: D1 = SEQUENCE(3) and D4 = 10, and D1 has not been calculated yet when the
     // block D1:D5 is read.
@@ -1264,5 +1296,422 @@ fn offset_extreme_arguments_return_ref() {
         ("=ROWS(OFFSET(A1,0,0,1048576,1))", 1048576.0),
     ] {
         assert_eq!(crate::evaluate(&wb, 0, c("D1"), formula), Value::Number(expected), "{formula}");
+    }
+}
+
+impl T {
+    /// Stores formulas without recalculating, then recalculates everything at once (as loading
+    /// a file does).
+    fn load(&mut self, cells: impl IntoIterator<Item = (String, String)>) {
+        for (at, f) in cells {
+            self.wb.sheet_mut(0).unwrap().cells.set(c(&at), Cell::formula(Formula::new(&f)));
+        }
+        self.calc.recalc_all(&mut self.wb);
+    }
+}
+
+#[test]
+fn long_chains_compute_in_either_direction() {
+    let n = 20_000;
+    let mut t = T::new();
+    // C1 = C2+1, C2 = C3+1, …: every formula reads the row below, the reverse of row order.
+    t.load((1..n).map(|r| (format!("C{r}"), format!("=C{}+1", r + 1))).chain([(format!("C{n}"), "=1".to_string())]));
+    assert_eq!(t.num("C1"), n as f64);
+    assert!(t.calc.circular.is_empty());
+    // An edit at the far end recalculates the whole chain.
+    t.set(&format!("C{n}"), "=10");
+    assert_eq!(t.num("C1"), (n + 9) as f64);
+}
+
+#[test]
+fn long_chains_need_no_call_stack() {
+    // Evaluation sets formulas aside on a heap stack instead of recursing, so a long reverse
+    // chain through a defined name (no static precedents to order by) fits a tiny thread stack.
+    let run = || {
+        let n = 5_000;
+        let mut t = T::new();
+        t.wb.names.push(gridcraft_model::DefinedName {
+            name: "Step".into(),
+            scope: None,
+            formula: "1".into(),
+            comment: String::new(),
+            hidden: false,
+        });
+        t.load((1..n).map(|r| (format!("A{r}"), format!("=A{}+Step", r + 1))).chain([(format!("A{n}"), "=Step".to_string())]));
+        t.num("A1")
+    };
+    let a1 = std::thread::Builder::new().stack_size(512 * 1024).spawn(run).unwrap().join().unwrap();
+    assert_eq!(a1, 5_000.0);
+}
+
+#[test]
+fn cycles_are_circular_and_so_is_what_reads_them() {
+    let mut t = T::new();
+    t.set("A1", "=B1+1");
+    t.set("B1", "=A1+1");
+    assert!(!t.calc.circular.is_empty());
+    t.set("C1", "=A1*2");
+    t.set("D1", "=5");
+    for at in ["A1", "B1", "C1"] {
+        assert_eq!(t.get(at), Value::Error(CellError::Circ), "{at}");
+    }
+    assert_eq!(t.num("D1"), 5.0);
+    // Breaking the cycle recalculates everything that was stuck behind it.
+    t.set("B1", "=D1");
+    assert_eq!((t.num("A1"), t.num("B1"), t.num("C1")), (6.0, 5.0, 12.0));
+    assert!(t.calc.circular.is_empty());
+    // A formula that reads itself.
+    t.set("E1", "=E1+1");
+    assert_eq!(t.get("E1"), Value::Error(CellError::Circ));
+}
+
+#[test]
+fn ranges_over_formulas_wait_for_all_of_them() {
+    // SUM reads a range of formulas below it that are dirty in the same pass.
+    let mut t = T::new();
+    t.load((2..=1001).map(|r| (format!("A{r}"), format!("=ROW()+B{r}"))).chain([("A1".to_string(), "=SUM(A2:A1001)".to_string())]));
+    let want: f64 = (2..=1001).map(f64::from).sum();
+    assert_eq!(t.num("A1"), want);
+    t.set("B5", "100");
+    assert_eq!(t.num("A1"), want + 100.0);
+}
+
+#[test]
+fn indexed_lookups_match_scanning_ones() {
+    // Each lookup appears three times over the same table, so the later copies go through the
+    // shared range and its index (built on the second search): all copies must agree with what a
+    // scan finds.
+    let mut t = T::new();
+    let mut cells: Vec<(String, String)> = (1..=100).map(|r| (format!("A{r}"), format!("=\"Key{r}\""))).collect();
+    cells.extend([
+        ("A5".to_string(), "=\"key3\"".to_string()),
+        ("A10".to_string(), "=0.3".to_string()),
+        ("A11".to_string(), "=TRUE".to_string()),
+        ("A12".to_string(), "=7".to_string()),
+    ]);
+    cells.extend((1..=100).map(|r| (format!("B{r}"), format!("={r}"))));
+    cells.extend((1..=100).map(|r| (format!("C{r}"), format!("={}", r * 10))));
+    let cases = [
+        ("=VLOOKUP(\"KEY3\",$A$1:$B$100,2,FALSE)", Value::Number(3.0)),
+        ("=XLOOKUP(\"key3\",$A$1:$A$100,$B$1:$B$100,,0,-1)", Value::Number(5.0)),
+        ("=MATCH(0.1+0.2,$A$1:$A$100,0)", Value::Number(10.0)),
+        ("=MATCH(TRUE,$A$1:$A$100,0)", Value::Number(11.0)),
+        ("=XMATCH(7,$A$1:$A$100)", Value::Number(12.0)),
+        ("=MATCH(\"7\",$A$1:$A$100,0)", Value::Error(CellError::NA)),
+        ("=VLOOKUP(\"Key2*\",$A$1:$B$100,2,FALSE)", Value::Number(2.0)),
+        ("=MATCH(\"nope\",$A$1:$A$100,0)", Value::Error(CellError::NA)),
+        ("=MATCH(255,$C$1:$C$100,1)", Value::Number(25.0)),
+        ("=XLOOKUP(255,$C$1:$C$100,$B$1:$B$100,,1)", Value::Number(26.0)),
+        ("=XMATCH(990,$C$1:$C$100,0,2)", Value::Number(99.0)),
+        ("=VLOOKUP(5,$C$1:$C$100,1,TRUE)", Value::Error(CellError::NA)),
+    ];
+    for (i, (f, _)) in cases.iter().enumerate() {
+        for col in ["E", "F", "G"] {
+            cells.push((format!("{col}{}", i + 1), f.to_string()));
+        }
+    }
+    t.load(cells);
+    for (i, (f, want)) in cases.iter().enumerate() {
+        for col in ["E", "F", "G"] {
+            assert_eq!(&t.get(&format!("{col}{}", i + 1)), want, "{col}{}: {f}", i + 1);
+        }
+    }
+    // An edit to the table: the next recalculation searches the new values.
+    t.set("A3", "Moved");
+    assert_eq!(t.num("E1"), 5.0);
+    assert_eq!(t.num("G1"), 5.0);
+}
+
+#[test]
+fn a_spill_landing_in_a_shared_range_replaces_it() {
+    // F1:F3 read G2:G100, which G1's spill fills during the same recalculation; a range shared
+    // before the spill landed must not be reused after it.
+    let mut t = T::new();
+    t.load([("G1".to_string(), "=SEQUENCE(100)".to_string())].into_iter().chain((1..=3).map(|r| (format!("F{r}"), "=SUM(G2:G100)".to_string()))));
+    for r in 1..=3 {
+        assert_eq!(t.num(&format!("F{r}")), 5049.0);
+    }
+}
+
+/// A workbook of ~3,000 rows mixing what multi-threaded levels must get right: lookups over a
+/// shared table, INDIRECT and a defined name reading cells of the same level (so workers hand
+/// formulas back), spills and their readers, running sums, text, a cycle.
+fn mixed_workbook(threads: u32) -> T {
+    let n = 3_000;
+    let mut t = T::new();
+    t.wb.calc.threads = threads;
+    t.wb.names.push(gridcraft_model::DefinedName {
+        name: "Base".into(),
+        scope: None,
+        formula: "Sheet1!$B$7".into(),
+        comment: String::new(),
+        hidden: false,
+    });
+    let mut cells: Vec<(String, String)> = Vec::new();
+    for r in 1..=n {
+        cells.push((format!("A{r}"), format!("={}", (r * 37) % 1000)));
+        cells.push((format!("B{r}"), format!("=A{r}*2+ROW()")));
+        cells.push((format!("C{r}"), format!("=VLOOKUP({},$A$1:$B${n},2,FALSE)", (r * 37) % 1000)));
+        cells.push((format!("D{r}"), "=INDIRECT(\"B\"&ROW())+Base".to_string()));
+        cells.push((format!("E{r}"), format!("=IF(MOD(A{r},2)=0,\"even\"&A{r},LEN(\"odd\"&B{r}))")));
+        cells.push((format!("F{r}"), if r == 1 { "=B1".to_string() } else { format!("=F{}+B{r}", r - 1) }));
+        cells.push((format!("G{r}"), format!("=SUM($B$1:$B${n})/ROW()")));
+    }
+    cells.push(("J1".to_string(), "=SEQUENCE(50,1,A3)".to_string()));
+    cells.push(("K1".to_string(), "=SUM(J1#)+COUNT(J2:J50)".to_string()));
+    cells.push(("L1".to_string(), "=L2+1".to_string()));
+    cells.push(("L2".to_string(), "=L1+1".to_string()));
+    t.load(cells);
+    t
+}
+
+#[test]
+fn multi_threaded_recalc_matches_one_thread() {
+    let one = mixed_workbook(1);
+    let many = mixed_workbook(8);
+    let (a, b) = (one.wb.sheet(0).unwrap(), many.wb.sheet(0).unwrap());
+    let mut cells = 0;
+    for (c, cell) in a.cells.iter() {
+        assert_eq!(cell.value, b.value(c), "{}", c.a1());
+        cells += 1;
+    }
+    assert_eq!(cells, b.cells.iter().count());
+    assert_eq!(a.spill, b.spill);
+    // Spot checks against values worked out by hand.
+    assert_eq!(one.num("D10"), one.num("B10") + one.num("B7"));
+    assert_eq!(one.num("C5"), one.num("B5"));
+    assert_eq!(one.num("K1"), (0..50).map(|i| f64::from(i) + one.num("A3")).sum::<f64>() + 49.0);
+    assert_eq!(many.get("L1"), Value::Error(CellError::Circ));
+    // An edit recalculates thousands of formulas in large levels again.
+    let mut many = many;
+    let mut one = one;
+    many.set("A1", "=999");
+    one.set("A1", "=999");
+    for (c, cell) in one.wb.sheet(0).unwrap().cells.iter() {
+        assert_eq!(cell.value, many.wb.sheet(0).unwrap().value(c), "after edit {}", c.a1());
+    }
+}
+
+#[test]
+fn thread_count_follows_the_settings() {
+    let mut s = gridcraft_model::CalcSettings { threads: 3, ..Default::default() };
+    assert_eq!(crate::recalc::thread_count(&s), if cfg!(target_arch = "wasm32") { 1 } else { 3 });
+    s.multi_threaded = false;
+    assert_eq!(crate::recalc::thread_count(&s), 1);
+    s.multi_threaded = true;
+    s.threads = 0;
+    assert!(crate::recalc::thread_count(&s) >= 1);
+}
+
+#[test]
+fn clearing_a_far_blocker_unblocks_a_spill() {
+    // The blocker is 79 rows below the anchor: further than the 64-cell window typed edits look
+    // at, so only the index of blocked anchors finds it when the cell is cleared.
+    let mut t = T::new();
+    t.set("A1", "=SEQUENCE(100)");
+    t.set("A80", "x");
+    assert_eq!(t.get("A1"), Value::Error(CellError::Spill));
+    t.set("A80", "");
+    assert_eq!((t.num("A1"), t.num("A80")), (1.0, 80.0));
+    // Blocked again, then the graph rebuilt from the workbook (as undo does): the index is
+    // rebuilt from the cells' values.
+    t.set("A90", "y");
+    assert_eq!(t.get("A1"), Value::Error(CellError::Spill));
+    t.calc.rebuild(&t.wb);
+    t.set("A90", "");
+    assert_eq!(t.num("A90"), 90.0);
+}
+
+#[test]
+fn relative_names_in_shared_formulas() {
+    // A filled column of `=Left*2` shares one parse; each copy's `Left` is the cell to the left
+    // of that copy, not of the formula it was filled from.
+    let mut t = T::new();
+    t.wb.names.push(gridcraft_model::DefinedName {
+        name: "Left".into(),
+        scope: None,
+        formula: "Sheet1!XFD1".into(),
+        comment: String::new(),
+        hidden: false,
+    });
+    let n = 300;
+    let base = Formula::new("Left*2");
+    {
+        let sh = t.wb.sheet_mut(0).unwrap();
+        for r in 1..=n {
+            sh.cells.set(c(&format!("A{r}")), Cell::value(Value::Number(f64::from(r))));
+            sh.cells.set(c(&format!("B{r}")), Cell::formula(base.moved(i64::from(r) - 1, 0)));
+        }
+    }
+    assert!(t.wb.sheet(0).unwrap().cell(c("B150")).unwrap().formula.as_ref().unwrap().is_shared());
+    t.calc.rebuild(&t.wb);
+    t.calc.recalc_all(&mut t.wb);
+    for r in [1, 2, 150, n] {
+        assert_eq!(t.num(&format!("B{r}")), f64::from(r) * 2.0, "B{r}");
+    }
+    t.set("A150", "1000");
+    assert_eq!(t.num("B150"), 2000.0);
+    assert_eq!(t.num("B151"), 302.0);
+}
+
+#[test]
+fn xlookup_references_over_an_indexed_table_on_several_threads() {
+    // 600 formulas read the same 600-row table: it is shared and indexed, and the level is
+    // large enough to run on worker threads. Each returns a reference that SUM reads through.
+    let n = 600;
+    for threads in [1, 4] {
+        let mut t = T::new();
+        t.wb.calc.threads = threads;
+        let mut cells = Vec::new();
+        for r in 1..=n {
+            cells.push((format!("A{r}"), format!("=\"k\"&{r}")));
+            cells.push((format!("B{r}"), format!("={r}")));
+            cells.push((format!("C{r}"), format!("=SUM(B$1:XLOOKUP(\"k\"&ROW(),A$1:A${n},B$1:B${n}))")));
+        }
+        t.load(cells);
+        let tri = |r: u32| f64::from(r * (r + 1) / 2);
+        for r in [1, 10, 299, n] {
+            assert_eq!(t.num(&format!("C{r}")), tri(r), "C{r}, {threads} threads");
+        }
+        t.set("B10", "0");
+        assert_eq!(t.num("C9"), tri(9), "{threads} threads");
+        assert_eq!(t.num("C10"), tri(10) - 10.0, "{threads} threads");
+        assert_eq!(t.num(&format!("C{n}")), tri(n) - 10.0, "{threads} threads");
+    }
+}
+
+#[test]
+fn formulas_queued_together_are_not_a_cycle() {
+    // E1 reads A2 and A3 before either is done; A3 reads A2. Both are queued behind E1, and A3
+    // reading A2 while A2 only waits its turn is not a circular reference.
+    let mut t = T::new();
+    t.set("D1", "1");
+    t.set("A2", "=D1");
+    t.set("A3", "=A2+1");
+    t.set("E1", "=INDIRECT(\"A2\")+INDIRECT(\"A3\")");
+    t.calc.recalc_all(&mut t.wb);
+    assert_eq!(t.num("E1"), 3.0);
+    assert!(t.calc.circular.is_empty());
+    // The same through a defined name over a chain: a SUM of three cells.
+    let mut t = T::new();
+    t.wb.names.push(gridcraft_model::DefinedName {
+        name: "Block".into(),
+        scope: None,
+        formula: "Sheet1!$A$2:$A$4".into(),
+        comment: String::new(),
+        hidden: false,
+    });
+    t.set("C1", "=SUM(Block)");
+    t.set("A2", "=1");
+    t.set("A3", "=A2+1");
+    t.set("A4", "=A3+1");
+    t.calc.recalc_all(&mut t.wb);
+    assert_eq!(t.num("C1"), 6.0);
+    assert!(t.calc.circular.is_empty());
+}
+
+fn xorshift(s: &mut u64) -> u64 {
+    *s ^= *s << 13;
+    *s ^= *s >> 7;
+    *s ^= *s << 17;
+    *s
+}
+
+fn a1(row: u32, col: u32) -> String {
+    format!("{}{}", char::from(b'A' + col as u8), row + 1)
+}
+
+/// An acyclic sheet whose formulas read cells entered before them, placed anywhere (so row-major
+/// order isn't a topological order) and mostly recent ones (so they read chains of one another),
+/// directly, through ranges, defined names and INDIRECT. Returns the cells in entry order and the
+/// names.
+fn random_acyclic_sheet(seed: u64, rows: u32, cols: u32) -> (Vec<(String, String)>, Vec<(String, String)>) {
+    let mut s = seed.max(1);
+    let mut cells: Vec<(u32, u32)> = (0..rows).flat_map(|r| (0..cols).map(move |c| (r, c))).collect();
+    for i in (1..cells.len()).rev() {
+        let j = (xorshift(&mut s) % (i as u64 + 1)) as usize;
+        cells.swap(i, j);
+    }
+    let rank: std::collections::HashMap<(u32, u32), usize> = cells.iter().enumerate().map(|(i, c)| (*c, i)).collect();
+    let mut out = Vec::new();
+    let mut names = Vec::new();
+    for (i, &(r, c)) in cells.iter().enumerate() {
+        if i < 20 || xorshift(&mut s).is_multiple_of(5) {
+            out.push((a1(r, c), format!("{}", xorshift(&mut s) % 100)));
+            continue;
+        }
+        let pick = |s: &mut u64| {
+            let back = if xorshift(s).is_multiple_of(4) { xorshift(s) % i as u64 } else { 1 + xorshift(s) % 6 };
+            cells[i - back.max(1) as usize]
+        };
+        let mut terms = Vec::new();
+        for _ in 0..1 + xorshift(&mut s) % 3 {
+            let (pr, pc) = pick(&mut s);
+            terms.push(match xorshift(&mut s) % 4 {
+                0 => format!("INDIRECT(\"{}\")", a1(pr, pc)),
+                1 => {
+                    let name = format!("N{}", names.len());
+                    names.push((name.clone(), format!("Sheet1!${}${}", char::from(b'A' + pc as u8), pr + 1)));
+                    name
+                }
+                2 => {
+                    // A column range ending at the cell, if every cell in it was entered before.
+                    let top = pr.saturating_sub((xorshift(&mut s) % 4) as u32);
+                    if (top..=pr).all(|rr| rank.get(&(rr, pc)).is_some_and(|&k| k < i)) {
+                        format!("SUM({}:{})", a1(top, pc), a1(pr, pc))
+                    } else {
+                        a1(pr, pc)
+                    }
+                }
+                _ => a1(pr, pc),
+            });
+        }
+        out.push((a1(r, c), format!("=MOD({},1000)", terms.join("+"))));
+    }
+    (out, names)
+}
+
+#[test]
+fn full_recalc_matches_entering_cells_one_by_one_at_any_thread_count() {
+    // `GRIDCRAFT_ORDER_FUZZ_SEEDS=50` soaks it.
+    let seeds: u64 = std::env::var("GRIDCRAFT_ORDER_FUZZ_SEEDS").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+    for seed in 1..=seeds {
+        let (cells, names) = random_acyclic_sheet(seed * 7919, 400, 8);
+        let book = |threads: u32| {
+            let mut t = T::new();
+            t.wb.calc.multi_threaded = threads > 1;
+            t.wb.calc.threads = threads;
+            for (name, formula) in &names {
+                t.wb.names.push(gridcraft_model::DefinedName {
+                    name: name.clone(),
+                    scope: None,
+                    formula: formula.clone(),
+                    comment: String::new(),
+                    hidden: false,
+                });
+            }
+            t
+        };
+        // Reference: entered in order, each formula reading only finished cells.
+        let mut want = book(1);
+        for (at, input) in &cells {
+            want.set(at, input);
+        }
+        for threads in [1, 8] {
+            let mut t = book(threads);
+            for (at, input) in &cells {
+                let cell = if input.starts_with('=') {
+                    Cell::formula(Formula::new(input))
+                } else {
+                    Cell::value(gridcraft_core::parse::parse_input(input, t.wb.date_system).value)
+                };
+                t.wb.sheet_mut(0).unwrap().cells.set(c(at), cell);
+            }
+            t.calc.rebuild(&t.wb);
+            t.calc.recalc_all(&mut t.wb);
+            let wrong: Vec<_> =
+                cells.iter().filter(|(at, _)| t.get(at) != want.get(at)).map(|(at, f)| (at, f, t.get(at), want.get(at))).take(5).collect();
+            assert!(wrong.is_empty(), "seed {seed}, {threads} threads: {wrong:?}");
+        }
     }
 }
