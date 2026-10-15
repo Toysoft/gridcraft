@@ -694,6 +694,47 @@ fn empty_workbook_roundtrip() {
 }
 
 #[test]
+fn cell_text_carriage_returns_survive_xlsx_roundtrip() {
+    let mut wb = Workbook::new();
+    let values = [("A1", "Line 1\r\nLine 2"), ("A2", "Part A\rPart B"), ("A3", "Item 3\nItem 4"), ("A4", "literal _x000D_ marker")];
+    let sheet = wb.sheet_mut(0).unwrap();
+    for (address, text) in values {
+        sheet.set_value(at(address), Value::text(text));
+    }
+    let mut formula = Cell::formula(Formula::new("A1"));
+    formula.value = Value::text("Cached\r\ntext");
+    sheet.cells.set(at("B1"), formula);
+    sheet.comments.insert(
+        at("A1"),
+        Comment {
+            author: "Tester".into(),
+            text: "Note\r\ntext".into(),
+            replies: vec![],
+            threaded: false,
+            resolved: false,
+            visible: false,
+            dates: vec![],
+        },
+    );
+
+    let bytes = write_xlsx(&wb).unwrap();
+    let mut package = Package::open(&bytes).unwrap();
+    let shared_strings = String::from_utf8(package.read("xl/sharedStrings.xml").unwrap().unwrap()).unwrap();
+    assert!(shared_strings.contains("Line 1_x000D_\nLine 2"), "CR must be encoded before XML parsing");
+    assert!(shared_strings.contains("Part A_x000D_Part B"));
+    assert!(!shared_strings.contains('\r'), "raw CR is normalized to LF by XML parsers");
+    let sheet_xml = String::from_utf8(package.read("xl/worksheets/sheet1.xml").unwrap().unwrap()).unwrap();
+    assert!(sheet_xml.contains("Cached_x000D_\ntext"), "formula caches also use ST_Xstring");
+
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    for (address, text) in values {
+        assert_eq!(back.sheets[0].value(at(address)), Value::text(text), "{address} changed on save/reopen");
+    }
+    assert_eq!(back.sheets[0].value(at("B1")), Value::text("Cached\r\ntext"));
+    assert_eq!(back.sheets[0].comments.get(&at("A1")).map(|c| c.text.as_str()), Some("Note\r\ntext"));
+}
+
+#[test]
 fn writing_repairs_invalid_models() {
     let mut wb = Workbook::new();
     let s = wb.sheet_mut(0).unwrap();
