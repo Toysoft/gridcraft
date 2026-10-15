@@ -21,6 +21,7 @@ pub mod pivot_calc;
 pub mod sample;
 pub mod selection;
 pub mod tables;
+pub mod webquery;
 
 use std::sync::Arc;
 
@@ -232,6 +233,8 @@ pub struct Session {
     docs: Vec<DocState>,
     active: usize,
     pub clipboard: Option<Clipboard>,
+    /// The host's web table fetcher (Data ▸ From Web); `None` in wasm and tests that don't set it.
+    pub web_source: Option<webquery::WebFetch>,
     pub prefs: Prefs,
     pub mode: Mode,
     /// Commands run so far, without their passwords ([`cmd::journal_params`]).
@@ -374,11 +377,14 @@ impl Session {
     pub fn execute_headless(&mut self, id: &str, params: Json) -> Result<Json> {
         let r = self.execute(id, params);
         let requests = self.take_ui_requests();
-        let asked_for_file = requests.iter().any(|q| matches!(q, UiRequest::Dialog(name, _) if name == "open" || name == "saveAs"));
+        let asked_for_file = requests
+            .iter()
+            .any(|q| matches!(q, UiRequest::Dialog(name, _) if name == "open" || name == "saveAs" || name == "fromWeb" || name == "fromDatabase"));
         if r.is_ok() && asked_for_file {
             let what = match id {
                 "file.open" => "`path` or `base64`",
                 "data.getData" | "data.fromTextCsv" => "`path` or `text`",
+                "data.fromWeb" => "`url`",
                 _ => "`path`",
             };
             let msg = format!("missing {what}: programmatic calls never open dialogs");

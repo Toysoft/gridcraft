@@ -20,6 +20,7 @@ pub mod slicer;
 pub mod solver;
 pub mod spelling;
 pub mod view;
+pub mod web;
 pub mod whatif;
 
 use gridcraft_calc::Key;
@@ -130,6 +131,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(sheet::specs());
         v.extend(insert::specs());
         v.extend(data::specs());
+        v.extend(web::specs());
         v.extend(formulas::specs());
         v.extend(review::specs());
         v.extend(view::specs());

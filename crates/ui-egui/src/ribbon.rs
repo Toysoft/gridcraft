@@ -1891,6 +1891,11 @@ fn data(app: &mut SheetApp, ui: &mut Ui) {
     if gd.clicked() {
         app.open_dialog("open", json!({}));
     }
+    let web = big_button(ui, Icon::Table, "From\nWeb", "Import a table from a web page (From Web)", false);
+    control_keytip(app, ui, &web, "data.fromWeb");
+    if web.clicked() {
+        app.open_dialog("fromWeb", json!({}));
+    }
     sep(ui);
     ui.vertical(|ui| {
         let __k = small_button(ui, Icon::SortAsc, "", "Sort A to Z", false);
