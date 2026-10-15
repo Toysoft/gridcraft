@@ -9,7 +9,7 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(noundo "file.new", "New Workbook", ["File"], Some("Cmd+N"), "{sample?: \"budget\"|\"sales\"|\"grades\"}", always, new_workbook),
         cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path} | {name, base64}, plus {password} for a password-protected workbook (xlsx, xlsm, xls import, xlsb and ods data import, csv, tsv, txt, json)", always, open),
-        cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} (xlsx by default; .csv/.tsv/.json/.html/.pdf by extension)", has_doc, save),
+        cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?, autosave?} → {path, bytes, renamedFrom}. xlsx by default; .csv/.tsv/.json/.html/.pdf by extension; a workbook with macros saves as .xlsm (.xltx as .xltm). Plugins hear of the save (documentSaved) unless `autosave` is true", has_doc, save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} (.xlsx, .csv, .tsv, .json, .html, or .pdf: a PDF of the active sheet)", has_doc, save_as),
         cmd!(query "file.saveBytes", "Encode Workbook", [], None, "{format?: xlsx|csv|tsv|json|html} → {base64}", has_doc, save_bytes),
         cmd!(noundo "file.close", "Close", ["File"], Some("Cmd+W"), "{force?: bool}", has_doc, close),
@@ -90,6 +90,10 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
         }
         s.ui_requests.push(crate::UiRequest::Message(message));
     }
+    // Protocol 1.2: plugins hear of it (after the fact; they never hold the open up).
+    if let Some(path) = str_param(p, "path") {
+        super::plugins::emit(gridcraft_plugin::events::DOCUMENT_OPENED, path, None);
+    }
     let d = s.doc()?;
     Ok(
         json!({"index": i, "title": d.display_title(), "sheets": d.wb.sheets.iter().map(|s| s.name.clone()).collect::<Vec<_>>(), "warnings": warnings}),
@@ -109,6 +113,17 @@ fn save(s: &mut Session, p: &Json) -> Result<Json> {
     if std::path::Path::new(&path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("pdf")) {
         return super::print::export_pdf(s, &json!({"path": path}));
     }
+    // Macros need a macro-enabled format: Book.xlsx is saved as Book.xlsm (the .xlsx is left alone).
+    let asked = path.clone();
+    let path = crate::io::macro_enabled_path(&s.doc()?.wb, &asked).unwrap_or(path);
+    if path != asked {
+        let name = |p: &str| std::path::Path::new(p).file_name().and_then(|n| n.to_str()).unwrap_or(p).to_string();
+        s.ui_requests.push(crate::UiRequest::Message(format!(
+            "This workbook has macros, which a {} file can't hold, so it was saved as {}.",
+            std::path::Path::new(&asked).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase(),
+            name(&path)
+        )));
+    }
     let d = s.doc_mut()?;
     // The document's own file keeps the format its content had when opened; any other path
     // goes by its extension. Relative paths to linked workbooks are rewritten for the new folder.
@@ -125,7 +140,13 @@ fn save(s: &mut Session, p: &Json) -> Result<Json> {
         d.saved = d.wb.clone();
         d.path = Some(path.clone());
     }
-    Ok(json!({"path": path, "bytes": bytes.len()}))
+    let renamed = (path != asked).then_some(asked);
+    // Protocol 1.2: plugins hear of a save the user (or a caller) made, not of an automatic one.
+    if !bool_param(p, "autosave").unwrap_or(false) {
+        let format = std::path::Path::new(&path).extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
+        super::plugins::emit(gridcraft_plugin::events::DOCUMENT_SAVED, &path, Some(&format));
+    }
+    Ok(json!({"path": path, "bytes": bytes.len(), "renamedFrom": renamed}))
 }
 
 fn save_as(s: &mut Session, p: &Json) -> Result<Json> {
@@ -137,8 +158,13 @@ fn save_as(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 fn save_bytes(s: &mut Session, p: &Json) -> Result<Json> {
-    let fmt = str_param(p, "format").unwrap_or("xlsx");
     let d = s.doc()?;
+    // A workbook with macros downloads as .xlsm.
+    let asked = str_param(p, "format").unwrap_or("xlsx");
+    let fmt = crate::io::macro_enabled_path(&d.wb, &format!("x.{asked}"))
+        .and_then(|p| p.strip_prefix("x.").map(str::to_string))
+        .unwrap_or_else(|| asked.to_string());
+    let fmt = fmt.as_str();
     let bytes = crate::io::save_bytes(&d.wb, &format!("x.{fmt}"))?;
     let name = format!("{}.{fmt}", std::path::Path::new(&d.display_title()).file_stem().and_then(|x| x.to_str()).unwrap_or("Book"));
     Ok(json!({"name": name, "base64": crate::io::base64_encode(&bytes), "bytes": bytes.len()}))
@@ -152,7 +178,11 @@ fn close(s: &mut Session, p: &Json) -> Result<Json> {
         return Ok(json!({"closed": false, "dirty": true}));
     }
     let i = s.active_index();
+    let path = d.path.clone();
     s.close_document(i);
+    if let Some(path) = path {
+        super::plugins::emit(gridcraft_plugin::events::DOCUMENT_CLOSED, &path, None);
+    }
     Ok(json!({"closed": true}))
 }
 
