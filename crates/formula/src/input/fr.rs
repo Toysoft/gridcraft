@@ -21,8 +21,11 @@
 //! `FILTRE`, `RECHERCHEX`, `TROUVERB`, `CHERCHERB`, `LENB` and `URLENCODAGE` work. That Excel takes
 //! `,` between arguments and `.` as the decimal, from its Windows regional format ("English
 //! (Europe)", system separators on), not from the French interface. So does `TEXTE`: there
-//! `"dd/mm/yyyy"` works and `"jj/mm/aaaa"` is `#VALEUR!`, the reverse of Excel 2013 with a French
-//! region; format codes inside strings are never translated here.
+//! `"dd/mm/yyyy"` works and `"jj/mm/aaaa"` is `#VALEUR!`; format codes inside strings are never
+//! translated here. With only the regional format switched to French (France)
+//! (https://github.com/storytold/gridcraft/pull/443#issuecomment-6182189162), the same Excel gives
+//! `=SOMME(1,5;2)` 3,5, `=COLONNES({1.2.3})` 3 (`.` between array columns), `=INDEX({1.2;3.4,1};2;2)`
+//! 4,1, and `TEXTE` takes `"jj/mm/aaaa"` and refuses `"dd/mm/yyyy"`.
 //! Also checked there (https://github.com/storytold/gridcraft/pull/443#issuecomment-6181684117):
 //! `ESTVIDE`, `ESTERR`, `ESTERREUR`, `ESTLOGIQUE`, `ESTNA`, `ESTNONTEXTE`, `NON`, `ORGA.LIGNES` and
 //! `BDLIRE`.
