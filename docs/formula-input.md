@@ -11,21 +11,22 @@ preference follows the system language.
 | Português (Brasil) | Brazilian Portuguese |
 | Русский | Russian |
 | Français | French |
+| Svenska | Swedish |
 | English, 日本語, 中文, 한국어 | English (Japanese, Chinese and Korean Excel use English function names) |
 | Čeština | English for now: Czech has no function table yet |
 
 ## What changes per language
 
-| | English | Spanish | German | Portuguese (Brazil) | Russian | French |
-| --- | --- | --- | --- | --- | --- | --- |
-| Example | `SUM`, `IF`, `VLOOKUP` | `SUMA`, `SI`, `BUSCARV` | `SUMME`, `WENN`, `SVERWEIS` | `SOMA`, `SE`, `PROCV` | `СУММ`, `ЕСЛИ`, `ВПР` | `SOMME`, `SI`, `RECHERCHEV` |
-| Function names translated | — | 434 | 413 | 420 | 471 | 405 |
-| Booleans | `TRUE`, `FALSE` | `VERDADERO`, `FALSO` | `WAHR`, `FALSCH` | `VERDADEIRO`, `FALSO` | `ИСТИНА`, `ЛОЖЬ` | `VRAI`, `FAUX` |
-| Errors (e.g.) | `#VALUE!`, `#N/A` | `#¡VALOR!`, `#N/D` | `#WERT!`, `#NV` | `#VALOR!`, `#N/D` | `#ЗНАЧ!`, `#Н/Д` | `#VALEUR!`, `#N/A` |
-| Arguments and unions | `,` | `;` | `;` | `;` | `;` | `;` |
-| Decimal separator | `.` | `,` | `,` | `,` | `,` | `,` |
-| Array columns / rows | `,` / `;` | `\` / `;` | `.` / `;` | `\` / `;` | `;` / `:` | `.` / `;` |
-| Table specifiers (e.g.) | `#Headers`, `#This Row` | `#Encabezados`, `#Esta fila` | `#Kopfzeilen`, `#Diese Zeile` | `#Cabeçalhos`, `#Esta Linha` | `#Заголовки`, `#Эта строка` | `#En-têtes`, `#Cette ligne` |
+| | English | Spanish | German | Portuguese (Brazil) | Russian | French | Swedish |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Example | `SUM`, `IF`, `VLOOKUP` | `SUMA`, `SI`, `BUSCARV` | `SUMME`, `WENN`, `SVERWEIS` | `SOMA`, `SE`, `PROCV` | `СУММ`, `ЕСЛИ`, `ВПР` | `SOMME`, `SI`, `RECHERCHEV` | `SUMMA`, `OM`, `LETARAD` |
+| Function names translated | — | 434 | 413 | 420 | 471 | 405 | 378 |
+| Booleans | `TRUE`, `FALSE` | `VERDADERO`, `FALSO` | `WAHR`, `FALSCH` | `VERDADEIRO`, `FALSO` | `ИСТИНА`, `ЛОЖЬ` | `VRAI`, `FAUX` | `SANT`, `FALSKT` |
+| Errors (e.g.) | `#VALUE!`, `#N/A` | `#¡VALOR!`, `#N/D` | `#WERT!`, `#NV` | `#VALOR!`, `#N/D` | `#ЗНАЧ!`, `#Н/Д` | `#VALEUR!`, `#N/A` | `#VÄRDEFEL!`, `#SAKNAS!` |
+| Arguments and unions | `,` | `;` | `;` | `;` | `;` | `;` | `;` |
+| Decimal separator | `.` | `,` | `,` | `,` | `,` | `,` | `,` |
+| Array columns / rows | `,` / `;` | `\` / `;` | `.` / `;` | `\` / `;` | `;` / `:` | `.` / `;` | `\` / `;` |
+| Table specifiers (e.g.) | `#Headers`, `#This Row` | `#Encabezados`, `#Esta fila` | `#Kopfzeilen`, `#Diese Zeile` | `#Cabeçalhos`, `#Esta Linha` | `#Заголовки`, `#Эта строка` | `#En-têtes`, `#Cette ligne` | `#Rubriker`, `#Denna rad` |
 
 For example, `=SI(VERDADERO;SUMA(1,5;2,25);0)` (Spanish), `=WENN(WAHR;SUMME({1.2;3,5.4});#NV)`
 (German) and `=ЕСЛИ(ИСТИНА;СУММ({1;2:3;4});#Н/Д)` (Russian) are stored as
@@ -69,5 +70,10 @@ function names in French Excel 2024, three of which were wrong and are fixed (#1
 added to Excel after the tables were first built (the irregular-period bond functions, the
 `FORECAST.ETS` family, `PERCENTOF`, `TRIMRANGE`…) were checked name by name against a Microsoft
 page and a non-Microsoft reference in each language; where they disagree the function keeps its
-English name. The other tables have not yet been checked against a running localized Excel or
-by native speakers; corrections are one-line edits with a source.
+English name. The Swedish table was read from a running Excel for Mac 16.114 with macOS region
+Sweden: 351 function names, the separators, `SANT`/`FALSKT`, seven error names and four table
+specifiers come from Excel's own `formula local` output; the functions that build does not
+resolve (`XLOOKUP`, `LET`, `LAMBDA`, `FILTER`, `TEXTSPLIT`…) and `#CALC!`, `#SPILL!`,
+`#HÄMTAR_DATA` and `#Denna rad` come from Microsoft pages and are unverified. The other tables
+have not yet been checked against a running localized Excel or by native speakers; corrections
+are one-line edits with a source.

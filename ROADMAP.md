@@ -94,8 +94,8 @@ and German (266–268 labels each, ~12% of ~2,200 strings; merged 10-10 in #31, 
 added 10-11), the
 interface follows the system language, and CJK, Thai and Hebrew text falls back to system fonts
 (#38). Dialogs, menus and messages are English. Formulas follow the interface language in
-Spanish, German, Brazilian Portuguese, Russian and French (function names, booleans, errors, table
-specifiers and separators at the editor; files keep English: [formula-input.md](docs/formula-input.md));
+Spanish, German, Brazilian Portuguese, Russian, French and Swedish (function names, booleans, errors,
+table specifiers and separators at the editor; files keep English: [formula-input.md](docs/formula-input.md));
 number formats are en-US only. PR #163 (German formulas and numbers) is open. Detail:
 [localization-parity.md](docs/localization-parity.md).
 
@@ -113,6 +113,7 @@ number formats are en-US only. PR #163 (German formulas and numbers) is open. De
 | German | de | menus only | ~12% |
 | Korean | ko | menus only | ~12% |
 | Vietnamese | vi | none | 0% |
+| Swedish | sv | menus, File view, dialogs; formulas | ~18% |
 
 Other shipped languages: 2 (Russian and German, menus only, ~12%).
 
@@ -135,6 +136,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
+| 2026-10-15 | Swedish: interface catalog (398 labels, ~18%) and formulas (378 local function names, `SANT`/`FALSKT`, Swedish errors and table specifiers, `;` arguments and `\` array columns); 351 names, the separators, booleans, seven errors and four specifiers read from Excel for Mac 16.114 (sv-SE), the rest from Microsoft pages |
 | 2026-10-14 | Formulas in German, Spanish, Brazilian Portuguese and Russian name the functions their tables were missing (bond functions with an odd period, `FORECAST.ETS*`, `PERCENTOF`, `TRIMRANGE`…), each from two sources: 413, 434, 420 and 471 names; Brazilian `REGEXTEST`/`REGEXREPLACE` stay English, `REPLACEB` is `SUBSTITUIRB` |
 | 2026-10-13 | Formulas in French: 405 local function names, `VRAI`/`FAUX`, French errors and table specifiers, `;` arguments and `.` array columns; separators and some names checked in French Excel 2013 and 2024 (#191) |
 | 2026-10-12 | Rows auto-fit oversized fonts: opening a file and whole-row/column formatting grow non-custom rows to their tallest font (#833) |
@@ -199,6 +201,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Languages: Swedish interface catalog and formula table; progress log row |
 | 2026-10-13 | minor | Languages: French formula table; progress log row |
 | 2026-10-12 | minor | Rows auto-fit oversized fonts on open and whole-row/column formatting (#833); progress log row |
 | 2026-10-12 | minor | Progress log: multi-area row/column delete (#758) |

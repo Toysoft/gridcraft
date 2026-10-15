@@ -14,6 +14,7 @@ mod es;
 mod fr;
 mod pt;
 mod ru;
+mod sv;
 
 /// Formula-entry syntax selected by the interface language. Interface languages without a
 /// formula table (Japanese, Chinese and Korean Excel use English names; Czech and Serbian have no
@@ -27,6 +28,7 @@ pub enum FormulaLocale {
     PtBr,
     Ru,
     Fr,
+    Sv,
 }
 
 /// One formula language's words and separators.
@@ -50,7 +52,7 @@ pub(crate) struct Dialect {
 const TABLE_ITEMS: [&str; 5] = ["#All", "#Data", "#Headers", "#Totals", "#This Row"];
 
 impl FormulaLocale {
-    pub const ALL: [Self; 6] = [Self::En, Self::Es, Self::De, Self::PtBr, Self::Ru, Self::Fr];
+    pub const ALL: [Self; 7] = [Self::En, Self::Es, Self::De, Self::PtBr, Self::Ru, Self::Fr, Self::Sv];
 
     fn dialect(self) -> Option<&'static Dialect> {
         match self {
@@ -60,6 +62,7 @@ impl FormulaLocale {
             Self::PtBr => Some(&pt::DIALECT),
             Self::Ru => Some(&ru::DIALECT),
             Self::Fr => Some(&fr::DIALECT),
+            Self::Sv => Some(&sv::DIALECT),
         }
     }
 

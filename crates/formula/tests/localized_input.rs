@@ -1,10 +1,10 @@
-//! German, Brazilian Portuguese, Russian, French and the full Spanish table: entry and display
-//! syntax.
+//! German, Brazilian Portuguese, Russian, French, Swedish and the full Spanish table: entry and
+//! display syntax.
 use gridcraft_core::CellError;
-use gridcraft_formula::FormulaLocale::{self, De, Es, Fr, PtBr, Ru};
+use gridcraft_formula::FormulaLocale::{self, De, Es, Fr, PtBr, Ru, Sv};
 use gridcraft_formula::{parse, parse_input, print, print_input};
 
-const LOCALIZED: [FormulaLocale; 5] = [Es, De, PtBr, Ru, Fr];
+const LOCALIZED: [FormulaLocale; 6] = [Es, De, PtBr, Ru, Fr, Sv];
 
 fn canonical(src: &str, locale: FormulaLocale) -> String {
     print(&parse_input(src, locale, |_| false).unwrap_or_else(|e| panic!("{locale:?} `{src}`: {e}")))
@@ -55,6 +55,14 @@ fn each_language_spells_formulas_like_its_excel() {
             "AND(ISBLANK(Z1),ISERR(1/0),ISERROR(1/0),ISLOGICAL(TRUE),ISNA(#N/A),ISNONTEXT(1),NOT(FALSE))",
         ),
         (Fr, "ORGA.LIGNES(A1:A6;3)+BDLIRE(F1:G3;\"b\";I1:I2)", "WRAPROWS(A1:A6,3)+DGET(F1:G3,\"b\",I1:I2)"),
+        // Read from Excel for Mac 16.114 with macOS region Sweden: `;` between arguments, decimal
+        // commas, `\` between array columns, SANT/FALSKT, the error names and the table specifiers.
+        (Sv, "SUMMA(A1;2,5)+SUMMA({1\\2;3\\4})", "SUM(A1,2.5)+SUM({1,2;3,4})"),
+        (Sv, "OM(SANT;LETARAD(A2;D:E;2;FALSKT);#SAKNAS!)", "IF(TRUE,VLOOKUP(A2,D:E,2,FALSE),#N/A)"),
+        (Sv, "RADER(Tabell1[#Rubriker])+SUMMA(Tabell1[[#Alla];[Tal]])", "ROWS(Tabell1[#Headers])+SUM(Tabell1[[#All],[Tal]])"),
+        (Sv, "OMFEL(1/0;#VÄRDEFEL!)+ROT(-1)+INDIREKT(\"Z1\")", "IFERROR(1/0,#VALUE!)+SQRT(-1)+INDIRECT(\"Z1\")"),
+        (Sv, "ANTAL.OM(A1:A3;\">1,5\")+AVRUNDA(MEDEL(A1:A3);2)+ÄRTOM(Z1)", "COUNTIF(A1:A3,\">1,5\")+ROUND(AVERAGE(A1:A3),2)+ISBLANK(Z1)"),
+        (Sv, "XLETAUPP(3;A1:A6;A1:A6)+SEKVENS(3)+PROGNOS.LINJÄR(7;A1:A6;A1:A6)", "XLOOKUP(3,A1:A6,A1:A6)+SEQUENCE(3)+FORECAST.LINEAR(7,A1:A6,A1:A6)"),
     ] {
         assert_eq!(canonical(local, locale), english, "{locale:?} entry");
         assert_eq!(shown(english, locale), local, "{locale:?} display");
@@ -96,6 +104,7 @@ fn english_names_and_any_letter_case_are_accepted() {
     // French TRIM is MIRR, and the English TRIM is SUPPRESPACE.
     assert_eq!(canonical("TRIM(A1:A3;0,1;0,1)&SUPPRESPACE(B1)", Fr), "MIRR(A1:A3,0.1,0.1)&TRIM(B1)");
     assert_eq!(shown("TRIM(MIRR(A1:A3,0.1,0.1))", Fr), "SUPPRESPACE(TRIM(A1:A3;0,1;0,1))");
+    assert_eq!(canonical("summa(1;2)+rensa(A1)+#saknas!", Sv), "SUM(1,2)+TRIM(A1)+#N/A");
     // English separators are not the language's syntax.
     assert!(parse_input("SUMME(1.5;2)", De, |_| false).is_err());
     assert!(parse_input("SUM(1,2)", Ru, |_| false).is_ok_and(|e| print(&e) == "SUM(1.2)"));
@@ -161,6 +170,8 @@ fn malformed_localized_input_is_an_error() {
         (PtBr, "SOMA(1,"),
         (PtBr, "{SOMA(1)}"),
         (Es, "#¡VALOR"),
+        (Sv, "#VÄRDEFEL"),
+        (Sv, "SUMMA({1\\}"),
     ] {
         assert!(parse_input(bad, locale, |_| false).is_err(), "{locale:?}: {bad}");
     }

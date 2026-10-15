@@ -109,7 +109,7 @@ cargo run --release -p gridcraft -- --sample sales --control 7979   # + JSON con
 cargo xtask ci                                                 # fmt, clippy, tests, assets, layering, wasm
 ```
 
-Choose Español, Deutsch, Português (Brasil), Русский or Français under View → Interface language for [local formula names, booleans, errors and separators](docs/formula-input.md).
+Choose Español, Deutsch, Português (Brasil), Русский, Français or Svenska under View → Interface language for [local formula names, booleans, errors and separators](docs/formula-input.md).
 Workbooks, clipboard exchange, and programmatic APIs retain canonical English syntax.
 
 ### Web
