@@ -102,6 +102,12 @@ sheet's rules in priority order, priority numbers aside), `validations`, `charts
 `hyperlinks`, `pivots`. `#SPILL!`/`#CALC!` compare equal to `#VALUE!` and `#CIRC!` to 0, as
 that's what the file format stores.
 
+`properties` compares the document properties of `docProps/core.xml` field by field, for every property GridCraft keeps
+(title, subject, creator, keywords, description, lastModifiedBy, lastPrinted, created, modified, category,
+contentStatus, revision, version, identifier, language): one the source sets that the written file lacks is reported
+as `property dcterms:created lost`, a different text as `property cp:lastModifiedBy changed: "A" → "B"`. The round trip
+writes the file as it is, without the save time and user name a Save records.
+
 Files that fail to open are reported with GridCraft's error and don't stop the run. Exit code: 0 when every file
 opened with no mismatch and no round-trip difference, 1 otherwise, 2 on a usage error. `--max-report` caps the
 examples listed per file and category (counts are always complete).
