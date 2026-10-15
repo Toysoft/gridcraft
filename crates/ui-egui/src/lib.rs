@@ -1238,6 +1238,7 @@ impl SheetApp {
 /// Strips the engine's error prefixes for message boxes.
 /// Data › Refresh All: database tables, then PivotTables. Failures are listed in one message.
 pub(crate) fn refresh_all(app: &mut SheetApp) {
+    let title = app.ui.language.tr("Refresh All").to_string();
     match app.run("data.refreshAll", serde_json::json!({})) {
         Ok(r) => {
             let errors: Vec<String> = r["errors"]
@@ -1249,12 +1250,12 @@ pub(crate) fn refresh_all(app: &mut SheetApp) {
                 })
                 .unwrap_or_default();
             if !errors.is_empty() {
-                app.message = Some(("Refresh All".into(), errors.join("\n")));
+                app.message = Some((title, errors.join("\n")));
             } else if r.get("needPassword").is_none() {
-                app.toast = Some((format!("Refreshed {}", r["refreshed"]), now_ms()));
+                app.toast = Some((format!("{} {}", app.ui.language.tr("Refreshed:"), r["refreshed"]), now_ms()));
             }
         }
-        Err(e) => app.message = Some(("Refresh All".into(), clean_error(&e))),
+        Err(e) => app.message = Some((title, clean_error(&e))),
     }
 }
 

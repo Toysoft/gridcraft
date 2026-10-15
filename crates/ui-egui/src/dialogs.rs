@@ -463,11 +463,15 @@ impl Dialog {
                 d
             }
             "dbPassword" => {
-                let user = p("user").as_str().map(|u| format!(" as {u}")).unwrap_or_default();
+                let lang = app.ui.language;
+                let user = p("user").as_str().map(|u| format!(" ({u})")).unwrap_or_default();
                 let text = format!(
-                    "Refreshing '{}' connects to {}{user}. Enter the password (it is not saved).",
+                    "{}: {}\n{}: {}{user}\n{}",
+                    lang.tr("Table"),
                     p("table").as_str().unwrap_or(""),
-                    p("connection").as_str().unwrap_or("the database")
+                    lang.tr("Connection"),
+                    p("connection").as_str().unwrap_or(""),
+                    lang.tr("Enter the password to refresh it (it is not saved).")
                 );
                 let mut values = params.clone();
                 values["password"] = json!("");
@@ -2880,6 +2884,7 @@ fn db_load_columns(app: &mut SheetApp, d: &mut Dialog) {
 }
 
 fn from_database(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+    let lang = crate::i18n::current(ui.ctx());
     let text_row = |ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str, hint: &str| {
         ui.label(label);
         let mut v = db_str(d, key);
@@ -2891,13 +2896,13 @@ fn from_database(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm:
     // Saved connections (preferences; never a password).
     let profiles = app.session.prefs.db_connections.clone();
     ui.horizontal(|ui| {
-        ui.label("Saved connection:");
+        ui.label(lang.tr("Saved connection:"));
         let current = db_str(d, "profile");
         egui::ComboBox::from_id_salt("dbProfile")
-            .selected_text(if current.is_empty() { "(new)".to_string() } else { current.clone() })
+            .selected_text(if current.is_empty() { lang.tr("(new)").to_string() } else { current.clone() })
             .width(220.0)
             .show_ui(ui, |ui| {
-                if ui.selectable_label(current.is_empty(), "(new)").clicked() {
+                if ui.selectable_label(current.is_empty(), lang.tr("(new)")).clicked() {
                     d.values.insert("profile".into(), json!(""));
                 }
                 for pr in &profiles {
@@ -2921,13 +2926,13 @@ fn from_database(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm:
                     }
                 }
             });
-        if !current.is_empty() && ui.button("Delete").on_hover_text("Remove this saved connection").clicked() {
+        if !current.is_empty() && ui.button(lang.tr("Delete")).on_hover_text(lang.tr("Remove this saved connection")).clicked() {
             app.session.prefs.db_connections.retain(|p| p.name != current);
             d.values.insert("profile".into(), json!(""));
         }
     });
     ui.add_space(4.0);
-    ui.label(egui::RichText::new("Database:").strong());
+    ui.label(egui::RichText::new(lang.tr("Database:")).strong());
     ui.horizontal(|ui| {
         let cur = db_str(d, "driver");
         for (val, text) in [("postgres", "PostgreSQL"), ("mysql", "MySQL / MariaDB"), ("sqlite", "SQLite file"), ("odbc", "ODBC")] {
@@ -2939,20 +2944,20 @@ fn from_database(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm:
     let driver = db_str(d, "driver");
     egui::Grid::new("dbConn").num_columns(2).spacing(vec2(8.0, 4.0)).show(ui, |ui| {
         match driver.as_str() {
-            "sqlite" => text_row(ui, d, "file", "Database file:", "/path/data.db"),
+            "sqlite" => text_row(ui, d, "file", lang.tr("Database file:"), "/path/data.db"),
             "odbc" => {
-                text_row(ui, d, "dsn", "Data source:", "DSN name, or Driver={…};Server=…");
-                text_row(ui, d, "user", "User name:", "optional");
+                text_row(ui, d, "dsn", lang.tr("Data source:"), lang.tr("DSN name, or Driver={…};Server=…"));
+                text_row(ui, d, "user", lang.tr("User name:"), lang.tr("optional"));
             }
             _ => {
-                text_row(ui, d, "host", "Server:", "localhost");
-                text_row(ui, d, "port", "Port:", if driver == "mysql" { "3306" } else { "5432" });
-                text_row(ui, d, "database", "Database:", "");
-                text_row(ui, d, "user", "User name:", "");
+                text_row(ui, d, "host", lang.tr("Server:"), "localhost");
+                text_row(ui, d, "port", lang.tr("Port:"), if driver == "mysql" { "3306" } else { "5432" });
+                text_row(ui, d, "database", lang.tr("Database:"), "");
+                text_row(ui, d, "user", lang.tr("User name:"), "");
             }
         }
         if driver != "sqlite" {
-            ui.label("Password:");
+            ui.label(lang.tr("Password:"));
             let mut pw = db_str(d, "password");
             if ui.add(egui::TextEdit::singleline(&mut pw).password(!d.show_password).desired_width(300.0)).changed() {
                 d.values.insert("password".into(), json!(pw));
@@ -2963,7 +2968,7 @@ fn from_database(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm:
     // The composed connection string, editable on request.
     let mut edit = d.values.get("editConnection").and_then(Json::as_bool).unwrap_or(false);
     ui.horizontal(|ui| {
-        if ui.checkbox(&mut edit, "Edit connection string").changed() {
+        if ui.checkbox(&mut edit, lang.tr("Edit connection string")).changed() {
             if edit && db_str(d, "connection").is_empty() {
                 let composed = db_profile(d).connection();
                 d.values.insert("connection".into(), json!(composed));
@@ -2971,7 +2976,7 @@ fn from_database(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm:
             d.values.insert("editConnection".into(), json!(edit));
         }
         if driver != "sqlite" {
-            ui.checkbox(&mut d.show_password, "Show password");
+            ui.checkbox(&mut d.show_password, lang.tr("Show password"));
         }
     });
     if edit {
@@ -2983,7 +2988,7 @@ fn from_database(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm:
         ui.label(egui::RichText::new(db_profile(d).connection()).monospace().weak());
     }
     ui.horizontal(|ui| {
-        if ui.button("Connect").on_hover_text("Connect and list the tables").clicked() {
+        if ui.button(lang.tr("Connect")).on_hover_text(lang.tr("Connect and list the tables")).clicked() {
             match app.run("data.databaseTables", db_conn_params(d)) {
                 Ok(t) => {
                     d.values.insert("tables".into(), t);
@@ -2998,11 +3003,11 @@ fn from_database(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm:
         }
         ui.separator();
         let mut name = db_str(d, "saveName");
-        ui.add(egui::TextEdit::singleline(&mut name).hint_text("connection name").desired_width(150.0));
+        ui.add(egui::TextEdit::singleline(&mut name).hint_text(lang.tr("connection name")).desired_width(150.0));
         d.values.insert("saveName".into(), json!(name.clone()));
         if ui
-            .add_enabled(!name.trim().is_empty(), egui::Button::new("Save connection"))
-            .on_hover_text("Keep these settings (not the password) for next time")
+            .add_enabled(!name.trim().is_empty(), egui::Button::new(lang.tr("Save connection")))
+            .on_hover_text(lang.tr("Keep these settings (not the password) for next time"))
             .clicked()
         {
             let mut prof = db_profile(d);
@@ -3013,7 +3018,7 @@ fn from_database(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm:
                 None => list.push(prof.clone()),
             }
             d.values.insert("profile".into(), json!(prof.name));
-            app.toast = Some((format!("Connection '{}' saved", prof.name), crate::now_ms()));
+            app.toast = Some((format!("{} '{}'", lang.tr("Connection saved:"), prof.name), crate::now_ms()));
         }
     });
     if let Some(e) = d.values.get("error").and_then(Json::as_str) {
@@ -3023,11 +3028,11 @@ fn from_database(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm:
     // What to import: a table (and its columns) or an SQL query.
     let mode = db_str(d, "mode");
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Import:").strong());
-        if ui.radio(mode != "sql", "Table").clicked() {
+        ui.label(egui::RichText::new(lang.tr("Import:")).strong());
+        if ui.radio(mode != "sql", lang.tr("Table")).clicked() {
             d.values.insert("mode".into(), json!("table"));
         }
-        if ui.radio(mode == "sql", "SQL query").clicked() {
+        if ui.radio(mode == "sql", lang.tr("SQL query")).clicked() {
             d.values.insert("mode".into(), json!("sql"));
         }
     });
@@ -3037,34 +3042,35 @@ fn from_database(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm:
             d.values.insert("query".into(), json!(q));
         }
     } else if db_str(d, "tablesFor") != db_list_key(d) {
-        ui.label(egui::RichText::new("Press Connect to list the tables.").weak());
+        ui.label(egui::RichText::new(lang.tr("Press Connect to list the tables.")).weak());
     } else {
         db_table_picker(app, ui, d);
     }
     ui.horizontal(|ui| {
-        ui.label("New sheet name:");
+        ui.label(lang.tr("New sheet name:"));
         let mut sheet = db_str(d, "sheet");
         let hint = if mode == "sql" { "Query".to_string() } else { db_str(d, "table") };
         if ui.add(egui::TextEdit::singleline(&mut sheet).hint_text(hint).desired_width(220.0)).changed() {
             d.values.insert("sheet".into(), json!(sheet));
         }
     });
-    ui.label(egui::RichText::new("The table remembers its query: Data › Refresh brings it up to date.").small().weak());
+    ui.label(egui::RichText::new(lang.tr("The table remembers its query: Data › Refresh brings it up to date.")).small().weak());
     ok_cancel(ui, confirm, open);
     // OK needs something to import.
     if *confirm && mode != "sql" && db_str(d, "table").is_empty() {
         *confirm = false;
-        d.values.insert("error".into(), json!("Connect and choose a table, or switch to SQL query."));
+        d.values.insert("error".into(), json!(lang.tr("Connect and choose a table, or switch to SQL query.")));
     }
 }
 
 /// The table grid (filterable) and, below, the chosen table's columns as checkboxes.
 fn db_table_picker(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog) {
+    let lang = crate::i18n::current(ui.ctx());
     let tables: Vec<Json> = d.values.get("tables").and_then(Json::as_array).cloned().unwrap_or_default();
     let mut filter = db_str(d, "filter");
     ui.horizontal(|ui| {
-        ui.label(format!("{} tables and views", tables.len()));
-        if ui.add(egui::TextEdit::singleline(&mut filter).hint_text("Search").desired_width(180.0)).changed() {
+        ui.label(format!("{} {}", tables.len(), lang.tr("tables and views")));
+        if ui.add(egui::TextEdit::singleline(&mut filter).hint_text(lang.tr("Search")).desired_width(180.0)).changed() {
             d.values.insert("filter".into(), json!(filter.clone()));
         }
     });
@@ -3074,9 +3080,9 @@ fn db_table_picker(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog) {
     egui::Frame::group(ui.style()).show(ui, |ui| {
         egui::ScrollArea::vertical().id_salt("dbTables").max_height(150.0).auto_shrink([false, true]).show(ui, |ui| {
             egui::Grid::new("dbTablesGrid").num_columns(3).striped(true).spacing(vec2(12.0, 2.0)).show(ui, |ui| {
-                ui.label(egui::RichText::new("Name").strong());
-                ui.label(egui::RichText::new("Schema").strong());
-                ui.label(egui::RichText::new("Type").strong());
+                ui.label(egui::RichText::new(lang.tr("Name")).strong());
+                ui.label(egui::RichText::new(lang.tr("Schema")).strong());
+                ui.label(egui::RichText::new(lang.tr("Type")).strong());
                 ui.end_row();
                 for t in &tables {
                     let (name, schema, kind) =
@@ -3111,11 +3117,11 @@ fn db_table_picker(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog) {
         .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
         .unwrap_or_default();
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(format!("Columns of {cur_table}:")).strong());
-        if ui.small_button("All").clicked() {
+        ui.label(egui::RichText::new(format!("{} {cur_table}:", lang.tr("Columns of"))).strong());
+        if ui.small_button(lang.tr("All")).clicked() {
             selected = columns.iter().filter_map(|c| c["name"].as_str().map(str::to_string)).collect();
         }
-        if ui.small_button("None").clicked() {
+        if ui.small_button(lang.tr("None")).clicked() {
             selected.clear();
         }
     });
