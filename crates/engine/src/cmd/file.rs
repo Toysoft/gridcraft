@@ -9,6 +9,15 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(noundo "file.new", "New Workbook", ["File"], Some("Cmd+N"), "{sample?: \"budget\"|\"sales\"|\"grades\"}", always, new_workbook),
         cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path} | {name, base64}, plus {password} for a password-protected workbook (xlsx, xlsm, xls import, xlsb and ods data import, csv, tsv, txt, json)", always, open),
+        cmd!(
+            noundo "file.reload",
+            "Reload Workbook",
+            [],
+            None,
+            "{path} | {name, base64}, plus {password?}, {force?: bool}: replaces the open workbook with that path (else that file name) by the file's current contents, keeping its window, active sheet and selection; opens it when it isn't open. A workbook with unsaved changes is kept unless force (live views of a file another program rewrites)",
+            always,
+            reload
+        ),
         cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} (xlsx by default; .csv/.tsv/.json/.html/.pdf by extension)", has_doc, save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} (.xlsx, .csv, .tsv, .json, .html, or .pdf: a PDF of the active sheet)", has_doc, save_as),
         cmd!(query "file.saveBytes", "Encode Workbook", [], None, "{format?: xlsx|csv|tsv|json|html} → {base64}", has_doc, save_bytes),
@@ -94,6 +103,61 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
     Ok(
         json!({"index": i, "title": d.display_title(), "sheets": d.wb.sheets.iter().map(|s| s.name.clone()).collect::<Vec<_>>(), "warnings": warnings}),
     )
+}
+
+/// Swaps an open workbook for the file's current contents (a live view of a file another program
+/// writes). The document keeps its uid, so the interface keeps its scroll position.
+fn reload(s: &mut Session, p: &Json) -> Result<Json> {
+    let path = str_param(p, "path");
+    let name = str_param(p, "name").or(path).unwrap_or("Book.xlsx");
+    let file = std::path::Path::new(name).file_name().and_then(|n| n.to_str()).unwrap_or(name);
+    let target = path
+        .and_then(|x| s.docs.iter().position(|d| d.path.as_deref() == Some(x)))
+        .or_else(|| s.docs.iter().position(|d| d.title == file && (path.is_none() || d.path.is_none())));
+    let Some(i) = target else {
+        if str_param(p, "base64").is_none() && path.is_none() {
+            return Err(bad("file.reload", "missing `path` or `base64`"));
+        }
+        let mut r = open(s, p)?;
+        if let Some(o) = r.as_object_mut() {
+            o.insert("reloaded".into(), json!(false));
+        }
+        return Ok(r);
+    };
+    let bytes = match (str_param(p, "base64"), path) {
+        (Some(b), _) => crate::io::base64_decode(b).ok_or_else(|| bad("file.reload", "invalid base64"))?,
+        (None, Some(path)) => crate::io::read_file(path)?,
+        (None, None) => return Err(bad("file.reload", "missing `path` or `base64`")),
+    };
+    let old = s.docs.get(i).ok_or(crate::EngineError::NoDocument)?;
+    if old.is_dirty() && !bool_param(p, "force").unwrap_or(false) {
+        return Err(bad("file.reload", format!("`{}` has unsaved changes; pass force: true to discard them", old.display_title())));
+    }
+    let (mut wb, warnings) = crate::io::open_bytes_with_password(name, &bytes, str_param(p, "password"))?;
+    wb.source_dir = old.path.as_deref().and_then(crate::io::source_dir);
+    let names = |w: &gridcraft_model::Workbook| w.sheets.iter().map(|sh| sh.name.clone()).collect::<Vec<_>>();
+    let same_sheets = names(&wb) == names(&old.wb);
+    let active = old.wb.active().and_then(|sh| wb.sheet_index(&sh.name));
+    if let Some(a) = active {
+        wb.active_sheet = a;
+    }
+    let mut doc = DocState::new(wb, old.path.clone(), old.title.clone());
+    doc.uid = old.uid;
+    doc.revision = old.revision.saturating_add(1);
+    doc.content_kind = old.content_kind;
+    if active.is_some() {
+        doc.selection = old.selection.clone();
+    }
+    if same_sheets {
+        doc.sheet_selections = old.sheet_selections.clone();
+    }
+    let sheets = names(&doc.wb);
+    let title = doc.display_title();
+    if let Some(slot) = s.docs.get_mut(i) {
+        *slot = doc;
+    }
+    s.set_active(i);
+    Ok(json!({"index": i, "title": title, "sheets": sheets, "warnings": warnings, "reloaded": true}))
 }
 
 fn save(s: &mut Session, p: &Json) -> Result<Json> {

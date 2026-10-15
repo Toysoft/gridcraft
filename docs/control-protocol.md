@@ -15,6 +15,28 @@ Then send newline-delimited JSON to `127.0.0.1:7979`. Every request line gets on
 
 Errors come back as `{"id": …, "ok": false, "error": "…"}`.
 
+## In the browser
+
+A web page can't listen on a port, so GridCraft for the web dials out instead: run the relay,
+then open the page with `?control=`:
+
+```sh
+gridcraft-cli relay --watch /path/to/model.xlsx      # control on 7979, browser WebSocket on 7980
+# open http://127.0.0.1:8771/?control=7980            (or ?control=ws://host:port)
+```
+
+The relay serves this same protocol on `127.0.0.1:7979`, so `gridcraft-cli send 7979 …`,
+`gridcraft-cli mcp --connect 7979` and scripts drive the page exactly as they drive the desktop
+app. The browser has no file system, so the relay does the file work for it: a `path` on
+`app.open`, `file.open` and `file.reload` is read by the relay and sent as bytes,
+`app.save {path}` writes the workbook there (format from the extension), and
+`ui.screenshot {path}` writes the PNG there. `--watch FILE` (repeatable) runs `file.reload`
+whenever the file changes on disk and whenever the page (re)connects, so the page always shows
+the file's latest contents; a workbook with unsaved edits in the page is left alone (the relay
+reports it). Only pages served from `localhost`/`127.0.0.1` may connect; allow another origin
+with `--origin https://example.com`. The newest page to connect wins, and a page reconnects by
+itself when the relay restarts. `app.quit`, `ui.resize` and `ui.focus` don't apply in a browser.
+
 ## Methods
 
 | Method | Params | What it does |
@@ -36,7 +58,8 @@ Errors come back as `{"id": …, "ok": false, "error": "…"}`.
 | `ui.screenshot` | `{path?}` | PNG of the window (base64 when no path). Animations are settled first: the picture shows the final state |
 | `ui.set` | `{dark?, formulaBar?, ribbonCollapsed?, animations?}` | UI preferences (`formulaBar` runs `view.formulaBar`) |
 | `ui.resize` / `ui.focus` | `{width, height}` | Window control |
-| `app.open` / `app.save` / `app.quit` | `{path, password?}` / `{path?}` | Files and lifetime. `password` opens a password-protected workbook; without it, such a workbook returns an error (never a dialog) |
+| `app.open` / `app.save` / `app.quit` | `{path, password?}` / `{path?}` | Files and lifetime. `password` opens a password-protected workbook; without it, such a workbook returns an error (never a dialog). Opening a path that is already open switches to it without rereading the file: use `file.reload` |
+| `file.reload` (a command) | `{path}` \| `{name, base64}`, `{password?, force?}` | Replaces the open workbook with the file's current contents, keeping its window, active sheet, selection and scroll (opens it when it isn't open). Refuses a workbook with unsaved changes unless `force: true`. For a live view of a file another program rewrites |
 
 Any other method name that is a command id (e.g. `home.bold`) runs that command.
 

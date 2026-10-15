@@ -11,6 +11,7 @@
 //! gridcraft-cli functions [--json] [--search X] [--category C]
 //! gridcraft-cli mcp [--connect PORT] [--in FILE | --sample NAME]
 //! gridcraft-cli send <port> <method> [json]
+//! gridcraft-cli relay [--port 7979] [--ws-port 7980] [--watch FILE]... [--origin URL]...
 //! gridcraft-cli version | --version
 //! ```
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -30,6 +31,7 @@ macro_rules! outln {
 }
 
 mod check;
+mod relay;
 
 use gridcraft_engine::Session;
 use serde_json::{Value, json};
@@ -47,6 +49,9 @@ const USAGE: &str = "usage:
   gridcraft-cli functions [--json] [--search X] [--category C]
   gridcraft-cli mcp [--connect PORT] [--in FILE | --sample NAME]
   gridcraft-cli send <port> <method> [json]
+  gridcraft-cli relay [--port 7979] [--ws-port 7980] [--watch FILE]... [--origin URL]...
+                     control channel for GridCraft in the browser (?control=ws://127.0.0.1:7980);
+                     --watch reloads FILE in the browser whenever it changes
   gridcraft-cli version";
 
 /// stdout went away. A reader that stopped early (a closed pipe) ends the program quietly; any
@@ -81,6 +86,7 @@ fn main() -> ExitCode {
         Some("functions") => functions(rest),
         Some("mcp") => mcp(rest),
         Some("send") => send(rest),
+        Some("relay") => relay(rest),
         Some(other) => Err(format!("unknown subcommand `{other}`\n{USAGE}")),
         None => Err(USAGE.to_string()),
     };
@@ -543,6 +549,23 @@ fn send(args: &[String]) -> Result<(), String> {
     let v = r.call(method, params)?;
     outln!("{}", pretty(&v));
     Ok(())
+}
+
+/// `relay`: serve the control protocol for a browser page (see `relay.rs`).
+fn relay(args: &[String]) -> Result<(), String> {
+    let a = Args::parse(args, &["port", "ws-port", "watch", "origin"], &[])?;
+    a.no_extra(0)?;
+    let port = |name: &str, default: u16| -> Result<u16, String> {
+        a.opt(name).map_or(Ok(default), |v| v.parse().map_err(|_| format!("--{name}: `{v}` is not a port")))
+    };
+    let all = |name: &str| a.opts.iter().filter(|(n, _)| n == name).map(|(_, v)| v.clone()).collect::<Vec<_>>();
+    let watch = all("watch");
+    for path in &watch {
+        if !std::path::Path::new(path).is_file() {
+            return Err(format!("--watch {path}: no such file"));
+        }
+    }
+    relay::run(relay::Options { port: port("port", 7979)?, ws_port: port("ws-port", 7980)?, watch, origins: all("origin") })
 }
 
 #[cfg(test)]

@@ -59,13 +59,20 @@ pub fn start() {
                         app.ui.language = browser;
                     }
                     SheetApp::setup_context_for_language(&cc.egui_ctx, false, app.ui.language);
+                    // `?control=`: scripts, agents and `--watch`ed files drive this page through
+                    // `gridcraft-cli relay` (`live`).
+                    let live = query_param("control").and_then(|p| crate::live::url_from(&p)).map(|url| {
+                        let (live, rx) = crate::live::Live::start(url, cc.egui_ctx.clone());
+                        app.control_rx = Some(rx);
+                        live
+                    });
                     if let Some(bridge) = &app_bridge {
                         if let Some(author) = query_param("author") {
                             crate::host::Bridge::set_author(&mut app, &author);
                         }
                         bridge.post_ready();
                     }
-                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge }))
+                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge, live }))
                 }),
             )
             .await;
@@ -93,6 +100,7 @@ struct WebShell {
     app: SheetApp,
     inbox: Inbox,
     bridge: Option<crate::host::Bridge>,
+    live: Option<crate::live::Live>,
 }
 
 impl eframe::App for WebShell {
@@ -112,7 +120,13 @@ impl eframe::App for WebShell {
                 }
             });
         }
+        if let Some(live) = &mut self.live {
+            live.pump();
+        }
         self.app.logic(ctx);
+        if let Some(live) = &mut self.live {
+            live.flush(ctx);
+        }
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {

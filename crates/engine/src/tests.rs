@@ -3282,3 +3282,58 @@ fn paste_special_validation_moves_relative_references() {
     assert!(!ok(&mut s, "C3", "5"), "the pasted rule checks C3, not A1");
     assert!(ok(&mut s, "C3", "20"));
 }
+
+/// A workbook with `A1` set, encoded as XLSX base64.
+fn xlsx_with_a1(input: &str) -> serde_json::Value {
+    let mut b = s();
+    b.execute("cell.set", json!({"cell": "A1", "input": input})).unwrap();
+    b.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap()["base64"].clone()
+}
+
+#[test]
+fn reload_replaces_the_open_workbook_in_place() {
+    let mut s = Session::new();
+    s.execute("file.open", json!({"name": "model.xlsx", "base64": xlsx_with_a1("1")})).unwrap();
+    s.execute("file.new", json!({})).unwrap();
+    s.execute("window.activate", json!({"index": 0})).unwrap();
+    s.execute("selection.set", json!({"range": "C3"})).unwrap();
+    let uid = s.doc().unwrap().uid;
+    let revision = s.doc().unwrap().revision;
+    s.execute("window.activate", json!({"index": 1})).unwrap();
+
+    let r = s.execute("file.reload", json!({"name": "model.xlsx", "base64": xlsx_with_a1("2")})).unwrap();
+    assert_eq!(r["reloaded"], true);
+    assert_eq!(s.documents().len(), 2, "reload replaces, never adds");
+    assert_eq!(s.active_index(), 0);
+    assert_eq!(v(&s, "A1"), Value::Number(2.0));
+    let d = s.doc().unwrap();
+    assert_eq!((d.uid, d.title.as_str()), (uid, "model.xlsx"));
+    assert!(d.revision > revision);
+    assert_eq!(d.selection.active, CellRef::parse("C3").unwrap());
+    assert!(!d.is_dirty());
+}
+
+#[test]
+fn reload_keeps_unsaved_changes_unless_forced() {
+    let mut s = Session::new();
+    s.execute("file.open", json!({"name": "model.xlsx", "base64": xlsx_with_a1("1")})).unwrap();
+    s.execute("cell.set", json!({"cell": "B1", "input": "mine"})).unwrap();
+    let refused = s.execute("file.reload", json!({"name": "model.xlsx", "base64": xlsx_with_a1("2")}));
+    assert!(refused.unwrap_err().to_string().contains("unsaved changes"));
+    assert_eq!(v(&s, "A1"), Value::Number(1.0));
+    s.execute("file.reload", json!({"name": "model.xlsx", "base64": xlsx_with_a1("3"), "force": true})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::Number(3.0));
+    assert_eq!(v(&s, "B1"), Value::Empty);
+}
+
+#[test]
+fn reload_opens_a_workbook_that_is_not_open_and_rejects_bad_input() {
+    let mut s = Session::new();
+    let r = s.execute("file.reload", json!({"name": "new.xlsx", "base64": xlsx_with_a1("7")})).unwrap();
+    assert_eq!(r["reloaded"], false);
+    assert_eq!(v(&s, "A1"), Value::Number(7.0));
+    assert!(s.execute("file.reload", json!({})).is_err());
+    assert!(s.execute("file.reload", json!({"name": "new.xlsx", "base64": "%%%"})).is_err());
+    assert!(s.execute("file.reload", json!({"name": "new.xlsx", "base64": "AAAA"})).is_err());
+    assert_eq!(v(&s, "A1"), Value::Number(7.0), "a failed reload leaves the workbook alone");
+}
