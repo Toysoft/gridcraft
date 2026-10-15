@@ -16,6 +16,11 @@
 //! `TROUVE`, `STXT`, `STXTB`, `NBCAR`, `ESTNUM`, `EST.IMPAIR`, `ESTREF`, `ESTTEXTE`,
 //! `FRACTIONNER.TEXTE`, `VAR.P.N`, `VAR.P`, `PHONETIQUE` and `SI.CONDITIONS` exist; `NBCARB`,
 //! `CHERCHEB` and `TROUVEB` give `#NOM?` (the names below are `LENB`, `CHERCHERB`, `TROUVERB`).
+//! Retested in the same Excel (https://github.com/storytold/gridcraft/pull/443#issuecomment-6181287747):
+//! `PRENDRE`, `EXCLURE`, `ETENDRE`, `DANSCOL`, `ORGA.COLS`, `CENTILE.EXCLURE`, `PREVISION.LINEAIRE`,
+//! `FILTRE`, `RECHERCHEX`, `TROUVERB`, `CHERCHERB`, `LENB` and `URLENCODAGE` work. That Excel takes
+//! `,` between arguments and `.` as the decimal, from its Windows regional format ("English
+//! (Europe)", system separators on), not from the French interface.
 //!
 //! Sources for the other words:
 //! - bool: https://support.microsoft.com/fr-fr/excel/functions/true-function | https://support.microsoft.com/fr-fr/excel/functions/false-function

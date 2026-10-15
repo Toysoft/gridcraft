@@ -35,8 +35,20 @@ fn each_language_spells_formulas_like_its_excel() {
         (Fr, "LIGNES(Tableau1[#Tout])-LIGNES(Tableau1[[#En-têtes];[Nom]])", "ROWS(Tableau1[#All])-ROWS(Tableau1[[#Headers],[Nom]])"),
         (Fr, "SI(VRAI;RECHERCHEV(A2;D:E;2;FAUX);#N/A)", "IF(TRUE,VLOOKUP(A2,D:E,2,FALSE),#N/A)"),
         (Fr, "SOMME({1.2;3,5.4})+SIERREUR(1/0;#VALEUR!)", "SUM({1,2;3.5,4})+IFERROR(1/0,#VALUE!)"),
-        // French Excel 2024 (#191): STXTB exists, NBCARB/CHERCHEB/TROUVEB are #NOM?.
+        // French Excel 2024 (#191, #443): STXTB exists, NBCARB/CHERCHEB/TROUVEB are #NOM?, and the
+        // names below were retested there with that Excel's region separators.
         (Fr, "STXTB(A1;2;1)&CHERCHERB(\"b\";A1)&TROUVERB(\"b\";A1)&LENB(A1)", "MIDB(A1,2,1)&SEARCHB(\"b\",A1)&FINDB(\"b\",A1)&LENB(A1)"),
+        (
+            Fr,
+            "SOMME(PRENDRE(A1:A6;2);EXCLURE(A1:A6;4);ETENDRE(A1:A2;3;1;0);DANSCOL(A1:A6);ORGA.COLS(A1:A6;3))",
+            "SUM(TAKE(A1:A6,2),DROP(A1:A6,4),EXPAND(A1:A2,3,1,0),TOCOL(A1:A6),WRAPCOLS(A1:A6,3))",
+        ),
+        (
+            Fr,
+            "CENTILE.EXCLURE(A1:A6;0,5)+PREVISION.LINEAIRE(7;A1:A6;A1:A6)+SOMME(FILTRE(A1:A6;A1:A6>4))+RECHERCHEX(3;A1:A6;A1:A6)",
+            "PERCENTILE.EXC(A1:A6,0.5)+FORECAST.LINEAR(7,A1:A6,A1:A6)+SUM(FILTER(A1:A6,A1:A6>4))+XLOOKUP(3,A1:A6,A1:A6)",
+        ),
+        (Fr, "URLENCODAGE(\"a b\")", "ENCODEURL(\"a b\")"),
     ] {
         assert_eq!(canonical(local, locale), english, "{locale:?} entry");
         assert_eq!(shown(english, locale), local, "{locale:?} display");
