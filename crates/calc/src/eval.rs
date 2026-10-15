@@ -18,6 +18,8 @@ pub const MAX_CELLS: u64 = 16_000_000;
 /// formulas over them stay fast.
 const FULL_SIZE_CELLS: u64 = 16_384;
 const MAX_DEPTH: usize = 400;
+/// GETPIVOTDATA takes a value field, a PivotTable and up to 126 field/item pairs.
+const MAX_GETPIVOTDATA_ARGS: usize = 254;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Area {
@@ -732,6 +734,7 @@ impl<'h> Evaluator<'h> {
             "INDEX" => self.index(args),
             "XLOOKUP" => self.xlookup(args),
             "CELL" => self.cell_info(args),
+            "GETPIVOTDATA" => self.getpivotdata(args),
             "TRIMRANGE" => self.trimrange(args),
             "SUBTOTAL" | "AGGREGATE" => self.subtotal(name, args),
             "TEXT" => {
@@ -1344,6 +1347,63 @@ impl<'h> Evaluator<'h> {
         self.builtin("XLOOKUP", args)
     }
 
+    /// GETPIVOTDATA(data_field, pivot_table, [field1, item1], …): a value shown in a PivotTable
+    /// report. `pivot_table` is any cell or range in the report; the report's index, written by
+    /// the engine with the report, says which cell the value field and items name
+    /// ([`gridcraft_model::PivotReport::lookup`]). An empty value cell counts as 0, as in Excel.
+    fn getpivotdata(&mut self, args: &[Expr]) -> Ev {
+        if args.len() < 2 || args.len() > MAX_GETPIVOTDATA_ARGS {
+            return err(CellError::Value);
+        }
+        let text = |v: Value| -> Result<String, CellError> { v.scalar().to_text() };
+        let data = match text(self.value(&args[0])) {
+            Ok(t) => t,
+            Err(e) => return err(e),
+        };
+        let area = match self.eval(&args[1]) {
+            Ev::R(areas) => match areas.first() {
+                Some(a) => *a,
+                None => return err(CellError::Ref),
+            },
+            Ev::V(Value::Error(e)) => return err(e),
+            _ => return err(CellError::Ref),
+        };
+        let mut pairs: Vec<(String, Value)> = Vec::with_capacity(args.len() / 2);
+        for pair in args.get(2..).unwrap_or_default().chunks(2) {
+            let field = match pair.first().map(|f| text(self.value(f))) {
+                Some(Ok(f)) => f,
+                Some(Err(e)) => return err(e),
+                None => return err(CellError::Ref),
+            };
+            // A field without its item names nothing.
+            let Some(item) = pair.get(1).map(|i| self.value(i).scalar()) else { return err(CellError::Ref) };
+            if let Value::Error(e) = item {
+                return err(e);
+            }
+            pairs.push((field, item));
+        }
+        let found = self.host.workbook().sheet(area.sheet).and_then(|sh| {
+            sh.pivots.iter().find_map(|p| {
+                let r = p.last_range.filter(|r| r.intersects(&area.range))?;
+                Some((r.start, p.report.0.clone()?))
+            })
+        });
+        let Some((origin, report)) = found else { return err(CellError::Ref) };
+        let named: Vec<(&str, &Value)> = pairs.iter().map(|(f, v)| (f.as_str(), v)).collect();
+        let (r, c) = match report.lookup(&data, &named) {
+            Ok(at) => at,
+            Err(e) => return err(e),
+        };
+        let (Some(row), Some(col)) = (origin.row.checked_add(r), origin.col.checked_add(c)) else { return err(CellError::Ref) };
+        if row >= MAX_ROWS || col >= MAX_COLS {
+            return err(CellError::Ref);
+        }
+        match self.host.cell_value(area.sheet, CellRef::new(row, col)) {
+            Value::Empty => Ev::V(Value::Number(0.0)),
+            v => Ev::V(v),
+        }
+    }
+
     fn cell_info(&mut self, args: &[Expr]) -> Ev {
         let kind = match self.arg_val(args, 0).map(|v| v.scalar().to_text()) {
             Some(Ok(t)) => t.to_ascii_lowercase(),
@@ -1763,6 +1823,24 @@ pub fn precedents(wb: &Workbook, sheet: usize, e: &Expr) -> (Vec<Area>, bool) {
             (_, Some(Expr::Number(_) | Expr::Text(_) | Expr::Bool(_) | Expr::Error(_) | Expr::Array(_) | Expr::Missing)) => {}
             _ => dynamic = true,
         },
+        // GETPIVOTDATA reads a cell of the report its reference points into. Refreshing a
+        // PivotTable recalculates everything; an edit inside the report must reach it too.
+        Expr::Call(n, args) if n == "GETPIVOTDATA" => {
+            if let Some(Expr::Ref(r)) = args.get(1) {
+                let range = r.range();
+                let mut reports = Vec::new();
+                push(&mut reports, r, range);
+                for a in reports {
+                    let hits = wb
+                        .sheet(a.sheet)
+                        .into_iter()
+                        .flat_map(|sh| sh.pivots.iter())
+                        .filter_map(|p| p.last_range)
+                        .filter(|pr| pr.intersects(&a.range));
+                    out.extend(hits.map(|range| Area { sheet: a.sheet, range }));
+                }
+            }
+        }
         Expr::Call(n, _)
             if matches!(n.as_str(), "INDIRECT" | "OFFSET" | "NOW" | "TODAY" | "RAND" | "RANDBETWEEN" | "RANDARRAY" | "CELL" | "INFO") =>
         {
@@ -1811,6 +1889,7 @@ fn is_special(n: &str) -> bool {
             | "INDIRECT"
             | "INDEX"
             | "CELL"
+            | "GETPIVOTDATA"
             | "TRIMRANGE"
             | "SUBTOTAL"
             | "AGGREGATE"
@@ -1849,6 +1928,7 @@ pub const SPECIAL_FUNCTIONS: &[&str] = &[
     "INDIRECT",
     "INDEX",
     "CELL",
+    "GETPIVOTDATA",
     "TRIMRANGE",
     "SUBTOTAL",
     "AGGREGATE",

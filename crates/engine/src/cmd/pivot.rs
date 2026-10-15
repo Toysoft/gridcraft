@@ -96,18 +96,62 @@ pub fn specs() -> Vec<CommandSpec> {
             "Value Field Settings",
             ["PivotTable Analyze", "Active Field"],
             None,
-            "{pivot?, field: caption or source field | index: n, func?, name?, showAs?: normal|percentOfGrandTotal|percentOfColumnTotal|percentOfRowTotal|runningTotal|rank, numberFormat?: \"#,##0\" | null, replace?}",
+            "{pivot?, field: caption or source field | index: n, func?, name?, showAs?: normal|percentOfGrandTotal|percentOfColumnTotal|percentOfRowTotal|percentOf|percentOfParentRowTotal|percentOfParentColumnTotal|percentOfParentTotal|differenceFrom|percentDifferenceFrom|runningTotal|percentRunningTotal|rankAscending|rankDescending|index, baseField?: row or column field, baseItem?: item label | \"(previous)\" | \"(next)\", numberFormat?: \"#,##0\" | null, replace?}",
             has_doc,
             value_settings
         ),
-        cmd!("pivot.filter", "Filter Items", [], None, "{pivot?, field, selected: [\"East\", ..] | null (all), replace?}", has_doc, filter),
+        cmd!(
+            "pivot.filter",
+            "Filter Items",
+            [],
+            None,
+            "{pivot?, field, selected: [\"East\", ..] | null (all), replace?} (clears the field's label, value or Top 10 filter)",
+            has_doc,
+            filter
+        ),
+        cmd!(
+            "pivot.labelFilter",
+            "Label Filter",
+            [],
+            None,
+            "{pivot?, field: row or column field, op: equals|doesNotEqual|beginsWith|doesNotBeginWith|endsWith|doesNotEndWith|contains|doesNotContain|greaterThan|greaterThanOrEqual|lessThan|lessThanOrEqual|between|notBetween, value, value2? (between), replace?} keeps the items whose caption passes (* and ? are wildcards); replaces the field's other filters",
+            has_doc,
+            label_filter
+        ),
+        cmd!(
+            "pivot.valueFilter",
+            "Value Filter",
+            [],
+            None,
+            "{pivot?, field: row or column field, op: equals|doesNotEqual|greaterThan|greaterThanOrEqual|lessThan|lessThanOrEqual|between|notBetween, value: number, value2? (between), valueField?: caption (default the first value field), replace?} keeps the items whose total passes, within each parent item; replaces the field's other filters",
+            has_doc,
+            value_filter
+        ),
+        cmd!(
+            "pivot.top10",
+            "Top 10",
+            [],
+            None,
+            "{pivot?, field: row or column field, top?: true (false: bottom), count?: 10, by?: items|percent|sum, valueField?: caption (default the first value field), replace?} keeps the top or bottom items by their totals, within each parent item; replaces the field's other filters",
+            has_doc,
+            top10
+        ),
+        cmd!(
+            "pivot.clearFilter",
+            "Clear Filter",
+            [],
+            None,
+            "{pivot?, field?, replace?} clears the field's item, label, value and Top 10 filters (report filters show all); without `field`, every field's",
+            has_doc,
+            clear_filter
+        ),
         cmd!("pivot.sort", "Sort Field", [], None, "{pivot?, field, order: asc|desc|none, replace?}", has_doc, sort),
         cmd!(
             "pivot.group",
             "Group Field",
             ["PivotTable Analyze", "Group"],
             None,
-            "{pivot?, field, by: years|quarters|months|days|none, replace?}",
+            "{pivot?, field, by: years|quarters|months|days|hours|minutes|seconds|range|none | [levels] (several date and time levels make one field each, coarsest first), start?, end?: number or date (Starting at / Ending at; default automatic), interval? (by: range; default 10), days?: 1 (Number of days; by: days only), replace?}; without `field` and `by` opens the Grouping dialog for the field at the active cell",
             has_doc,
             group
         ),
@@ -188,6 +232,28 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             delete
         ),
+        cmd!(query "pivot.generateGetPivotData", "Generate GetPivotData", ["PivotTable Analyze", "PivotTable", "Options"], None, "{on?: bool} (toggles without it) → {on}: pointing at a PivotTable value while typing a formula inserts GETPIVOTDATA (an application setting, on by default)", always, |s, p| {
+            s.prefs.generate_get_pivot_data = bool_param(p, "on").unwrap_or(!s.prefs.generate_get_pivot_data);
+            Ok(json!({"on": s.prefs.generate_get_pivot_data}))
+        }),
+        cmd!(
+            "pivot.clearAll",
+            "Clear All",
+            ["PivotTable Analyze", "Actions", "Clear"],
+            None,
+            "{pivot?, replace?} takes every field out of Rows, Columns, Values and Filters (the PivotTable stays, empty; calculated fields and layout options are kept)",
+            has_doc,
+            clear_all
+        ),
+        cmd!(
+            "pivot.clearFilters",
+            "Clear Filters",
+            ["PivotTable Analyze", "Actions", "Clear"],
+            None,
+            "{pivot?, replace?} shows every item again: report filters go back to (All) and hidden items of row and column fields come back",
+            has_doc,
+            clear_filters
+        ),
     ]
 }
 
@@ -197,14 +263,14 @@ fn with(p: &Json, k: &str, v: Json) -> Json {
     Json::Object(m)
 }
 
-fn other(msg: impl Into<String>) -> EngineError {
+pub(super) fn other(msg: impl Into<String>) -> EngineError {
     EngineError::Other(msg.into())
 }
 
 // ---------------------------------------------------------------- lookup
 
 /// (sheet, index) of the pivot a call targets.
-fn find_pivot(s: &Session, p: &Json) -> Result<(usize, usize)> {
+pub(super) fn find_pivot(s: &Session, p: &Json) -> Result<(usize, usize)> {
     let d = s.doc()?;
     let active = d.wb.active_sheet;
     if let Some(v) = p.get("pivot").filter(|v| !v.is_null()) {
@@ -278,27 +344,35 @@ fn func_name(f: PivotFunc) -> &'static str {
     }
 }
 
+/// Show Values As modes: (command name, mode).
+const SHOW_AS: &[(&str, PivotShowAs)] = &[
+    ("normal", PivotShowAs::Normal),
+    ("percentOfGrandTotal", PivotShowAs::PercentOfGrandTotal),
+    ("percentOfColumnTotal", PivotShowAs::PercentOfColumnTotal),
+    ("percentOfRowTotal", PivotShowAs::PercentOfRowTotal),
+    ("percentOf", PivotShowAs::PercentOf),
+    ("percentOfParentRowTotal", PivotShowAs::PercentOfParentRowTotal),
+    ("percentOfParentColumnTotal", PivotShowAs::PercentOfParentColumnTotal),
+    ("percentOfParentTotal", PivotShowAs::PercentOfParentTotal),
+    ("differenceFrom", PivotShowAs::DifferenceFrom),
+    ("percentDifferenceFrom", PivotShowAs::PercentDifferenceFrom),
+    ("runningTotal", PivotShowAs::RunningTotal),
+    ("percentRunningTotal", PivotShowAs::PercentRunningTotal),
+    ("rankAscending", PivotShowAs::RankAscending),
+    ("rankDescending", PivotShowAs::Rank),
+    ("index", PivotShowAs::Index),
+];
+
 fn show_as_param(v: &str) -> Option<PivotShowAs> {
-    Some(match v.to_ascii_lowercase().as_str() {
-        "normal" | "none" => PivotShowAs::Normal,
-        "percentofgrandtotal" => PivotShowAs::PercentOfGrandTotal,
-        "percentofcolumntotal" => PivotShowAs::PercentOfColumnTotal,
-        "percentofrowtotal" => PivotShowAs::PercentOfRowTotal,
-        "runningtotal" => PivotShowAs::RunningTotal,
-        "rank" => PivotShowAs::Rank,
-        _ => return None,
-    })
+    match v.to_ascii_lowercase().as_str() {
+        "none" => Some(PivotShowAs::Normal),
+        "rank" => Some(PivotShowAs::Rank),
+        l => SHOW_AS.iter().find(|(n, _)| n.eq_ignore_ascii_case(l)).map(|(_, m)| *m),
+    }
 }
 
 fn show_as_name(v: PivotShowAs) -> &'static str {
-    match v {
-        PivotShowAs::Normal => "normal",
-        PivotShowAs::PercentOfGrandTotal => "percentOfGrandTotal",
-        PivotShowAs::PercentOfColumnTotal => "percentOfColumnTotal",
-        PivotShowAs::PercentOfRowTotal => "percentOfRowTotal",
-        PivotShowAs::RunningTotal => "runningTotal",
-        PivotShowAs::Rank => "rank",
-    }
+    SHOW_AS.iter().find(|(_, m)| *m == v).map(|(n, _)| *n).unwrap_or("normal")
 }
 
 fn layout_name(l: PivotLayout) -> &'static str {
@@ -316,7 +390,18 @@ fn group_name(g: PivotDateGroup) -> &'static str {
         PivotDateGroup::Quarters => "quarters",
         PivotDateGroup::Months => "months",
         PivotDateGroup::Days => "days",
+        PivotDateGroup::Hours => "hours",
+        PivotDateGroup::Minutes => "minutes",
+        PivotDateGroup::Seconds => "seconds",
     }
+}
+
+/// A row or column field as `pivot.list` and `pivot.fields` report it.
+fn axis_json(f: &PivotField) -> Json {
+    let group = if f.number_group.is_some() { "range" } else { group_name(f.date_group) };
+    let range = f.number_group.map(|g| json!({"start": g.start, "end": g.end, "interval": g.by}));
+    let dates = f.date_range.map(|r| json!({"start": r.start, "end": r.end, "days": r.days}));
+    json!({"field": f.source_col, "sort": sort_name(f.sort), "group": group, "range": range, "dates": dates, "collapsed": f.collapsed_items})
 }
 
 fn sort_name(o: PivotSort) -> &'static str {
@@ -329,7 +414,7 @@ fn sort_name(o: PivotSort) -> &'static str {
 
 // ---------------------------------------------------------------- layout editing (pure)
 
-fn in_axes(pt: &PivotTable, field: &str) -> bool {
+pub(super) fn in_axes(pt: &PivotTable, field: &str) -> bool {
     pt.rows.iter().chain(pt.columns.iter()).any(|f| f.source_col.eq_ignore_ascii_case(field))
 }
 
@@ -360,7 +445,7 @@ fn shift_values(pt: &mut PivotTable, rows: bool, i: usize, inserted: bool) {
 }
 
 /// Takes `field` out of Rows and Columns (Σ Values keeps its place); returns its first entry.
-fn take_from_axes(pt: &mut PivotTable, field: &str) -> Option<PivotField> {
+pub(super) fn take_from_axes(pt: &mut PivotTable, field: &str) -> Option<PivotField> {
     let mut first = None;
     for rows in [true, false] {
         loop {
@@ -375,7 +460,7 @@ fn take_from_axes(pt: &mut PivotTable, field: &str) -> Option<PivotField> {
 }
 
 /// Inserts `f` into Rows (`rows`) or Columns at `position` (default: the end).
-fn insert_axis_field(pt: &mut PivotTable, rows: bool, f: PivotField, position: Option<usize>) {
+pub(super) fn insert_axis_field(pt: &mut PivotTable, rows: bool, f: PivotField, position: Option<usize>) {
     let list = if rows { &mut pt.rows } else { &mut pt.columns };
     let at = position.unwrap_or(list.len()).min(list.len());
     list.insert(at, f);
@@ -408,12 +493,17 @@ fn calc_field<'a>(pt: &'a PivotTable, field: &str) -> Option<&'a PivotCalcField>
     pt.calculated_fields.iter().find(|c| c.name.eq_ignore_ascii_case(field.trim()))
 }
 
-/// The canonical name of a source or calculated field.
+/// The canonical name of a source, calculated or grouped (Group Selection) field.
 fn canonical_any(cmd: &str, pt: &PivotTable, src: &pv::Source, field: &str) -> Result<String> {
-    match calc_field(pt, field) {
-        Some(c) if src.col(field).is_none() => Ok(c.name.clone()),
-        _ => canonical(cmd, src, field),
+    if src.col(field).is_none() {
+        if let Some(c) = calc_field(pt, field) {
+            return Ok(c.name.clone());
+        }
+        if let Some(g) = pt.group_field(field) {
+            return Ok(g.name.clone());
+        }
     }
+    canonical(cmd, src, field)
 }
 
 fn unique_value_name(pt: &PivotTable, base: &str, except: Option<usize>) -> String {
@@ -443,7 +533,13 @@ fn add_to_area(
     if is_calc && area != "values" {
         return Err(other("A calculated field can only be placed in the Values area."));
     }
+    if src.col(field).is_none() && pt.group_field(field).is_some() && area == "values" {
+        return Err(other("A field made by Group Selection can't be placed in the Values area."));
+    }
     let field = canonical_any(cmd, pt, src, field)?;
+    if matches!(area, "values" | "filters") && pt.calculated_items.iter().any(|c| c.field.eq_ignore_ascii_case(&field)) {
+        return Err(other(super::pivot_tools::CALC_ITEM_AREA));
+    }
     match area {
         "rows" | "columns" => {
             if pt.rows.len() + pt.columns.len() >= pv::MAX_AXIS_FIELDS && !in_axes(pt, &field) {
@@ -451,8 +547,8 @@ fn add_to_area(
             }
             let existing = take_from_axes(pt, &field).unwrap_or_else(|| PivotField { source_col: field.clone(), ..Default::default() });
             // A report filter that selects nothing in particular goes away; a selection stays
-            // as the field's hidden items.
-            pt.filters.retain(|f| !(f.source_col.eq_ignore_ascii_case(&field) && f.selected.is_none()));
+            // as the field's hidden items, and a dormant rule becomes active again.
+            pt.filters.retain(|f| !(f.source_col.eq_ignore_ascii_case(&field) && f.selected.is_none() && f.rule.is_none()));
             insert_axis_field(pt, area == "rows", existing, position);
         }
         "values" => {
@@ -461,6 +557,14 @@ fn add_to_area(
             }
             let numeric = is_calc || src.col(&field).and_then(|c| src.numeric.get(c).copied()).unwrap_or(false);
             let f = func.unwrap_or(if numeric { PivotFunc::Sum } else { PivotFunc::Count });
+            if !pt.calculated_items.is_empty() {
+                if super::pivot_tools::averages(f) {
+                    return Err(other(super::pivot_tools::NO_AVERAGES));
+                }
+                if pt.values.iter().any(|v| v.source_col.eq_ignore_ascii_case(&field)) {
+                    return Err(other(super::pivot_tools::NO_DUPLICATE_VALUES));
+                }
+            }
             let base = match name {
                 Some(n) if !n.trim().is_empty() => {
                     if src.col(n).is_some() {
@@ -471,7 +575,7 @@ fn add_to_area(
                 _ => auto_name(f, &field),
             };
             let nm = unique_value_name(pt, &base, None);
-            let v = PivotValue { source_col: field, func: f, name: nm, show_as: PivotShowAs::Normal, number_format: None };
+            let v = PivotValue { source_col: field, func: f, name: nm, ..PivotValue::default() };
             let at = position.unwrap_or(pt.values.len()).min(pt.values.len());
             pt.values.insert(at, v);
         }
@@ -479,8 +583,9 @@ fn add_to_area(
             take_from_axes(pt, &field);
             let existing = pt.filters.iter().position(|f| f.source_col.eq_ignore_ascii_case(&field));
             let entry = match existing {
-                Some(i) => pt.filters.remove(i),
-                None => PivotFilter { source_col: field, selected: None },
+                // Label, value and Top 10 filters apply to row and column fields only.
+                Some(i) => PivotFilter { rule: None, ..pt.filters.remove(i) },
+                None => PivotFilter { source_col: field, ..PivotFilter::default() },
             };
             let at = position.unwrap_or(pt.filters.len()).min(pt.filters.len());
             pt.filters.insert(at, entry);
@@ -511,13 +616,15 @@ fn remove_from_area(cmd: &str, pt: &mut PivotTable, field: &str, area: &str) -> 
                 .position(|v| v.name.eq_ignore_ascii_case(field))
                 .or_else(|| pt.values.iter().position(|v| v.source_col.eq_ignore_ascii_case(field)))
                 .ok_or_else(|| bad(cmd, format!("`{field}` isn't in the values area")))?;
-            Ok(pt.values.remove(i).source_col)
+            let v = pt.values.remove(i);
+            retarget_rules(pt, &v.name, None);
+            Ok(v.source_col)
         }
         _ => {
             let i = pt
                 .filters
                 .iter()
-                .position(|f| f.source_col.eq_ignore_ascii_case(field) && !in_axes(pt, &f.source_col))
+                .position(|f| f.source_col.eq_ignore_ascii_case(field) && f.rule.is_none() && !in_axes(pt, &f.source_col))
                 .ok_or_else(|| bad(cmd, format!("`{field}` isn't in the filters area")))?;
             Ok(pt.filters.remove(i).source_col)
         }
@@ -527,7 +634,7 @@ fn remove_from_area(cmd: &str, pt: &mut PivotTable, field: &str, area: &str) -> 
 // ---------------------------------------------------------------- shared update
 
 /// Applies `f` to the targeted pivot and re-renders it, as one undo step.
-fn update(s: &mut Session, p: &Json, f: impl FnOnce(&mut PivotTable, &pv::Source, &Workbook) -> Result<Json>) -> Result<Json> {
+pub(super) fn update(s: &mut Session, p: &Json, f: impl FnOnce(&mut PivotTable, &pv::Source, &Workbook) -> Result<Json>) -> Result<Json> {
     let (si, pi) = find_pivot(s, p)?;
     let replace = bool_param(p, "replace").unwrap_or(false);
     edit(s, |cx| {
@@ -744,10 +851,10 @@ fn pivot_json(wb: &Workbook, si: usize, pt: &PivotTable) -> Json {
         "anchor": pt.anchor.a1(),
         "range": pt.last_range.map(|r| r.a1()),
         "source": pt.source,
-        "rows": pt.rows.iter().map(|f| json!({"field": f.source_col, "sort": sort_name(f.sort), "group": group_name(f.date_group), "collapsed": f.collapsed_items})).collect::<Vec<_>>(),
-        "columns": pt.columns.iter().map(|f| json!({"field": f.source_col, "sort": sort_name(f.sort), "group": group_name(f.date_group), "collapsed": f.collapsed_items})).collect::<Vec<_>>(),
-        "values": pt.values.iter().map(|v| json!({"field": v.source_col, "func": func_name(v.func), "name": v.name, "showAs": show_as_name(v.show_as), "numberFormat": v.number_format})).collect::<Vec<_>>(),
-        "filters": pt.filters.iter().map(|f| json!({"field": f.source_col, "selected": f.selected, "report": !in_axes(pt, &f.source_col)})).collect::<Vec<_>>(),
+        "rows": pt.rows.iter().map(axis_json).collect::<Vec<_>>(),
+        "columns": pt.columns.iter().map(axis_json).collect::<Vec<_>>(),
+        "values": pt.values.iter().map(|v| json!({"field": v.source_col, "func": func_name(v.func), "name": v.name, "showAs": show_as_name(v.show_as), "baseField": v.base_field, "baseItem": v.base_item, "numberFormat": v.number_format})).collect::<Vec<_>>(),
+        "filters": pt.filters.iter().map(|f| json!({"field": f.source_col, "selected": f.selected, "rule": f.rule.as_ref().map(rule_json), "report": f.rule.is_none() && !in_axes(pt, &f.source_col)})).collect::<Vec<_>>(),
         "layout": layout_name(pt.layout),
         "grandTotalsRows": pt.grand_totals_rows,
         "grandTotalsCols": pt.grand_totals_cols,
@@ -757,6 +864,8 @@ fn pivot_json(wb: &Workbook, si: usize, pt: &PivotTable) -> Json {
         "calculatedFields": pt.calculated_fields.iter().map(|c| json!({"name": c.name, "formula": c.formula})).collect::<Vec<_>>(),
         "valuesOnRows": pt.values_on_rows,
         "valuesPosition": pt.values_position,
+        "groupFields": pt.group_fields.iter().map(|g| json!({"name": g.name, "base": g.base, "groups": g.groups.iter().map(|x| json!({"name": x.name, "items": x.items})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
+        "calculatedItems": pt.calculated_items.iter().map(|c| json!({"field": c.field, "name": c.name, "formula": c.formula})).collect::<Vec<_>>(),
     })
 }
 
@@ -782,14 +891,14 @@ fn fields(s: &mut Session, p: &Json) -> Result<Json> {
                 if pt.values.iter().any(|f| f.source_col.eq_ignore_ascii_case(h)) {
                     areas.push("values");
                 }
-                if pt.filters.iter().any(|f| f.source_col.eq_ignore_ascii_case(h)) && !in_axes(pt, h) {
+                if pt.filters.iter().any(|f| f.source_col.eq_ignore_ascii_case(h) && f.rule.is_none()) && !in_axes(pt, h) {
                     areas.push("filters");
                 }
                 json!({
                     "name": h,
                     "numeric": src.numeric.get(c).copied().unwrap_or(false),
                     "date": src.dates.get(c).copied().unwrap_or(false),
-                    "samples": pv::distinct_labels(&d.wb, src, c, PivotDateGroup::None, 5),
+                    "samples": pv::distinct_labels(&d.wb, src, c, pv::Grouping::default(), 5),
                     "areas": areas,
                 })
             })
@@ -800,6 +909,19 @@ fn fields(s: &mut Session, p: &Json) -> Result<Json> {
     for c in &pt.calculated_fields {
         let areas: Vec<&str> = if pt.values.iter().any(|v| v.source_col.eq_ignore_ascii_case(&c.name)) { vec!["values"] } else { vec![] };
         list.push(json!({"name": c.name, "numeric": true, "date": false, "samples": [], "areas": areas, "calculated": true, "formula": c.formula}));
+    }
+    for g in &pt.group_fields {
+        let mut areas = vec![];
+        for (key, area) in [("rows", &pt.rows), ("columns", &pt.columns)] {
+            if area.iter().any(|f| f.source_col.eq_ignore_ascii_case(&g.name)) {
+                areas.push(key);
+            }
+        }
+        if pt.filters.iter().any(|f| f.source_col.eq_ignore_ascii_case(&g.name) && f.rule.is_none()) && !in_axes(pt, &g.name) {
+            areas.push("filters");
+        }
+        let samples: Vec<&str> = g.groups.iter().take(5).map(|x| x.name.as_str()).collect();
+        list.push(json!({"name": g.name, "numeric": false, "date": false, "samples": samples, "areas": areas, "grouped": true, "base": g.base}));
     }
     if let Some(m) = out.as_object_mut() {
         m.insert("fields".into(), Json::Array(list));
@@ -999,7 +1121,7 @@ fn move_field(s: &mut Session, p: &Json) -> Result<Json> {
             if let (Some(k), Some(slot)) = (kept, list.iter_mut().find(|f| f.source_col.eq_ignore_ascii_case(&src_field))) {
                 *slot = k;
             }
-            if let Some(h) = hidden.filter(|h| h.selected.is_some())
+            if let Some(h) = hidden.filter(|h| h.selected.is_some() || h.rule.is_some())
                 && !pt.filters.iter().any(|f| f.source_col.eq_ignore_ascii_case(&src_field))
             {
                 pt.filters.push(h);
@@ -1043,6 +1165,9 @@ fn value_settings(s: &mut Session, p: &Json) -> Result<Json> {
         let cur = pt.values.get(i).cloned().ok_or_else(|| bad(C, "no value field at that index"))?;
         let mut v = cur.clone();
         if let Some(f) = func {
+            if super::pivot_tools::averages(f) && !pt.calculated_items.is_empty() {
+                return Err(other(super::pivot_tools::NO_AVERAGES));
+            }
             v.func = f;
             // An automatic caption follows the function.
             let auto = auto_name(cur.func, &cur.source_col);
@@ -1066,6 +1191,21 @@ fn value_settings(s: &mut Session, p: &Json) -> Result<Json> {
         if let Some(sa) = show {
             v.show_as = sa;
         }
+        if let Some(b) = str_param(p, "baseField") {
+            if !in_axes(pt, b) {
+                return Err(bad(C, format!("the base field `{b}` must be a row or column field")));
+            }
+            v.base_field = Some(b.to_string());
+        }
+        if let Some(b) = str_param(p, "baseItem") {
+            v.base_item = Some(b.to_string());
+        }
+        if v.show_as.needs_base_field() && v.base_field.is_none() {
+            v.base_field = pt.rows.first().or(pt.columns.first()).map(|f| f.source_col.clone());
+        }
+        if v.show_as.needs_base_item() && v.base_item.is_none() {
+            v.base_item = Some(BASE_PREVIOUS.to_string());
+        }
         match &fmt {
             Some(Json::String(f)) if !f.is_empty() && f.len() <= 255 => v.number_format = Some(f.clone()),
             Some(Json::Null) => v.number_format = None,
@@ -1074,6 +1214,9 @@ fn value_settings(s: &mut Session, p: &Json) -> Result<Json> {
             None => {}
         }
         let name = v.name.clone();
+        if !name.eq_ignore_ascii_case(&cur.name) {
+            retarget_rules(pt, &cur.name, Some(&name));
+        }
         if let Some(slot) = pt.values.get_mut(i) {
             *slot = v;
         }
@@ -1107,11 +1250,12 @@ fn filter(s: &mut Session, p: &Json) -> Result<Json> {
         Some(_) => return Err(bad(C, "`selected` is a list of item labels or null")),
     };
     update(s, p, |pt, src, _| {
-        let field = canonical(C, src, &field)?;
+        let field = canonical_any(C, pt, src, &field)?;
         let i = pt.filters.iter().position(|f| f.source_col.eq_ignore_ascii_case(&field));
         match (i, selected) {
             (Some(i), None) => {
-                if in_axes(pt, &field) {
+                // An axis field's filter with no rule left has nothing to keep.
+                if in_axes(pt, &field) && pt.filters.get(i).is_some_and(|f| f.rule.is_none()) {
                     pt.filters.remove(i);
                 } else if let Some(f) = pt.filters.get_mut(i) {
                     f.selected = None;
@@ -1120,12 +1264,210 @@ fn filter(s: &mut Session, p: &Json) -> Result<Json> {
             (Some(i), Some(sel)) => {
                 if let Some(f) = pt.filters.get_mut(i) {
                     f.selected = Some(sel);
+                    f.rule = None;
                 }
             }
-            (None, Some(sel)) => pt.filters.push(PivotFilter { source_col: field.clone(), selected: Some(sel) }),
+            (None, Some(sel)) => pt.filters.push(PivotFilter { source_col: field.clone(), selected: Some(sel), rule: None }),
             (None, None) => {}
         }
         Ok(json!({"field": field}))
+    })
+}
+
+// ---------------------------------------------------------------- label, value and Top 10 filters
+
+fn compare_param(cmd: &str, v: Option<&str>) -> Result<PivotCompare> {
+    let raw = v.ok_or_else(|| bad(cmd, "missing `op`"))?;
+    PivotCompare::ALL.into_iter().find(|c| compare_name(*c).eq_ignore_ascii_case(raw)).ok_or_else(|| bad(cmd, format!("unknown comparison `{raw}`")))
+}
+
+fn compare_name(c: PivotCompare) -> &'static str {
+    match c {
+        PivotCompare::Equals => "equals",
+        PivotCompare::NotEquals => "doesNotEqual",
+        PivotCompare::BeginsWith => "beginsWith",
+        PivotCompare::NotBeginsWith => "doesNotBeginWith",
+        PivotCompare::EndsWith => "endsWith",
+        PivotCompare::NotEndsWith => "doesNotEndWith",
+        PivotCompare::Contains => "contains",
+        PivotCompare::NotContains => "doesNotContain",
+        PivotCompare::Greater => "greaterThan",
+        PivotCompare::GreaterOrEqual => "greaterThanOrEqual",
+        PivotCompare::Less => "lessThan",
+        PivotCompare::LessOrEqual => "lessThanOrEqual",
+        PivotCompare::Between => "between",
+        PivotCompare::NotBetween => "notBetween",
+    }
+}
+
+fn top_by_name(b: PivotTopBy) -> &'static str {
+    match b {
+        PivotTopBy::Items => "items",
+        PivotTopBy::Percent => "percent",
+        PivotTopBy::Sum => "sum",
+    }
+}
+
+/// A filter rule as `pivot.list` and `pivot.fields` report it, in the parameters of the command
+/// that sets it.
+fn rule_json(r: &PivotRule) -> Json {
+    match r {
+        PivotRule::Label { op, value, value2 } => json!({"type": "label", "op": compare_name(*op), "value": value, "value2": value2}),
+        PivotRule::Value { op, field, value, value2 } => {
+            json!({"type": "value", "op": compare_name(*op), "valueField": field, "value": value, "value2": value2})
+        }
+        PivotRule::Top { top, count, by, field } => json!({"type": "top10", "top": top, "count": count, "by": top_by_name(*by), "valueField": field}),
+    }
+}
+
+/// A label filter value: text, or a number or logical written as text.
+fn text_param(cmd: &str, p: &Json, k: &str) -> Result<Option<String>> {
+    match p.get(k) {
+        None | Some(Json::Null) => Ok(None),
+        Some(Json::String(t)) if t.len() <= 255 => Ok(Some(t.clone())),
+        Some(Json::Number(n)) => Ok(Some(n.to_string())),
+        Some(Json::Bool(b)) => Ok(Some(if *b { "TRUE" } else { "FALSE" }.into())),
+        Some(_) => Err(bad(cmd, format!("`{k}` is text of at most 255 characters"))),
+    }
+}
+
+fn number_param(cmd: &str, p: &Json, k: &str) -> Result<Option<f64>> {
+    match p.get(k) {
+        None | Some(Json::Null) => Ok(None),
+        Some(v) => v.as_f64().filter(|x| x.is_finite()).map(Some).ok_or_else(|| bad(cmd, format!("`{k}` must be a number"))),
+    }
+}
+
+/// The caption of the value field a value filter or Top 10 uses: the one named, else the first.
+fn value_field_param(cmd: &str, pt: &PivotTable, p: &Json) -> Result<String> {
+    match str_param(p, "valueField") {
+        Some(n) => pt
+            .values
+            .iter()
+            .find(|v| v.name.eq_ignore_ascii_case(n))
+            .or_else(|| pt.values.iter().find(|v| v.source_col.eq_ignore_ascii_case(n)))
+            .map(|v| v.name.clone())
+            .ok_or_else(|| bad(cmd, format!("`{n}` isn't in the values area"))),
+        None => pt.values.first().map(|v| v.name.clone()).ok_or_else(|| other("A value filter needs a field in the Values area.")),
+    }
+}
+
+/// Sets the filter rule of a row or column field, replacing its other filters.
+fn set_rule(cmd: &str, pt: &mut PivotTable, field: &str, rule: PivotRule) -> Result<String> {
+    let field = pt
+        .rows
+        .iter()
+        .chain(pt.columns.iter())
+        .find(|f| f.source_col.eq_ignore_ascii_case(field))
+        .map(|f| f.source_col.clone())
+        .ok_or_else(|| bad(cmd, format!("`{field}` isn't in the rows or columns area")))?;
+    pt.filters.retain(|f| !f.source_col.eq_ignore_ascii_case(&field));
+    pt.filters.push(PivotFilter { source_col: field.clone(), selected: None, rule: Some(rule) });
+    Ok(field)
+}
+
+/// Follows a value field's change of caption in the rules that use it, or drops those rules
+/// (`to: None`) when the value field is removed.
+fn retarget_rules(pt: &mut PivotTable, from: &str, to: Option<&str>) {
+    pt.filters.retain_mut(|f| {
+        let Some(rule) = f.rule.as_mut() else { return true };
+        let (PivotRule::Value { field, .. } | PivotRule::Top { field, .. }) = rule else { return true };
+        if !field.eq_ignore_ascii_case(from) {
+            return true;
+        }
+        match to {
+            Some(n) => *field = n.to_string(),
+            None => return false,
+        }
+        true
+    });
+    let axis: Vec<String> = pt.rows.iter().chain(pt.columns.iter()).map(|f| f.source_col.clone()).collect();
+    pt.filters.retain(|f| f.selected.is_some() || f.rule.is_some() || !axis.iter().any(|a| a.eq_ignore_ascii_case(&f.source_col)));
+}
+
+fn label_filter(s: &mut Session, p: &Json) -> Result<Json> {
+    const C: &str = "pivot.labelFilter";
+    let field = str_param(p, "field").ok_or_else(|| bad(C, "missing `field`"))?.to_string();
+    let op = compare_param(C, str_param(p, "op"))?;
+    let value = text_param(C, p, "value")?.ok_or_else(|| bad(C, "missing `value`"))?;
+    let value2 = text_param(C, p, "value2")?;
+    if op.is_range() && value2.is_none() {
+        return Err(bad(C, "`between` and `notBetween` need `value2`"));
+    }
+    let rule = PivotRule::Label { op, value, value2: value2.unwrap_or_default() };
+    update(s, p, |pt, _, _| Ok(json!({"field": set_rule(C, pt, &field, rule)?})))
+}
+
+fn value_filter(s: &mut Session, p: &Json) -> Result<Json> {
+    const C: &str = "pivot.valueFilter";
+    let field = str_param(p, "field").ok_or_else(|| bad(C, "missing `field`"))?.to_string();
+    let op = compare_param(C, str_param(p, "op"))?;
+    if op.is_text_only() {
+        return Err(bad(C, "a value filter compares numbers"));
+    }
+    let value = number_param(C, p, "value")?.ok_or_else(|| bad(C, "missing `value`"))?;
+    let value2 = number_param(C, p, "value2")?;
+    if op.is_range() && value2.is_none() {
+        return Err(bad(C, "`between` and `notBetween` need `value2`"));
+    }
+    update(s, p, |pt, _, _| {
+        let rule = PivotRule::Value { op, field: value_field_param(C, pt, p)?, value, value2: value2.unwrap_or(0.0) };
+        Ok(json!({"field": set_rule(C, pt, &field, rule)?}))
+    })
+}
+
+fn top10(s: &mut Session, p: &Json) -> Result<Json> {
+    const C: &str = "pivot.top10";
+    let field = str_param(p, "field").ok_or_else(|| bad(C, "missing `field`"))?.to_string();
+    let top = match p.get("top") {
+        None | Some(Json::Null) => true,
+        Some(Json::Bool(b)) => *b,
+        Some(_) => return Err(bad(C, "`top` is true (top) or false (bottom)")),
+    };
+    let by = match str_param(p, "by").unwrap_or("items") {
+        b if b.eq_ignore_ascii_case("items") => PivotTopBy::Items,
+        b if b.eq_ignore_ascii_case("percent") => PivotTopBy::Percent,
+        b if b.eq_ignore_ascii_case("sum") => PivotTopBy::Sum,
+        b => return Err(bad(C, format!("unknown `by` `{b}` (items|percent|sum)"))),
+    };
+    let count = number_param(C, p, "count")?.unwrap_or(10.0);
+    let ok = match by {
+        PivotTopBy::Items => (1.0..=2_147_483_647.0).contains(&count) && count.fract() == 0.0,
+        PivotTopBy::Percent => count > 0.0 && count <= 100.0,
+        PivotTopBy::Sum => true,
+    };
+    if !ok {
+        return Err(other(match by {
+            PivotTopBy::Items => "Enter a whole number of items, 1 or more.",
+            PivotTopBy::Percent => "Enter a percent greater than 0 and at most 100.",
+            PivotTopBy::Sum => "Enter a number.",
+        }));
+    }
+    update(s, p, |pt, _, _| {
+        let rule = PivotRule::Top { top, count, by, field: value_field_param(C, pt, p)? };
+        Ok(json!({"field": set_rule(C, pt, &field, rule)?}))
+    })
+}
+
+fn clear_filter(s: &mut Session, p: &Json) -> Result<Json> {
+    const C: &str = "pivot.clearFilter";
+    let field = str_param(p, "field").map(str::to_string);
+    update(s, p, |pt, _, _| {
+        if let Some(n) = &field
+            && !pt.filters.iter().any(|f| f.source_col.eq_ignore_ascii_case(n))
+            && !in_axes(pt, n)
+        {
+            return Err(bad(C, format!("`{n}` isn't a field of the PivotTable")));
+        }
+        let hit = |f: &PivotFilter| field.as_ref().is_none_or(|n| f.source_col.eq_ignore_ascii_case(n));
+        // Axis and dormant rules go; a report filter stays in its area, showing all.
+        let axis: Vec<String> = pt.rows.iter().chain(pt.columns.iter()).map(|f| f.source_col.clone()).collect();
+        pt.filters.retain(|f| !(hit(f) && (f.rule.is_some() || axis.iter().any(|a| a.eq_ignore_ascii_case(&f.source_col)))));
+        for f in pt.filters.iter_mut().filter(|f| hit(f)) {
+            f.selected = None;
+            f.rule = None;
+        }
+        Ok(json!({}))
     })
 }
 
@@ -1153,31 +1495,199 @@ fn sort(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 fn group_param(v: Option<&str>) -> Option<PivotDateGroup> {
-    Some(match v?.to_ascii_lowercase().as_str() {
+    Some(match v?.trim().to_ascii_lowercase().as_str() {
         "years" | "year" => PivotDateGroup::Years,
         "quarters" | "quarter" => PivotDateGroup::Quarters,
         "months" | "month" => PivotDateGroup::Months,
         "days" | "day" => PivotDateGroup::Days,
+        "hours" | "hour" => PivotDateGroup::Hours,
+        "minutes" | "minute" => PivotDateGroup::Minutes,
+        "seconds" | "second" => PivotDateGroup::Seconds,
         "none" | "ungroup" => PivotDateGroup::None,
         _ => return None,
     })
 }
 
-fn group(s: &mut Session, p: &Json) -> Result<Json> {
-    const C: &str = "pivot.group";
-    let field = str_param(p, "field").ok_or_else(|| bad(C, "missing `field`"))?.to_string();
-    let raw = str_param(p, "by").unwrap_or("months");
-    let by = group_param(Some(raw)).ok_or_else(|| bad(C, format!("unknown grouping `{raw}` (years|quarters|months|days|none)")))?;
-    update(s, p, |pt, src, _| {
-        if by != PivotDateGroup::None {
-            let c = src.col(&field).ok_or_else(|| bad(C, format!("no field `{field}` in the source data")))?;
-            if !src.numeric.get(c).copied().unwrap_or(false) {
-                return Err(other("Cannot group that selection."));
-            }
+/// Sets the grouping of every Rows or Columns entry of `field` on the axis it is first on: date
+/// and time `levels` (one entry per level, coarsest first, at the first entry's place), a number
+/// range grouping, or none (no levels and no number). The field's item selections and label
+/// filters no longer apply and go.
+pub(super) fn set_grouping(
+    pt: &mut PivotTable,
+    field: &str,
+    levels: &[PivotDateGroup],
+    number: Option<PivotNumberGroup>,
+    range: Option<PivotDateRange>,
+) -> Result<()> {
+    let rows = pt.rows.iter().any(|f| f.source_col.eq_ignore_ascii_case(field));
+    let list = if rows { &pt.rows } else { &pt.columns };
+    let at = list
+        .iter()
+        .position(|f| f.source_col.eq_ignore_ascii_case(field))
+        .ok_or_else(|| bad("pivot.group", format!("`{field}` isn't in the rows or columns area")))?;
+    let base = list.get(at).cloned().unwrap_or_default();
+    loop {
+        let list = if rows { &mut pt.rows } else { &mut pt.columns };
+        let Some(i) = list.iter().position(|f| f.source_col.eq_ignore_ascii_case(field)) else { break };
+        list.remove(i);
+        shift_values(pt, rows, i, false);
+    }
+    let mut levels: Vec<PivotDateGroup> = levels.iter().copied().filter(|g| *g != PivotDateGroup::None).collect();
+    levels.sort_by_key(|g| std::cmp::Reverse(g.fineness()));
+    levels.dedup();
+    let plain = PivotField { date_group: PivotDateGroup::None, number_group: None, date_range: None, collapsed_items: vec![], ..base };
+    let entries: Vec<PivotField> = if levels.is_empty() {
+        vec![PivotField { number_group: number, ..plain }]
+    } else {
+        levels.iter().map(|g| PivotField { date_group: *g, date_range: range, ..plain.clone() }).collect()
+    };
+    for (k, e) in entries.into_iter().enumerate() {
+        insert_axis_field(pt, rows, e, Some(at + k));
+    }
+    for x in pt.filters.iter_mut().filter(|x| x.source_col.eq_ignore_ascii_case(field)) {
+        x.selected = None;
+        if matches!(x.rule, Some(PivotRule::Label { .. })) {
+            x.rule = None;
         }
-        let f = axis_field(C, pt, &field)?;
-        f.date_group = by;
-        f.collapsed_items.clear();
+    }
+    Ok(())
+}
+
+/// A number or date parameter (`"1/1/2026"`, `"2026-01-01"` or a serial).
+fn date_or_number(cmd: &str, p: &Json, key: &str, sys: gridcraft_core::DateSystem) -> Result<Option<f64>> {
+    match p.get(key) {
+        None | Some(Json::Null) => Ok(None),
+        Some(Json::String(t)) if !t.trim().is_empty() => match gridcraft_core::parse::parse_input(t.trim(), sys).value {
+            gridcraft_core::Value::Number(n) if n.is_finite() => Ok(Some(n)),
+            _ => Err(bad(cmd, format!("`{key}` must be a number or a date"))),
+        },
+        Some(v) => v.as_f64().filter(|x| x.is_finite()).map(Some).ok_or_else(|| bad(cmd, format!("`{key}` must be a number or a date"))),
+    }
+}
+
+/// The smallest and largest number of source column `c` (infinite when it has none).
+fn number_bounds(src: &pv::Source, c: usize) -> (f64, f64) {
+    src.rows
+        .iter()
+        .filter_map(|r| match r.get(c) {
+            Some(gridcraft_core::Value::Number(n)) => Some(*n),
+            _ => None,
+        })
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), n| (lo.min(n), hi.max(n)))
+}
+
+/// The Grouping dialog for the field at the active cell (Group Field without parameters).
+fn grouping_dialog(s: &mut Session, p: &Json) -> Result<Json> {
+    const C: &str = "pivot.group";
+    let (si, pi) = find_pivot(s, p)?;
+    let field = match str_param(p, "field") {
+        Some(f) => f.trim().to_string(),
+        None => super::pivot_tools::active_item(s, si, pi)
+            .map(|(f, _)| f)
+            .ok_or_else(|| EngineError::Disabled(C.into(), "select an item of a row or column field to group".into()))?,
+    };
+    let d = s.doc()?;
+    let pt = d.wb.sheet(si).and_then(|sh| sh.pivots.get(pi)).ok_or_else(|| other("There's no such PivotTable."))?;
+    let src = pv::read_source(&d.wb, &pt.source, si).map_err(other)?;
+    let c = src.col(&field).filter(|c| src.numeric.get(*c).copied().unwrap_or(false)).ok_or_else(|| other(super::pivot_tools::CANNOT_GROUP))?;
+    let (lo, hi) = number_bounds(&src, c);
+    let entries: Vec<&PivotField> = pt.rows.iter().chain(pt.columns.iter()).filter(|f| f.source_col.eq_ignore_ascii_case(&field)).collect();
+    let date = src.dates.get(c).copied().unwrap_or(false) || entries.iter().any(|f| f.date_group != PivotDateGroup::None);
+    let mut levels: Vec<&str> = entries.iter().filter(|f| f.date_group != PivotDateGroup::None).map(|f| group_name(f.date_group)).collect();
+    if levels.is_empty() && date {
+        levels.push("months");
+    }
+    let range = entries.iter().find_map(|f| f.date_range);
+    let number = entries.iter().find_map(|f| f.number_group);
+    let pivot = pt.name.clone();
+    let params = if date {
+        json!({
+            "pivot": pivot, "field": field, "kind": "date", "levels": levels,
+            "start": range.and_then(|r| r.start).unwrap_or(lo.floor()), "end": range.and_then(|r| r.end).unwrap_or(hi.floor() + 1.0),
+            "autoStart": range.is_none_or(|r| r.start.is_none()), "autoEnd": range.is_none_or(|r| r.end.is_none()),
+            "days": range.map_or(1, |r| r.days),
+        })
+    } else {
+        json!({
+            "pivot": pivot, "field": field, "kind": "number",
+            "start": number.map_or(lo, |g| g.start), "end": number.map_or(hi, |g| g.end), "interval": number.map_or(10.0, |g| g.by),
+            "autoStart": number.is_none(), "autoEnd": number.is_none(),
+        })
+    };
+    s.ui_requests.push(crate::UiRequest::Dialog("pivotGrouping".into(), params));
+    ok()
+}
+
+pub(super) fn group(s: &mut Session, p: &Json) -> Result<Json> {
+    const C: &str = "pivot.group";
+    if p.get("by").is_none() && p.get("levels").is_none() {
+        return grouping_dialog(s, p);
+    }
+    let field = str_param(p, "field").ok_or_else(|| bad(C, "missing `field`"))?.trim().to_string();
+    // `by`: one level name, `range`, `none`, or a list of date and time levels.
+    let raw: Vec<String> = match p.get("by").or_else(|| p.get("levels")) {
+        Some(Json::String(b)) => vec![b.clone()],
+        Some(Json::Array(a)) => a.iter().take(16).map(|x| x.as_str().unwrap_or("?").to_string()).collect(),
+        _ => return Err(bad(C, "`by` is years|quarters|months|days|hours|minutes|seconds|range|none or a list of levels")),
+    };
+    let range = raw.iter().any(|b| b.trim().eq_ignore_ascii_case("range"));
+    let mut levels: Vec<PivotDateGroup> = Vec::new();
+    if !range {
+        for b in &raw {
+            levels.push(
+                group_param(Some(b))
+                    .ok_or_else(|| bad(C, format!("unknown grouping `{b}` (years|quarters|months|days|hours|minutes|seconds|range|none)")))?,
+            );
+        }
+        levels.retain(|g| *g != PivotDateGroup::None);
+    } else if raw.len() > 1 {
+        return Err(bad(C, "`range` can't be combined with date levels"));
+    }
+    let sys = s.doc()?.wb.date_system;
+    let (start, end) = (date_or_number(C, p, "start", sys)?, date_or_number(C, p, "end", sys)?);
+    let interval = match p.get("interval") {
+        None | Some(Json::Null) => None,
+        Some(v) => Some(v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| bad(C, "`interval` must be a number"))?),
+    };
+    let days = match p.get("days") {
+        None | Some(Json::Null) => 1,
+        Some(v) => v
+            .as_u64()
+            .filter(|d| (1..=u64::from(PivotDateRange::MAX_DAYS)).contains(d))
+            .ok_or_else(|| bad(C, "`days` is a whole number from 1 to 32767"))? as u32,
+    };
+    if days > 1 && levels != [PivotDateGroup::Days] {
+        return Err(other("Number of days applies only when grouping by Days alone."));
+    }
+    update(s, p, |pt, src, _| {
+        let grouping = range || !levels.is_empty();
+        if grouping {
+            if !pt.calculated_items.is_empty() {
+                return Err(other(super::pivot_tools::GROUP_WITH_CALC_ITEMS));
+            }
+            let c = src.col(&field).ok_or_else(|| other(super::pivot_tools::CANNOT_GROUP))?;
+            if !src.numeric.get(c).copied().unwrap_or(false) {
+                return Err(other(super::pivot_tools::CANNOT_GROUP));
+            }
+            if range {
+                // Excel's defaults: from the smallest to the largest number, in tens.
+                let (lo, hi) = number_bounds(src, c);
+                let g = PivotNumberGroup::checked(start.unwrap_or(lo), end.unwrap_or(hi), interval.unwrap_or(10.0)).ok_or_else(|| {
+                    other("Enter a starting number no greater than the ending number and a positive By value (at most 100,000 groups).")
+                })?;
+                set_grouping(pt, &field, &[], Some(g), None)?;
+                return Ok(json!({}));
+            }
+            if let (Some(a), Some(b)) = (start, end)
+                && a > b
+            {
+                return Err(other("The ending date must be after the starting date."));
+            }
+            let dr = (start.is_some() || end.is_some() || days > 1).then_some(PivotDateRange { start, end, days });
+            set_grouping(pt, &field, &levels, None, dr)?;
+        } else {
+            set_grouping(pt, &field, &[], None, None)?;
+        }
         Ok(json!({}))
     })
 }
@@ -1191,14 +1701,10 @@ fn collapse(s: &mut Session, p: &Json) -> Result<Json> {
     update(s, p, |pt, src, wb| {
         let all = match &items {
             Some(v) => v.clone(),
-            None => {
-                let f = pt.rows.iter().chain(pt.columns.iter()).find(|f| f.source_col.eq_ignore_ascii_case(&field));
-                let g = f.map(|f| f.date_group).unwrap_or_default();
-                match src.col(&field) {
-                    Some(c) => pv::distinct_labels(wb, src, c, g, 100_000),
-                    None => vec![],
-                }
-            }
+            None => match pv::resolve_name(src, pt, &field) {
+                Some((c, g)) => pv::distinct_labels(wb, src, c, g, 100_000),
+                None => vec![],
+            },
         };
         let f = axis_field(C, pt, &field)?;
         if on {
@@ -1325,8 +1831,12 @@ fn change_source(s: &mut Session, p: &Json) -> Result<Json> {
     update(s, p, move |pt, _, _| {
         pt.source = source.clone();
         let mut dropped: Vec<String> = vec![];
+        // Grouped fields and calculated items go with the source field they are made from.
+        pt.group_fields.retain(|g| src.col(&g.base).is_some());
+        pt.calculated_items.retain(|c| src.col(&c.field).is_some());
+        let groups: Vec<String> = pt.group_fields.iter().map(|g| g.name.clone()).collect();
         let keep = |name: &str, dropped: &mut Vec<String>| {
-            let ok = src.col(name).is_some();
+            let ok = src.col(name).is_some() || groups.iter().any(|g| g.eq_ignore_ascii_case(name));
             if !ok {
                 dropped.push(name.to_string());
             }
@@ -1368,11 +1878,48 @@ fn delete(s: &mut Session, p: &Json) -> Result<Json> {
             }
         }
         pv::clear_output(&mut cx.wb, si, pi);
+        // Its timelines no longer filter it.
+        if let Some(id) = cx.wb.sheet(si).and_then(|sh| sh.pivots.get(pi)).map(|pt| pt.id) {
+            for i in 0..cx.wb.sheets.len() {
+                if cx.wb.sheet(i).is_some_and(|sh| sh.timelines.iter().any(|t| t.pivots.contains(&id))) {
+                    for t in cx.sheet_mut(i)?.timelines.iter_mut() {
+                        t.pivots.retain(|x| *x != id);
+                    }
+                }
+            }
+        }
         let sh = cx.sheet_mut(si)?;
         if pi < sh.pivots.len() {
             sh.pivots.remove(pi);
         }
         cx.structural = true;
+        Ok(json!({}))
+    })
+}
+
+/// PivotTable Analyze › Clear › Clear All: an empty PivotTable on the same source, as Excel
+/// leaves it. Calculated fields are definitions rather than layout, so they stay available.
+fn clear_all(s: &mut Session, p: &Json) -> Result<Json> {
+    update(s, p, |pt, _, _| {
+        pt.rows.clear();
+        pt.columns.clear();
+        pt.values.clear();
+        pt.filters.clear();
+        pt.values_on_rows = false;
+        pt.values_position = None;
+        Ok(json!({}))
+    })
+}
+
+/// PivotTable Analyze › Clear › Clear Filters: report filters show (All) again and row and
+/// column fields lose their hidden-items filters.
+fn clear_filters(s: &mut Session, p: &Json) -> Result<Json> {
+    update(s, p, |pt, _, _| {
+        let axes: Vec<String> = pt.rows.iter().chain(pt.columns.iter()).map(|f| f.source_col.to_ascii_lowercase()).collect();
+        pt.filters.retain(|f| f.rule.is_none() && !axes.contains(&f.source_col.to_ascii_lowercase()));
+        for f in &mut pt.filters {
+            f.selected = None;
+        }
         Ok(json!({}))
     })
 }
@@ -1457,7 +2004,7 @@ fn insert_pivot_chart(s: &mut Session, p: &Json) -> Result<Json> {
 fn suggestions(wb: &Workbook, src: &pv::Source) -> Vec<Json> {
     let n = src.headers.len();
     let h = |i: usize| src.headers.get(i).cloned().unwrap_or_default();
-    let distinct = |i: usize| pv::distinct_labels(wb, src, i, PivotDateGroup::None, 1001).len();
+    let distinct = |i: usize| pv::distinct_labels(wb, src, i, pv::Grouping::default(), 1001).len();
     let records = src.rows.len().max(1);
     let is_num = |i: usize| src.numeric.get(i).copied().unwrap_or(false);
     let is_date = |i: usize| src.dates.get(i).copied().unwrap_or(false);
@@ -1552,6 +2099,7 @@ fn recommended(s: &mut Session, p: &Json) -> Result<Json> {
 #[cfg(test)]
 mod tests {
     use gridcraft_core::{CellError, CellRef, Value};
+    use gridcraft_model::{PivotCompare, PivotFilter, PivotRule, PivotTopBy};
     use serde_json::{Value as Json, json};
 
     use crate::Session;
@@ -1616,6 +2164,67 @@ mod tests {
     }
 
     #[test]
+    fn every_show_values_as_mode() {
+        // Sum of Sales, Region down (East, North, West), Product across (Apples, Pears, Plums):
+        //          Apples Pears Plums Total
+        //   East     160   195    60   415
+        //   North     90    30    15   135
+        //   West     170    45    70   285
+        //   Total    420   270   145   835
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Product"], "values": ["Sales"]})).unwrap();
+        let close = |s: &Session, a: &str, want: f64| {
+            let got = val(s, a).as_f64().unwrap_or_else(|| panic!("{a} = {:?}", val(s, a)));
+            assert!((got - want).abs() < 1e-12, "{a}: {got} vs {want}");
+        };
+        let set = |s: &mut Session, p: serde_json::Value| {
+            let mut p = p;
+            p["field"] = json!("Sum of Sales");
+            s.execute("pivot.valueSettings", p).unwrap();
+        };
+        set(&mut s, json!({"showAs": "percentOf", "baseField": "Region", "baseItem": "East"}));
+        close(&s, "B6", 90.0 / 160.0);
+        close(&s, "B5", 1.0);
+        assert_eq!(val(&s, "B8"), Value::Empty, "the grand total row has no Region item");
+        let st = s.execute("cell.get", json!({"cell": "B6"})).unwrap();
+        assert_eq!(st["style"]["num_fmt"], "0.00%");
+        set(&mut s, json!({"showAs": "differenceFrom", "baseItem": "(previous)"}));
+        close(&s, "B6", 90.0 - 160.0);
+        assert_eq!(val(&s, "B5"), Value::Empty, "East has no previous item");
+        set(&mut s, json!({"showAs": "percentDifferenceFrom", "baseItem": "East"}));
+        close(&s, "C7", (45.0 - 195.0) / 195.0);
+        set(&mut s, json!({"showAs": "runningTotal"}));
+        close(&s, "B7", 160.0 + 90.0 + 170.0);
+        set(&mut s, json!({"showAs": "percentRunningTotal"}));
+        close(&s, "B6", (160.0 + 90.0) / 420.0);
+        set(&mut s, json!({"showAs": "rankAscending"}));
+        close(&s, "B6", 1.0);
+        close(&s, "B7", 3.0);
+        set(&mut s, json!({"showAs": "rankDescending"}));
+        close(&s, "B7", 1.0);
+        set(&mut s, json!({"showAs": "index"}));
+        close(&s, "B5", 160.0 * 835.0 / (415.0 * 420.0));
+        set(&mut s, json!({"showAs": "percentOfParentRowTotal"}));
+        close(&s, "B5", 160.0 / 420.0);
+        set(&mut s, json!({"showAs": "percentOfParentColumnTotal"}));
+        close(&s, "B5", 160.0 / 415.0);
+        // % of Parent Total over nested rows: Region > Product, each product as a share of its
+        // region.
+        s.execute("pivot.moveField", json!({"field": "Product", "from": "columns", "to": "rows"})).unwrap();
+        set(&mut s, json!({"showAs": "percentOfParentTotal", "baseField": "Region"}));
+        let row = find_row(&s, "Apples").unwrap();
+        close(&s, &CellRef::new(row, 1).a1(), 160.0 / 415.0);
+        assert!(s.execute("pivot.valueSettings", json!({"field": "Sum of Sales", "baseField": "Units"})).is_err());
+        // Through xlsx.
+        set(&mut s, json!({"showAs": "percentOf", "baseField": "Region", "baseItem": "North"}));
+        let want = pt(&s).values;
+        let b64 = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap()["base64"].as_str().unwrap().to_string();
+        s.execute("file.open", json!({"name": "p.xlsx", "base64": b64})).unwrap();
+        s.execute("sheet.activate", json!({"sheet": 0})).unwrap();
+        assert_eq!(pt(&s).values, want);
+    }
+
+    #[test]
     fn region_by_product_sum_of_sales() {
         let mut s = sales();
         s.execute("insert.pivotTable", json!({})).unwrap();
@@ -1674,6 +2283,355 @@ mod tests {
         assert_eq!(text(&s, "I4"), "Total Average of Units");
         let last = pt(&s).last_range.unwrap();
         assert_eq!(val(&s, &CellRef::new(last.end.row, 7).a1()), Value::Number(TOTAL));
+    }
+
+    fn grand_total(s: &Session) -> Value {
+        let row = find_row(s, "Grand Total").expect("a Grand Total row");
+        val(s, &CellRef::new(row, pt(s).last_range.unwrap().start.col + 1).a1())
+    }
+
+    fn dormant_product_rules() -> [(PivotRule, f64); 3] {
+        [
+            (PivotRule::Label { op: PivotCompare::Equals, value: "Pears".into(), value2: String::new() }, 270.0),
+            (PivotRule::Value { op: PivotCompare::GreaterOrEqual, field: "Sum of Sales".into(), value: 270.0, value2: 0.0 }, 690.0),
+            (PivotRule::Top { top: true, count: 1.0, by: PivotTopBy::Items, field: "Sum of Sales".into() }, 420.0),
+        ]
+    }
+
+    fn add_dormant_product_rule(s: &mut Session, rule: PivotRule) -> Vec<PivotFilter> {
+        // XLSX can retain a rule on a pivotField that has no axis. Build that state without
+        // an external workbook or using a command that requires the field to be on an axis.
+        let d = s.doc_mut().unwrap();
+        let active = d.wb.active_sheet;
+        let p = std::sync::Arc::make_mut(&mut d.wb).sheet_mut(active).unwrap().pivots.last_mut().unwrap();
+        p.filters.push(PivotFilter { source_col: "Product".into(), selected: None, rule: Some(rule) });
+        p.filters.clone()
+    }
+
+    fn pivot_report_values(s: &Session) -> Vec<Value> {
+        // Include the report-filter rows above the anchor and the empty cells around the report.
+        (0..20).flat_map(|row| (0..8).map(move |col| val(s, &CellRef::new(row, col).a1()))).collect()
+    }
+
+    #[test]
+    fn dormant_filter_rules_do_not_change_report_on_refresh() {
+        for (rule, _) in dormant_product_rules() {
+            let mut s = sales();
+            s.execute("insert.pivotTable", json!({"rows": ["Region"], "values": ["Sales"]})).unwrap();
+            let before = pt(&s);
+            let cells = s.doc().unwrap().wb.active().unwrap().cells.clone();
+            let filters = add_dormant_product_rule(&mut s, rule);
+            s.execute("pivot.refresh", json!({})).unwrap();
+            assert_eq!(pt(&s).filters, filters);
+            assert_eq!(pt(&s).anchor, before.anchor, "a dormant rule is not a report-filter row");
+            assert_eq!(pt(&s).last_range, before.last_range);
+            assert_eq!(s.doc().unwrap().wb.active().unwrap().cells, cells, "a dormant rule leaves the rendered cells and styles unchanged");
+            assert_eq!(grand_total(&s), Value::Number(TOTAL));
+            let info = s.execute("pivot.fields", json!({})).unwrap();
+            assert_eq!(info["fields"][1]["name"], "Product");
+            assert_eq!(info["fields"][1]["areas"], json!([]), "a dormant rule does not place its field in Filters");
+            assert_eq!(info["filters"][0]["report"], false);
+        }
+    }
+
+    #[test]
+    fn dormant_filter_rules_round_trip_and_activate_in_rows_or_columns() {
+        for area in ["rows", "columns"] {
+            for (rule, filtered_total) in dormant_product_rules() {
+                let mut s = sales();
+                s.execute("insert.pivotTable", json!({"values": ["Sales"]})).unwrap();
+                let before = pt(&s);
+                let cells = pivot_report_values(&s);
+                let filters = add_dormant_product_rule(&mut s, rule);
+                // A second save proves the imported rule is modelled, rather than only retained
+                // in opaque XML from the first file.
+                for _ in 0..2 {
+                    let b64 = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap()["base64"].as_str().unwrap().to_string();
+                    s.execute("file.open", json!({"name": "dormant-filters.xlsx", "base64": b64})).unwrap();
+                    s.execute("sheet.activate", json!({"sheet": 0})).unwrap();
+                    assert_eq!(pt(&s).filters, filters, "the rule must survive XLSX while its field has no axis");
+                    assert_eq!(pt(&s).anchor, before.anchor);
+                    assert_eq!(pt(&s).last_range, before.last_range);
+                    assert_eq!(pivot_report_values(&s), cells);
+                    s.execute("pivot.refresh", json!({})).unwrap();
+                    assert_eq!(pt(&s).anchor, before.anchor);
+                    assert_eq!(pt(&s).last_range, before.last_range);
+                    assert_eq!(pivot_report_values(&s), cells);
+                }
+                s.execute("pivot.addField", json!({"field": "Product", "area": area})).unwrap();
+                assert_eq!(pt(&s).filters, filters, "adding the field to an axis must activate its saved rule");
+                let report = pt(&s);
+                assert_eq!(val(&s, &report.last_range.unwrap().end.a1()), Value::Number(filtered_total));
+                assert!(report.rows.iter().chain(report.columns.iter()).any(|f| f.source_col == "Product"));
+            }
+        }
+    }
+
+    #[test]
+    fn clear_filter_removes_dormant_rules_and_keeps_report_filters() {
+        for (command, params) in
+            [("pivot.clearFilter", json!({"field": "Product"})), ("pivot.clearFilter", json!({})), ("pivot.clearFilters", json!({}))]
+        {
+            for (rule, _) in dormant_product_rules() {
+                let mut s = sales();
+                s.execute("insert.pivotTable", json!({"rows": ["Region"], "values": ["Sales"], "filters": ["Date"]})).unwrap();
+                let before = pt(&s);
+                let cells = s.doc().unwrap().wb.active().unwrap().cells.clone();
+                add_dormant_product_rule(&mut s, rule);
+                s.execute(command, params.clone()).unwrap();
+                assert_eq!(pt(&s).filters, before.filters, "clearing the rule must not leave a Product report filter");
+                assert_eq!(pt(&s).anchor, before.anchor);
+                assert_eq!(pt(&s).last_range, before.last_range);
+                assert_eq!(s.doc().unwrap().wb.active().unwrap().cells, cells);
+            }
+        }
+    }
+
+    #[test]
+    fn dormant_value_rules_follow_value_field_rename_and_removal() {
+        for (rule, _) in dormant_product_rules().into_iter().skip(1) {
+            let mut s = sales();
+            let mut control = sales();
+            for session in [&mut s, &mut control] {
+                session.execute("insert.pivotTable", json!({"rows": ["Region"], "values": ["Sales", "Units"], "filters": ["Date"]})).unwrap();
+            }
+            add_dormant_product_rule(&mut s, rule);
+            for session in [&mut s, &mut control] {
+                session.execute("pivot.valueSettings", json!({"field": "Sum of Sales", "name": "Revenue"})).unwrap();
+            }
+            let renamed = pt(&s);
+            assert_eq!(renamed.filters.len(), 2);
+            assert_eq!(renamed.filters[1].rule.as_ref().and_then(PivotRule::value_field), Some("Revenue"));
+            assert_eq!(renamed.filters[1].selected, None);
+            assert_eq!(renamed.anchor, pt(&control).anchor);
+            assert_eq!(renamed.last_range, pt(&control).last_range);
+            assert_eq!(s.doc().unwrap().wb.active().unwrap().cells, control.doc().unwrap().wb.active().unwrap().cells);
+            let info = s.execute("pivot.fields", json!({})).unwrap();
+            assert_eq!(info["fields"][1]["areas"], json!([]));
+            assert_eq!(info["filters"][1]["report"], false);
+            for session in [&mut s, &mut control] {
+                session.execute("pivot.removeField", json!({"field": "Revenue", "area": "values"})).unwrap();
+            }
+            assert_eq!(
+                pt(&s).filters,
+                pt(&control).filters,
+                "removing the value field removes its dormant rule without creating a Product report filter"
+            );
+            assert_eq!(pt(&s).anchor, pt(&control).anchor);
+            assert_eq!(pt(&s).last_range, pt(&control).last_range);
+            assert_eq!(s.doc().unwrap().wb.active().unwrap().cells, control.doc().unwrap().wb.active().unwrap().cells);
+            assert_eq!(grand_total(&s), Value::Number(72.0));
+        }
+    }
+
+    #[test]
+    fn label_filters() {
+        // Sum of Sales by Region: East 415, North 135, West 285.
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "values": ["Sales"]})).unwrap();
+        let mut label = |op: &str, value: &str, value2: Option<&str>| {
+            let mut p = json!({"field": "Region", "op": op, "value": value});
+            if let Some(v) = value2 {
+                p["value2"] = json!(v);
+            }
+            s.execute("pivot.labelFilter", p).unwrap();
+            grand_total(&s)
+        };
+        assert_eq!(label("beginsWith", "E", None), Value::Number(415.0));
+        assert_eq!(label("contains", "ST", None), Value::Number(700.0), "case does not matter");
+        assert_eq!(label("equals", "?orth", None), Value::Number(135.0), "wildcards");
+        assert_eq!(label("doesNotEqual", "e*t", None), Value::Number(420.0));
+        assert_eq!(label("endsWith", "h", None), Value::Number(135.0));
+        assert_eq!(label("doesNotBeginWith", "w", None), Value::Number(550.0));
+        assert_eq!(label("greaterThan", "N", None), Value::Number(420.0));
+        assert_eq!(label("between", "Z", Some("M")), Value::Number(420.0), "bounds in either order");
+        assert_eq!(label("notBetween", "M", Some("Z")), Value::Number(415.0));
+        assert!(find_row(&s, "West").is_none());
+        // One filter per field: selecting items clears the label filter, and the reverse.
+        s.execute("pivot.filter", json!({"field": "Region", "selected": ["North", "West"]})).unwrap();
+        assert_eq!(pt(&s).filters.len(), 1);
+        assert!(pt(&s).filters[0].rule.is_none());
+        assert_eq!(grand_total(&s), Value::Number(420.0));
+        s.execute("pivot.labelFilter", json!({"field": "Region", "op": "equals", "value": "East"})).unwrap();
+        assert_eq!(pt(&s).filters[0].selected, None);
+        assert_eq!(grand_total(&s), Value::Number(415.0));
+        // Selecting all items keeps the label filter.
+        s.execute("pivot.filter", json!({"field": "Region", "selected": null})).unwrap();
+        assert_eq!(grand_total(&s), Value::Number(415.0));
+        let info = s.execute("pivot.list", json!({})).unwrap();
+        assert_eq!(info[0]["filters"][0]["rule"], json!({"type": "label", "op": "equals", "value": "East", "value2": ""}));
+        s.execute("pivot.clearFilter", json!({"field": "Region"})).unwrap();
+        assert!(pt(&s).filters.is_empty());
+        assert_eq!(grand_total(&s), Value::Number(TOTAL));
+        // Numbers compare as numbers.
+        s.execute("pivot.addField", json!({"field": "Units", "area": "rows", "position": 0})).unwrap();
+        s.execute("pivot.removeField", json!({"field": "Region"})).unwrap();
+        s.execute("pivot.labelFilter", json!({"field": "Units", "op": "greaterThanOrEqual", "value": 10})).unwrap();
+        assert_eq!(grand_total(&s), Value::Number(220.0));
+    }
+
+    #[test]
+    fn value_and_top10_filters() {
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region"], "values": ["Sales", "Units"]})).unwrap();
+        let mut run = |c: &str, p: Json| {
+            s.execute(c, p).unwrap();
+            grand_total(&s)
+        };
+        assert_eq!(run("pivot.valueFilter", json!({"field": "Region", "op": "greaterThan", "value": 200})), Value::Number(700.0));
+        assert_eq!(run("pivot.valueFilter", json!({"field": "Region", "op": "between", "value": 300, "value2": 100})), Value::Number(420.0));
+        // By another value field: Units are East 33, North 12, West 27.
+        let units = json!({"field": "Region", "op": "lessThan", "value": 20, "valueField": "Sum of Units"});
+        assert_eq!(run("pivot.valueFilter", units), Value::Number(135.0));
+        assert_eq!(run("pivot.top10", json!({"field": "Region", "count": 1})), Value::Number(415.0));
+        assert_eq!(run("pivot.top10", json!({"field": "Region", "top": false, "count": 1})), Value::Number(135.0));
+        assert_eq!(run("pivot.top10", json!({"field": "Region", "count": 50, "by": "percent"})), Value::Number(700.0));
+        assert_eq!(run("pivot.top10", json!({"field": "Region", "count": 400, "by": "sum"})), Value::Number(415.0));
+        assert_eq!(run("pivot.top10", json!({"field": "Region", "count": 99})), Value::Number(TOTAL));
+        // A renamed value field keeps its filter; a removed one takes the filter with it.
+        s.execute("pivot.top10", json!({"field": "Region", "count": 1, "valueField": "Sum of Units"})).unwrap();
+        s.execute("pivot.valueSettings", json!({"field": "Sum of Units", "name": "Units Sold"})).unwrap();
+        assert_eq!(pt(&s).filters[0].rule.as_ref().and_then(|r| r.value_field()), Some("Units Sold"));
+        s.execute("pivot.removeField", json!({"field": "Units Sold", "area": "values"})).unwrap();
+        assert!(pt(&s).filters.is_empty());
+        assert_eq!(grand_total(&s), Value::Number(TOTAL));
+        // Within each parent: the top Product of each Region, with totals of the items shown.
+        s.execute("pivot.addField", json!({"field": "Product", "area": "rows"})).unwrap();
+        s.execute("pivot.top10", json!({"field": "Product", "count": 1})).unwrap();
+        assert_eq!(grand_total(&s), Value::Number(195.0 + 90.0 + 170.0));
+        let east = find_row(&s, "East").unwrap();
+        assert_eq!(val(&s, &CellRef::new(east, 1).a1()), Value::Number(195.0), "East's subtotal counts only Pears");
+        assert_eq!(text(&s, &CellRef::new(east + 1, 0).a1()), "Pears");
+        // A filter follows its field between rows and columns, and goes with it to the filters area.
+        s.execute("pivot.moveField", json!({"field": "Product", "from": "rows", "to": "columns"})).unwrap();
+        assert!(pt(&s).filters[0].rule.is_some());
+        s.execute("pivot.moveField", json!({"field": "Product", "from": "columns", "to": "filters"})).unwrap();
+        assert_eq!(pt(&s).filters[0].rule, None);
+        assert_eq!(pt(&s).filters[0].selected, None);
+        // On a column field: Apples 420 and Pears 270 pass.
+        s.execute("pivot.moveField", json!({"field": "Product", "from": "filters", "to": "columns"})).unwrap();
+        s.execute("pivot.valueFilter", json!({"field": "Product", "op": "greaterThanOrEqual", "value": 270})).unwrap();
+        let r = find_row(&s, "Grand Total").unwrap();
+        assert_eq!(text(&s, "D4"), "Grand Total", "two product columns");
+        assert_eq!(val(&s, &CellRef::new(r, 3).a1()), Value::Number(690.0));
+        // Clear Filters on the whole PivotTable; a report filter stays, showing all.
+        s.execute("pivot.addField", json!({"field": "Date", "area": "filters"})).unwrap();
+        s.execute("pivot.filter", json!({"field": "Date", "selected": ["1/15/2026"]})).unwrap();
+        s.execute("pivot.clearFilter", json!({})).unwrap();
+        assert_eq!(pt(&s).filters.len(), 1);
+        assert_eq!(pt(&s).filters[0].source_col, "Date");
+        assert_eq!(pt(&s).filters[0].selected, None);
+    }
+
+    #[test]
+    fn top10_keeps_items_tied_at_the_cut_off() {
+        // #498 review: Excel keeps every item tied with the last one a Top N keeps.
+        let mut s = Session::new();
+        s.new_workbook();
+        let rows = json!([["Item", "Score"], ["A", 5], ["B", 5], ["C", 5], ["D", 10], ["E", 1]]);
+        s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+        s.execute("insert.pivotTable", json!({"source": "Sheet1!A1:B6", "rows": ["Item"], "values": ["Score"]})).unwrap();
+        // Top 2: D, then A, B and C all tie at 5 → 25.
+        s.execute("pivot.top10", json!({"field": "Item", "count": 2})).unwrap();
+        assert_eq!(grand_total(&s), Value::Number(25.0));
+        // Top 1 has no tie at its cut-off.
+        s.execute("pivot.top10", json!({"field": "Item", "count": 1})).unwrap();
+        assert_eq!(grand_total(&s), Value::Number(10.0));
+        // Bottom 2: E, then the three tied at 5 → 16.
+        s.execute("pivot.top10", json!({"field": "Item", "count": 2, "top": false})).unwrap();
+        assert_eq!(grand_total(&s), Value::Number(16.0));
+    }
+
+    #[test]
+    fn filters_round_trip_and_refusals() {
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region", "Product"], "columns": [], "values": ["Sales", "Units"]})).unwrap();
+        s.execute("pivot.labelFilter", json!({"field": "Region", "op": "doesNotContain", "value": "or"})).unwrap();
+        s.execute("pivot.top10", json!({"field": "Product", "top": false, "count": 2, "valueField": "Sum of Units"})).unwrap();
+        let want = pt(&s).filters;
+        let total = grand_total(&s);
+        // West: Pears 3 and Plums 7 units (45 + 70); East: Plums 4 and Pears 13 units (60 + 195).
+        assert_eq!(total, Value::Number(370.0));
+        let b64 = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap()["base64"].as_str().unwrap().to_string();
+        s.execute("file.open", json!({"name": "f.xlsx", "base64": b64})).unwrap();
+        s.execute("sheet.activate", json!({"sheet": 0})).unwrap();
+        assert_eq!(pt(&s).filters, want);
+        s.execute("pivot.refresh", json!({})).unwrap();
+        assert_eq!(grand_total(&s), total);
+        // Refusals.
+        let refused = [
+            ("pivot.labelFilter", json!({"field": "Units", "op": "equals", "value": "1"})),
+            ("pivot.labelFilter", json!({"field": "Region", "op": "between", "value": "A"})),
+            ("pivot.labelFilter", json!({"field": "Region", "op": "near", "value": "A"})),
+            ("pivot.labelFilter", json!({"field": "Region", "op": "equals"})),
+            ("pivot.valueFilter", json!({"field": "Region", "op": "contains", "value": 1})),
+            ("pivot.valueFilter", json!({"field": "Region", "op": "equals", "value": "x"})),
+            ("pivot.valueFilter", json!({"field": "Region", "op": "equals", "value": 1, "valueField": "Nope"})),
+            ("pivot.top10", json!({"field": "Region", "count": 0})),
+            ("pivot.top10", json!({"field": "Region", "count": 1.5})),
+            ("pivot.top10", json!({"field": "Region", "count": 120, "by": "percent"})),
+            ("pivot.top10", json!({"field": "Region", "by": "rows"})),
+            ("pivot.clearFilter", json!({"field": "Nope"})),
+        ];
+        for (c, p) in refused {
+            assert!(s.execute(c, p.clone()).is_err(), "{c} {p}");
+        }
+        assert_eq!(pt(&s).filters, want, "refusals change nothing");
+        s.execute("pivot.removeField", json!({"field": "Sum of Sales", "area": "values"})).unwrap();
+        s.execute("pivot.removeField", json!({"field": "Sum of Units", "area": "values"})).unwrap();
+        assert!(s.execute("pivot.top10", json!({"field": "Region"})).is_err(), "no value field");
+    }
+
+    #[test]
+    fn number_range_grouping() {
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Units"], "values": ["Sales"]})).unwrap();
+        // Units in fives: 0-4 (2, 4, 3, 1), 5-9 (5, 8, 7, 9, 6, 5), 10-14 (10, 12).
+        s.execute("pivot.group", json!({"field": "Units", "by": "range", "start": 0, "end": 14, "interval": 5})).unwrap();
+        assert_eq!(text(&s, "A4"), "0-4");
+        assert_eq!(val(&s, "B4"), Value::Number(150.0));
+        assert_eq!(text(&s, "A5"), "5-9");
+        assert_eq!(val(&s, "B5"), Value::Number(465.0));
+        assert_eq!(text(&s, "A6"), "10-14");
+        assert_eq!(val(&s, "B6"), Value::Number(220.0));
+        assert_eq!(val(&s, "B7"), Value::Number(TOTAL));
+        let l = s.execute("pivot.list", json!({})).unwrap();
+        assert_eq!(l[0]["rows"][0]["group"], "range");
+        assert_eq!(l[0]["rows"][0]["range"], json!({"start": 0.0, "end": 14.0, "interval": 5.0}));
+        // Values outside the bounds fall into "<start" and ">end", sorted first and last.
+        s.execute("pivot.group", json!({"field": "Units", "by": "range", "start": 3, "end": 9, "interval": 5})).unwrap();
+        assert_eq!(text(&s, "A4"), "<3");
+        assert_eq!(val(&s, "B4"), Value::Number(45.0));
+        assert_eq!(text(&s, "A5"), "3-7");
+        assert_eq!(text(&s, "A7"), ">9");
+        assert_eq!(val(&s, "B7"), Value::Number(220.0));
+        // Fractional widths show both ends; the defaults are the data's bounds, in tens.
+        s.execute("pivot.group", json!({"field": "Units", "by": "range", "start": 0, "end": 12, "interval": 2.5})).unwrap();
+        assert_eq!(text(&s, "A4"), "0-2.5");
+        s.execute("pivot.group", json!({"field": "Units", "by": "range"})).unwrap();
+        assert_eq!(text(&s, "A4"), "1-10");
+        assert_eq!(val(&s, "B4"), Value::Number(TOTAL - 120.0));
+        assert_eq!(text(&s, "A5"), "11-20");
+        // Through xlsx.
+        let want = pt(&s).rows;
+        let b64 = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap()["base64"].as_str().unwrap().to_string();
+        s.execute("file.open", json!({"name": "p.xlsx", "base64": b64})).unwrap();
+        s.execute("sheet.activate", json!({"sheet": 0})).unwrap();
+        assert_eq!(pt(&s).rows, want);
+        // Unusable bounds, widths and fields are refused; `none` ungroups.
+        for bad in [
+            json!({"field": "Units", "by": "range", "interval": 0}),
+            json!({"field": "Units", "by": "range", "interval": -5}),
+            json!({"field": "Units", "by": "range", "start": 10, "end": 1}),
+            json!({"field": "Units", "by": "range", "interval": 1e-9}),
+            json!({"field": "Units", "by": "range", "start": "low"}),
+            json!({"field": "Region", "by": "range"}),
+        ] {
+            assert!(s.execute("pivot.group", bad.clone()).is_err(), "{bad}");
+        }
+        s.execute("pivot.group", json!({"field": "Units", "by": "none"})).unwrap();
+        assert_eq!(text(&s, "A4"), "1");
+        assert_eq!(pt(&s).rows[0].number_group, None);
     }
 
     #[test]
@@ -2218,6 +3176,10 @@ mod tests {
             "pivot.moveField",
             "pivot.valueSettings",
             "pivot.filter",
+            "pivot.labelFilter",
+            "pivot.valueFilter",
+            "pivot.top10",
+            "pivot.clearFilter",
             "pivot.sort",
             "pivot.group",
             "pivot.collapse",
@@ -2229,6 +3191,24 @@ mod tests {
             "pivot.refresh",
             "data.refreshAll",
             "pivot.changeSource",
+            "pivot.groupSelection",
+            "pivot.ungroup",
+            "pivot.calculatedItem",
+            "pivot.solveOrder",
+            "pivot.listFormulas",
+            "insert.timeline",
+            "pivot.insertTimeline",
+            "timeline.select",
+            "timeline.clear",
+            "timeline.level",
+            "timeline.scroll",
+            "timeline.caption",
+            "timeline.reportConnections",
+            "timeline.style",
+            "timeline.size",
+            "timeline.showHeader",
+            "timeline.periods",
+            "timeline.delete",
             "pivot.delete",
         ];
         let hostile = [
@@ -2242,6 +3222,14 @@ mod tests {
             json!({"field": "Region", "selected": [null, 1, {"x": 1}], "index": 18446744073709551615u64, "showAs": "rank"}),
             json!({"apply": 99, "layout": "weird", "subtotals": 7, "style": "x".repeat(500)}),
             json!({"field": "Date", "by": "decades", "items": "nope", "order": "sideways"}),
+            json!({"field": "Region", "op": "between", "value": 1e308, "value2": "x", "count": -1, "by": "sum", "top": "x", "valueField": 7}),
+            json!({"field": "Region", "op": "notBetween", "value": ["x"], "count": 1e300, "by": "percent", "valueField": "nope"}),
+            json!({"field": "Date", "by": ["days", "hours", 7, null], "days": 4294967296u64, "start": "x", "end": -1e308, "items": [1, null]}),
+            json!({"field": "Date", "by": "days", "days": 32767, "start": 0, "end": 2958465}),
+            json!({"field": "Region", "items": ["East", "North"], "name": "", "formula": "=East[", "order": [null], "move": "sideways"}),
+            json!({"field": "Region", "name": "x".repeat(300), "formula": format!("={}", "East+".repeat(5000)), "delete": "yes"}),
+            json!({"timeline": -1, "start": "1/1/9999", "end": "1/1/1900", "level": "eons", "to": 1e300, "caption": 5, "pivots": ["Nope", 3]}),
+            json!({"timeline": "Date", "style": "x".repeat(100), "width": f64::NAN, "height": -5, "on": "maybe", "fields": ["Date", "Date", 9]}),
         ];
         for c in cmds {
             for h in &hostile {
@@ -2307,5 +3295,45 @@ mod tests {
         s.execute("pivot.collapse", json!({"field": "Grp"})).unwrap();
         // 64 Sub items under the collapsed "g" show as one column group: (1 + grand total) x 256 columns fit.
         s.execute("pivot.addField", json!({"field": "Sub", "area": "columns"})).unwrap();
+    }
+
+    #[test]
+    fn generate_getpivotdata_is_a_setting_on_by_default() {
+        let mut s = Session::new();
+        assert!(s.prefs.generate_get_pivot_data);
+        assert_eq!(s.execute("pivot.generateGetPivotData", json!({})).unwrap()["on"], false);
+        assert_eq!(s.execute("pivot.generateGetPivotData", json!({"on": true})).unwrap()["on"], true);
+        assert!(s.journal.is_empty(), "a setting, not an edit of the workbook");
+        // A prefs.json saved before the setting existed keeps it on.
+        let old: crate::Prefs = serde_json::from_str(r#"{"userName": "Ann"}"#).unwrap();
+        assert!(old.generate_get_pivot_data);
+    }
+
+    #[test]
+    fn clear_all_leaves_an_empty_pivottable_and_clear_filters_shows_every_item() {
+        let mut s = sales();
+        s.execute("insert.pivotTable", json!({"rows": ["Region", "Product"], "values": ["Sales"], "filters": ["Date"]})).unwrap();
+        s.execute("pivot.filter", json!({"field": "Product", "selected": ["Apples"]})).unwrap();
+        s.execute("pivot.filter", json!({"field": "Date", "selected": ["1/15/2026"]})).unwrap();
+        let p = pt(&s);
+        assert_eq!(p.filters.len(), 2);
+        s.execute("pivot.clearFilters", json!({})).unwrap();
+        let p = pt(&s);
+        // The report filter stays, showing (All); the row field's hidden items are gone.
+        assert_eq!(p.filters.len(), 1);
+        assert_eq!(p.filters[0].source_col, "Date");
+        assert_eq!(p.filters[0].selected, None);
+        let gt = find_row(&s, "Grand Total").unwrap();
+        assert_eq!(val(&s, &CellRef::new(gt, 1).a1()), Value::Number(TOTAL));
+        // Clear All keeps the PivotTable, now empty, and is one undo step.
+        s.execute("pivot.calculatedField", json!({"name": "Tax", "formula": "=Sales*0.1", "values": false})).unwrap();
+        s.execute("pivot.clearAll", json!({})).unwrap();
+        let p = pt(&s);
+        assert!(p.rows.is_empty() && p.columns.is_empty() && p.values.is_empty() && p.filters.is_empty());
+        assert_eq!(p.calculated_fields.len(), 1);
+        assert!(text(&s, "A3").starts_with("PivotTable1"), "{}", text(&s, "A3"));
+        assert_eq!(s.doc().unwrap().wb.active().unwrap().pivots.len(), 1);
+        s.execute("edit.undo", json!({})).unwrap();
+        assert_eq!(pt(&s).rows.len(), 2);
     }
 }

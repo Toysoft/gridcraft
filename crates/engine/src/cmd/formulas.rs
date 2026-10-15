@@ -192,6 +192,12 @@ pub fn function_list() -> Vec<Json> {
         ("ISREF", "Information", "ISREF(value)", "TRUE for references."),
         ("ISFORMULA", "Information", "ISFORMULA(reference)", "TRUE when the cell has a formula."),
         ("FORMULATEXT", "Lookup", "FORMULATEXT(reference)", "The formula of a cell as text."),
+        (
+            "GETPIVOTDATA",
+            "Lookup",
+            "GETPIVOTDATA(data_field, pivot_table, [field1, item1], ...)",
+            "Returns a value shown in a PivotTable report, named by its value field and items.",
+        ),
         ("SHEET", "Information", "SHEET([value])", "Sheet number."),
         ("SHEETS", "Information", "SHEETS([reference])", "Number of sheets."),
         ("AREAS", "Lookup", "AREAS(reference)", "Number of areas in a reference."),

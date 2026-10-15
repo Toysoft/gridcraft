@@ -387,6 +387,11 @@ pub(crate) fn paint_objects(app: &SheetApp, p: &Painter, geo: &Geo, wb: &Workboo
         }
     }
     paint_slicers(app, p, geo, wb, si, sh);
+    if !sh.timelines.is_empty()
+        && let Some(d) = app.session.active()
+    {
+        crate::timeline_view::paint(app, p, geo, &d.wb, sh);
+    }
     painted
 }
 
@@ -507,6 +512,12 @@ fn selection_frame(p: &Painter, r: Rect) {
 /// The topmost object under `p`: (kind, id, rect).
 pub fn hit(app: &SheetApp, geo: &Geo, sh: &Sheet, p: Pos2) -> Option<(&'static str, u32, Rect)> {
     let _ = app;
+    for tl in sh.timelines.iter().rev() {
+        let r = anchor_rect(geo, sh, &tl.anchor);
+        if r.contains(p) && geo.cells.contains(p) {
+            return Some(("timeline", tl.id, r));
+        }
+    }
     for sl in sh.slicers.iter().rev() {
         let r = anchor_rect(geo, sh, &sl.anchor);
         if r.contains(p) && geo.cells.contains(p) {

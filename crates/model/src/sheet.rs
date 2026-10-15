@@ -93,6 +93,9 @@ pub struct Sheet {
     /// On-sheet slicer widgets (filter a table column by clicking value tiles).
     #[serde(default)]
     pub slicers: Vec<Slicer>,
+    /// Timelines (filter PivotTables by a period of a date field).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timelines: Vec<Timeline>,
     /// PivotTables whose output lives on this sheet.
     #[serde(default)]
     pub pivots: Vec<PivotTable>,
@@ -156,6 +159,7 @@ impl Sheet {
             shapes: vec![],
             sparklines: vec![],
             slicers: vec![],
+            timelines: vec![],
             pivots: vec![],
             protection: None,
             edit_ranges: vec![],

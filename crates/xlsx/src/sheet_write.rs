@@ -488,8 +488,8 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
         }
     }
 
-    // Drawing: pictures, charts, shapes.
-    if !sheet.images.is_empty() || !sheet.charts.is_empty() || !sheet.shapes.is_empty() {
+    // Drawing: pictures, charts, shapes, timelines.
+    if !sheet.images.is_empty() || !sheet.charts.is_empty() || !sheet.shapes.is_empty() || !sheet.timelines.is_empty() {
         out.drawings += 1;
         let dn = out.drawings;
         let mut drels = Rels::default();
@@ -529,6 +529,9 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
         }
         for sh in &sheet.shapes {
             objs.push(Obj::Shape(sh));
+        }
+        for t in &sheet.timelines {
+            objs.push(Obj::Timeline(t));
         }
         out.part(&format!("xl/drawings/drawing{dn}.xml"), Some(CT_DRAWING), crate::drawing::write_drawing(sheet, &wb.theme, &objs).into_bytes());
         if !drels.is_empty() {
@@ -584,7 +587,25 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
         .filter(|(_, cf)| !cf.ranges.is_empty() && matches!(cf.rule, CfRule::DataBar { gradient: false, .. }))
         .map(|(i, cf)| (cf, prio.get(i).copied().unwrap_or(1)))
         .collect();
-    if !solid_bars.is_empty() || !sheet.sparklines.is_empty() {
+    // Timelines: the sheet's timeline part, listed in its own extension.
+    let mut timeline_ext = String::new();
+    if !sheet.timelines.is_empty() {
+        out.timelines += 1;
+        let n = out.timelines;
+        let names = crate::timeline::cache_names(wb).into_iter().nth(si).unwrap_or_default();
+        out.part(
+            &format!("xl/timelines/timeline{n}.xml"),
+            Some(crate::timeline::CT_TIMELINE),
+            crate::timeline::timelines_xml(sheet, &names, wb.date_system).into_bytes(),
+        );
+        let rid = rels.add_uri(crate::timeline::REL_TIMELINE, &format!("../timelines/timeline{n}.xml"));
+        timeline_ext = format!(
+            "<ext uri=\"{}\" xmlns:x15=\"{}\"><x15:timelineRefs><x15:timelineRef r:id=\"{rid}\"/></x15:timelineRefs></ext>",
+            crate::timeline::EXT_SHEET,
+            crate::timeline::NS_X15
+        );
+    }
+    if !solid_bars.is_empty() || !sheet.sparklines.is_empty() || !timeline_ext.is_empty() {
         s.push_str("<extLst>");
     }
     if !solid_bars.is_empty() {
@@ -622,7 +643,8 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
         }
         s.push_str("</x14:sparklineGroups></ext>");
     }
-    if !solid_bars.is_empty() || !sheet.sparklines.is_empty() {
+    s.push_str(&timeline_ext);
+    if !solid_bars.is_empty() || !sheet.sparklines.is_empty() || !timeline_ext.is_empty() {
         s.push_str("</extLst>");
     }
     s.push_str("</worksheet>");

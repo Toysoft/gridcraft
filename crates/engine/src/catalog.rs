@@ -300,6 +300,7 @@ pub const CATALOG: &[(&str, &str, &str, &str)] = &[
     ("chart.shapeFill", "Format", "Shape Styles", "Shape Fill"),
     ("chart.shapeOutline", "Format", "Shape Styles", "Shape Outline"),
     // PivotTable Analyze / Design
+    ("pivot.generateGetPivotData", "PivotTable Analyze", "PivotTable", "Generate GetPivotData"),
     ("pivot.fieldList", "PivotTable Analyze", "Show", "Field List"),
     ("pivot.refresh", "PivotTable Analyze", "Data", "Refresh"),
     ("pivot.changeSource", "PivotTable Analyze", "Data", "Change Data Source"),
@@ -315,8 +316,25 @@ pub const CATALOG: &[(&str, &str, &str, &str)] = &[
     ("pivot.filter", "PivotTable Analyze", "Filter", "Filter"),
     ("pivot.sort", "PivotTable Analyze", "Sort", "Sort"),
     ("pivot.group", "PivotTable Analyze", "Group", "Group Field"),
+    ("pivot.groupSelection", "PivotTable Analyze", "Group", "Group Selection"),
+    ("pivot.ungroup", "PivotTable Analyze", "Group", "Ungroup"),
+    ("pivot.calculatedItem", "PivotTable Analyze", "Calculations", "Calculated Item"),
+    ("pivot.solveOrder", "PivotTable Analyze", "Calculations", "Solve Order"),
+    ("pivot.listFormulas", "PivotTable Analyze", "Calculations", "List Formulas"),
+    ("pivot.insertTimeline", "PivotTable Analyze", "Filter", "Insert Timeline"),
+    // Timeline (contextual)
+    ("timeline.caption", "Timeline", "Timeline", "Timeline Caption"),
+    ("timeline.reportConnections", "Timeline", "Timeline", "Report Connections"),
+    ("timeline.style", "Timeline", "Timeline Styles", "Timeline Styles"),
+    ("timeline.size", "Timeline", "Size", "Size"),
+    ("timeline.showHeader", "Timeline", "Show", "Header"),
+    ("timeline.showSelectionLabel", "Timeline", "Show", "Selection Label"),
+    ("timeline.showScrollbar", "Timeline", "Show", "Scrollbar"),
+    ("timeline.showTimeLevel", "Timeline", "Show", "Time Level"),
     ("pivot.collapse", "PivotTable Analyze", "Active Field", "Collapse Field"),
-    ("pivot.delete", "PivotTable Analyze", "Actions", "Clear All"),
+    ("pivot.clearAll", "PivotTable Analyze", "Actions", "Clear All"),
+    ("pivot.clearFilters", "PivotTable Analyze", "Actions", "Clear Filters"),
+    ("pivot.delete", "PivotTable Analyze", "Actions", "Delete PivotTable"),
 ];
 
 /// Distinct catalog ids.

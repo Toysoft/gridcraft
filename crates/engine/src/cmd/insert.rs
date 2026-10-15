@@ -1099,6 +1099,7 @@ fn delete_object(s: &mut Session, p: &Json) -> Result<Json> {
             "chart" => sh.charts.retain(|c| c.id != id),
             "image" => sh.images.retain(|c| c.id != id),
             "slicer" => sh.slicers.retain(|c| c.id != id),
+            "timeline" => sh.timelines.retain(|c| c.id != id),
             _ => sh.shapes.retain(|c| c.id != id),
         }
         Ok(Json::Null)
@@ -1116,6 +1117,7 @@ fn move_object(s: &mut Session, p: &Json) -> Result<Json> {
             "chart" => sh.charts.iter_mut().find(|c| c.id == id).map(|c| &mut c.anchor),
             "image" => sh.images.iter_mut().find(|c| c.id == id).map(|c| &mut c.anchor),
             "slicer" => sh.slicers.iter_mut().find(|c| c.id == id).map(|c| &mut c.anchor),
+            "timeline" => sh.timelines.iter_mut().find(|c| c.id == id).map(|c| &mut c.anchor),
             "shape" => sh.shapes.iter_mut().find(|c| c.id == id).map(|c| &mut c.anchor),
             _ => None,
         };

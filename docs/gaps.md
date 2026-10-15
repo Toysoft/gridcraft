@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (rows auto-fit oversized fonts on open and whole-row/column formatting) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (§8: preserve dormant PivotTable filter rules on XLSX round-trip) · **Target:** Microsoft Excel (Microsoft 365)
 
 Every known shortfall against Excel, one entry each, ranked by user impact (what blocks someone
 using GridCraft for real work first). This is the work list: pick from the top, check the open
@@ -77,12 +77,26 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
   routine in business.
 - **Estimate:** 14–21 h (`.xls` styles and objects 10–15, encryption 4–6). [file-format-parity.md](file-format-parity.md)
 
-### 8. PivotTables: no slicers, calculated items, PivotCharts; unverified in Excel (F)
-- **Evidence:** `parity-checklist.md` missing `insert.slicer`, `insert.timeline`,
-  `insert.pivotChart`, `table.insertSlicer`; calculated items and GETPIVOTDATA missing (calculated fields
-  and values on rows done).
+### 8. PivotTables: no slicers on PivotTables or date filters; Excel ignores saved calculated items and timeline selections (F)
+- **Evidence:** slicers (`insert.slicer`, `table.insertSlicer`) filter tables only; PivotTable
+  slicers are #719. Done: calculated fields and calculated items (with solve order and List
+  Formulas), Group Selection, date and time grouping with the Grouping dialog's bounds and Number
+  of days, number ranges, timelines (sheet object, Timeline tab, XLSX timeline and timeline cache
+  parts), label, value and Top 10 filters from the report's field buttons, values on rows,
+  PivotCharts, GETPIVOTDATA and the PivotTable Analyze and Design tabs. Label, value and Top 10
+  rules on source fields outside Rows/Columns survive XLSX saves without filtering or adding
+  report-filter rows; adding the field to an axis reactivates its rule (synthetic regression tests).
+  Missing: date filters
+  (relative periods), "allow multiple filters per field", OLAP and data-model pivots, Field
+  Settings for row and column fields, a pivot cache shared by several PivotTables (a timeline
+  filtering several PivotTables is saved to XLSX filtering the first). Checked in Excel 365 over
+  COM on synthetic files: date levels, Starting/Ending at bounds, day spans and Group Selection
+  groups open and refresh to the same items and totals (time levels not checked). Files with
+  calculated items or a timeline open without repair, but Excel drops the calculated items (marking
+  them as formula items makes Excel refuse the file), and it shows the timeline with its period
+  without applying it to the PivotTable.
 - **Impact:** pivots are the analyst's main tool.
-- **Estimate:** 20–30 h for beta (25–40 h full).
+- **Estimate:** 10–16 h for beta (15–25 h full).
 
 ### 9. Keyboard-first users: key tips, shortcuts, context menus (U)
 - **Evidence:** #33, #49 (key tips: initial Home-tab support landed in #43 on 10-10, the rest of the ribbon not yet), #110, #28 (selection),
@@ -120,10 +134,7 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
   Margins are dragged on the rulers (#792). Remaining: pictures in headers/footers, Different First Page / Odd & Even pages. Desktop now submits directly through craft-print with printer choice, copies, duplex and grayscale; browser printing stays available. Print ranges and driver tray/options UI remain. **Estimate:** 5–10 h.
 
 ### 15. Remaining functions and an oracle suite (F)
-- 18 missing, 9 stubs; no Excel-computed oracle corpus; #137, #138. **Estimate:** 16–26 h.
-- 20 missing, 9 stubs; no Excel-computed oracle corpus; #137, #138. **Estimate:** 17–29 h.
-- 21 missing, 9 stubs; no Excel-computed oracle corpus; #137, #138. **Estimate:** 18–30 h.
-- 18 missing, 9 stubs; no Excel-computed oracle corpus; #137, #138. **Estimate:** 18–30 h.
+- 17 missing, 9 stubs; no Excel-computed oracle corpus; #137, #138. **Estimate:** 14–23 h.
   [function-parity.md](function-parity.md)
 
 ### 16. Collaboration and review (F)
@@ -168,6 +179,9 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | §8: dormant label/value/Top 10 rules survive XLSX round-trips and reactivate when their field returns to Rows/Columns (#1207) |
+| 2026-10-14 | minor | §8: Group Selection, time grouping and the Grouping dialog, calculated items, timelines and the label/value filter menus landed; slicers on PivotTables and date filters remain |
+| 2026-10-14 | minor | §8: GETPIVOTDATA, Generate GetPivotData and the PivotTable Analyze and Design tabs; §15: 17 functions missing |
 | 2026-10-12 | minor | rows auto-fit oversized fonts on open and whole-row/column formatting (#833) |
 | 2026-10-12 | minor | Page Layout view: dragging margins on the rulers (#792) removed from the §14 remainder |
 | 2026-10-12 | minor | §13: Forecast Sheet Forecast Start (hindcast) landed (#785) |

@@ -1266,3 +1266,46 @@ fn offset_extreme_arguments_return_ref() {
         assert_eq!(crate::evaluate(&wb, 0, c("D1"), formula), Value::Number(expected), "{formula}");
     }
 }
+
+#[test]
+fn getpivotdata_reads_the_report_index() {
+    use gridcraft_model::{PivotReport, PivotReportIndex, PivotTable, ReportDataField, ReportField, ReportItem, ReportKey};
+    // A report at D1:E4 as the engine writes it: a header, East and West, a grand total.
+    let mut t = T::new();
+    let item = |l: &str| ReportItem { value: Value::text(l), label: l.into() };
+    let key = |offset, items: &[Option<u32>]| ReportKey { offset, data: None, items: items.to_vec() };
+    let report = PivotReport {
+        data_fields: vec![ReportDataField { name: "Sum of Sales".into(), source: "Sales".into() }],
+        row_fields: vec![ReportField { name: "Region".into(), dates: false, items: vec![item("East"), item("West")] }],
+        rows: vec![key(1, &[Some(0)]), key(2, &[Some(1)]), key(3, &[None])],
+        cols: vec![ReportKey { offset: 1, data: Some(0), items: vec![] }],
+        label_cols: 1,
+        compact: true,
+        ..PivotReport::default()
+    };
+    let pt = PivotTable {
+        anchor: c("D1"),
+        last_range: Some(gridcraft_core::RangeRef::parse("D1:E4").unwrap()),
+        report: PivotReportIndex(Some(std::sync::Arc::new(report))),
+        ..PivotTable::default()
+    };
+    t.wb.sheet_mut(0).unwrap().pivots.push(pt);
+    for (at, v) in [("E2", "30"), ("E3", "12"), ("E4", "42")] {
+        t.set(at, v);
+    }
+    t.set("A1", r#"=GETPIVOTDATA("Sales",D1,"Region","west")"#);
+    t.set("A2", r#"=GETPIVOTDATA("Sum of Sales",E4)"#);
+    t.set("A3", r#"=GETPIVOTDATA("Sales",D1,"Region","North")"#);
+    assert_eq!(t.num("A1"), 12.0);
+    assert_eq!(t.num("A2"), 42.0);
+    assert_eq!(t.get("A3"), Value::Error(CellError::Ref));
+    // A changed report cell reaches the formulas that read it.
+    t.set("E3", "13");
+    assert_eq!(t.num("A1"), 13.0);
+    // An empty value cell reads as 0; without an index there is nothing to read.
+    t.set("E3", "");
+    assert_eq!(t.num("A1"), 0.0);
+    t.wb.sheet_mut(0).unwrap().pivots[0].report = PivotReportIndex::default();
+    t.set("A1", r#"=GETPIVOTDATA("Sales",D1,"Region","West")"#);
+    assert_eq!(t.get("A1"), Value::Error(CellError::Ref));
+}

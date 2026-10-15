@@ -3,21 +3,32 @@
 //! with move/remove menus. Everything runs `pivot.*` commands.
 
 use egui::{Color32, Ui, vec2};
+use gridcraft_engine::model::PivotTable;
 use serde_json::{Value as Json, json};
 
 use crate::SheetApp;
 use crate::i18n;
 use crate::theme::{self, Tokens};
 
-/// Whether the active cell is inside a pivot report (so the pane should show).
-pub fn active_pivot(app: &SheetApp) -> Option<String> {
+/// The PivotTable whose report holds the active cell (or whose anchor it is): the pane and the
+/// PivotTable Analyze and Design tabs show while there is one.
+pub fn at_active_cell(app: &SheetApp) -> Option<&PivotTable> {
     let d = app.session.active()?;
     let sh = d.wb.active()?;
     let a = d.selection.active;
-    sh.pivots.iter().find(|p| p.last_range.is_some_and(|r| r.contains(a)) || p.anchor == a).map(|p| p.name.clone())
+    sh.pivots.iter().find(|p| p.last_range.is_some_and(|r| r.contains(a)) || p.anchor == a)
+}
+
+/// Whether the active cell is inside a pivot report (so the pane should show).
+pub fn active_pivot(app: &SheetApp) -> Option<String> {
+    at_active_cell(app).map(|p| p.name.clone())
 }
 
 pub fn show(app: &mut SheetApp, ui: &mut Ui) {
+    // PivotTable Analyze › Show › Field List hides the pane.
+    if !app.ui.pivot_field_list {
+        return;
+    }
     let Some(name) = active_pivot(app) else { return };
     let t = Tokens::get(ui.ctx());
     let lang = i18n::current(ui.ctx());
@@ -61,6 +72,8 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 .or(info[key].as_array())
                 .map(|a| {
                     a.iter()
+                        // A row or column field's own filter is not a report filter.
+                        .filter(|x| x["report"].as_bool() != Some(false))
                         .filter_map(|x| x["name"].as_str().or(x["field"].as_str()).or(x["sourceCol"].as_str()).or(x.as_str()).map(str::to_string))
                         .collect()
                 })
@@ -121,8 +134,15 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                                 for (sa, l) in [
                                     ("normal", "Show as No Calculation"),
                                     ("percentOfGrandTotal", "Show as % of Grand Total"),
+                                    ("percentOfColumnTotal", "Show as % of Column Total"),
+                                    ("percentOfRowTotal", "Show as % of Row Total"),
+                                    ("percentOfParentRowTotal", "Show as % of Parent Row Total"),
+                                    ("percentOfParentColumnTotal", "Show as % of Parent Column Total"),
                                     ("runningTotal", "Show as Running Total"),
-                                    ("rank", "Show as Rank"),
+                                    ("percentRunningTotal", "Show as % Running Total"),
+                                    ("rankAscending", "Show as Rank Smallest to Largest"),
+                                    ("rankDescending", "Show as Rank Largest to Smallest"),
+                                    ("index", "Show as Index"),
                                 ] {
                                     if ui.button(lang.tr(l)).clicked() {
                                         app.run_or_alert("pivot.valueSettings", json!({"pivot": name, "field": f, "showAs": sa}));
@@ -139,11 +159,38 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                                     ("years", "Group by Years"),
                                     ("quarters", "Group by Quarters"),
                                     ("months", "Group by Months"),
+                                    ("range", "Group by Ranges of 10"),
                                     ("none", "Ungroup"),
                                 ] {
                                     if ui.button(lang.tr(l)).clicked() {
                                         app.run_or_alert("pivot.group", json!({"pivot": name, "field": f, "by": g}));
                                     }
+                                }
+                                ui.separator();
+                                if ui.button(format!("{} \"{f}\"", lang.tr("Clear Filter From"))).clicked() {
+                                    app.run_or_alert("pivot.clearFilter", json!({"pivot": name, "field": f}));
+                                }
+                                if *key != "filters" {
+                                    // Label Filters ▸ and Value Filters ▸, as on the report's field button.
+                                    ui.menu_button(lang.tr("Label Filters"), |ui| {
+                                        for (op, l, _) in crate::pivot_ui::LABEL_OPS {
+                                            if ui.button(lang.tr(l)).clicked() {
+                                                app.open_dialog("pivotLabelFilter", json!({"pivot": name, "field": f, "op": op}));
+                                            }
+                                        }
+                                    });
+                                    ui.menu_button(lang.tr("Value Filters"), |ui| {
+                                        for op in crate::pivot_ui::VALUE_OPS {
+                                            let label = crate::pivot_ui::LABEL_OPS.iter().find(|(o, ..)| *o == op).map_or(op, |(_, l, _)| l);
+                                            if ui.button(lang.tr(label)).clicked() {
+                                                app.open_dialog("pivotValueFilter", json!({"pivot": name, "field": f, "op": op}));
+                                            }
+                                        }
+                                        ui.separator();
+                                        if ui.button(lang.tr("Top 10…")).clicked() {
+                                            app.open_dialog("pivotTop10", json!({"pivot": name, "field": f}));
+                                        }
+                                    });
                                 }
                             }
                             ui.separator();

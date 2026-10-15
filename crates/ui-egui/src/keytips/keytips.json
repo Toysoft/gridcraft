@@ -1210,9 +1210,8 @@
    "seq": "NST",
    "kind": "command",
    "target": "insert.timeline",
-   "pending": true,
    "excel": "Timeline",
-   "note": "insert.timeline missing (gap #8); reserved until the command lands"
+   "note": ""
   },
   {
    "seq": "NSZ",
@@ -2444,6 +2443,20 @@
    "target": "chart.changeType",
    "excel": "Chart: Change Chart Type",
    "note": "containment(Change Chart Type)"
+  },
+  {
+   "seq": "JT",
+   "kind": "tab",
+   "target": "PivotTable Analyze",
+   "excel": "PivotTable Analyze tab",
+   "note": "Contextual: only while the active cell is in a PivotTable (Table Design's JT letters follow otherwise)."
+  },
+  {
+   "seq": "JY",
+   "kind": "tab",
+   "target": "PivotTable Design",
+   "excel": "PivotTable Design tab",
+   "note": "Contextual: only while the active cell is in a PivotTable."
   },
   {
    "seq": "JTS",

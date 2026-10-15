@@ -661,6 +661,70 @@ pub struct Slicer {
     pub columns: u32,
 }
 
+/// The time level a timeline shows its periods at.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TimelineLevel {
+    Years,
+    Quarters,
+    #[default]
+    Months,
+    Days,
+}
+
+/// A timeline: an on-sheet filter of the date field of one or more PivotTables, by one
+/// contiguous period at a time level (Insert › Timeline). The PivotTables it is connected to show
+/// only the records whose date falls in the selection. As in Excel, the selection is kept in
+/// whole days and snapped to whole periods of the level it was made at.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Timeline {
+    pub id: u32,
+    /// The timeline's name (unique in the workbook, `Date`, `Date 1`…).
+    pub name: String,
+    /// Caption in the header.
+    pub caption: String,
+    /// The source field (a date column) it filters.
+    pub field: String,
+    /// Ids of the PivotTables it filters (Report Connections).
+    pub pivots: Vec<u32>,
+    pub anchor: Anchor,
+    pub level: TimelineLevel,
+    /// First and last day of the selection, as date serials (inclusive); `None` = all periods.
+    pub selection: Option<(f64, f64)>,
+    /// The level the selection was made at (the selection label follows it).
+    pub selection_level: TimelineLevel,
+    /// Leftmost date shown (the scroll position); `None` = the start of the data.
+    pub scroll: Option<f64>,
+    /// Timeline style name (`TimeSlicerStyleLight1`).
+    pub style: String,
+    pub show_header: bool,
+    pub show_selection_label: bool,
+    pub show_time_level: bool,
+    pub show_scrollbar: bool,
+}
+
+impl Default for Timeline {
+    fn default() -> Self {
+        Timeline {
+            id: 0,
+            name: String::new(),
+            caption: String::new(),
+            field: String::new(),
+            pivots: vec![],
+            anchor: Anchor::default(),
+            level: TimelineLevel::Months,
+            selection: None,
+            selection_level: TimelineLevel::Months,
+            scroll: None,
+            style: "TimeSlicerStyleLight1".into(),
+            show_header: true,
+            show_selection_label: true,
+            show_time_level: true,
+            show_scrollbar: true,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Orientation {
     #[default]
@@ -908,6 +972,119 @@ pub enum PivotDateGroup {
     Quarters,
     Months,
     Days,
+    Hours,
+    Minutes,
+    Seconds,
+}
+
+impl PivotDateGroup {
+    /// The date and time levels from finest to coarsest, as the Grouping dialog lists them.
+    pub const LEVELS: [PivotDateGroup; 7] = [
+        PivotDateGroup::Seconds,
+        PivotDateGroup::Minutes,
+        PivotDateGroup::Hours,
+        PivotDateGroup::Days,
+        PivotDateGroup::Months,
+        PivotDateGroup::Quarters,
+        PivotDateGroup::Years,
+    ];
+
+    /// Position in [`Self::LEVELS`] (0 = finest); `None` for no grouping.
+    pub fn fineness(self) -> Option<usize> {
+        Self::LEVELS.iter().position(|g| *g == self)
+    }
+}
+
+/// The Grouping dialog's bounds and day span for a date or time grouping: values before
+/// `start` or after `end` fall into one `<start` and one `>end` item, and with Days, `days` days
+/// make one item (`1/1/2026 - 1/7/2026`). `None` bounds are automatic (the first and last date).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PivotDateRange {
+    pub start: Option<f64>,
+    pub end: Option<f64>,
+    /// Number of days per item when grouping by days (1 = one item per calendar day).
+    pub days: u32,
+}
+
+impl PivotDateRange {
+    /// Most days one item may span (Excel's Number of days goes up to 32,767).
+    pub const MAX_DAYS: u32 = 32_767;
+}
+
+impl Default for PivotDateRange {
+    fn default() -> Self {
+        PivotDateRange { start: None, end: None, days: 1 }
+    }
+}
+
+/// Grouping of a number field into ranges of equal width (Group › Starting at, Ending at, By).
+/// Values below `start` fall into one `<start` item and values above `end` into one `>end` item.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PivotNumberGroup {
+    pub start: f64,
+    pub end: f64,
+    /// Width of each range; positive.
+    pub by: f64,
+}
+
+impl PivotNumberGroup {
+    /// Most ranges a grouping may make (Excel's own limit on group items is lower).
+    pub const MAX_RANGES: f64 = 100_000.0;
+
+    /// The grouping, if its bounds and width are usable: finite, `start <= end`, a positive
+    /// width and at most [`Self::MAX_RANGES`] ranges.
+    pub fn checked(start: f64, end: f64, by: f64) -> Option<PivotNumberGroup> {
+        let ok = start.is_finite() && end.is_finite() && by.is_finite() && by > 0.0 && start <= end && (end - start) / by < Self::MAX_RANGES;
+        ok.then_some(PivotNumberGroup { start, end, by })
+    }
+
+    /// The position of the range that holds `n` (0 for the range starting at `start`).
+    pub fn range_index(&self, n: f64) -> i64 {
+        let by = if self.by > 0.0 && self.by.is_finite() { self.by } else { 1.0 };
+        let k = ((n - self.start) / by).floor();
+        if k.is_finite() { k.clamp(-1e15, 1e15) as i64 } else { 0 }
+    }
+
+    /// The lower bound of range `k`.
+    pub fn range_start(&self, k: i64) -> f64 {
+        self.start + k as f64 * self.by
+    }
+
+    /// The caption of range `k`: `0-9` when the start and width are whole numbers (the range
+    /// covers whole numbers up to one below the next start), otherwise `0-0.5`.
+    pub fn caption(&self, k: i64) -> String {
+        let lo = self.range_start(k);
+        let whole = self.start.fract() == 0.0 && self.by.fract() == 0.0 && self.by >= 1.0;
+        let hi = if whole { lo + self.by - 1.0 } else { lo + self.by };
+        format!("{}-{}", tidy_number(lo), tidy_number(hi))
+    }
+
+    /// The caption of the item for values below `start`.
+    pub fn below_caption(&self) -> String {
+        format!("<{}", tidy_number(self.start))
+    }
+
+    /// The caption of the item for values above `end`.
+    pub fn above_caption(&self) -> String {
+        format!(">{}", tidy_number(self.end))
+    }
+
+    /// Captions of every item in order: `<start`, each range up to the one holding `end`, `>end`.
+    pub fn captions(&self) -> Vec<String> {
+        let last = self.range_index(self.end).clamp(0, Self::MAX_RANGES as i64);
+        let mut v = Vec::with_capacity(last as usize + 3);
+        v.push(self.below_caption());
+        v.extend((0..=last).map(|k| self.caption(k)));
+        v.push(self.above_caption());
+        v
+    }
+}
+
+/// A number as text without the binary noise of repeated additions (`0.30000000000000004`).
+fn tidy_number(x: f64) -> String {
+    let x = if x.abs() < 1e12 { (x * 1e9).round() / 1e9 } else { x };
+    // `+ 0.0` turns a rounded -0 into 0.
+    gridcraft_core::number_to_text(x + 0.0)
 }
 
 /// A field placed in the Rows or Columns area.
@@ -918,8 +1095,55 @@ pub struct PivotField {
     pub source_col: String,
     pub sort: PivotSort,
     pub date_group: PivotDateGroup,
+    /// Number range grouping; when set, `date_group` is `None`.
+    pub number_group: Option<PivotNumberGroup>,
     /// Item labels whose detail is hidden (collapsed).
     pub collapsed_items: Vec<String>,
+    /// Bounds and day span of a date grouping (`None`: automatic bounds, one day per item). A
+    /// field grouped at several levels (Years, Quarters, Months) is one entry per level, each
+    /// carrying the same range.
+    pub date_range: Option<PivotDateRange>,
+}
+
+/// Group Selection: a field (`Region2`) whose items gather items of a `base` field into named
+/// groups (`Group1`); base items in no group stay items of their own. Excel keeps it as an extra
+/// cache field with `discretePr`. Its name is used like a source field's in the areas.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PivotGroupField {
+    pub name: String,
+    /// The source field whose items are grouped.
+    pub base: String,
+    pub groups: Vec<PivotItemGroup>,
+}
+
+/// One manual group: its caption and the base items in it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PivotItemGroup {
+    pub name: String,
+    pub items: Vec<String>,
+}
+
+impl PivotGroupField {
+    /// The group holding base item `label`, if any.
+    pub fn group_of(&self, label: &str) -> Option<&PivotItemGroup> {
+        self.groups.iter().find(|g| g.items.iter().any(|i| i.eq_ignore_ascii_case(label)))
+    }
+}
+
+/// A calculated item: an item `name` added to `field`, whose values come from a formula over the
+/// field's other items (`=East+West`, `=East*1.1`, `=Region['North East']/2`). Its place in
+/// [`PivotTable::calculated_items`] is its solve order: where items of two fields meet, the later
+/// formula sets the value.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PivotCalcItem {
+    /// The field the item belongs to (a source field).
+    pub field: String,
+    pub name: String,
+    /// Formula text, starting with `=`.
+    pub formula: String,
 }
 
 /// Summarize-values-by function.
@@ -947,11 +1171,69 @@ pub enum PivotShowAs {
     PercentOfGrandTotal,
     PercentOfColumnTotal,
     PercentOfRowTotal,
-    /// Running total in the first row field.
+    /// Running total in the base field (the first row field when none is given).
     RunningTotal,
-    /// Rank largest to smallest among sibling row items.
+    /// Rank largest to smallest among the base field's items.
     Rank,
+    /// As a percentage of the base field's base item.
+    PercentOf,
+    /// As a percentage of the parent row (the row one level up).
+    PercentOfParentRowTotal,
+    /// As a percentage of the parent column.
+    PercentOfParentColumnTotal,
+    /// As a percentage of the total of the base field's item that contains it.
+    PercentOfParentTotal,
+    /// Minus the base field's base item.
+    DifferenceFrom,
+    /// (value − base item) / base item.
+    PercentDifferenceFrom,
+    /// Running total in the base field, as a percentage of the field's total.
+    PercentRunningTotal,
+    /// Rank smallest to largest among the base field's items.
+    RankAscending,
+    /// (value × grand total) / (row total × column total).
+    Index,
 }
+
+impl PivotShowAs {
+    /// Whether the transform needs a base field.
+    pub fn needs_base_field(self) -> bool {
+        matches!(
+            self,
+            PivotShowAs::RunningTotal
+                | PivotShowAs::PercentRunningTotal
+                | PivotShowAs::Rank
+                | PivotShowAs::RankAscending
+                | PivotShowAs::PercentOf
+                | PivotShowAs::PercentOfParentTotal
+                | PivotShowAs::DifferenceFrom
+                | PivotShowAs::PercentDifferenceFrom
+        )
+    }
+    /// Whether it also needs a base item.
+    pub fn needs_base_item(self) -> bool {
+        matches!(self, PivotShowAs::PercentOf | PivotShowAs::DifferenceFrom | PivotShowAs::PercentDifferenceFrom)
+    }
+    /// Whether the result is a percentage.
+    pub fn is_percent(self) -> bool {
+        matches!(
+            self,
+            PivotShowAs::PercentOfGrandTotal
+                | PivotShowAs::PercentOfColumnTotal
+                | PivotShowAs::PercentOfRowTotal
+                | PivotShowAs::PercentOf
+                | PivotShowAs::PercentOfParentRowTotal
+                | PivotShowAs::PercentOfParentColumnTotal
+                | PivotShowAs::PercentOfParentTotal
+                | PivotShowAs::PercentDifferenceFrom
+                | PivotShowAs::PercentRunningTotal
+        )
+    }
+}
+
+/// A base item that means the previous / next item of the base field.
+pub const BASE_PREVIOUS: &str = "(previous)";
+pub const BASE_NEXT: &str = "(next)";
 
 /// A field in the Values area.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -963,15 +1245,112 @@ pub struct PivotValue {
     pub name: String,
     pub show_as: PivotShowAs,
     pub number_format: Option<String>,
+    /// Show Values As base field (source column name).
+    pub base_field: Option<String>,
+    /// Show Values As base item: an item label, [`BASE_PREVIOUS`] or [`BASE_NEXT`].
+    pub base_item: Option<String>,
 }
 
-/// A report filter (or, for a field also in Rows/Columns, its hidden-items filter).
+/// A comparison in a label filter or a value filter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PivotCompare {
+    Equals,
+    NotEquals,
+    BeginsWith,
+    NotBeginsWith,
+    EndsWith,
+    NotEndsWith,
+    Contains,
+    NotContains,
+    Greater,
+    GreaterOrEqual,
+    Less,
+    LessOrEqual,
+    Between,
+    NotBetween,
+}
+
+impl PivotCompare {
+    /// Every comparison, in the order of Excel's Label Filters menu.
+    pub const ALL: [PivotCompare; 14] = [
+        PivotCompare::Equals,
+        PivotCompare::NotEquals,
+        PivotCompare::BeginsWith,
+        PivotCompare::NotBeginsWith,
+        PivotCompare::EndsWith,
+        PivotCompare::NotEndsWith,
+        PivotCompare::Contains,
+        PivotCompare::NotContains,
+        PivotCompare::Greater,
+        PivotCompare::GreaterOrEqual,
+        PivotCompare::Less,
+        PivotCompare::LessOrEqual,
+        PivotCompare::Between,
+        PivotCompare::NotBetween,
+    ];
+
+    /// Whether the comparison takes a second value.
+    pub fn is_range(self) -> bool {
+        matches!(self, PivotCompare::Between | PivotCompare::NotBetween)
+    }
+
+    /// Whether the comparison applies to text only (it has no meaning in a value filter).
+    pub fn is_text_only(self) -> bool {
+        matches!(
+            self,
+            PivotCompare::BeginsWith
+                | PivotCompare::NotBeginsWith
+                | PivotCompare::EndsWith
+                | PivotCompare::NotEndsWith
+                | PivotCompare::Contains
+                | PivotCompare::NotContains
+        )
+    }
+}
+
+/// What a Top 10 filter counts: items, a percent of the total, or a sum.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PivotTopBy {
+    Items,
+    Percent,
+    Sum,
+}
+
+/// A filter rule on a row or column field.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum PivotRule {
+    /// Label Filters: compares each item's caption with `value` (and `value2` for a range).
+    /// `*` and `?` are wildcards.
+    Label { op: PivotCompare, value: String, value2: String },
+    /// Value Filters: compares each item's total of the value field named `field` (its caption).
+    Value { op: PivotCompare, field: String, value: f64, value2: f64 },
+    /// Top 10: keeps the top (or bottom) items by the value field named `field`.
+    Top { top: bool, count: f64, by: PivotTopBy, field: String },
+}
+
+impl PivotRule {
+    /// The caption of the value field the rule uses, if any.
+    pub fn value_field(&self) -> Option<&str> {
+        match self {
+            PivotRule::Label { .. } => None,
+            PivotRule::Value { field, .. } | PivotRule::Top { field, .. } => Some(field),
+        }
+    }
+}
+
+/// A report filter, an axis field's item selection or a filter rule.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PivotFilter {
     pub source_col: String,
     /// Item labels shown; `None` = all.
     pub selected: Option<Vec<String>>,
+    /// A label, value or Top 10 filter, applied in Rows/Columns. A rule on a field outside
+    /// those areas is dormant and preserved for when the field returns, not a report filter.
+    /// As in Excel without
+    /// "Allow multiple filters per field", a field has one kind of filter at a time: setting a
+    /// rule clears `selected`, and selecting items clears the rule.
+    pub rule: Option<PivotRule>,
 }
 
 /// A PivotTable: its definition plus where its output was last written. The output itself is
@@ -1009,6 +1388,21 @@ pub struct PivotTable {
     /// Position of Σ Values among the row fields (`None` = after the last). Only used with
     /// `values_on_rows`: in Columns Σ Values always comes after the last column field.
     pub values_position: Option<usize>,
+    /// Fields made by Group Selection (`Region2`), usable in the areas by name.
+    pub group_fields: Vec<PivotGroupField>,
+    /// Calculated items, in solve order.
+    pub calculated_items: Vec<PivotCalcItem>,
+    /// What each line and data column of the written report stands for (GETPIVOTDATA reads
+    /// it). Written with the report; not saved, rebuilt when a workbook is opened.
+    #[serde(skip)]
+    pub report: crate::PivotReportIndex,
+}
+
+impl PivotTable {
+    /// The Group Selection field named `name`, if any.
+    pub fn group_field(&self, name: &str) -> Option<&PivotGroupField> {
+        self.group_fields.iter().find(|g| g.name.eq_ignore_ascii_case(name.trim()))
+    }
 }
 
 /// A calculated field: a formula over other fields (`=Sales*0.1`, `='Unit Price'*Units`). As in
@@ -1043,6 +1437,9 @@ impl Default for PivotTable {
             calculated_fields: vec![],
             values_on_rows: false,
             values_position: None,
+            group_fields: vec![],
+            calculated_items: vec![],
+            report: Default::default(),
         }
     }
 }

@@ -13,12 +13,14 @@ pub mod formulas;
 pub mod insert;
 pub mod inspect;
 pub mod pivot;
+pub mod pivot_tools;
 pub mod print;
 pub mod review;
 pub mod sheet;
 pub mod slicer;
 pub mod solver;
 pub mod spelling;
+pub mod timeline;
 pub mod view;
 pub mod whatif;
 
@@ -139,7 +141,9 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(spelling::specs());
         v.extend(solver::specs());
         v.extend(pivot::specs());
+        v.extend(pivot_tools::specs());
         v.extend(slicer::specs());
+        v.extend(timeline::specs());
         v.extend(whatif::specs());
         v.extend(forecast::specs());
         v.extend(analysis::specs());

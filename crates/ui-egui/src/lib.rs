@@ -26,12 +26,14 @@ pub mod outline;
 pub mod panes;
 pub mod paper_view;
 pub mod pivot_pane;
+pub mod pivot_ui;
 pub mod printing;
 pub mod ribbon;
 pub mod selection_glide;
 pub mod tabs;
 pub mod text_box;
 pub mod theme;
+pub mod timeline_view;
 pub mod widgets;
 
 use std::collections::HashMap;
@@ -60,6 +62,9 @@ pub struct UiState {
     /// Enable AutoComplete for cell values (File ▸ Options ▸ Editing): typed text is completed
     /// from the one matching entry in the same column.
     pub autocomplete: bool,
+    /// PivotTable Analyze › Show › Field List: the PivotTable Fields pane shows beside a
+    /// PivotTable's report.
+    pub pivot_field_list: bool,
     pub recent: Vec<String>,
     /// One-shot keytip request for a ribbon control: set when a keytip action resolves to
     /// [`keytips::Action::Control`], consumed (and cleared) by the control's render site.
@@ -103,6 +108,7 @@ impl Default for UiState {
             status_bar: true,
             animations: true,
             autocomplete: true,
+            pivot_field_list: true,
             recent: vec![],
             keytip_invoke: None,
             language: i18n::Language::En,
@@ -607,6 +613,10 @@ impl SheetApp {
             "options.autoComplete" => {
                 self.ui.autocomplete = p.get("on").and_then(Json::as_bool).unwrap_or(!self.ui.autocomplete);
                 Ok(json!({"on": self.ui.autocomplete}))
+            }
+            "pivot.showFieldList" => {
+                self.ui.pivot_field_list = p.get("on").and_then(Json::as_bool).unwrap_or(!self.ui.pivot_field_list);
+                Ok(json!({"on": self.ui.pivot_field_list}))
             }
             "view.interfaceScale" => {
                 // `{"percent": 125}` or `{"percent": "auto"}`; out-of-range values are clamped.
@@ -1187,8 +1197,13 @@ impl SheetApp {
         for action in actions {
             match action {
                 keytips::Action::Tab(tab) => {
-                    self.run_or_alert("ui.ribbonTab", json!({"tab": tab}));
-                    self.ui.ribbon_collapsed = false;
+                    // A contextual tab's sequence works only while the tab shows: PivotTable
+                    // Analyze's JT also leads to Table Design's commands.
+                    let contextual = [ribbon::pivot_tabs::ANALYZE, ribbon::pivot_tabs::DESIGN].contains(&tab);
+                    if !contextual || ribbon::contextual_tabs(self).contains(&tab) {
+                        self.run_or_alert("ui.ribbonTab", json!({"tab": tab}));
+                        self.ui.ribbon_collapsed = false;
+                    }
                 }
                 keytips::Action::Command(id @ ("edit.copy" | "edit.cut")) => self.copy_to_clipboard(ctx, id),
                 keytips::Action::Command("edit.paste") => self.paste_from_clipboard(),

@@ -183,44 +183,44 @@ pub const SEQUENCES: &[(&str, Entry)] = &[
     ("NSF", Entry::Finish(Action::Command("insert.slicer"))), // Excel: Slicer; insert.slicer missing (gap #8); reserved until the command lands
     ("NSH", Entry::Finish(Action::Command("insert.shape"))), // Excel: Shapes
     ("NSP", Entry::Finish(Action::Command("insert.recommendedPivotTables"))), // Excel: Recommended PivotTables
-    ("NST", Entry::Finish(Action::Pending("insert.timeline"))), // pending; Excel: Timeline; insert.timeline missing (gap #8); reserved until the command lands
+    ("NST", Entry::Finish(Action::Command("insert.timeline"))), // Excel: Timeline
     ("NSZ", Entry::Finish(Action::Command("insert.pivotChart"))), // Excel: PivotChart; PivotChart; reserved until the command lands
-    ("NT", Entry::Finish(Action::Command("insert.table"))),     // Excel: Table
-    ("NU", Entry::Finish(Action::Command("insert.symbol"))),    // Excel: Symbols; containment(Symbol)
-    ("NZS", Entry::Finish(Action::Command("insert.symbol"))),   // Excel: Excel: Symbol (modern)
+    ("NT", Entry::Finish(Action::Command("insert.table"))), // Excel: Table
+    ("NU", Entry::Finish(Action::Command("insert.symbol"))), // Excel: Symbols; containment(Symbol)
+    ("NZS", Entry::Finish(Action::Command("insert.symbol"))), // Excel: Excel: Symbol (modern)
     ("NV", Entry::Finish(Action::Command("insert.pivotTable"))), // Excel: PivotTable
-    ("NW", Entry::Finish(Action::Pending("insert.wordArt"))),   // pending; Excel: WordArt; WordArt; reserved until the command lands
-    ("NX", Entry::Finish(Action::Command("insert.textBox"))),   // Excel: Text Box
-    ("NZK", Entry::Continue),                                   // Excel: Sparklines Menu; group level:
-    ("NZKSL", Entry::Finish(Action::Dialog("sparkline"))),      // Excel: Line Sparkline
-    ("NZKSO", Entry::Finish(Action::Dialog("sparkline"))),      // Excel: Column Sparkline
-    ("NZKSW", Entry::Finish(Action::Dialog("sparkline"))),      // Excel: Win/Loss Sparkline
+    ("NW", Entry::Finish(Action::Pending("insert.wordArt"))), // pending; Excel: WordArt; WordArt; reserved until the command lands
+    ("NX", Entry::Finish(Action::Command("insert.textBox"))), // Excel: Text Box
+    ("NZK", Entry::Continue), // Excel: Sparklines Menu; group level:
+    ("NZKSL", Entry::Finish(Action::Dialog("sparkline"))), // Excel: Line Sparkline
+    ("NZKSO", Entry::Finish(Action::Dialog("sparkline"))), // Excel: Column Sparkline
+    ("NZKSW", Entry::Finish(Action::Dialog("sparkline"))), // Excel: Win/Loss Sparkline
     ("NZTX", Entry::Finish(Action::Command("insert.textBox"))), // Excel: Text Box
-    ("NZT", Entry::Finish(Action::Command("insert.textBox"))),  // Excel: Excel: Text Box (modern)
+    ("NZT", Entry::Finish(Action::Command("insert.textBox"))), // Excel: Excel: Text Box (modern)
     ("PAE", Entry::Finish(Action::Command("arrange.sendBackward"))), // Excel: Send Backward
     ("PAF", Entry::Finish(Action::Command("arrange.bringForward"))), // Excel: Bring Forward
-    ("PB", Entry::Continue),                                    // Excel: Breaks; group level:
+    ("PB", Entry::Continue),  // Excel: Breaks; group level:
     ("PBI", Entry::Finish(Action::Command("pageLayout.breaks"))), // Excel: Insert Page Break; Insert Page Break
     ("PBR", Entry::Finish(Action::Command("pageLayout.breaks"))), // Excel: Remove Page Break; Remove Page Break
     ("PGB", Entry::Finish(Action::Command("pageLayout.background"))), // Excel: Background; Excel badge GB (Background in the Page Setup group)
     ("PI", Entry::Finish(Action::Command("pageLayout.printTitles"))), // Excel: Print Titles
-    ("PM", Entry::Continue),                                    // Excel: Margins; group level:
+    ("PM", Entry::Continue),  // Excel: Margins; group level:
     ("PMA", Entry::Finish(Action::Command("pageLayout.margins"))), // Excel: Custom Margins; containment(Margins)
     ("PO", Entry::Finish(Action::Command("pageLayout.orientation"))), // Excel: Orientation
     ("PPG", Entry::Finish(Action::Command("pageLayout.printGridlines"))), // Excel: Print Gridlines
     ("PPH", Entry::Finish(Action::Command("pageLayout.printHeadings"))), // Excel: Print Headings
-    ("PR", Entry::Continue),                                    // Excel: Print Area; group level:
+    ("PR", Entry::Continue),  // Excel: Print Area; group level:
     ("PRS", Entry::Finish(Action::Command("pageLayout.printArea"))), // Excel: Set Print Area
-    ("PSP", Entry::Finish(Action::Dialog("pageSetup"))),        // Excel: Page Setup
+    ("PSP", Entry::Finish(Action::Dialog("pageSetup"))), // Excel: Page Setup
     ("PSZ", Entry::Finish(Action::Command("pageLayout.size"))), // Excel: Size
     ("PTC", Entry::Finish(Action::Command("pageLayout.themeColors"))), // Excel: Theme Colors; containment(Colors)
     ("PTE", Entry::Finish(Action::Command("pageLayout.themeEffects"))), // Excel: Theme Effects; containment(Effects)
     ("PTF", Entry::Finish(Action::Command("pageLayout.themeFonts"))), // Excel: Theme Fonts; containment(Fonts)
-    ("PTH", Entry::Continue),                                   // Excel: Themes; group level:
+    ("PTH", Entry::Continue), // Excel: Themes; group level:
     ("PTHB", Entry::Finish(Action::Command("pageLayout.theme"))), // Excel: Browse Themes; containment(Themes)
-    ("PVG", Entry::Finish(Action::Command("view.gridlines"))),  // Excel: View Gridlines
-    ("PVH", Entry::Finish(Action::Command("view.headings"))),   // Excel: View Headings
-    ("MA", Entry::Continue),                                    // Excel: Remove Arrows Menu; group level: containment(Remove Arrows)
+    ("PVG", Entry::Finish(Action::Command("view.gridlines"))), // Excel: View Gridlines
+    ("PVH", Entry::Finish(Action::Command("view.headings"))), // Excel: View Headings
+    ("MA", Entry::Continue),  // Excel: Remove Arrows Menu; group level: containment(Remove Arrows)
     ("MAA", Entry::Finish(Action::Command("formulas.removeArrows"))), // Excel: Remove All Arrows; landed in the catalog; live since T7 probe
     ("MAP", Entry::Finish(Action::Pending("formulas.removePrecedentArrows"))), // pending; Excel: Remove Precedent Arrows; Remove Precedent Arrows; reserved until the command lands
     ("MB", Entry::Finish(Action::Command("formulas.calculateNow"))),           // Excel: Calculate Now
@@ -359,7 +359,9 @@ pub const SEQUENCES: &[(&str, Entry)] = &[
     ("JAM", Entry::Finish(Action::Command("chart.formatSelection"))), // Excel: Chart format: Format Selection pane; containment(Format Selection)
     ("JCA", Entry::Finish(Action::Command("chart.addElement"))),    // Excel: Chart: Add Chart Element; containment(Add Chart Element)
     ("JCC", Entry::Finish(Action::Command("chart.changeType"))),    // Excel: Chart: Change Chart Type; containment(Change Chart Type)
-    ("JTS", Entry::Finish(Action::Command("table.style"))),         // Excel: Table: table style
+    ("JT", Entry::Tab("PivotTable Analyze")), // Excel: PivotTable Analyze tab; Contextual: only while the active cell is in a PivotTable (Table Design's JT letters follow otherwise).
+    ("JY", Entry::Tab("PivotTable Design")),  // Excel: PivotTable Design tab; Contextual: only while the active cell is in a PivotTable.
+    ("JTS", Entry::Finish(Action::Command("table.style"))), // Excel: Table: table style
     ("JTV", Entry::Finish(Action::Command("table.summarizePivot"))), // Excel: Table: Summarize with PivotTable; containment(Summarize with PivotTable)
     ("FA", Entry::Finish(Action::Command("file.saveAs"))), // Excel: Save / Save As page; fires immediately in Excel; deeper aliases dropped as unreachable
     ("FC", Entry::Finish(Action::Command("file.close"))),  // Excel: Close workbook

@@ -116,6 +116,10 @@ pub struct Out {
     /// References of chartex parts, defined as hidden `_xlchart.v1.N` names.
     pub chart_names: Vec<String>,
     pub drawings: u32,
+    /// Timeline parts written so far (one per sheet with timelines).
+    pub timelines: u32,
+    /// Timeline cache parts written so far.
+    pub timeline_caches: u32,
     pub tables: u32,
     pub comments: u32,
     /// Authors of threaded comments, in first-use order; written to `xl/persons/person.xml`.
@@ -203,6 +207,8 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
         charts: 0,
         chart_names: vec![],
         drawings: 0,
+        timelines: 0,
+        timeline_caches: 0,
         tables: 0,
         comments: 0,
         persons: vec![],
@@ -229,10 +235,13 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
     let mut pivots = crate::pivot::PivotWriter::default();
     let mut sheets_xml = String::new();
     let mut sheet_id = 1usize;
+    // The `sheetId` of each sheet (timeline caches name their PivotTables' sheets by it).
+    let mut tab_ids: Vec<usize> = Vec::with_capacity(wb.sheets.len());
     for (i, sheet) in wb.sheets.iter().enumerate() {
         let (before, next) = kept.sheet_entries(i, false, sheet_id);
         sheets_xml.push_str(&before);
         sheet_id = next;
+        tab_ids.push(sheet_id);
         let (xml, mut rels) = crate::sheet_write::write_sheet(wb, i, i == active, &mut out);
         pivots.add_sheet(wb, i, &mut out, &mut rels);
         let name = format!("xl/worksheets/sheet{}.xml", i + 1);
@@ -253,8 +262,42 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
     }
     sheets_xml.push_str(&kept.sheet_entries(wb.sheets.len(), true, sheet_id).0);
 
-    // Defined names, then print areas and titles.
+    // Timeline caches, each with its `NativeTimeline_…` name and a workbook relationship.
+    let mut timeline_refs = String::new();
     let mut names = String::new();
+    let cache_names = crate::timeline::cache_names(wb);
+    for (sheet, list) in wb.sheets.iter().zip(cache_names.iter()) {
+        for (t, name) in sheet.timelines.iter().zip(list) {
+            // The first PivotTable it filters, with its sheet's id, pivot cache and filter id.
+            let first = t
+                .pivots
+                .first()
+                .and_then(|id| wb.sheets.iter().enumerate().find_map(|(psi, sh)| sh.pivots.iter().position(|p| p.id == *id).map(|pi| (psi, pi))));
+            let pivot = first.and_then(|(psi, pi)| {
+                let pt = wb.sheet(psi)?.pivots.get(pi)?;
+                let k = crate::timeline::filters_of(wb, pt.id).iter().position(|x| x.id == t.id).unwrap_or(0) as u32;
+                Some(crate::timeline::CachePivot {
+                    tab_id: *tab_ids.get(psi)?,
+                    name: pt.name.clone(),
+                    cache_id: pivots.cache_id(psi, pi)?,
+                    filter_id: crate::timeline::FILTER_ID_BASE + k,
+                })
+            });
+            let bounds = first.and_then(|(psi, pi)| pivots.bounds(psi, pi, &t.field));
+            out.timeline_caches += 1;
+            let n = out.timeline_caches;
+            out.part(
+                &format!("xl/timelineCaches/timelineCache{n}.xml"),
+                Some(crate::timeline::CT_TIMELINE_CACHE),
+                crate::timeline::cache_xml(t, name, pivot.as_ref(), bounds, wb.date_system).into_bytes(),
+            );
+            let rid = wb_rels.add_uri(crate::timeline::REL_TIMELINE_CACHE, &format!("timelineCaches/timelineCache{n}.xml"));
+            let _ = write!(timeline_refs, "<x15:timelineCacheRef r:id=\"{rid}\"/>");
+            let _ = write!(names, "<definedName name=\"{}\">#N/A</definedName>", esc_attr(name));
+        }
+    }
+
+    // Defined names, then print areas and titles.
     let mut seen = std::collections::HashSet::new();
     for n in &wb.names {
         if n.name.is_empty() || !seen.insert((n.name.to_ascii_lowercase(), n.scope)) {
@@ -351,7 +394,15 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind) -> Result<Vec<u8>, IoError> {
     }
     w.push_str("/>");
     w.push_str(&pivots.workbook_xml(&mut wb_rels));
-    let exts = crate::passthrough::workbook_elements(wb, "ext");
+    let mut exts = crate::passthrough::workbook_elements(wb, "ext");
+    if !timeline_refs.is_empty() {
+        let _ = write!(
+            exts,
+            "<ext uri=\"{}\" xmlns:x15=\"{}\"><x15:timelineCacheRefs>{timeline_refs}</x15:timelineCacheRefs></ext>",
+            crate::timeline::EXT_WORKBOOK,
+            crate::timeline::NS_X15
+        );
+    }
     if !exts.is_empty() {
         let _ = write!(w, "<extLst>{exts}</extLst>");
     }

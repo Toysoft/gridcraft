@@ -1,8 +1,8 @@
 # GridCraft roadmap
 
-**Stage: alpha** · next: beta, ~25 points of "ready for real work" and ~160–240 h away
+**Stage: alpha** · next: beta, ~25 points of "ready for real work" and ~150–230 h away
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (rows auto-fit oversized fonts on open and whole-row/column formatting) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-14 · **Change:** minor (PivotTables: Group Selection, time grouping, calculated items, timelines, label and value filter menus; GETPIVOTDATA and the PivotTable tabs) · **Target:** Microsoft Excel (Microsoft 365)
 
 GridCraft aims at full Microsoft Excel parity, and at being better in places: faster, open (XLSX
 is the native format), fully scriptable by agents (MCP, control channel, CLI), and on the web.
@@ -21,11 +21,11 @@ This page is the summary. The detail is in:
 
 | Number | Value | Kind |
 |---|---|---|
-| **Feature breadth** (weighted) | **~75%** | estimated, anchored on two measurements: ribbon catalog 274 / 290 (94.5%), worksheet functions 513 / 523 (98.1%; 504 working, 96.4%) |
-| **Ready for real work** | **~50%** | estimated from written weights (51.6); [target-app-parity.md](docs/target-app-parity.md) |
+| **Feature breadth** (weighted) | **~75%** | estimated, anchored on two measurements: ribbon catalog 292 / 307 (95.1%), worksheet functions 514 / 523 (98.3%; 505 working, 96.6%) |
+| **Ready for real work** | **~50%** | estimated from written weights (52.0); [target-app-parity.md](docs/target-app-parity.md) |
 | **Mainstream practitioner** | **~50%** | estimated: typical analyst/finance user, weekly features, × 0.90 interaction × 0.92 stability × 0.88 file exchange; [method](docs/target-app-parity.md#mainstream-practitioner) |
 | **Essentials user** | **~63%** | estimated: core features only, × 0.92 launch/stability × 0.95 clarity × 0.90 opening sent files; [method](docs/target-app-parity.md#essentials-user) |
-| Remaining to **beta** | **~160–240 Opus 5.5 agent-hours** | estimated; itemized in [roadmap.md](docs/roadmap.md#beta-gates) |
+| Remaining to **beta** | **~150–230 Opus 5.5 agent-hours** | estimated; itemized in [roadmap.md](docs/roadmap.md#beta-gates) |
 | Remaining to **full parity** | **~700–1,100 Opus 5.5 agent-hours** | estimated; sum of the dimension rows below |
 
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
@@ -78,7 +78,7 @@ collaboration, mobile, AI).
 | Editing, navigation, clipboard, fill | ~90% | ~70% | 15–25 | [ui-parity.md](docs/ui-parity.md) |
 | Cell formatting, styles, conditional formatting | ~95% | ~80% | 8–14 | [target-app-parity.md](docs/target-app-parity.md#feature-areas) |
 | Sort, filter, tables, validation, outline | ~82% | ~70% | 10–16 | [target-app-parity.md](docs/target-app-parity.md#feature-areas) |
-| PivotTables | ~65% | ~45% | 25–40 | [target-app-parity.md](docs/target-app-parity.md#feature-areas) |
+| PivotTables | ~78% | ~58% | 10–16 | [target-app-parity.md](docs/target-app-parity.md#feature-areas) |
 | Charts and sparklines | ~50% | ~30% | 40–60 | [chart-parity.md](docs/chart-parity.md) |
 | Page layout, print, PDF | ~80% | ~55% | 12–20 | [target-app-parity.md](docs/target-app-parity.md#feature-areas) |
 | What-if and analysis (Goal Seek, Solver, ToolPak, Forecast) | ~50% | ~40% | 22–35 | [target-app-parity.md](docs/target-app-parity.md#feature-areas) |
@@ -132,6 +132,11 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
+| 2026-10-14 | PivotTables: timelines (Insert › Timeline, PivotTable Analyze › Insert Timeline, the Timeline tab) filter PivotTables by a period of a date field and round-trip through XLSX timeline parts (Excel shows the timeline but does not apply its saved selection yet) |
+| 2026-10-14 | PivotTables: calculated items (Fields, Items & Sets › Calculated Item, Solve Order, List Formulas) with Excel's totals and restrictions, loaded from and saved to XLSX (Excel itself does not load the saved items yet) |
+| 2026-10-14 | PivotTables: Group Selection and Ungroup (`Region2` / `Group1`), date and time grouping at several levels with the Grouping dialog's Starting at, Ending at and Number of days, with XLSX round-trip |
+| 2026-10-14 | PivotTables: the report's field buttons and the field list open Label Filters ▸ / Value Filters ▸ and a Top 10 dialog; Top N keeps items tied at the cut-off (#498 review) |
+| 2026-10-14 | PivotTables: GETPIVOTDATA (value field by caption or source field, row, column and report filter items, Excel's rules for totals and hidden items, recalculated on refresh, evaluated on open), Generate GetPivotData (clicking or arrowing onto a PivotTable value while typing a formula inserts it; on by default, also in File › Options › Formulas), and the PivotTable Analyze and Design contextual tabs in Excel 365's layout with German labels and key tips JT/JY |
 | 2026-10-12 | Rows auto-fit oversized fonts: opening a file and whole-row/column formatting grow non-custom rows to their tallest font (#833) |
 | 2026-10-12 | Number formats: parsing a format code is linear in its length (long runs of `[`, `,` or `/` no longer take quadratic time), and an unclosed `[` is a literal when splitting sections as well as when tokenizing (#810) |
 | 2026-10-12 | Number formats: a fraction denominator with 65,536 zeros no longer crashes; format codes are capped at 255 characters like Excel (longer codes display as General, `TEXT` gives `#VALUE!`) (#807) |
@@ -148,6 +153,9 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 | 2026-10-12 | Ink strokes save as unfilled DrawingML paths and reopen as editable ink with their points, colour and width; icons in #551 remain a follow-up |
 | 2026-10-12 | The selection outline stays visible when extended to the last row (Ctrl+Shift+Down): its sides are cut to the viewport instead of stroking a 20-million-point rectangle (#687) |
 | 2026-10-12 | File › Print selects a system printer, copies, duplex and grayscale, submits PDF jobs through craft-print on a worker and shows spooler errors; browser printing and PDF export remain available |
+| 2026-10-12 | PivotTables: label filters (with wildcards), value filters and Top 10 (items, percent, sum) on row and column fields, with XLSX round-trip |
+| 2026-10-11 | PivotTables: number fields group into ranges (Starting at, Ending at, By) with XLSX round-trip |
+| 2026-10-11 | PivotTables: Show Values As covers all 15 calculations (% of, difference from, % of parent totals, % running total, ranks, index), with base field and base item, and XLSX round-trip |
 | 2026-10-11 | Command-sequence fuzzing: random command sequences checked against undo/redo, XLSX round-trip and full recalculation; fixes for the table, legacy-array, spill, AutoSum, Watch Window and sheet-copy bugs it found |
 | 2026-10-11 | Password-protected workbooks open: GridCraft asks for the password and decrypts Agile and Standard encryption (#11) |
 | 2026-10-11 | Text boxes keep their formatting: run size, bold, italic, typeface, text colour and outline, alignment, vertical anchor and "no outline" (#377) |
@@ -193,6 +201,8 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | PivotTables ~65/~45% → ~78/~58% (Group Selection, time grouping, calculated items, timelines, filter menus); full number 51.6 → 52.0; beta ~160–240 → ~150–230 h (gate #8 20–30 → 10–16 h); four progress log rows |
+| 2026-10-14 | minor | Progress log row for GETPIVOTDATA and the PivotTable tabs |
 | 2026-10-12 | minor | Rows auto-fit oversized fonts on open and whole-row/column formatting (#833); progress log row |
 | 2026-10-12 | minor | Progress log: multi-area row/column delete (#758) |
 | 2026-10-12 | trivial | Progress log: XLSX chart sheets kept on save (#727) |

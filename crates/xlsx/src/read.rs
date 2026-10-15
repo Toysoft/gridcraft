@@ -30,6 +30,8 @@ pub struct Ctx<'a> {
     pub cell_pictures: Vec<Option<Arc<CellPicture>>>,
     /// x14 conditional-format ids of the current sheet's data bars, with the index of the rule in `cond_formats`.
     pub cf_ext_ids: Vec<(String, usize)>,
+    /// Anchors of the current sheet's timeline frames, by timeline name (lower case).
+    pub timeline_frames: std::collections::HashMap<String, gridcraft_model::Anchor>,
 }
 
 impl Ctx<'_> {
@@ -82,6 +84,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
         num_fmts: Default::default(),
         cell_pictures: vec![],
         cf_ext_ids: vec![],
+        timeline_frames: Default::default(),
     };
     let root_rels = cx.pkg.rels("")?;
     let wb_part = find_rel(&root_rels, "officeDocument").map(|r| r.target.clone()).unwrap_or_else(|| "xl/workbook.xml".into());
@@ -196,9 +199,20 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
     }
     let active_tab = wb_xml.path(&["bookViews", "workbookView"]).and_then(|v| v.attr_u32("activeTab")).unwrap_or(0) as usize;
 
+    // Timeline caches come first: their PivotTables' date filters are their selections.
+    let timeline_caches = crate::timeline::read_caches(&mut cx, &wb_rels)?;
+
     // Sheets. `file_to_model[i]` maps the i-th <sheet> to a model sheet index.
     let mut file_to_model: Vec<Option<usize>> = vec![];
     let mut pivot_caches = crate::pivot::CachesIn::new(&wb_xml, &wb_rels);
+    for c in &timeline_caches {
+        if let Some(id) = c.filter_id {
+            pivot_caches.timeline_filters.extend(c.pivots.iter().map(|(_, p)| (p.clone(), id)));
+        }
+    }
+    // Timelines read per model sheet, with their drawing frames; `sheetId` → model sheet.
+    let mut timelines: Vec<(Vec<crate::timeline::TimelineIn>, std::collections::HashMap<String, gridcraft_model::Anchor>)> = vec![];
+    let mut tab_ids: std::collections::HashMap<u32, usize> = Default::default();
     let sheet_els: Vec<El> = wb_xml.child("sheets").map(|s| s.kids("sheet").cloned().collect()).unwrap_or_default();
     for (i, se) in sheet_els.iter().enumerate() {
         let name = se.attr("name").unwrap_or("").to_string();
@@ -219,6 +233,7 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
             continue;
         }
         let name = unique_name(&wb, &name, i);
+        cx.timeline_frames.clear();
         let mut sheet = match crate::sheet_read::read_sheet(&mut cx, &rel.target, &name) {
             Ok(s) => s,
             Err(IoError::TooLarge(m)) => return Err(IoError::TooLarge(m)),
@@ -238,9 +253,22 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
             Some("veryHidden") => Visibility::VeryHidden,
             _ => Visibility::Visible,
         };
+        let list = match crate::timeline::read_sheet(&mut cx, &rel.target) {
+            Ok(l) => l,
+            Err(IoError::TooLarge(m)) => return Err(IoError::TooLarge(m)),
+            Err(e) => {
+                cx.warn(format!("timelines on sheet \"{name}\" could not be read: {e}"));
+                vec![]
+            }
+        };
+        timelines.push((list, std::mem::take(&mut cx.timeline_frames)));
+        if let Some(id) = se.attr_u32("sheetId") {
+            tab_ids.insert(id, wb.sheets.len());
+        }
         file_to_model.push(Some(wb.sheets.len()));
         wb.sheets.push(Arc::new(sheet));
     }
+    crate::timeline::attach(&mut cx, &mut wb, &timeline_caches, timelines, &tab_ids);
     if wb.sheets.is_empty() {
         cx.warn("the workbook has no worksheets; added an empty sheet");
         wb.sheets.push(Arc::new(Sheet::new("Sheet1")));
@@ -262,6 +290,10 @@ pub fn read_xlsx(bytes: &[u8]) -> Result<(Workbook, ReadReport), IoError> {
             let text = d.text.trim();
             let lname = name.to_ascii_lowercase();
             if lname == "_xlnm._filterdatabase" {
+                continue;
+            }
+            // A timeline cache's name: written again with the cache.
+            if timeline_caches.iter().any(|c| c.name.eq_ignore_ascii_case(name)) {
                 continue;
             }
             if lname.starts_with("_xlchart.") {

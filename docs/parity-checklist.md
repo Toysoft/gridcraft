@@ -4,13 +4,13 @@
 
 Each entry is an Excel ribbon or menu command (feature names only). It counts as implemented when GridCraft registers a command with the same id. This measures breadth only; the overall assessment (depth, fidelity, effort) is in [target-app-parity.md](target-app-parity.md).
 
-**Overall: 274 / 290 commands implemented (94.5%).**
+**Overall: 292 / 307 commands implemented (95.1%).**
 
 | Tab | Implemented | Total | Parity |
 |---|---|---|---|
 | File | 11 | 11 | 100% |
 | Home | 94 | 94 | 100% |
-| Insert | 17 | 25 | 68% |
+| Insert | 18 | 25 | 72% |
 | Draw | 4 | 4 | 100% |
 | Page Layout | 23 | 23 | 100% |
 | Formulas | 23 | 23 | 100% |
@@ -21,8 +21,9 @@ Each entry is an Excel ribbon or menu command (feature names only). It counts as
 | Table Design | 13 | 13 | 100% |
 | Chart Design | 8 | 8 | 100% |
 | Format | 3 | 3 | 100% |
-| PivotTable Analyze | 13 | 13 | 100% |
+| PivotTable Analyze | 22 | 22 | 100% |
 | PivotTable Design | 4 | 4 | 100% |
+| Timeline | 8 | 8 | 100% |
 
 ## File (11 / 11, 100%)
 
@@ -139,7 +140,7 @@ Implemented:
 - `edit.goToSpecial` Go To Special (Editing)
 - `home.addIns` Add-ins (Add-ins)
 
-## Insert (17 / 25, 68%)
+## Insert (18 / 25, 72%)
 
 Implemented:
 
@@ -154,6 +155,7 @@ Implemented:
 - `insert.pivotChart` PivotChart (Charts)
 - `insert.sparkline` Sparklines (Sparklines)
 - `insert.slicer` Slicer (Filters)
+- `insert.timeline` Timeline (Filters)
 - `insert.link` Link (Links)
 - `review.newComment` Comment (Comments)
 - `insert.textBox` Text Box (Text)
@@ -166,7 +168,6 @@ Missing:
 - `insert.smartArt` SmartArt (Illustrations)
 - `insert.screenshot` Screenshot (Illustrations)
 - `insert.map` Maps (Charts)
-- `insert.timeline` Timeline (Filters)
 - `insert.wordArt` WordArt (Text)
 - `insert.signatureLine` Signature Line (Text)
 - `insert.object` Object (Text)
@@ -371,10 +372,11 @@ Implemented:
 - `chart.shapeFill` Shape Fill (Shape Styles)
 - `chart.shapeOutline` Shape Outline (Shape Styles)
 
-## PivotTable Analyze (13 / 13, 100%)
+## PivotTable Analyze (22 / 22, 100%)
 
 Implemented:
 
+- `pivot.generateGetPivotData` Generate GetPivotData (PivotTable)
 - `pivot.fieldList` Field List (Show)
 - `pivot.refresh` Refresh (Data)
 - `pivot.changeSource` Change Data Source (Data)
@@ -386,8 +388,16 @@ Implemented:
 - `pivot.filter` Filter (Filter)
 - `pivot.sort` Sort (Sort)
 - `pivot.group` Group Field (Group)
+- `pivot.groupSelection` Group Selection (Group)
+- `pivot.ungroup` Ungroup (Group)
+- `pivot.calculatedItem` Calculated Item (Calculations)
+- `pivot.solveOrder` Solve Order (Calculations)
+- `pivot.listFormulas` List Formulas (Calculations)
+- `pivot.insertTimeline` Insert Timeline (Filter)
 - `pivot.collapse` Collapse Field (Active Field)
-- `pivot.delete` Clear All (Actions)
+- `pivot.clearAll` Clear All (Actions)
+- `pivot.clearFilters` Clear Filters (Actions)
+- `pivot.delete` Delete PivotTable (Actions)
 
 ## PivotTable Design (4 / 4, 100%)
 
@@ -397,3 +407,16 @@ Implemented:
 - `pivot.subtotals` Subtotals (Layout)
 - `pivot.reportLayout` Report Layout (Layout)
 - `pivot.style` PivotTable Styles (PivotTable Styles)
+
+## Timeline (8 / 8, 100%)
+
+Implemented:
+
+- `timeline.caption` Timeline Caption (Timeline)
+- `timeline.reportConnections` Report Connections (Timeline)
+- `timeline.style` Timeline Styles (Timeline Styles)
+- `timeline.size` Size (Size)
+- `timeline.showHeader` Header (Show)
+- `timeline.showSelectionLabel` Selection Label (Show)
+- `timeline.showScrollbar` Scrollbar (Show)
+- `timeline.showTimeLevel` Time Level (Show)

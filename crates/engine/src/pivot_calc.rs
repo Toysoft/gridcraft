@@ -35,6 +35,12 @@ pub struct Compiled {
 /// Parses a calculated-field formula. `field` maps a written name to the canonical name of a
 /// source or calculated field.
 pub fn compile(formula: &str, field: &dyn Fn(&str) -> Option<String>) -> Result<Compiled, String> {
+    compile_named(formula, field, "field")
+}
+
+/// [`compile`] for names of `noun`s (`field`, or `item` for calculated items), which the error
+/// messages name.
+pub fn compile_named(formula: &str, field: &dyn Fn(&str) -> Option<String>, noun: &str) -> Result<Compiled, String> {
     let text = formula.trim();
     let text = text.strip_prefix('=').unwrap_or(text).trim();
     if text.is_empty() {
@@ -99,7 +105,7 @@ pub fn compile(formula: &str, field: &dyn Fn(&str) -> Option<String>) -> Result<
                         }
                     }
                 }
-                let canon = field(&name).ok_or_else(|| format!("There's no field named '{name}'."))?;
+                let canon = field(&name).ok_or_else(|| format!("There's no {noun} named '{name}'."))?;
                 out.push_str(&slot(canon, &mut refs));
             }
             c if c.is_ascii_digit() || (c == '.' && at(i + 1).is_some_and(|d| d.is_ascii_digit())) => {
@@ -151,8 +157,8 @@ pub fn compile(formula: &str, field: &dyn Fn(&str) -> Option<String>) -> Result<
         }
         match e {
             Expr::Name(n) if n.starts_with(PREFIX) => {}
-            Expr::Name(n) => problem = Some(format!("There's no field named '{n}'.")),
-            Expr::Ref(_) | Expr::Struct(_) => problem = Some("A calculated field can't refer to cells or tables; use field names.".into()),
+            Expr::Name(n) => problem = Some(format!("There's no {noun} named '{n}'.")),
+            Expr::Ref(_) | Expr::Struct(_) => problem = Some(format!("A calculated {noun} can't refer to cells or tables; use {noun} names.")),
             _ => {}
         }
     });

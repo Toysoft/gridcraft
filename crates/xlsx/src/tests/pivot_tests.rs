@@ -104,7 +104,7 @@ fn workbook() -> Workbook {
                 ..PivotValue::default()
             },
         ],
-        filters: vec![PivotFilter { source_col: "Channel".into(), selected: Some(vec!["Online".into()]) }],
+        filters: vec![PivotFilter { source_col: "Channel".into(), selected: Some(vec!["Online".into()]), rule: None }],
         layout: PivotLayout::Tabular,
         grand_totals_rows: false,
         grand_totals_cols: true,
@@ -116,6 +116,9 @@ fn workbook() -> Workbook {
         calculated_fields: vec![],
         values_on_rows: false,
         values_position: None,
+        group_fields: vec![],
+        calculated_items: vec![],
+        report: Default::default(),
     };
     // Pivot 2: table source, date grouping on two levels, show-values-as, multi-select page
     // filter and a hidden-items filter on a column field.
@@ -125,8 +128,15 @@ fn workbook() -> Workbook {
         source: "SalesTbl".into(),
         anchor: at("K4"),
         rows: vec![
-            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Years, sort: PivotSort::None, collapsed_items: vec!["2024".into()] },
-            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Months, sort: PivotSort::Asc, collapsed_items: vec![] },
+            PivotField {
+                source_col: "Date".into(),
+                date_group: PivotDateGroup::Years,
+                // Date groups keep their chronological order: ascending (no `sortType`).
+                sort: PivotSort::Asc,
+                collapsed_items: vec!["2024".into()],
+                ..PivotField::default()
+            },
+            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Months, sort: PivotSort::Asc, ..PivotField::default() },
         ],
         columns: vec![PivotField { sort: PivotSort::Desc, ..field("Product") }],
         values: vec![
@@ -135,34 +145,42 @@ fn workbook() -> Workbook {
                 func: PivotFunc::Sum,
                 name: "Share".into(),
                 show_as: PivotShowAs::PercentOfGrandTotal,
-                number_format: None,
+                ..PivotValue::default()
             },
-            PivotValue { source_col: "Sales".into(), func: PivotFunc::Max, name: "Rank".into(), show_as: PivotShowAs::Rank, number_format: None },
+            PivotValue {
+                source_col: "Sales".into(),
+                func: PivotFunc::Max,
+                name: "Rank".into(),
+                show_as: PivotShowAs::Rank,
+                base_field: Some("Date".into()),
+                ..PivotValue::default()
+            },
             PivotValue {
                 source_col: "Sales".into(),
                 func: PivotFunc::Average,
                 name: "Running".into(),
                 show_as: PivotShowAs::RunningTotal,
-                number_format: None,
+                base_field: Some("Date".into()),
+                ..PivotValue::default()
             },
             PivotValue {
                 source_col: "Units".into(),
                 func: PivotFunc::StdDevP,
                 name: "Spread".into(),
                 show_as: PivotShowAs::PercentOfColumnTotal,
-                number_format: None,
+                ..PivotValue::default()
             },
             PivotValue {
                 source_col: "Units".into(),
                 func: PivotFunc::VarP,
                 name: "RowPct".into(),
                 show_as: PivotShowAs::PercentOfRowTotal,
-                number_format: None,
+                ..PivotValue::default()
             },
         ],
         filters: vec![
-            PivotFilter { source_col: "Region".into(), selected: Some(vec!["East".into(), "North".into()]) },
-            PivotFilter { source_col: "Product".into(), selected: Some(vec!["A".into(), "B".into()]) },
+            PivotFilter { source_col: "Region".into(), selected: Some(vec!["East".into(), "North".into()]), rule: None },
+            PivotFilter { source_col: "Product".into(), selected: Some(vec!["A".into(), "B".into()]), rule: None },
         ],
         layout: PivotLayout::Outline,
         grand_totals_rows: true,
@@ -175,6 +193,9 @@ fn workbook() -> Workbook {
         calculated_fields: vec![],
         values_on_rows: false,
         values_position: None,
+        group_fields: vec![],
+        calculated_items: vec![],
+        report: Default::default(),
     };
     // Pivot 3: defaults, defined-name source, compact.
     let p3 = PivotTable {
@@ -184,7 +205,7 @@ fn workbook() -> Workbook {
         anchor: at("AB1"),
         rows: vec![field("Product")],
         values: vec![PivotValue { source_col: "Units".into(), func: PivotFunc::Product, name: "Product of Units".into(), ..PivotValue::default() }],
-        filters: vec![PivotFilter { source_col: "Channel".into(), selected: None }],
+        filters: vec![PivotFilter { source_col: "Channel".into(), selected: None, rule: None }],
         last_range: Some(rr("AB1:AC6")),
         ..PivotTable::default()
     };
@@ -417,7 +438,7 @@ fn with_pivot(table: &str, cache: Option<&str>) -> Vec<u8> {
     minimal("<sheetData/>", &extra, "", "")
 }
 
-const GOOD_CACHE: &str = r#"<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cacheSource type="worksheet"><worksheetSource ref="A1:B3"/></cacheSource><cacheFields count="2"><cacheField name="K"><sharedItems><s v="x"/><n v="2"/><m/><b v="1"/><d v="2024-01-01T00:00:00"/></sharedItems></cacheField><cacheField name="V"><sharedItems/><fieldGroup base="0"><rangePr startNum="0" endNum="10" groupInterval="5"/><groupItems><s v="0-4"/></groupItems></fieldGroup></cacheField></cacheFields></pivotCacheDefinition>"#;
+const GOOD_CACHE: &str = r#"<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cacheSource type="worksheet"><worksheetSource ref="A1:B3"/></cacheSource><cacheFields count="2"><cacheField name="K"><sharedItems><s v="x"/><n v="2"/><m/><b v="1"/><d v="2024-01-01T00:00:00"/></sharedItems></cacheField><cacheField name="V"><sharedItems/><fieldGroup base="0"><rangePr startNum="0" endNum="10" groupInterval="0"/><groupItems><s v="0-4"/></groupItems></fieldGroup></cacheField></cacheFields></pivotCacheDefinition>"#;
 
 #[test]
 fn hostile_pivot_parts_warn_not_panic() {
@@ -456,8 +477,12 @@ fn hostile_pivot_parts_warn_not_panic() {
     assert_eq!(pt.rows[0].sort, PivotSort::Desc);
     assert!(pt.values.iter().any(|v| v.func == PivotFunc::Sum && v.source_col == "V"));
     assert!(report.warnings.iter().any(|w| w.contains("bogus")), "{:?}", report.warnings);
+    // A number range with no width is not a grouping the model can hold.
     assert!(report.warnings.iter().any(|w| w.contains("grouping")), "{:?}", report.warnings);
-    assert!(report.warnings.iter().any(|w| w.contains("index")), "{:?}", report.warnings);
+    assert!(pt.columns.iter().all(|f| f.number_group.is_none()), "{:?}", pt.columns);
+    // Index and % of Parent Total are read now.
+    assert!(pt.values.iter().any(|v| v.show_as == PivotShowAs::Index), "{:?}", pt.values);
+    assert!(pt.values.iter().any(|v| v.show_as == PivotShowAs::PercentOfParentTotal), "{:?}", pt.values);
 }
 
 #[test]
@@ -516,6 +541,210 @@ fn calculated_fields_round_trip() {
     for (a, b) in orig.iter().zip(read.iter()) {
         assert_eq!(a, b, "pivot {} differs", a.name);
     }
+}
+
+#[test]
+fn number_range_grouping_round_trips() {
+    let mut wb = workbook();
+    let ng = PivotNumberGroup { start: 0.0, end: 80.0, by: 25.0 };
+    {
+        let p = wb.sheet_mut(1).unwrap().pivots.get_mut(0).unwrap();
+        p.rows.push(PivotField { number_group: Some(ng), ..field("Sales") });
+    }
+    let bytes = write_xlsx(&wb).unwrap();
+    let parts = unzip(&bytes);
+    let c1 = String::from_utf8(parts.get("xl/pivotCache/pivotCacheDefinition1.xml").unwrap().clone()).unwrap();
+    assert!(c1.contains("<rangePr autoStart=\"0\" autoEnd=\"0\" startNum=\"0\" endNum=\"80\" groupInterval=\"25\"/>"), "{c1}");
+    assert!(
+        c1.contains(
+            "<groupItems count=\"6\"><s v=\"&lt;0\"/><s v=\"0-24\"/><s v=\"25-49\"/><s v=\"50-74\"/><s v=\"75-99\"/><s v=\"&gt;80\"/></groupItems>"
+        ),
+        "{c1}"
+    );
+    // The grouped field's records stay numbers, not dates.
+    assert!(c1.contains("<cacheField name=\"Sales\" numFmtId=\"0\">"), "{c1}");
+    let (back, report) = read_xlsx(&bytes).unwrap();
+    assert!(report.warnings.iter().all(|w| !w.to_lowercase().contains("pivot")), "{:?}", report.warnings);
+    let orig = &wb.sheet(1).unwrap().pivots;
+    let read = &back.sheet(1).unwrap().pivots;
+    for (a, b) in orig.iter().zip(read.iter()) {
+        assert_eq!(a, b, "pivot {} differs", a.name);
+    }
+}
+
+#[test]
+fn label_value_and_top10_filters_round_trip() {
+    let mut wb = workbook();
+    {
+        let sh = wb.sheet_mut(1).unwrap();
+        // Pivot 1: a label filter on Region (rows) and a value filter on Product (columns).
+        let p1 = sh.pivots.get_mut(0).unwrap();
+        p1.filters.push(PivotFilter {
+            source_col: "Region".into(),
+            selected: None,
+            rule: Some(PivotRule::Label { op: PivotCompare::NotBetween, value: "A & B".into(), value2: "F".into() }),
+        });
+        p1.filters.push(PivotFilter {
+            source_col: "Product".into(),
+            selected: None,
+            rule: Some(PivotRule::Value { op: PivotCompare::Between, field: "Count of Units".into(), value: 1.5, value2: 30.0 }),
+        });
+        // Pivot 3: the bottom 2 items by percent of Product of Units.
+        let p3 = sh.pivots.get_mut(2).unwrap();
+        p3.filters.push(PivotFilter {
+            source_col: "Product".into(),
+            selected: None,
+            rule: Some(PivotRule::Top { top: false, count: 2.0, by: PivotTopBy::Percent, field: "Product of Units".into() }),
+        });
+    }
+    let bytes = write_xlsx(&wb).unwrap();
+    let parts = unzip(&bytes);
+    let t1 = String::from_utf8(parts.get("xl/pivotTables/pivotTable1.xml").unwrap().clone()).unwrap();
+    assert!(
+        t1.contains(
+            "<filters count=\"2\"><filter fld=\"0\" type=\"captionNotBetween\" evalOrder=\"-1\" id=\"1\" stringValue1=\"A &amp; B\" stringValue2=\"F\"><autoFilter ref=\"A1\"><filterColumn colId=\"0\"><customFilters><customFilter operator=\"lessThan\" val=\"A &amp; B\"/><customFilter operator=\"greaterThan\" val=\"F\"/></customFilters></filterColumn></autoFilter></filter>"
+        ),
+        "{t1}"
+    );
+    assert!(t1.contains("type=\"valueBetween\" evalOrder=\"-1\" id=\"2\" iMeasureFld=\"1\""), "{t1}");
+    assert!(t1.contains("<customFilters and=\"1\"><customFilter operator=\"greaterThanOrEqual\" val=\"1.5\"/>"), "{t1}");
+    // `<filters>` follows the style info, as the schema orders them.
+    assert!(t1.find("<pivotTableStyleInfo").unwrap() < t1.find("<filters").unwrap(), "{t1}");
+    let t3 = String::from_utf8(parts.get("xl/pivotTables/pivotTable3.xml").unwrap().clone()).unwrap();
+    assert!(t3.contains("type=\"percent\" evalOrder=\"-1\" id=\"1\" iMeasureFld=\"0\"><autoFilter ref=\"A1\"><filterColumn colId=\"0\"><top10 top=\"0\" percent=\"1\" val=\"2\"/>"), "{t3}");
+    let (back, report) = read_xlsx(&bytes).unwrap();
+    assert!(report.warnings.iter().all(|w| !w.to_lowercase().contains("pivot")), "{:?}", report.warnings);
+    let orig = &wb.sheet(1).unwrap().pivots;
+    let read = &back.sheet(1).unwrap().pivots;
+    for (a, b) in orig.iter().zip(read.iter()) {
+        assert_eq!(a, b, "pivot {} differs", a.name);
+    }
+}
+
+/// Synthetic equivalent of PR #1207's field 14 in pivotTable2.xml and pivotTable3.xml.
+fn dormant_filter_workbook() -> Workbook {
+    let mut wb = Workbook::new();
+    let sh = wb.sheet_mut(0).unwrap();
+    sh.name = "Data".into();
+    for c in 0..15 {
+        let name = match c {
+            0 => "Region".into(),
+            1 => "Sales".into(),
+            14 => "Dormant".into(),
+            _ => format!("Unused{c}"),
+        };
+        sh.cells.set(CellRef::new(0, c), Cell::value(Value::text(name)));
+    }
+    for r in 1..=4 {
+        sh.cells.set(CellRef::new(r, 0), Cell::value(Value::text(if r <= 2 { "East" } else { "West" })));
+        sh.cells.set(CellRef::new(r, 1), Cell::value(Value::number(f64::from(r * 10))));
+        sh.cells.set(CellRef::new(r, 14), Cell::value(Value::number(f64::from(r % 2))));
+    }
+    for id in 1..=3 {
+        sh.pivots.push(PivotTable {
+            id,
+            name: format!("PivotTable{id}"),
+            source: "Data!$A$1:$O$5".into(),
+            anchor: CellRef::new(2, 16 + id * 3),
+            rows: vec![field("Region")],
+            values: vec![PivotValue { source_col: "Sales".into(), name: "Total".into(), ..PivotValue::default() }],
+            ..PivotTable::default()
+        });
+    }
+    wb
+}
+
+fn dormant_label_filter() -> PivotFilter {
+    PivotFilter {
+        source_col: "Dormant".into(),
+        selected: None,
+        rule: Some(PivotRule::Label { op: PivotCompare::Equals, value: "1".into(), value2: String::new() }),
+    }
+}
+
+#[test]
+fn reads_dormant_field14_filters_in_multiple_pivots() {
+    let mut parts = unzip(&write_xlsx(&dormant_filter_workbook()).unwrap());
+    // Inject Excel's reported XML independently of our filter writer.
+    for id in [2, 3] {
+        let path = format!("xl/pivotTables/pivotTable{id}.xml");
+        let table = String::from_utf8(parts.remove(&path).unwrap()).unwrap();
+        let table = table.replace(
+            "</pivotTableDefinition>",
+            r#"<filters count="1"><filter fld="14" type="captionEqual" evalOrder="-1" id="3" stringValue1="1"><autoFilter ref="A1"><filterColumn colId="0"><customFilters><customFilter operator="equal" val="1"/></customFilters></filterColumn></autoFilter></filter></filters></pivotTableDefinition>"#,
+        );
+        parts.insert(path, table.into_bytes());
+    }
+    let list: Vec<_> = parts.iter().map(|(n, d)| (n.as_str(), d.as_slice())).collect();
+    let (wb, report) = read_xlsx(&super::make_zip(&list)).unwrap();
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    for pt in wb.sheet(0).unwrap().pivots.iter().skip(1) {
+        assert_eq!(pt.filters, vec![dormant_label_filter()], "{} lost its dormant filter", pt.name);
+        assert_eq!(pt.rows, vec![field("Region")]);
+    }
+    let saved = write_xlsx(&wb).unwrap();
+    let parts = unzip(&saved);
+    for id in [2, 3] {
+        let table = xml::parse(parts.get(&format!("xl/pivotTables/pivotTable{id}.xml")).unwrap()).unwrap();
+        assert_eq!(table.child("filters").unwrap().child("filter").unwrap().attr("fld"), Some("14"));
+        assert!(table.child("pivotFields").unwrap().kids("pivotField").nth(14).unwrap().attr("axis").is_none());
+        assert!(table.child("pageFields").is_none());
+    }
+    let (back, report) = read_xlsx(&saved).unwrap();
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert_eq!(wb.sheet(0).unwrap().pivots, back.sheet(0).unwrap().pivots);
+}
+
+#[test]
+fn writes_dormant_label_value_and_top10_filters_without_page_fields() {
+    let rules = [
+        dormant_label_filter().rule.unwrap(),
+        PivotRule::Value { op: PivotCompare::Between, field: "Total".into(), value: 5.0, value2: 50.0 },
+        PivotRule::Top { top: false, count: 2.0, by: PivotTopBy::Items, field: "Total".into() },
+    ];
+    for rule in rules {
+        let mut wb = dormant_filter_workbook();
+        let filter = PivotFilter { source_col: "Dormant".into(), selected: None, rule: Some(rule) };
+        wb.sheet_mut(0).unwrap().pivots[0].filters.push(filter.clone());
+        for _ in 0..2 {
+            let bytes = write_xlsx(&wb).unwrap();
+            let parts = unzip(&bytes);
+            let table = xml::parse(parts.get("xl/pivotTables/pivotTable1.xml").unwrap()).unwrap();
+            assert!(table.child("pageFields").is_none(), "dormant rule became a report filter: {filter:?}");
+            assert_eq!(table.child("filters").unwrap().child("filter").unwrap().attr("fld"), Some("14"));
+            assert!(table.child("pivotFields").unwrap().kids("pivotField").nth(14).unwrap().attr("axis").is_none());
+            let (back, report) = read_xlsx(&bytes).unwrap();
+            assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+            assert_eq!(back.sheet(0).unwrap().pivots[0].filters, vec![filter.clone()]);
+            wb = back;
+        }
+    }
+}
+
+#[test]
+fn unsupported_and_hostile_pivot_filters() {
+    // Unsupported dates, missing value fields/numbers and invalid cache fields are skipped.
+    // A rule on a field outside the axes is preserved; a Top 10 without its `top10` element
+    // takes Excel's defaults.
+    let table = r#"<pivotTableDefinition name="F" cacheId="1"><location ref="A3:B6"/><pivotFields count="2"><pivotField axis="axisRow"><items><item x="0"/><item t="default"/></items></pivotField><pivotField dataField="1"/></pivotFields><rowFields><field x="0"/></rowFields><dataFields><dataField name="Total" fld="1"/></dataFields><filters><filter fld="0" type="thisMonth" id="1"/><filter fld="1" type="captionEqual" id="2" stringValue1="x"/><filter fld="0" type="valueEqual" iMeasureFld="7" id="3"/><filter fld="0" type="valueEqual" iMeasureFld="0" id="4"/><filter fld="99" type="count" id="5"/><filter fld="0" type="count" iMeasureFld="0" id="6"/></filters></pivotTableDefinition>"#;
+    let (wb, report) = read_xlsx(&with_pivot(table, Some(GOOD_CACHE))).unwrap();
+    let pt = &wb.sheet(0).unwrap().pivots[0];
+    assert!(report.warnings.iter().any(|w| w.contains("thisMonth")), "{:?}", report.warnings);
+    assert_eq!(
+        pt.filters,
+        vec![
+            PivotFilter {
+                source_col: "V".into(),
+                selected: None,
+                rule: Some(PivotRule::Label { op: PivotCompare::Equals, value: "x".into(), value2: String::new() }),
+            },
+            PivotFilter {
+                source_col: "K".into(),
+                selected: None,
+                rule: Some(PivotRule::Top { top: true, count: 10.0, by: PivotTopBy::Items, field: "Total".into() }),
+            },
+        ]
+    );
 }
 
 /// The `x` attributes of an axis list (`rowFields`/`colFields`) in a pivotTable part.
@@ -589,4 +818,227 @@ fn data_on_rows_with_one_value_field_reads_without_warning() {
     assert_eq!(pt.values_position, None);
     let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
     assert!(back.sheet(0).unwrap().pivots[0].values_on_rows);
+}
+
+#[test]
+fn group_selection_fields_round_trip_as_discrete_groups() {
+    let mut wb = workbook();
+    {
+        let p = wb.sheet_mut(1).unwrap().pivots.get_mut(0).unwrap();
+        p.group_fields.push(PivotGroupField {
+            name: "Region2".into(),
+            base: "Region".into(),
+            groups: vec![PivotItemGroup { name: "Group1".into(), items: vec!["East".into(), "North".into()] }],
+        });
+        p.rows.insert(0, field("Region2"));
+        p.filters.push(PivotFilter { source_col: "Region2".into(), selected: Some(vec!["Group1".into()]), rule: None });
+    }
+    let bytes = write_xlsx(&wb).unwrap();
+    let parts = unzip(&bytes);
+    let c1 = String::from_utf8(parts.get("xl/pivotCache/pivotCacheDefinition1.xml").unwrap().clone()).unwrap();
+    // The base field names its grouped field; the grouped field maps each base item to a group item.
+    assert!(c1.contains("<fieldGroup par=\"6\"/></cacheField>"), "{c1}");
+    assert!(
+        c1.contains(
+            "<cacheField name=\"Region2\" numFmtId=\"0\" databaseField=\"0\"><fieldGroup base=\"0\"><discretePr count=\"3\"><x v=\"0\"/><x v=\"1\"/><x v=\"0\"/></discretePr><groupItems count=\"2\"><s v=\"Group1\"/><s v=\"West\"/></groupItems></fieldGroup></cacheField>"
+        ),
+        "{c1}"
+    );
+    let t1 = String::from_utf8(parts.get("xl/pivotTables/pivotTable1.xml").unwrap().clone()).unwrap();
+    assert!(t1.contains("<rowFields count=\"2\"><field x=\"6\"/><field x=\"0\"/></rowFields>"), "{t1}");
+    let (back, report) = read_xlsx(&bytes).unwrap();
+    assert!(report.warnings.iter().all(|w| !w.to_lowercase().contains("pivot")), "{:?}", report.warnings);
+    assert_eq!(back.sheet(1).unwrap().pivots[0], wb.sheet(1).unwrap().pivots[0]);
+}
+
+#[test]
+fn time_levels_bounds_and_day_spans_round_trip() {
+    let mut wb = workbook();
+    {
+        let p = wb.sheet_mut(1).unwrap().pivots.get_mut(0).unwrap();
+        let range = Some(PivotDateRange { start: Some(date(2024, 1, 1)), end: Some(date(2024, 12, 31)), days: 1 });
+        p.columns = vec![
+            PivotField { date_group: PivotDateGroup::Years, date_range: range, ..field("Date") },
+            PivotField { date_group: PivotDateGroup::Months, date_range: range, ..field("Date") },
+        ];
+        let p3 = wb.sheet_mut(1).unwrap().pivots.get_mut(2).unwrap();
+        p3.rows = vec![PivotField {
+            date_group: PivotDateGroup::Days,
+            date_range: Some(PivotDateRange { start: None, end: None, days: 30 }),
+            ..field("Date")
+        }];
+    }
+    let bytes = write_xlsx(&wb).unwrap();
+    let parts = unzip(&bytes);
+    let c1 = String::from_utf8(parts.get("xl/pivotCache/pivotCacheDefinition1.xml").unwrap().clone()).unwrap();
+    assert!(
+        c1.contains("<rangePr autoStart=\"0\" autoEnd=\"0\" groupBy=\"months\" startDate=\"2024-01-01T00:00:00\" endDate=\"2024-12-31T00:00:00\"/>"),
+        "{c1}"
+    );
+    assert!(c1.contains("<s v=\"&gt;12/31/2024\"/>"), "{c1}");
+    // Excel sorts date group captions as text under `sortType`: ascending date groups go without it.
+    let t1 = String::from_utf8(parts.get("xl/pivotTables/pivotTable1.xml").unwrap().clone()).unwrap();
+    assert!(t1.contains("numFmtId=\"14\" showAll=\"0\"") && !t1.contains("numFmtId=\"14\" showAll=\"0\" sortType"), "{t1}");
+    let c3 = String::from_utf8(parts.get("xl/pivotCache/pivotCacheDefinition3.xml").unwrap().clone()).unwrap();
+    assert!(c3.contains("groupBy=\"days\" startDate=\"2024-01-05T00:00:00\" endDate=\"2026-01-01T00:00:00\" groupInterval=\"30\"/>"), "{c3}");
+    assert!(c3.contains("<s v=\"1/5/2024 - 2/3/2024\"/>"), "{c3}");
+    let (back, report) = read_xlsx(&bytes).unwrap();
+    assert!(report.warnings.iter().all(|w| !w.to_lowercase().contains("pivot")), "{:?}", report.warnings);
+    for (a, b) in wb.sheet(1).unwrap().pivots.iter().zip(back.sheet(1).unwrap().pivots.iter()) {
+        assert_eq!(a, b, "pivot {} differs", a.name);
+    }
+    // Hours, minutes and seconds read and write their own `groupBy`.
+    for (level, name) in [(PivotDateGroup::Hours, "hours"), (PivotDateGroup::Minutes, "minutes"), (PivotDateGroup::Seconds, "seconds")] {
+        wb.sheet_mut(1).unwrap().pivots[2].rows = vec![PivotField { date_group: level, ..field("Date") }];
+        let bytes = write_xlsx(&wb).unwrap();
+        let c3 = String::from_utf8(unzip(&bytes).get("xl/pivotCache/pivotCacheDefinition3.xml").unwrap().clone()).unwrap();
+        assert!(c3.contains(&format!("groupBy=\"{name}\"")), "{c3}");
+        let (back, _) = read_xlsx(&bytes).unwrap();
+        assert_eq!(back.sheet(1).unwrap().pivots[2].rows[0].date_group, level);
+    }
+}
+
+#[test]
+fn calculated_items_load_and_round_trip() {
+    let mut wb = workbook();
+    {
+        let p = wb.sheet_mut(1).unwrap().pivots.get_mut(0).unwrap();
+        p.calculated_items = vec![
+            PivotCalcItem { field: "Region".into(), name: "East+West".into(), formula: "=East+'West'".into() },
+            PivotCalcItem { field: "Product".into(), name: "AB".into(), formula: "=Product[A]*2".into() },
+        ];
+    }
+    let bytes = write_xlsx(&wb).unwrap();
+    let parts = unzip(&bytes);
+    let c1 = String::from_utf8(parts.get("xl/pivotCache/pivotCacheDefinition1.xml").unwrap().clone()).unwrap();
+    // The items are shared items of their fields, after the data items; the formulas live in the cache.
+    assert!(c1.contains("<s v=\"East+West\"/></sharedItems>"), "{c1}");
+    assert!(
+        c1.contains(
+            "<calculatedItems count=\"2\"><calculatedItem field=\"0\" formula=\"East+&apos;West&apos;\"><pivotArea cacheIndex=\"1\" outline=\"0\" fieldPosition=\"0\"><references count=\"1\"><reference field=\"0\" count=\"1\"><x v=\"3\"/></reference></references></pivotArea></calculatedItem>"
+        ) || c1.contains("formula=\"East+'West'\""),
+        "{c1}"
+    );
+    assert!(c1.find("</cacheFields>").unwrap() < c1.find("<calculatedItems").unwrap(), "{c1}");
+    let (back, report) = read_xlsx(&bytes).unwrap();
+    assert!(report.warnings.iter().all(|w| !w.to_lowercase().contains("calculated")), "{:?}", report.warnings);
+    assert_eq!(back.sheet(1).unwrap().pivots[0].calculated_items, wb.sheet(1).unwrap().pivots[0].calculated_items);
+}
+
+#[test]
+fn calculated_items_and_groups_from_hostile_caches() {
+    // A calculated item without a reference, one pointing past the items, a discrete group with
+    // indices out of range and a group field without a base: skipped or kept safely, never a panic.
+    let cache = r#"<pivotCacheDefinition xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cacheSource type="worksheet"><worksheetSource ref="A1:B3"/></cacheSource><cacheFields count="4"><cacheField name="K"><sharedItems><s v="x"/><s v="y"/><s v="xy"/></sharedItems><fieldGroup par="2"/></cacheField><cacheField name="V"><sharedItems/></cacheField><cacheField name="K2" databaseField="0"><fieldGroup base="0"><discretePr count="3"><x v="0"/><x v="0"/><x v="99"/></discretePr><groupItems count="1"><s v="Group1"/></groupItems></fieldGroup></cacheField><cacheField name="K3" databaseField="0"><fieldGroup><discretePr count="1"><x v="0"/></discretePr></fieldGroup></cacheField></cacheFields><calculatedItems count="3"><calculatedItem formula="x+y"/><calculatedItem field="0" formula="x*2"><pivotArea><references><reference field="0"><x v="77"/></reference></references></pivotArea></calculatedItem><calculatedItem field="0" formula="x+y"><pivotArea cacheIndex="1"><references><reference field="0"><x v="2"/></reference></references></pivotArea></calculatedItem></calculatedItems></pivotCacheDefinition>"#;
+    let table = r#"<pivotTableDefinition name="H" cacheId="1"><location ref="A3:B6"/><pivotFields count="4"><pivotField axis="axisRow"><items><item x="0"/><item x="1"/><item x="2"/></items></pivotField><pivotField dataField="1"/><pivotField axis="axisRow"><items><item x="0"/></items></pivotField><pivotField axis="axisRow"/></pivotFields><rowFields count="3"><field x="2"/><field x="0"/><field x="3"/></rowFields><dataFields><dataField name="Total" fld="1"/></dataFields></pivotTableDefinition>"#;
+    let (wb, report) = read_xlsx(&with_pivot(table, Some(cache))).unwrap();
+    let pt = &wb.sheet(0).unwrap().pivots[0];
+    assert_eq!(pt.calculated_items, vec![PivotCalcItem { field: "K".into(), name: "xy".into(), formula: "=x+y".into() }]);
+    assert_eq!(pt.group_fields.len(), 1);
+    assert_eq!(pt.group_fields[0].groups, vec![PivotItemGroup { name: "Group1".into(), items: vec!["x".into(), "y".into()] }]);
+    assert_eq!(pt.rows.iter().map(|f| f.source_col.as_str()).collect::<Vec<_>>(), ["K2", "K"]);
+    assert!(report.warnings.iter().any(|w| w.contains("K3")), "{:?}", report.warnings);
+    assert!(write_xlsx(&wb).is_ok());
+}
+
+#[test]
+fn timelines_round_trip_with_their_caches_and_pivot_filter() {
+    let mut wb = workbook();
+    let tl = Timeline {
+        id: 50,
+        name: "Date".into(),
+        caption: "Order date".into(),
+        field: "Date".into(),
+        pivots: vec![1],
+        anchor: Anchor { cell: at("H2"), dx: 0.0, dy: 0.0, width: 262.5, height: 108.0, mode: AnchorMode::MoveOnly },
+        level: TimelineLevel::Quarters,
+        selection: Some((date(2024, 1, 1), date(2024, 6, 30))),
+        selection_level: TimelineLevel::Months,
+        scroll: Some(date(2024, 1, 1)),
+        style: "TimeSlicerStyleDark2".into(),
+        show_scrollbar: false,
+        ..Timeline::default()
+    };
+    wb.sheet_mut(1).unwrap().timelines.push(tl.clone());
+    let bytes = write_xlsx(&wb).unwrap();
+    let parts = unzip(&bytes);
+    let text = |p: &str| String::from_utf8(parts.get(p).unwrap_or_else(|| panic!("missing {p}")).clone()).unwrap();
+    let t = text("xl/timelines/timeline1.xml");
+    assert!(
+        t.contains("<timeline name=\"Date\" cache=\"NativeTimeline_Date\" caption=\"Order date\" level=\"1\" selectionLevel=\"2\" scrollPosition=\"2024-01-01T00:00:00\" style=\"TimeSlicerStyleDark2\" showHorizontalScrollbar=\"0\"/>"),
+        "{t}"
+    );
+    let c = text("xl/timelineCaches/timelineCache1.xml");
+    assert!(
+        c.contains("name=\"NativeTimeline_Date\" sourceName=\"Date\"><pivotTables><pivotTable tabId=\"2\" name=\"Sales by Region\"/></pivotTables>"),
+        "{c}"
+    );
+    assert!(
+        c.contains("pivotCacheId=\"1\" filterType=\"dateBetween\" filterId=\"1000\" filterPivotName=\"Sales by Region\" filterTabId=\"2\">"),
+        "{c}"
+    );
+    assert!(c.contains("<selection startDate=\"2024-01-01T00:00:00\" endDate=\"2024-06-30T00:00:00\"/><bounds startDate=\"2024-01-01T00:00:00\" endDate=\"2026-01-01T00:00:00\"/>"), "{c}");
+    let w = text("xl/workbook.xml");
+    assert!(w.contains("<definedName name=\"NativeTimeline_Date\">#N/A</definedName>"), "{w}");
+    assert!(w.contains("<x15:timelineCacheRefs><x15:timelineCacheRef r:id="), "{w}");
+    assert!(text("xl/_rels/workbook.xml.rels").contains("relationships/timelineCache\" Target=\"timelineCaches/timelineCache1.xml\""));
+    assert!(text("xl/worksheets/sheet2.xml").contains("<x15:timelineRefs><x15:timelineRef r:id="));
+    assert!(text("xl/worksheets/_rels/sheet2.xml.rels").contains("relationships/timeline\" Target=\"../timelines/timeline1.xml\""));
+    assert!(text("xl/drawings/drawing1.xml").contains("<tsle:timeslicer name=\"Date\"/>"));
+    let ct = text("[Content_Types].xml");
+    assert!(ct.contains("application/vnd.ms-excel.timeline+xml") && ct.contains("application/vnd.ms-excel.timelineCache+xml"), "{ct}");
+    let pt = text("xl/pivotTables/pivotTable1.xml");
+    assert!(pt.contains("<filter fld=\"2\" type=\"dateBetween\" evalOrder=\"-1\" id=\"1000\" name=\"Date\">"), "{pt}");
+    let pc = text("xl/pivotCache/pivotCacheDefinition1.xml");
+    assert!(pc.contains("<x14:pivotCacheDefinition pivotCacheId=\"1\"/>"), "{pc}");
+    // The timeline's field is a date field in the cache.
+    assert!(
+        pc.contains("<cacheField name=\"Date\" numFmtId=\"14\"><sharedItems containsSemiMixedTypes=\"0\" containsNonDate=\"0\" containsDate=\"1\""),
+        "{pc}"
+    );
+
+    let (back, report) = read_xlsx(&bytes).unwrap();
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    let sh = back.sheet(1).unwrap();
+    assert_eq!(sh.timelines.len(), 1);
+    let got = &sh.timelines[0];
+    let pivot_id = sh.pivots[0].id;
+    // The anchor comes back through EMU, within a fraction of a point.
+    assert!((got.anchor.width - tl.anchor.width).abs() < 0.01 && (got.anchor.height - tl.anchor.height).abs() < 0.01, "{:?}", got.anchor);
+    assert_eq!(got.anchor.cell, tl.anchor.cell);
+    assert_eq!(Timeline { id: 50, pivots: vec![1], anchor: tl.anchor, ..got.clone() }, tl);
+    assert_eq!(got.pivots, vec![pivot_id]);
+    assert_eq!(sh.pivots[0].filters, wb.sheet(1).unwrap().pivots[0].filters, "the date filter is the timeline's, not a rule");
+    assert!(back.names.iter().all(|n| !n.name.starts_with("NativeTimeline")));
+    // A second save is stable.
+    let again = write_xlsx(&back).unwrap();
+    assert_eq!(read_xlsx(&again).unwrap().0.sheet(1).unwrap().timelines.len(), 1);
+}
+
+#[test]
+fn hostile_timeline_parts_warn_not_panic() {
+    let wb_extra = r#"<definedNames><definedName name="NativeTimeline_X">#N/A</definedName></definedNames>"#;
+    let wb_rels = r#"<Relationship Id="rId2" Type="http://schemas.microsoft.com/office/2011/relationships/timelineCache" Target="timelineCaches/timelineCache1.xml"/><Relationship Id="rId3" Type="http://schemas.microsoft.com/office/2011/relationships/timelineCache" Target="timelineCaches/missing.xml"/><Relationship Id="rId4" Type="http://schemas.microsoft.com/office/2011/relationships/timelineCache" Target="timelineCaches/timelineCache2.xml"/>"#;
+    let sheet_rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.microsoft.com/office/2011/relationships/timeline" Target="../timelines/timeline1.xml"/></Relationships>"#;
+    // A cache naming a missing PivotTable with a reversed selection, a cache without a field, a
+    // timeline naming a missing cache, one without a name, one with an odd level.
+    let cache1 = r#"<timelineCacheDefinition xmlns="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" name="NativeTimeline_X" sourceName="X"><pivotTables><pivotTable tabId="9" name="Nope"/><pivotTable name="NoTab"/></pivotTables><state filterId="4"><selection startDate="2026-05-01T00:00:00" endDate="2026-01-01T00:00:00"/></state></timelineCacheDefinition>"#;
+    let cache2 = r#"<timelineCacheDefinition xmlns="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" name="Broken"/>"#;
+    let timeline = r#"<timelines xmlns="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main"><timeline name="X" cache="NativeTimeline_X" level="77" scrollPosition="garbage"/><timeline name="Y" cache="Gone"/><timeline cache="NativeTimeline_X"/></timelines>"#;
+    let parts = [
+        ("xl/worksheets/_rels/sheet1.xml.rels", sheet_rels),
+        ("xl/timelineCaches/timelineCache1.xml", cache1),
+        ("xl/timelineCaches/timelineCache2.xml", cache2),
+        ("xl/timelines/timeline1.xml", timeline),
+    ];
+    let bytes = minimal("<sheetData/>", &parts, wb_rels, wb_extra);
+    let (wb, report) = read_xlsx(&bytes).unwrap();
+    let sh = wb.sheet(0).unwrap();
+    assert_eq!(sh.timelines.len(), 1);
+    let t = &sh.timelines[0];
+    assert_eq!((t.field.as_str(), t.level, t.selection, t.pivots.len(), t.scroll), ("X", TimelineLevel::Months, None, 0, None));
+    assert!(report.warnings.iter().any(|w| w.contains("\"Y\"")), "{:?}", report.warnings);
+    assert!(report.warnings.iter().any(|w| w.contains("without its name")), "{:?}", report.warnings);
+    assert!(wb.names.is_empty(), "the cache's name isn't a defined name");
+    assert!(write_xlsx(&wb).is_ok());
 }

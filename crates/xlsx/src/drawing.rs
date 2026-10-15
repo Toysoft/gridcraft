@@ -175,6 +175,11 @@ pub fn read_drawing(cx: &mut Ctx<'_>, part: &str, sheet: &mut Sheet) -> Result<(
                                 None => cx.warn(format!("chart {target} has no supported plot and was skipped")),
                             }
                         }
+                    } else if uri == crate::timeline::GRAPHIC_URI {
+                        // A timeline: its frame gives the anchor of the timeline of that name.
+                        if let Some(name) = gd.child("timeslicer").and_then(|t| t.attr("name")) {
+                            cx.timeline_frames.insert(name.to_lowercase(), anchor);
+                        }
                     } else if uri.contains("chartex") || uri.contains("chartEx") {
                         cx.warn("a histogram, waterfall, treemap… chart without its chart part was skipped");
                     } else {
@@ -311,6 +316,7 @@ pub enum Obj<'a> {
     Image(&'a Image, String),
     Chart(&'a gridcraft_model::Chart, String),
     Shape(&'a Shape),
+    Timeline(&'a gridcraft_model::Timeline),
 }
 
 /// The drawing part for a sheet's objects (relationship ids already assigned).
@@ -358,6 +364,12 @@ pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
                     id - 1,
                     xfrm(&ch.anchor, "xdr:xfrm")
                 );
+            }
+            Obj::Timeline(t) => {
+                let (open, close) = anchor_open(sheet, &t.anchor);
+                close_tag = close;
+                s.push_str(&open);
+                s.push_str(&crate::timeline::frame_xml(t, id, &xfrm(&t.anchor, "xdr:xfrm"), &xfrm(&t.anchor, "a:xfrm")));
             }
             Obj::Shape(sh) => {
                 let (open, close) = anchor_open(sheet, &sh.anchor);
