@@ -1296,7 +1296,9 @@ fn refresh(s: &mut Session, p: &Json) -> Result<Json> {
 
 fn refresh_all(s: &mut Session, p: &Json) -> Result<Json> {
     let replace = bool_param(p, "replace").unwrap_or(false);
-    edit(s, |cx| {
+    // Database tables first: PivotTables may summarise them.
+    let (queries, query_errors, need_password) = super::database::refresh_all(s)?;
+    let mut r = edit(s, |cx| {
         let mut n = 0;
         let mut errors = vec![];
         for si in 0..cx.wb.sheets.len() {
@@ -1311,7 +1313,15 @@ fn refresh_all(s: &mut Session, p: &Json) -> Result<Json> {
         }
         cx.structural = n > 0;
         Ok(json!({"refreshed": n, "errors": errors}))
-    })
+    })?;
+    r["refreshed"] = json!(r["refreshed"].as_u64().unwrap_or(0) + queries as u64);
+    if let Some(e) = r["errors"].as_array_mut() {
+        e.extend(query_errors);
+    }
+    if !need_password.is_empty() {
+        r["needPassword"] = json!(need_password);
+    }
+    Ok(r)
 }
 
 fn change_source(s: &mut Session, p: &Json) -> Result<Json> {

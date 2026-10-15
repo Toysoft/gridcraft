@@ -3,6 +3,7 @@
 mod array_export;
 mod chart_bool_default;
 mod csv_tests;
+mod db_queries_tests;
 mod encrypted_tests;
 mod fixtures;
 mod ink_roundtrip;

@@ -10,6 +10,7 @@ pub mod catalog;
 pub mod cf;
 mod clip_html;
 pub mod cmd;
+pub mod datasource;
 pub mod display;
 pub mod fill;
 pub mod io;
@@ -199,6 +200,8 @@ pub struct Prefs {
     pub user_dictionary: Vec<String>,
     /// View › Show › Formula Bar (an application option in Excel, not saved in the file).
     pub formula_bar: bool,
+    /// Saved connections of Data › From Database (no passwords).
+    pub db_connections: Vec<datasource::ConnectionProfile>,
 }
 
 impl Default for Prefs {
@@ -213,6 +216,7 @@ impl Default for Prefs {
             r1c1: false,
             user_dictionary: vec![],
             formula_bar: true,
+            db_connections: vec![],
         }
     }
 }
@@ -256,6 +260,12 @@ pub struct Session {
     /// Review › Notes › Show All Notes: every note is displayed. An application display setting
     /// (like Excel's comment indicator option), so it's not saved in the file.
     pub show_all_notes: bool,
+    /// Host-provided database access for `data.fromDatabase` (desktop app, CLI); `None` on the
+    /// web and in hosts without drivers.
+    pub data_source: Option<datasource::DataSource>,
+    /// Database passwords given this session, by driver, connection and user, so Refresh doesn't
+    /// ask again. Never saved or journaled.
+    pub db_passwords: std::collections::HashMap<String, String>,
 }
 
 impl Session {
@@ -374,11 +384,13 @@ impl Session {
     pub fn execute_headless(&mut self, id: &str, params: Json) -> Result<Json> {
         let r = self.execute(id, params);
         let requests = self.take_ui_requests();
-        let asked_for_file = requests.iter().any(|q| matches!(q, UiRequest::Dialog(name, _) if name == "open" || name == "saveAs"));
+        let asked_for_file =
+            requests.iter().any(|q| matches!(q, UiRequest::Dialog(name, _) if name == "open" || name == "saveAs" || name == "fromDatabase"));
         if r.is_ok() && asked_for_file {
             let what = match id {
                 "file.open" => "`path` or `base64`",
                 "data.getData" | "data.fromTextCsv" => "`path` or `text`",
+                "data.fromDatabase" => "`driver`, `connection` and `query`",
                 _ => "`path`",
             };
             let msg = format!("missing {what}: programmatic calls never open dialogs");
