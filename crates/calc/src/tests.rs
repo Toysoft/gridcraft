@@ -588,6 +588,9 @@ fn let_lambda() {
     assert_eq!(t.num("A3"), 6.0);
     t.set("A4", "=SUM(MAP({1,2,3},LAMBDA(v,v*v)))");
     assert_eq!(t.num("A4"), 14.0);
+    // Variable names ignore case in any script, so a localized call can name a LET lambda.
+    t.set("A6", "=LET(zählenwenn,LAMBDA(x,x*2),ZÄHLENWENN(3))");
+    assert_eq!(t.num("A6"), 6.0);
 }
 
 #[test]

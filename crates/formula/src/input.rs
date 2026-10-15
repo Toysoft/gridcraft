@@ -152,7 +152,8 @@ fn starts_with_ignore_case(text: &str, prefix: &str) -> bool {
 /// items, leaving column names and `'` escapes alone.
 fn translate_struct(inner: &str, from: &[&'static str; 5], to: &[&'static str; 5], from_sep: char, to_sep: char) -> String {
     let item = |text: &str| -> Option<&'static str> { from.iter().position(|f| eq_ignore_case(text.trim(), f)).and_then(|i| to.get(i).copied()) };
-    if !inner.starts_with('[') {
+    // Excel allows spaces around bracketed items (`Tabla1[ [#Datos]; [Col1] ]`).
+    if !inner.trim_start().starts_with('[') {
         return item(inner).map_or_else(|| inner.to_string(), str::to_string);
     }
     let mut out = String::with_capacity(inner.len());
@@ -336,7 +337,9 @@ fn normalize(
                     && (display || locale.boolean(function).is_none())
                 {
                     let alias = if display { locale.function_name(function) } else { locale.canonical_name(function) };
-                    if alias != function.as_str() && (!display || (!bound(alias, bindings) && locale.boolean(alias).is_none())) {
+                    // The canonical name must not become a reference to a binding or defined name
+                    // (`LET(SUM;42;ESERROR(SUMA))` keeps `SUMA`).
+                    if alias != function.as_str() && !bound(alias, bindings) && (!display || locale.boolean(alias).is_none()) {
                         *function = alias.to_string();
                         continue;
                     }

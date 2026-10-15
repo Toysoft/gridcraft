@@ -42,6 +42,8 @@ fn every_language_round_trips_canonical_formulas() {
         "SUM(1:3)+ROWS($2:$2)",
         "CEILING.MATH(2.5)+T.TEST(A1:A3,B1:B3,2,1)",
         "BYROW(A1:B2,SUM)+GROUPBY(A1:A3,B1:B3,AVERAGE)",
+        // `SUMA` is no function here; read back, it must not become the binding `SUM`.
+        "LET(SUM,42,ISERROR(SUMA))",
     ] {
         let expected = print(&parse(formula).unwrap());
         for locale in FormulaLocale::ALL {
@@ -56,6 +58,7 @@ fn english_words_and_any_letter_case_are_accepted() {
     assert_eq!(canonical("SUM(1;2)+suma(3)", Es), "SUM(1,2)+SUM(3)");
     assert_eq!(canonical("{verdadero\\FALSE}+#n/d+#¡valor!", Es), "{TRUE,FALSE}+#N/A+#VALUE!");
     assert_eq!(canonical("SUMA(Tabla1[[#encabezados];[a]])", Es), "SUM(Tabla1[[#Headers],[a]])");
+    assert_eq!(canonical("SUMA(Tabla1[ [#Datos];[a]])", Es), "SUM(Tabla1[[#Data],[a]])");
     // English separators are not the language's syntax.
     assert!(parse_input("SUMA(1.5;2)", Es, |_| false).is_err());
 }
