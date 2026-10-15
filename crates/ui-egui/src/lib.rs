@@ -247,6 +247,10 @@ pub struct SheetApp {
     pub collab_highlights: Vec<(u64, usize, gridcraft_engine::core::CellRef, f64)>,
     /// When the live sessions' state was last kept for recovery.
     pub collab_recovery_at: f64,
+    /// Invitation links transports gave for rooms (room id → link), for Share › Copy invitation.
+    pub collab_invites: std::collections::HashMap<String, String>,
+    /// A person's selection flashing after a click on their circle in the title bar.
+    pub collab_flash: Option<collab_ui::Flash>,
     print_feedback_seen: Option<printing::Feedback>,
     /// Synthetic input from agents, one batch per frame (drags need several frames).
     pub synthetic: std::collections::VecDeque<Vec<egui::Event>>,
@@ -311,6 +315,8 @@ impl SheetApp {
             status_message: None,
             collab_highlights: Vec::new(),
             collab_recovery_at: 0.0,
+            collab_invites: Default::default(),
+            collab_flash: None,
             print_feedback_seen: None,
             synthetic: Default::default(),
             control_rx: None,

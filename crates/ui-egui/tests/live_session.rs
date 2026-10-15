@@ -1,6 +1,6 @@
-//! A live session in the interface: the status bar shows it, others' edits arrive and are
-//! highlighted, their selection is drawn (no panic), and the Share dialog opens from the Review
-//! tab's Start Live Session. The other person is a second engine session connected in memory.
+//! A live session in the interface: the title bar shows it, others' edits arrive and are
+//! highlighted, their selection is drawn (no panic), and Start Live Session (`collab.share`)
+//! opens the Share dialog. The other person is a second engine session connected in memory.
 
 use egui::vec2;
 use egui_kittest::kittest::Queryable;
@@ -51,7 +51,7 @@ fn a_live_session_shows_and_merges() {
     exchange(&mut h, &mut bob);
     assert_eq!(bob.active().unwrap().wb.active().unwrap().value(CellRef::new(0, 0)), Value::Text("Budget".into()));
     h.run_steps(2);
-    let _ = h.get_by_label("Live");
+    let _ = h.get_by_label("Share, live");
 
     // Bob types and selects: Ann sees the value (highlighted) and Bob in the room.
     bob.execute("cell.set", json!({"cell": "B2", "input": "42"})).unwrap();

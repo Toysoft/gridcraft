@@ -101,8 +101,8 @@ pub fn run(app: &mut SheetApp, item: &Item, extra: Json) {
 }
 
 /// `plugins.run` from the interface (a button, a menu item, a plugin dialog): runs the command,
-/// shows its error, and performs what its result asks for after the step: opens `open` and shows
-/// `dialog`.
+/// shows its error, and performs what its result asks for after the step: opens `open`, joins
+/// `collab.join` and shows `dialog`.
 pub fn run_command(app: &mut SheetApp, params: Json) {
     let plugin = params.get("plugin").and_then(Json::as_str).unwrap_or("").to_string();
     match app.run("plugins.run", params) {
@@ -111,7 +111,7 @@ pub fn run_command(app: &mut SheetApp, params: Json) {
     }
 }
 
-/// Performs a plugin command's `open` and `dialog` (already validated by the engine).
+/// Performs a plugin command's `open`, `collab.join` and `dialog` (already validated by the engine).
 pub fn follow(app: &mut SheetApp, plugin: &str, r: &Json) {
     if let Some(o) = r.get("open").and_then(|o| plugin::dialog::OpenRequest::parse(o).ok()) {
         app.open_path(&o.path);
@@ -127,6 +127,23 @@ pub fn follow(app: &mut SheetApp, plugin: &str, r: &Json) {
                     app.doc_labels.remove(&uid);
                 }
             }
+        }
+    }
+    // Protocol 2: the room the transport's command set up (its Share or Join). The invitation
+    // it returned (`result.link`) is kept for the title bar's Share › Copy invitation.
+    if let Some(join) = r.get("collab").and_then(|c| c.get("join")).filter(|j| j.is_object()) {
+        let mut join = join.clone();
+        if join.get("plugin").and_then(Json::as_str).is_none() {
+            join["plugin"] = json!(plugin);
+        }
+        match app.run("collab.join", join) {
+            Ok(out) => {
+                let link = r.get("result").and_then(|x| x.get("link")).and_then(Json::as_str);
+                if let (Some(room), Some(link)) = (out.get("room").and_then(Json::as_str), link) {
+                    app.collab_invites.insert(room.to_string(), link.to_string());
+                }
+            }
+            Err(e) => app.alert(e),
         }
     }
     if let Some(d) = r.get("dialog") {

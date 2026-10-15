@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (File › Options › Add-ins) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-15 · **Change:** minor (Share and the live session's people in the title bar; previously minor: File › Options › Add-ins) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Interaction, controls and feel, against Excel. Part of [target-app-parity.md](target-app-parity.md).
 **UI/UX fidelity: ~55% ready, 50–80 h** (estimated). Ribbon command coverage is measured
@@ -14,7 +14,7 @@ Sources: `crates/ui-egui/src` (ribbon, grid, editor, formula bar, dialogs, panes
 
 | Element | Excel | GridCraft | Status |
 |---|---|---|---|
-| Title bar, Quick Access Toolbar, AutoSave toggle | yes | yes | done; macOS window controls misaligned (#170), Dock icon size (#169) |
+| Title bar, Quick Access Toolbar, AutoSave toggle | yes | yes | done; Share at the right end (live sessions, [collab.md](collab.md)) with the session's people as circles (four, then "+N"); narrow windows drop the optional controls and truncate the title; full screen reclaims the traffic lights' space; macOS window controls misaligned (#170), Dock icon size (#169) |
 | Ribbon: tabs, groups, split buttons, galleries, contextual tabs | yes | yes (Table Design, Chart Design, Format, PivotTable, Header & Footer tabs) | done; missing contextual tabs for pictures, shapes, sparklines, slicers |
 | Ribbon collapse, simplified ribbon, customize ribbon/QAT | yes | partial | customization missing (File ▸ Options is the one missing File command) |
 | Ribbon: tabs, groups, split buttons, galleries, contextual tabs | yes | yes (Table Design, Chart Design, Format, PivotTable tabs) | done; missing contextual tabs for pictures, shapes, sparklines, header/footer, slicers |
@@ -161,6 +161,7 @@ scrollbar bugs 2–4 · pixel/feel pass against observed Excel 7–12.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Title bar: Share for live sessions (state, popover) and the people's circles; narrow-window and full-screen layout; Export moved to More commands |
 | 2026-10-13 | minor | File › Options lists add-ins: documentation link, Activate / Deactivate |
 | 2026-10-12 | minor | The File view's recent list tells when each workbook was last changed, read off the UI thread |
 | 2026-10-13 | minor | Horizontal scrollbar in the sheet tab bar: drag, track click pages, frozen columns excluded from the page (#840) |

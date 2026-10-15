@@ -1,6 +1,6 @@
 # Live sessions (co-editing)
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** major (created: plugin protocol 2 in GridCraft, schema 1) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (Share and the session's people in the title bar; previously major: created: plugin protocol 2 in GridCraft, schema 1) · **Target:** Microsoft Excel (Microsoft 365)
 
 Several people edit one workbook at the same time, each in their own GridCraft, and see each
 other's selections and edits as they happen. This is GridCraft's equivalent of Excel's
@@ -20,14 +20,31 @@ the two agree, and this page has the detail that one leaves to GridCraft.
 
 ## Using it
 
-**Review › Share**: *Start Live Session* shares the active workbook, *Join* opens a new workbook
-filled from a room, *Leave* turns the workbook back into an ordinary one (with every edit, not
-saved automatically). A transport plugin usually brings its own Share and Join buttons (with
-invitations); they end in the same commands. While joining, the workbook is read-only and the
-status bar says "Joining…". The status bar shows the session's state (Live, Connecting…,
-Offline), whether it's encrypted, and the people in it as coloured initials; their selections
-are outlined in their colours with a name tag on their active cell, and cells they change are
-highlighted for two seconds.
+**Share**, at the right end of the title bar (as in Excel). Not in a session, it opens the
+Share dialog: pick the transport add-in, then its own *Start a Live Session* or *Join from an
+Invitation…* (the add-in makes and reads invitation links), or name a room and key under *Room
+name and key*. With no transport add-in installed, the dialog says a live-session add-in is
+needed, names craft-mqtt from [sirmmo/craft-collab](https://github.com/sirmmo/craft-collab) as an
+example, and opens Automate › Add-ins. In a session, the button shows the session's state with a
+dot (green: live; amber, ringed: connecting or joining; grey: offline, editing goes on here) and
+opens the session's popover: the room's title, state, room id and transport, whether it's
+encrypted or view-only, the transport's message, everyone in it (circle, name, "(you)"), *Copy
+invitation* when the transport's Share or Join returned a link (`result.link`), and *Leave*
+(the workbook stays open, with every edit, as an ordinary workbook; not saved automatically).
+
+To the left of Share, the people in the session are overlapping circles with their initials on
+their colour (black or white text, whichever reads better), the others by name and then you,
+at most four circles and then "+N" (hovering it lists the rest). Hover a circle for the name
+("(you)" for yourself); click it to go to that person's selection, switching sheet if needed,
+which flashes in their colour. In a narrow window the theme switch, Comments and Search give
+way first, then circles; the document title is cut short with "…" before anything overlaps it.
+In full screen on macOS the title bar's controls move into the traffic lights' space.
+
+Others' selections are outlined in their colours with a name tag on their active cell, and cells
+they change are highlighted for two seconds. The status bar only says why the workbook can't be
+edited now ("Joining…", view only, another app's room) and the transport's or app's problems
+("Wrong room key?"). The `collab.*` commands are in the command palette (they no longer have a
+Review tab group).
 
 Undo and Redo, while in a session, undo **your** changes only; others' edits never enter your
 undo history. Saving works as usual: each person saves their own copy.
@@ -44,7 +61,8 @@ undo history. Saving works as usual: each person saves their own copy.
 
 A plugin command's result may carry `collab: {join: {…}}` (with protocol 1.2's `open`,
 `dialog` and `message`): `plugins.run` returns it to the caller, and the interface runs
-`collab.join` with it when a button, menu item or plugin dialog ran the command. Programmatic
+`collab.join` with it (the plugin's id as `plugin` unless given) when a button, menu item or
+plugin dialog ran the command, keeping `result.link` as the room's invitation. Programmatic
 calls never open dialogs.
 
 Rust API (for embedders, tests and a future web build): `Session::collab_poll(now_ms)` runs the
@@ -218,4 +236,5 @@ and renews it every 15 s; a peer not heard from for 30 s is gone.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Share and the session's people in the title bar (state dot, popover with people, Copy invitation and Leave; circles with "+N"; click to go to a person's selection); the Share dialog points at Automate › Add-ins when no transport is installed; a transport command's `collab.join` is now joined by the interface and its invitation kept; Review › Share group removed; status bar keeps only read-only reasons and problems |
 | 2026-10-15 | major | Created: plugin protocol 2 (2.0.1) in GridCraft: push channel, rooms, schema 1, encryption, per-user undo, awareness, recovery, Review › Share |

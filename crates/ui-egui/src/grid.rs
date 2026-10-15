@@ -107,6 +107,9 @@ pub struct GridState {
     /// With `ensure_visible`: scroll to the moving end of the selection instead of the active cell
     /// (Shift/Ctrl+Shift+arrows keep the active cell on the anchor while the far corner moves).
     pub reveal_moving_end: bool,
+    /// Scroll to this cell once (someone else's selection in a live session) without moving the
+    /// selection.
+    pub reveal: Option<CellRef>,
     pub last_title: Option<String>,
     pub drag_select: bool,
     pub rect: Option<Rect>,
@@ -669,10 +672,13 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
     view.scroll.y = view.scroll.y.min(max_y);
     let mut geo = make_geo(app, view.scroll);
     // Keep the active cell (or the moving end of an extension) visible after keyboard moves.
-    if app.grid.ensure_visible {
+    if app.grid.ensure_visible || app.grid.reveal.is_some() {
         app.grid.ensure_visible = false;
         let cell = if std::mem::take(&mut app.grid.reveal_moving_end) { sel.moving_end() } else { sel.active };
-        let target = app.editor.as_ref().and_then(|e| e.point_cell).unwrap_or(cell);
+        let target = match app.grid.reveal.take() {
+            Some(cell) => cell,
+            None => app.editor.as_ref().and_then(|e| e.point_cell).unwrap_or(cell),
+        };
         if paper {
             crate::paper_view::ensure_covers(app, &wb, si, target);
             geo = make_geo(app, view.scroll);

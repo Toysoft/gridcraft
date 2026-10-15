@@ -132,7 +132,7 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 
 | Date | What landed |
 |---|---|
-| 2026-10-15 | Co-editing (plugin protocol 2, shared with WordCraft and DeckCraft): several people edit one workbook live through a transport plugin (MQTT, a local relay…); GridCraft merges the edits itself (Yjs), shows the others' selections and edits in their colours, keeps a per-person undo, encrypts end to end with a room key, and recovers a session after a crash; Review › Share ([docs/collab.md](docs/collab.md)) |
+| 2026-10-15 | Co-editing (plugin protocol 2, shared with WordCraft and DeckCraft): several people edit one workbook live through a transport plugin (MQTT, a local relay…); GridCraft merges the edits itself (Yjs), shows the others' selections and edits in their colours, keeps a per-person undo, encrypts end to end with a room key, and recovers a session after a crash; Share and the people in the title bar ([docs/collab.md](docs/collab.md)) |
 | 2026-10-15 | Plugin protocol 1.2, shared with WordCraft and DeckCraft: plugins show dialogs GridCraft draws (lists, forms, messages, chained one step at a time), open local files, and hear when workbooks open, save and close (never holding them up); commands see the workbook's file (`context.document`) ([docs/plugins.md](docs/plugins.md#protocol-12-dialogs-opening-files-document-events)) |
 | 2026-10-13 | Plugins: programs in any language add formula functions and commands, each in its own process (a crash or hang costs a cell `#VALUE!`, never the workbook); Automate › Add-ins, `--plugin`, [docs/plugins.md](docs/plugins.md) |
 | 2026-10-12 | Rows auto-fit oversized fonts: opening a file and whole-row/column formatting grow non-custom rows to their tallest font (#833) |

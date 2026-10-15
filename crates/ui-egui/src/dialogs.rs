@@ -523,29 +523,10 @@ impl Dialog {
                 json!({"groupBy": "A", "function": "sum"}),
             ),
             "collabShare" => {
+                // Drawn by `collab_ui::share_dialog`; OK (Room name and key) runs `collab.join`.
                 let mode = params.get("mode").and_then(Json::as_str).unwrap_or("share").to_string();
                 let defaults = crate::collab_ui::share_defaults(app, &mode);
-                let note = defaults["transports"].as_str().unwrap_or("").to_string();
-                Dialog::form(
-                    "collabShare",
-                    if mode == "join" { "Join Live Session" } else { "Start Live Session" },
-                    "collab.join",
-                    vec![
-                        Choice {
-                            key: "mode",
-                            label: "Session",
-                            options: vec![("share", "Share this workbook"), ("join", "Join a session (new workbook)")],
-                        },
-                        Text { key: "plugin", label: "Transport plugin:" },
-                        Text { key: "room", label: "Room:" },
-                        Text { key: "name", label: "Your name:" },
-                        Text { key: "color", label: "Your colour (#RRGGBB):" },
-                        Check { key: "encrypt", label: "Encrypt end to end (a new room key)" },
-                        Password { key: "key", label: "Room key (base64, from the invitation):" },
-                        Note(note),
-                    ],
-                    defaults,
-                )
+                Dialog::form("collabShare", if mode == "join" { "Join Live Session" } else { "Share" }, "collab.join", vec![], defaults)
             }
             "zoom" => Dialog::form(
                 "zoom",
@@ -1129,6 +1110,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 }
                 "macros" => macros(ui, &mut d),
                 "addIns" => add_ins(app, ui, &mut d),
+                "collabShare" => crate::collab_ui::share_dialog(app, ui, &mut d, &mut confirm, &mut open),
                 "statistics" | "accessibility" | "errorChecking" | "evaluateFormula" | "comments" => {
                     let r = if d.name == "comments" {
                         app.session.active().and_then(|doc| doc.wb.active().map(|s| json!(s.comments.iter().map(|(c, m)| json!({"cell": c.a1(), "author": m.author, "text": m.text})).collect::<Vec<_>>())))
