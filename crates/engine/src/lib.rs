@@ -199,6 +199,7 @@ pub struct Prefs {
     pub user_dictionary: Vec<String>,
     /// View › Show › Formula Bar (an application option in Excel, not saved in the file).
     pub formula_bar: bool,
+    pub ink_pens: Vec<gridcraft_model::InkPen>,
 }
 
 impl Default for Prefs {
@@ -213,6 +214,7 @@ impl Default for Prefs {
             r1c1: false,
             user_dictionary: vec![],
             formula_bar: true,
+            ink_pens: gridcraft_model::InkPen::defaults(),
         }
     }
 }
@@ -247,10 +249,8 @@ pub struct Session {
     pub recording: Option<usize>,
     /// Windows hidden with View › Hide.
     pub hidden_windows: Vec<usize>,
-    /// Draw tab tool: "" (select), "pen" or "eraser"; pen colour and width.
-    pub draw_tool: String,
-    pub draw_color: String,
-    pub draw_width: f32,
+    /// Draw tab: tool, pen, eraser and lasso selection.
+    pub draw: cmd::draw::DrawState,
     /// Review › Show Comments: the Comments pane is open.
     pub comments_pane: bool,
     /// Review › Notes › Show All Notes: every note is displayed. An application display setting

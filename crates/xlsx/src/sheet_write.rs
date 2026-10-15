@@ -527,8 +527,17 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
             };
             objs.push(Obj::Chart(ch, rid));
         }
-        for sh in &sheet.shapes {
-            objs.push(Obj::Shape(sh));
+        for (i, sh) in sheet.shapes.iter().enumerate() {
+            if sh.kind == gridcraft_model::ShapeKind::Ink {
+                // A stroke without ink data has nothing to draw.
+                let Some(ink) = &sh.ink else { continue };
+                let name = format!("ink{dn}_{}.xml", i + 1);
+                out.part(&format!("xl/ink/{name}"), Some("application/inkml+xml"), crate::inkml::write(sh, ink, &wb.theme).into_bytes());
+                let rid = drels.add("customXml", &format!("../ink/{name}"));
+                objs.push(Obj::Ink(sh, rid));
+            } else {
+                objs.push(Obj::Shape(sh));
+            }
         }
         out.part(&format!("xl/drawings/drawing{dn}.xml"), Some(CT_DRAWING), crate::drawing::write_drawing(sheet, &wb.theme, &objs).into_bytes());
         if !drels.is_empty() {

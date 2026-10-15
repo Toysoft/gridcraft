@@ -1,9 +1,9 @@
 //! Native ink remains editable after XLSX saves, including a save after an unrelated cell edit.
 
 use gridcraft_engine::Session;
-use gridcraft_engine::cmd::draw::{ink_points, ink_width};
+use gridcraft_engine::cmd::draw::anchor_origin;
 use gridcraft_engine::core::{CellRef, Value};
-use gridcraft_engine::model::{Shape, ShapeKind};
+use gridcraft_engine::model::{Shape, ShapeKind, Sheet};
 use serde_json::json;
 
 fn workbook() -> Session {
@@ -17,6 +17,14 @@ fn reopen(session: &mut Session) -> Session {
     let mut reopened = Session::new();
     reopened.execute("file.open", json!({"name": "ink.xlsx", "base64": saved["base64"]})).unwrap();
     reopened
+}
+
+fn ink_points(shape: &Shape) -> &[[f32; 2]] {
+    &shape.ink.as_ref().unwrap().points
+}
+
+fn ink_width(shape: &Shape) -> f32 {
+    shape.ink.as_ref().unwrap().width
 }
 
 fn shapes(session: &Session) -> &[Shape] {
@@ -36,20 +44,24 @@ fn assert_anchor(actual: &Shape, expected: &Shape) {
     }
 }
 
-fn assert_ink(actual: &Shape, expected: &Shape) {
+/// Compares strokes by where their points sit on the sheet: reopening may move the anchor to
+/// the stroke's bounds (InkML stores points relative to the content part).
+fn assert_ink(sheet: &Sheet, actual: &Shape, expected: &Shape) {
     assert_eq!(actual.kind, ShapeKind::Ink);
-    let actual_points = ink_points(actual);
-    let expected_points = ink_points(expected);
+    let on_sheet = |s: &Shape| {
+        let [x, y] = anchor_origin(sheet, &s.anchor);
+        ink_points(s).iter().map(|p| [x + p[0], y + p[1]]).collect::<Vec<_>>()
+    };
+    let (actual_points, expected_points) = (on_sheet(actual), on_sheet(expected));
     assert_eq!(actual_points.len(), expected_points.len());
     for (actual, expected) in actual_points.iter().zip(&expected_points) {
         for axis in 0..2 {
-            // DrawingML quantizes coordinates to integer EMUs (9,525 per model unit).
+            // The file quantizes coordinates (DrawingML to EMUs, InkML to 1/1000 cm).
             assert!((actual[axis] - expected[axis]).abs() < 0.001, "point {actual:?} != {expected:?}");
         }
     }
     assert_eq!(actual.line, expected.line);
     assert_eq!(ink_width(actual), ink_width(expected));
-    assert_anchor(actual, expected);
 }
 
 #[test]
@@ -67,8 +79,9 @@ fn ink_geometry_and_style_survive_two_saves_and_a_cell_edit() {
     for pass in 0..2 {
         session = reopen(&mut session);
         assert_eq!(shapes(&session).len(), expected.len());
+        let sheet = session.doc().unwrap().wb.active().unwrap();
         for (actual, expected) in shapes(&session).iter().zip(&expected) {
-            assert_ink(actual, expected);
+            assert_ink(sheet, actual, expected);
         }
         if pass == 0 {
             session.execute("cell.set", json!({"cell": "Z30", "input": "42"})).unwrap();
@@ -129,7 +142,7 @@ fn horizontal_vertical_and_signed_highlighter_strokes_survive_reopening() {
         let expected = shapes(&session)[0].clone();
         for _ in 0..2 {
             session = reopen(&mut session);
-            assert_ink(&shapes(&session)[0], &expected);
+            assert_ink(session.doc().unwrap().wb.active().unwrap(), &shapes(&session)[0], &expected);
         }
     }
 }

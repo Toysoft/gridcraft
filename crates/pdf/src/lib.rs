@@ -268,6 +268,8 @@ pub struct Page {
     fonts: [bool; 12],
     images: Vec<ImageData>,
     depth: u32,
+    /// Fill opacities used on the page, in percent (one `ExtGState` each).
+    alphas: Vec<u8>,
 }
 
 /// Most bytes of content per page before further drawing is dropped (keeps hostile inputs from
@@ -307,6 +309,14 @@ impl Page {
             self.depth -= 1;
             self.content.push_str("Q\n");
         }
+    }
+    /// Sets the fill opacity (0..=1, in whole percent) until the next [`Page::restore`].
+    pub fn fill_alpha(&mut self, alpha: f32) {
+        let percent = if alpha.is_finite() { (alpha.clamp(0.0, 1.0) * 100.0).round() as u8 } else { 100 };
+        if !self.alphas.contains(&percent) {
+            self.alphas.push(percent);
+        }
+        self.op(&format!("/GA{percent} gs"));
     }
     /// Intersects the clip with a rectangle (until the next [`Page::restore`]).
     pub fn clip_rect(&mut self, x: f32, y: f32, w: f32, h: f32) {
@@ -583,7 +593,7 @@ impl PdfDoc {
     pub fn add_page(&mut self, width_pt: f32, height_pt: f32) -> &mut Page {
         let width = if width_pt.is_finite() { width_pt.clamp(3.0, 14_400.0) } else { 612.0 };
         let height = if height_pt.is_finite() { height_pt.clamp(3.0, 14_400.0) } else { 792.0 };
-        self.pages.push(Page { width, height, content: String::new(), fonts: [false; 12], images: Vec::new(), depth: 0 });
+        self.pages.push(Page { width, height, content: String::new(), fonts: [false; 12], images: Vec::new(), depth: 0, alphas: Vec::new() });
         let i = self.pages.len() - 1;
         &mut self.pages[i]
     }
@@ -677,7 +687,14 @@ impl PdfDoc {
             o.extend_from_slice(body.as_bytes());
             o.extend_from_slice(b"endstream");
             objects.push((content_id, o));
-            let xo = if xobjects.is_empty() { String::new() } else { format!(" /XObject << {xobjects}>>") };
+            let mut xo = if xobjects.is_empty() { String::new() } else { format!(" /XObject << {xobjects}>>") };
+            if !page.alphas.is_empty() {
+                xo.push_str(" /ExtGState << ");
+                for a in &page.alphas {
+                    let _ = write!(xo, "/GA{a} << /ca {} >> ", n(*a as f32 / 100.0));
+                }
+                xo.push_str(">>");
+            }
             objects.push((
                 page_id,
                 format!(

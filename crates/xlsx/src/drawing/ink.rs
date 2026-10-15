@@ -129,7 +129,7 @@ pub(super) fn read(obj: &El, anchor: Anchor) -> Option<Shape> {
         }
     }
     let line = Color::from_hex(color.attr("val")?)?;
-    let mut text = String::new();
+    let mut points = Vec::with_capacity(path.children.len());
     for (i, command) in path.children.iter().enumerate() {
         if command.name != if i == 0 { "moveTo" } else { "lnTo" } || !command.attrs.is_empty() || command.children.len() != 1 {
             return None;
@@ -143,65 +143,9 @@ pub(super) fn read(obj: &El, anchor: Anchor) -> Option<Shape> {
         if !bounded(x) || !bounded(y) {
             return None;
         }
-        if i != 0 {
-            text.push(';');
-        }
-        let _ = write!(text, "{},{}", x as f32, y as f32);
+        points.push([x as f32, y as f32]);
     }
-    Some(Shape { id: 0, kind: ShapeKind::Ink, anchor, fill: Color::Rgb((width as u32) << 16), line, text, format: Default::default() })
-}
-
-/// Invalid/native out-of-range data uses the existing rectangle fallback. A successful
-/// result is complete before it is appended, so malformed points never yield half a stroke.
-pub(super) fn write(shape: &Shape, theme: &Theme, id: usize) -> Option<String> {
-    if shape.kind != ShapeKind::Ink || shape.format.no_line {
-        return None;
-    }
-    let width = match shape.fill {
-        Color::Rgb(rgb) => ((rgb >> 16) & 0xff).max(1),
-        _ => 2,
-    };
-    if !(1..=40).contains(&width) {
-        return None;
-    }
-    let a = &shape.anchor;
-    if !bounded(a.width as f64) || !bounded(a.height as f64) || a.width <= 0.0 || a.height <= 0.0 || !a.dx.is_finite() || !a.dy.is_finite() {
-        return None;
-    }
-    let w = (a.width as f64 * EMU_PER_PX).round().max(1.0) as i64;
-    let h = (a.height as f64 * EMU_PER_PX).round().max(1.0) as i64;
-    let mut points = Vec::new();
-    for point in shape.text.split(';') {
-        if points.len() == MAX_POINTS {
-            return None;
-        }
-        let (x, y) = point.split_once(',')?;
-        let (x, y) = (x.parse::<f64>().ok()?, y.parse::<f64>().ok()?);
-        if !bounded(x) || !bounded(y) {
-            return None;
-        }
-        points.push(((x * EMU_PER_PX).round() as i64, (y * EMU_PER_PX).round() as i64));
-    }
-    if points.len() < 2 {
-        return None;
-    }
-    let [r, g, b] = shape.line.resolve(theme)?;
-    let mut xml = format!(
-        "<xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"{id}\" name=\"Ink {id}\"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr>{}<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:pathLst><a:path w=\"{w}\" h=\"{h}\" fill=\"none\">",
-        xfrm(a, "a:xfrm")
-    );
-    for (i, (x, y)) in points.iter().enumerate() {
-        let tag = if i == 0 { "moveTo" } else { "lnTo" };
-        let _ = write!(xml, "<a:{tag}><a:pt x=\"{x}\" y=\"{y}\"/></a:{tag}>");
-    }
-    let _ = write!(
-        xml,
-        "</a:path></a:pathLst></a:custGeom><a:noFill/><a:ln w=\"{}\" cap=\"flat\"><a:solidFill><a:srgbClr val=\"{r:02X}{g:02X}{b:02X}\">",
-        width as i64 * EMU_PER_PX as i64
-    );
-    if width > 8 {
-        xml.push_str("<a:alpha val=\"45000\"/>");
-    }
-    xml.push_str("</a:srgbClr></a:solidFill><a:miter/></a:ln></xdr:spPr></xdr:sp>");
-    Some(xml)
+    // A translucent wide stroke is how this shape import has always kept highlighter ink.
+    let tool = if width > 8 { InkTool::Highlighter } else { InkTool::Pen };
+    Some(Shape::new_ink(0, anchor, line, Ink { points, width: width as f32, tool, ..Ink::default() }))
 }

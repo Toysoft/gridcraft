@@ -4,7 +4,9 @@
 use std::fmt::Write as _;
 
 use gridcraft_core::{CellRef, MAX_COLS, MAX_ROWS};
-use gridcraft_model::{Anchor, AnchorMode, Color, Image, Shape, ShapeFormat, ShapeKind, ShapeTextAlign, ShapeTextAnchor, Sheet, Theme};
+use gridcraft_model::{
+    Anchor, AnchorMode, Color, Image, Ink, InkEffect, InkTool, Shape, ShapeFormat, ShapeKind, ShapeTextAlign, ShapeTextAnchor, Sheet, Theme,
+};
 
 use crate::IoError;
 use crate::read::Ctx;
@@ -126,23 +128,34 @@ pub fn read_drawing(cx: &mut Ctx<'_>, part: &str, sheet: &mut Sheet) -> Result<(
     let rels = cx.pkg.rels(part)?;
     for a in &x.children {
         let Some(anchor) = read_anchor(a, sheet) else { continue };
-        // Objects in markup-compatibility blocks: the first choice (chartex frames), else the
-        // fallback.
-        let objs: Vec<&El> = a
-            .children
-            .iter()
-            .flat_map(|o| match o.name.as_str() {
-                "AlternateContent" => o
-                    .child("Choice")
-                    .filter(|c| c.child("graphicFrame").is_some())
-                    .or_else(|| o.child("Fallback"))
-                    .map(|c| c.children.iter().collect())
-                    .unwrap_or_default(),
-                _ => vec![o],
-            })
-            .collect();
+        let mut objs = Vec::new();
+        for obj in &a.children {
+            if obj.name != "AlternateContent" {
+                objs.push(obj);
+                continue;
+            }
+            let mut imported = false;
+            for choice in obj.kids("Choice") {
+                if let Some(content) = choice.child("contentPart") {
+                    imported = read_ink_part(cx, content, anchor, &rels, sheet)?;
+                    if imported {
+                        break;
+                    }
+                } else if choice.child("graphicFrame").is_some() {
+                    objs.extend(&choice.children);
+                    imported = true;
+                    break;
+                }
+            }
+            if !imported && let Some(fallback) = obj.child("Fallback") {
+                objs.extend(&fallback.children);
+            }
+        }
         for obj in objs {
             match obj.name.as_str() {
+                "contentPart" => {
+                    read_ink_part(cx, obj, anchor, &rels, sheet)?;
+                }
                 "pic" => {
                     let Some(rid) = obj.path(&["blipFill", "blip"]).and_then(|b| b.attr("embed")) else { continue };
                     let Some(rel) = rels.iter().find(|r| r.id == rid && !r.external) else {
@@ -195,8 +208,143 @@ pub fn read_drawing(cx: &mut Ctx<'_>, part: &str, sheet: &mut Sheet) -> Result<(
     Ok(())
 }
 
+/// Resolve only internal package parts; never follow an InkML reference onto the network.
+fn read_ink_part(cx: &mut Ctx<'_>, content: &El, anchor: Anchor, rels: &[crate::package::Rel], sheet: &mut Sheet) -> Result<bool, IoError> {
+    let Some(rel) = content.attr("id").and_then(|id| rels.iter().find(|r| r.id == id && !r.external && r.kind == "customXml")) else {
+        cx.warn("ink content has no internal relationship; retained image fallback");
+        return Ok(false);
+    };
+    let target = &rel.target;
+    let parsed = cx.pkg.read_limited(target, 8 * 1024 * 1024).and_then(|data| data.map(|b| crate::inkml::parse(&b)).transpose());
+    let mut ink_anchor = anchor;
+    if let Some(transform) = content.child("xfrm") {
+        if transform.attr_i64("rot").unwrap_or(0) != 0 || transform.flag("flipH", false) || transform.flag("flipV", false) {
+            cx.warn("unsupported ink transform; retained image fallback");
+            return Ok(false);
+        }
+        let Some(off) = transform.child("off") else { return Ok(false) };
+        let Some((x, y)) = off.attr_i64("x").zip(off.attr_i64("y")) else { return Ok(false) };
+        if x < 0 || y < 0 {
+            return Ok(false);
+        }
+        let x = emu_px(Some(x)) as f64;
+        let y = emu_px(Some(y)) as f64;
+        let col = sheet.col_at(x);
+        let row = sheet.row_at(y);
+        let (width, height) = ext_px(transform.child("ext"));
+        ink_anchor = Anchor {
+            cell: CellRef::new(row, col),
+            dx: (x - sheet.col_left(col)) as f32,
+            dy: (y - sheet.row_top(row)) as f32,
+            width,
+            height,
+            mode: anchor.mode,
+        };
+    }
+    match parsed.ok().flatten().and_then(|root| crate::inkml::read(&root, ink_anchor)) {
+        Some(shapes) if !ink_budget(cx, &shapes) => {
+            cx.warn("too much ink in the workbook; retained image fallback");
+            Ok(false)
+        }
+        Some(shapes) => {
+            for mut shape in shapes {
+                let x = sheet.col_left(shape.anchor.cell.col) + shape.anchor.dx as f64;
+                let y = sheet.row_top(shape.anchor.cell.row) + shape.anchor.dy as f64;
+                // Ink can reach left of column A or above row 1: the anchor stays on the sheet and
+                // the points keep their place, else the next save drops the negative offset.
+                if (x < 0.0 || y < 0.0)
+                    && let Some(ink) = shape.ink.as_mut()
+                {
+                    let (sx, sy) = (x.min(0.0) as f32, y.min(0.0) as f32);
+                    for p in &mut ink.points {
+                        p[0] += sx;
+                        p[1] += sy;
+                    }
+                }
+                let (x, y) = (x.max(0.0), y.max(0.0));
+                let col = sheet.col_at(x);
+                let row = sheet.row_at(y);
+                shape.anchor.cell = CellRef::new(row, col);
+                shape.anchor.dx = (x - sheet.col_left(col)) as f32;
+                shape.anchor.dy = (y - sheet.row_top(row)) as f32;
+                shape.id = cx.next_object_id();
+                sheet.shapes.push(shape);
+            }
+            Ok(true)
+        }
+        None => {
+            cx.warn(format!("unsupported or damaged InkML {target}; retained image fallback"));
+            Ok(false)
+        }
+    }
+}
+
+/// Most ink points one workbook may bring in (many anchors can share one ink part).
+const MAX_WORKBOOK_INK_POINTS: usize = 2_000_000;
+
+/// Counts `shapes`' points against the workbook's ink budget; false when they don't fit.
+fn ink_budget(cx: &mut Ctx<'_>, shapes: &[Shape]) -> bool {
+    let n = shapes.iter().filter_map(|s| s.ink.as_ref()).map(|i| i.points.len()).sum::<usize>();
+    let total = cx.ink_points.saturating_add(n);
+    if total > MAX_WORKBOOK_INK_POINTS {
+        return false;
+    }
+    cx.ink_points = total;
+    true
+}
+
+/// A stroke GridCraft wrote as a DrawingML shape: the `urn:gridcraft:ink:v1` extension keeps
+/// the centerline, force and pen; without it, the path itself is the centerline.
+pub(crate) fn read_gridcraft_ink(sp: &El, anchor: Anchor) -> Option<Shape> {
+    let meta = sp.child("extLst").and_then(|l| l.kids("ext").find(|e| e.attr("uri") == Some("urn:gridcraft:ink:v1"))).and_then(|e| e.child("ink"));
+    if let Some(meta) = meta {
+        let width = meta.attr_f64("width").filter(|w| *w > 0.0 && *w <= 40.0)? as f32;
+        let mut ink = Ink {
+            width,
+            tool: meta.attr("tool").and_then(InkTool::parse).unwrap_or_default(),
+            effect: meta.attr("effect").and_then(InkEffect::parse),
+            ..Ink::default()
+        };
+        let force = meta.flag("pressure", true);
+        for point in meta.kids("p").take(gridcraft_model::MAX_INK_POINTS) {
+            let p = [point.attr_f64("x")?, point.attr_f64("y")?];
+            if !p.iter().all(|v| v.is_finite() && v.abs() <= gridcraft_model::MAX_INK_COORD as f64) {
+                return None;
+            }
+            ink.points.push([p[0] as f32, p[1] as f32]);
+            if force {
+                ink.pressures.push(point.attr_f64("force").filter(|p| (0.0..=1.0).contains(p))? as f32);
+            }
+        }
+        let line = sp.child("solidFill").or_else(|| sp.path(&["ln", "solidFill"])).and_then(dml_color).unwrap_or(Color::Rgb(0));
+        return (ink.points.len() >= 2).then(|| Shape::new_ink(0, anchor, line, ink));
+    }
+    let path = sp.path(&["custGeom", "pathLst", "path"])?;
+    let w = path.attr_i64("w").filter(|v| *v > 0)? as f64;
+    let h = path.attr_i64("h").filter(|v| *v > 0)? as f64;
+    let mut points = Vec::new();
+    for command in path.children.iter().take(gridcraft_model::MAX_INK_POINTS) {
+        if !matches!(command.name.as_str(), "moveTo" | "lnTo") {
+            return None;
+        }
+        let pt = command.child("pt")?;
+        let x = pt.attr_i64("x")? as f64 / w * anchor.width as f64;
+        let y = pt.attr_i64("y")? as f64 / h * anchor.height as f64;
+        points.push([x as f32, y as f32]);
+    }
+    let ln = sp.child("ln");
+    let width = ln.and_then(|l| l.attr_i64("w")).map(|v| (v as f64 / EMU_PER_PX).clamp(0.1, 40.0) as f32).unwrap_or(2.0);
+    let line = ln.and_then(|l| l.child("solidFill")).and_then(dml_color).unwrap_or(Color::Rgb(0));
+    (points.len() >= 2).then(|| Shape::new_ink(0, anchor, line, Ink { points, width, ..Ink::default() }))
+}
+
 fn read_shape(obj: &El, anchor: Anchor) -> Option<Shape> {
     let sp = obj.child("spPr")?;
+    // GridCraft's own strokes are identified by name; other custom shapes become ink only when
+    // `ink::read` finds the strict polyline subset the ink model can represent.
+    if obj.path(&["nvSpPr", "cNvPr"]).and_then(|n| n.attr("name")).is_some_and(|n| n.starts_with("GridCraft Ink ")) {
+        return read_gridcraft_ink(sp, anchor);
+    }
     if let Some(shape) = ink::read(obj, anchor) {
         return Some(shape);
     }
@@ -224,7 +372,7 @@ fn read_shape(obj: &El, anchor: Anchor) -> Option<Shape> {
         .unwrap_or_default();
     let mut format = read_text_format(obj.child("txBody"));
     format.no_line = ln.is_some_and(|l| l.child("noFill").is_some());
-    Some(Shape { id: 0, kind, anchor, fill, line, text, format })
+    Some(Shape { id: 0, kind, anchor, fill, line, text, format, ink: None })
 }
 
 /// A shape's text formatting: vertical anchor (`a:bodyPr anchor`), the first paragraph's
@@ -311,6 +459,7 @@ pub enum Obj<'a> {
     Image(&'a Image, String),
     Chart(&'a gridcraft_model::Chart, String),
     Shape(&'a Shape),
+    Ink(&'a Shape, String),
 }
 
 /// The drawing part for a sheet's objects (relationship ids already assigned).
@@ -359,16 +508,27 @@ pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
                     xfrm(&ch.anchor, "xdr:xfrm")
                 );
             }
+            Obj::Ink(sh, rid) => {
+                let (open, close) = anchor_open(sheet, &sh.anchor);
+                close_tag = close;
+                s.push_str(&open);
+                let x = (sheet.col_left(sh.anchor.cell.col) + sh.anchor.dx as f64) * EMU_PER_PX;
+                let y = (sheet.row_top(sh.anchor.cell.row) + sh.anchor.dy as f64) * EMU_PER_PX;
+                let w = sh.anchor.width as f64 * EMU_PER_PX;
+                let h = sh.anchor.height as f64 * EMU_PER_PX;
+                let _ = write!(
+                    s,
+                    "<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice xmlns:xdr14=\"http://schemas.microsoft.com/office/excel/2010/spreadsheetDrawing\" Requires=\"xdr14\"><xdr:contentPart r:id=\"{rid}\"><xdr14:nvContentPartPr><xdr14:cNvPr id=\"{id}\" name=\"Ink {id}\"/><xdr14:cNvContentPartPr/></xdr14:nvContentPartPr><xdr14:nvPr macro=\"\"/><xdr14:xfrm><a:off x=\"{x:.0}\" y=\"{y:.0}\"/><a:ext cx=\"{w:.0}\" cy=\"{h:.0}\"/></xdr14:xfrm></xdr:contentPart></mc:Choice><mc:Fallback>"
+                );
+                if let Some(ink) = &sh.ink {
+                    write_ink(&mut s, sh, ink, id, theme);
+                }
+                s.push_str("</mc:Fallback></mc:AlternateContent>");
+            }
             Obj::Shape(sh) => {
                 let (open, close) = anchor_open(sheet, &sh.anchor);
                 close_tag = close;
                 s.push_str(&open);
-                if let Some(xml) = ink::write(sh, theme, id) {
-                    s.push_str(&xml);
-                    s.push_str("<xdr:clientData/>");
-                    s.push_str(close_tag);
-                    continue;
-                }
                 let (prst, tx) = match sh.kind {
                     ShapeKind::Rectangle => ("rect", false),
                     ShapeKind::RoundedRectangle => ("roundRect", false),
@@ -511,4 +671,61 @@ pub fn image_content_type(ext: &str) -> &'static str {
         "webp" => "image/webp",
         _ => "image/png",
     }
+}
+
+/// The stroke as DrawingML for applications without InkML: the filled silhouette for
+/// pressure strokes, else the centerline with a round pen. The `urn:gridcraft:ink:v1`
+/// extension keeps the editable centerline, force and pen.
+pub(crate) fn write_ink(s: &mut String, sh: &Shape, ink: &Ink, id: usize, theme: &Theme) {
+    let emu = |v: f32| (v.clamp(-1e7, 1e7) as f64 * EMU_PER_PX).round() as i64;
+    let (w, h) = (emu(sh.anchor.width).max(1), emu(sh.anchor.height).max(1));
+    let [r, g, b] = sh.line.resolve(theme).unwrap_or([0, 0, 0]);
+    let alpha = if ink.opacity() < 1.0 { format!("<a:alpha val=\"{}\"/>", (ink.opacity() * 100_000.0).round() as i64) } else { String::new() };
+    let color = format!("<a:srgbClr val=\"{r:02X}{g:02X}{b:02X}\">{alpha}</a:srgbClr>");
+    let _ = write!(
+        s,
+        "<xdr:sp macro=\"\" textlink=\"\"><xdr:nvSpPr><xdr:cNvPr id=\"{id}\" name=\"GridCraft Ink {id}\"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr>{}<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l=\"0\" t=\"0\" r=\"r\" b=\"b\"/><a:pathLst>",
+        xfrm(&sh.anchor, "a:xfrm")
+    );
+    if ink.has_pressure() {
+        for t in ink.polygons() {
+            let _ = write!(s, "<a:path w=\"{w}\" h=\"{h}\" fill=\"norm\" stroke=\"0\" extrusionOk=\"0\">");
+            for (i, p) in t.iter().enumerate() {
+                let tag = if i == 0 { "moveTo" } else { "lnTo" };
+                let _ = write!(s, "<a:{tag}><a:pt x=\"{}\" y=\"{}\"/></a:{tag}>", emu(p[0]), emu(p[1]));
+            }
+            s.push_str("<a:close/></a:path>");
+        }
+        let _ = write!(s, "</a:pathLst></a:custGeom><a:solidFill>{color}</a:solidFill><a:ln><a:noFill/></a:ln>");
+    } else {
+        let _ = write!(s, "<a:path w=\"{w}\" h=\"{h}\" fill=\"none\" stroke=\"1\" extrusionOk=\"0\">");
+        for (i, p) in ink.valid_points().enumerate() {
+            let tag = if i == 0 { "moveTo" } else { "lnTo" };
+            let _ = write!(s, "<a:{tag}><a:pt x=\"{}\" y=\"{}\"/></a:{tag}>", emu(p[0]), emu(p[1]));
+        }
+        let width = emu(ink.width());
+        let _ = write!(
+            s,
+            "</a:path></a:pathLst></a:custGeom><a:noFill/><a:ln w=\"{width}\" cap=\"rnd\"><a:solidFill>{color}</a:solidFill><a:round/></a:ln>"
+        );
+    }
+    let _ = write!(
+        s,
+        "<a:extLst><a:ext uri=\"urn:gridcraft:ink:v1\"><gc:ink xmlns:gc=\"urn:gridcraft:ink:v1\" width=\"{}\" tool=\"{}\" pressure=\"{}\"",
+        ink.width(),
+        ink.tool.id(),
+        u8::from(ink.has_pressure())
+    );
+    if let Some(effect) = ink.effect {
+        let _ = write!(s, " effect=\"{}\"", effect.id());
+    }
+    s.push('>');
+    for (i, p) in ink.valid_points().enumerate() {
+        let _ = write!(s, "<gc:p x=\"{:.2}\" y=\"{:.2}\"", p[0], p[1]);
+        if ink.has_pressure() {
+            let _ = write!(s, " force=\"{}\"", ink.force(i));
+        }
+        s.push_str("/>");
+    }
+    s.push_str("</gc:ink></a:ext></a:extLst></xdr:spPr></xdr:sp>");
 }

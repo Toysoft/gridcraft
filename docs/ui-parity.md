@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (horizontal scrollbar in the sheet tab bar, #840) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** minor (Draw: fast strokes keep their turns, sampled past the cells and smoothed only against jitter; horizontal scrollbar in the sheet tab bar, #840; Draw: Segment Eraser cuts at crossings, one undo step per eraser drag, live stroke matches the saved one; AutoFit reserves filter dropdown space, observed against Windows Excel; Draw toolbox, smoothing and inverse-speed width; selected object keyboard deletion) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Interaction, controls and feel, against Excel. Part of [target-app-parity.md](target-app-parity.md).
 **UI/UX fidelity: ~55% ready, 50–80 h** (estimated). Ribbon command coverage is measured
@@ -157,10 +157,37 @@ Key tips 3–5 · remaining shortcuts with their features 2–4 · context menus
 8–12 · Options dialog and ribbon/QAT customization 6–10 · accessibility 12–18 · selection and
 scrollbar bugs 2–4 · pixel/feel pass against observed Excel 7–12.
 
+## Draw update (2026-10-11)
+
+The Draw ribbon follows the observed Excel for Mac tool set: Draw, four eraser modes,
+Lasso Select, six initial pens, Add Pen (pen/highlighter/pencil) and Draw with Trackpad.
+Pen settings offer six thicknesses, sixteen colours, eight effect names, More Colors and
+Delete; presets persist in application preferences. Artwork, the colour palette and effect
+rendering are original.
+Lasso selects multiple strokes, which can be moved or deleted together. Drawing uses
+smoothed centerlines and filtered inverse-speed thickness; imported force remains preserved.
+Draw with Trackpad uses physical contacts in a floating canvas: one finger draws, two pan,
+and any key finishes. The sheet dims behind a rounded grid canvas (theme colours) with a
+shadow; a separate centered instruction banner sits above it, without window chrome. The
+device is probed when the mode is turned on and released when it is turned off; without a
+usable backend the toggle is disabled with the reason.
+macOS uses public AppKit touches, Linux uses accessible evdev multitouch devices with a
+scoped grab, Windows uses readable precision-touchpad HID reports. Linux input permissions
+and Windows driver restrictions can prevent capture; physical Windows/Linux testing is pending.
+Highlighter coverage applies opacity once across bends and self-intersections. Erasing keeps
+effect coordinates, including after XLSX round-trip. Lasso requires full contour enclosure
+and previews candidate outlines before release. Draw labels cover all nine UI languages.
+Small and Medium erasers cut sampled centerline segments; Segment Eraser removes the part of
+a stroke between its nearest crossings with other strokes (or itself). One eraser drag is one
+undo step, and a miss records none. The stroke previewed while drawing is the stroke that is
+saved (frozen panes, right-to-left sheets and page view included). Live stylus pressure/tilt and exact
+Excel texture rendering remain unverified or absent; this is not full Draw parity.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Draw: a stroke takes every pointer move and follows the pointer past the cells (headers, out of the window) like Excel; smoothing only settles jitter (≤1.5 px) with a centripetal spline through the samples, so fast zigzags keep sharp, full-height turns instead of rounding into loops. macOS: no mouse-drag coalescing and no force click while a Draw tool is on |
 | 2026-10-12 | minor | The File view's recent list tells when each workbook was last changed, read off the UI thread |
 | 2026-10-13 | minor | Horizontal scrollbar in the sheet tab bar: drag, track click pages, frozen columns excluded from the page (#840) |
 | 2026-10-12 | minor | Ctrl+wheel zoom steps along a ladder of percentages about 20% apart that never skips 100%, gliding to each step with animations on, so a notch out undoes a notch in (it drifted: 100 → 122 → 101); Excel steps 15 points, see decisions.md |
@@ -173,6 +200,10 @@ scrollbar bugs 2–4 · pixel/feel pass against observed Excel 7–12.
 | 2026-10-11 | minor | Selected whole columns can be reordered by dragging their headers to an insertion point |
 | 2026-10-11 | minor | Page Layout view with rulers and in-place headers and footers (#329) |
 | 2026-10-11 | minor | Forecast Sheet dialog (#322) |
+| 2026-10-12 | minor | Draw: Segment Eraser cuts at crossings; one undo step per eraser drag; live stroke placed like saved ink; lasso decided at press; Ink to Shape back on the ribbon; original pen palette; Draw strings in the per-language tables |
+| 2026-10-11 | patch | Draw trackpad overlay follows observed canvas proportions, dimmed worksheet, separate centered localized hint and border/shadow; no window chrome |
+| 2026-10-11 | minor | Draw native contact canvas, highlighter union coverage, effect-preserving erasers, full lasso preview and localization |
+| 2026-10-11 | minor | Draw pen gallery, settings, erasers, lasso, smoothing and speed-dependent width |
 | 2026-10-11 | minor | Delete and Backspace now remove the selected chart, picture or shape (#213) |
 | 2026-10-10 | minor | Keep formula helpers inside the worksheet when scrolling (#200) |
 | 2026-10-11 | trivial | Theme: title-bar light/dark switch, File › Display theme, system appearance on first run (#194, #239) |

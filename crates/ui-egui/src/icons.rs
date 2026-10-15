@@ -107,6 +107,7 @@ pub enum Icon {
     PrintArea,
     Script,
     Pen,
+    Lasso,
     Share,
     Search,
     Settings,
@@ -501,6 +502,18 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, c: Color32) {
             g.rect(2.0, 3.0, 12.0, 10.0, Some(Color32::from_rgb(0xD6, 0xE6, 0xF7)), Some(c));
             g.poly(&[(3.0, 12.0), (7.0, 7.0), (10.0, 10.0), (11.5, 8.5), (13.0, 12.0)], GREEN);
             g.circle(11.0, 5.5, 1.2, Some(YELLOW), None);
+        }
+        Icon::Lasso => {
+            let points: Vec<(f32, f32)> = (0..32)
+                .map(|i| {
+                    let a = i as f32 * std::f32::consts::TAU / 32.0;
+                    (7.0 + 5.0 * a.cos(), 6.0 + 4.0 * a.sin())
+                })
+                .collect();
+            for i in (0..32).step_by(4) {
+                g.stroke(&points[i..i + 3], c);
+            }
+            g.stroke(&[(11.0, 8.5), (13.5, 12.0), (10.5, 14.0), (8.5, 12.0)], GREEN);
         }
         Icon::Shapes => {
             g.circle(5.5, 5.5, 3.5, Some(BLUE), None);

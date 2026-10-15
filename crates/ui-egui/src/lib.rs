@@ -13,6 +13,8 @@ pub mod chartview;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
+mod draw_ribbon;
+mod draw_trackpad;
 pub mod editor;
 pub mod fonts;
 pub mod formula_bar;
@@ -20,6 +22,7 @@ mod formula_locale;
 pub mod grid;
 pub mod i18n;
 pub mod icons;
+mod ink_paint;
 pub mod keymap;
 pub mod keytips;
 pub mod outline;
@@ -161,13 +164,43 @@ pub struct Notice {
     pub action: Option<(String, String)>,
 }
 
+/// How hard a touchpad is pressed, on pads that measure it (Force Touch).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum TrackpadPress {
+    /// The pad doesn't report pressure.
+    #[default]
+    Unmeasured,
+    /// Fingers touch the pad without clicking it down.
+    Touched,
+    /// The pad is clicked down, pressed this hard beyond the click (0..=1).
+    Clicked(f32),
+}
+
+/// One touchpad contact frame for Draw with Trackpad.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TrackpadFrame {
+    /// The fingers down, normalized 0..=1 across the pad.
+    pub fingers: Vec<[f32; 2]>,
+    pub press: TrackpadPress,
+}
+
+/// Raw touchpad contacts for Draw with Trackpad: called with `true` every frame while the mode
+/// is on, it returns every contact frame since the last call, oldest first (none when nothing
+/// changed); called with `false` it releases the device.
+pub type TrackpadCapture = Box<dyn FnMut(bool) -> Result<Vec<TrackpadFrame>, String>>;
+
 /// Host services the platform shell provides (file pickers, opening URLs).
+
 #[derive(Default)]
 pub struct Services {
     /// Desktop: discover configured printers on a worker.
     pub printers: Option<printing::Discover>,
     /// Desktop: submit the PDF with the chosen settings on a worker.
     pub print_native: Option<printing::Submit>,
+    /// Physical touchpad contacts (never synthesized mouse motion), when the platform has them.
+    pub trackpad_capture: Option<TrackpadCapture>,
+    /// Why Draw with Trackpad can't run here, shown on its toggle.
+    pub trackpad_unavailable: Option<String>,
     pub pick_open: Option<Box<dyn Fn() -> Option<String>>>,
     pub pick_save: Option<Box<dyn Fn(&str) -> Option<String>>>,
     /// Native picture picker (PNG/JPEG), separate from workbook opening.
@@ -225,6 +258,8 @@ pub struct SheetApp {
     pub services: Services,
     pub printing: printing::State,
     print_feedback_seen: Option<printing::Feedback>,
+    /// Draw tab state that lives in the UI (pen colour picker, trackpad canvas).
+    pub draw_ui: draw_ribbon::DrawUi,
     /// Synthetic input from agents, one batch per frame (drags need several frames).
     pub synthetic: std::collections::VecDeque<Vec<egui::Event>>,
     pub control_rx: Option<std::sync::mpsc::Receiver<ControlRequest>>,
@@ -281,6 +316,7 @@ impl SheetApp {
             services,
             printing: Default::default(),
             print_feedback_seen: None,
+            draw_ui: Default::default(),
             synthetic: Default::default(),
             control_rx: None,
             grid: grid::GridState {
@@ -1088,6 +1124,29 @@ impl SheetApp {
         if let Some(mut batch) = self.synthetic.pop_front() {
             raw.events.append(&mut batch);
         }
+        // While drawing with the trackpad, keys only end the mode: they don't reach the sheet.
+        if self.session.draw.trackpad || self.draw_ui.trackpad.active {
+            if raw.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. })) {
+                self.draw_ui.trackpad.exit_requested = true;
+            }
+            // The trackpad is the canvas: the (hidden) pointer it also moves doesn't hover, click
+            // or scroll anything.
+            raw.events.retain(|e| {
+                !matches!(
+                    e,
+                    egui::Event::Key { .. }
+                        | egui::Event::Text(_)
+                        | egui::Event::Paste(_)
+                        | egui::Event::PointerMoved(_)
+                        | egui::Event::MouseMoved(_)
+                        | egui::Event::PointerButton { .. }
+                        | egui::Event::MouseWheel { .. }
+                        | egui::Event::Zoom(_)
+                        | egui::Event::Rotate(_)
+                        | egui::Event::Touch { .. }
+                )
+            });
+        }
     }
 
     /// Lays out the whole window.
@@ -1103,7 +1162,8 @@ impl SheetApp {
         // The language the widgets translate with this frame (see `i18n::current`).
         i18n::set_current(&ctx, self.ui.language);
         let t = theme::Tokens::get(&ctx);
-        if self.backstage.is_none() {
+        draw_trackpad::track(self, &ctx);
+        if self.backstage.is_none() && !self.session.draw.trackpad {
             self.ribbon_keys(&ctx);
         }
         ribbon::title_bar(self, ui);
@@ -1128,6 +1188,8 @@ impl SheetApp {
                 self.perf.grid_ms = now_ms() - g0;
             });
         }
+        draw_trackpad::paint(self, &ctx);
+        draw_ribbon::color_picker_window(self, &ctx);
         dialogs::show(self, &ctx);
         widgets::message_box(self, &ctx);
         widgets::toast(self, &ctx);

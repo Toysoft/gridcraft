@@ -331,6 +331,7 @@ fn sample() -> Workbook {
         alt: "Logo \"x\"".into(),
     });
     s.shapes.push(Shape {
+        ink: None,
         id: 11,
         kind: ShapeKind::Ellipse,
         anchor: Anchor { cell: at("E10"), dx: 0.0, dy: 0.0, width: 64.0, height: 40.0, mode: AnchorMode::Absolute },
@@ -340,6 +341,7 @@ fn sample() -> Workbook {
         format: Default::default(),
     });
     s.shapes.push(Shape {
+        ink: None,
         id: 12,
         kind: ShapeKind::Arrow,
         anchor: Anchor { cell: at("E14"), dx: 0.0, dy: 0.0, width: 64.0, height: 0.0, ..Default::default() },
@@ -349,6 +351,7 @@ fn sample() -> Workbook {
         format: Default::default(),
     });
     s.shapes.push(Shape {
+        ink: None,
         id: 13,
         kind: ShapeKind::TextBox,
         anchor: Anchor { cell: at("E16"), dx: 0.0, dy: 0.0, width: 64.0, height: 40.0, ..Default::default() },
@@ -1163,4 +1166,53 @@ fn doc_props_keep_boundary_whitespace() {
     };
     let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
     assert_eq!(back.props, wb.props);
+}
+
+#[test]
+fn ink_exports_as_unfilled_geometry_and_roundtrips() {
+    use gridcraft_model::{Ink, InkTool};
+    let mut wb = Workbook::new();
+    let stroke = |id, anchor, color, points: Vec<[f32; 2]>, width, tool| {
+        Shape::new_ink(id, anchor, Color::Rgb(color), Ink { points, width, tool, ..Ink::default() })
+    };
+    let shapes = vec![
+        stroke(
+            1,
+            Anchor { cell: at("C4"), dx: 3.0, dy: 5.0, width: 100.0, height: 50.0, mode: AnchorMode::Absolute },
+            0xD13B2F,
+            vec![[0.0, 50.0], [20.0, 0.0], [100.0, 30.0]],
+            2.0,
+            InkTool::Pen,
+        ),
+        stroke(
+            2,
+            Anchor { cell: at("A1"), width: 1.0, height: 25.0, ..Anchor::default() },
+            0x123456,
+            vec![[0.0, 0.0], [0.0, 25.0]],
+            7.0,
+            InkTool::Highlighter,
+        ),
+    ];
+    wb.sheet_mut(0).unwrap().shapes = shapes.clone();
+    let bytes = write_xlsx(&wb).unwrap();
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+    let mut xml = String::new();
+    z.by_name("xl/drawings/drawing1.xml").unwrap().read_to_string(&mut xml).unwrap();
+    assert_eq!(xml.matches("<a:custGeom>").count(), 2);
+    assert_eq!(xml.matches("<a:noFill/>").count(), 2);
+    assert!(xml.contains("<a:pt x=\"190500\" y=\"0\"/>"));
+    assert!(xml.contains("w=\"66675\" cap=\"rnd\""));
+    // The highlighter's fallback is translucent, like the stroke.
+    assert!(xml.contains("<a:srgbClr val=\"123456\"><a:alpha val=\"40000\"/></a:srgbClr>"), "{xml}");
+    assert!(!xml.contains("txBody") && !xml.contains("prstGeom"));
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    assert_eq!(back.sheet(0).unwrap().shapes.len(), shapes.len());
+    for (expected, actual) in shapes.iter().zip(&back.sheet(0).unwrap().shapes) {
+        assert_eq!(actual.kind, ShapeKind::Ink);
+        let (a, e) = (actual.ink.as_ref().unwrap(), expected.ink.as_ref().unwrap());
+        assert_eq!((a.width, a.tool), (e.width, e.tool));
+        assert!(a.points.iter().zip(&e.points).all(|(p, q)| (p[0] - q[0]).abs() < 0.001 && (p[1] - q[1]).abs() < 0.001));
+        assert_eq!(actual.line, expected.line);
+        assert_eq!(actual.anchor, expected.anchor);
+    }
 }

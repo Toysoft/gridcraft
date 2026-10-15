@@ -1287,6 +1287,29 @@ fn draw_objects(pg: &mut Page, wb: &Workbook, si: usize, sh: &Sheet, b: &Block) 
         let fill = rgb_of(shp.fill, wb);
         let line = rgb_of(shp.line, wb).filter(|_| !shp.format.no_line).map(|c| (c, (0.75 * b.k).max(0.25)));
         match shp.kind {
+            ShapeKind::Ink => {
+                let Some(ink) = &shp.ink else { continue };
+                let at = |q: [f32; 2]| [x + q[0] * b.k, y + q[1] * b.k];
+                let base = rgb_of(shp.line, wb).unwrap_or([0, 0, 0]);
+                pg.save();
+                if ink.opacity() < 1.0 {
+                    pg.fill_alpha(ink.opacity());
+                }
+                if ink.effect.is_some() {
+                    // An effect's colour varies along the stroke: one colour per triangle.
+                    for t in ink.polygons() {
+                        let centre = [(t[0][0] + t[1][0] + t[2][0]) / 3.0, (t[0][1] + t[1][1] + t[2][1]) / 3.0];
+                        pg.polygon(&t.map(at), Some(ink.color_at(centre, base)), None);
+                    }
+                } else {
+                    // One filled outline: bends and crossings are covered once, so translucent
+                    // ink (highlighters) stays even.
+                    let outline: Vec<_> = ink.outline().into_iter().map(at).collect();
+                    pg.polygon(&outline, Some(base), None);
+                }
+                pg.restore();
+                continue;
+            }
             ShapeKind::Ellipse => {
                 let pts: Vec<[f32; 2]> = (0..72)
                     .map(|i| {

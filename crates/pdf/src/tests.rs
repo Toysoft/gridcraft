@@ -277,3 +277,21 @@ fn info_strings_are_capped() {
     let pdf = doc.finish();
     assert_eq!(utf16_entry(&pdf, "/Title").chars().count(), MAX_INFO_CHARS);
 }
+
+#[test]
+fn fill_alpha_registers_one_ext_g_state_per_opacity() {
+    let mut d = PdfDoc::new();
+    let p = d.add_page(100.0, 100.0);
+    p.save();
+    p.fill_alpha(0.4);
+    p.polygon(&[[0.0, 0.0], [10.0, 0.0], [5.0, 8.0]], Some([255, 0, 0]), None);
+    p.fill_alpha(0.4);
+    p.fill_alpha(f32::NAN);
+    p.restore();
+    let pdf = d.finish();
+    check_xref(&pdf);
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(text.contains("/GA40 gs"));
+    assert_eq!(text.matches("/GA40 <<").count(), 1, "{text}");
+    assert!(text.contains("/GA100 <<"));
+}

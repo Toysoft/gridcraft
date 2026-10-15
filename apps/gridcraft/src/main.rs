@@ -17,6 +17,9 @@ mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
 mod print;
+mod trackpad;
+#[cfg(any(target_os = "windows", test))]
+mod trackpad_hid;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -40,6 +43,7 @@ impl eframe::App for App {
             apple_events::poll(&self.2, &mut self.0, ctx);
         }
         self.0.logic(ctx);
+        trackpad::precise_pointer(self.0.session.draw.tool != gridcraft_engine::cmd::draw::DrawTool::Select);
         self.0.poll_printing(ctx);
         if ctx.input(|input| input.viewport().close_requested()) && self.0.printing.busy() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -151,7 +155,10 @@ fn services() -> Services {
     // Keep the owner alive: X11/Wayland serve clipboard data from this handle.
     let clipboard: Rc<RefCell<Option<arboard::Clipboard>>> = Rc::default();
     let (html_clipboard, text_clipboard) = (clipboard.clone(), clipboard.clone());
+    let (trackpad_capture, trackpad_unavailable) = trackpad::service();
     Services {
+        trackpad_capture,
+        trackpad_unavailable,
         copy_html: Some(Box::new(move |html, text| {
             let mut clipboard = clipboard.borrow_mut();
             if clipboard.is_none() {
