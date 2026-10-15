@@ -1078,7 +1078,8 @@ fn autofit_rows(s: &mut Session, p: &Json) -> Result<Json> {
                     }
                 }
             }
-            cx.fit_rows.extend((a..=b).map(|r| (si, r)));
+            // Sized from their content alone, even rows merged areas cross (`RowFit::AutoFit`).
+            cx.autofit_rows.extend((a..=b).map(|r| (si, r)));
         }
         cx.structural = true; // autofit reveals hidden rows: SUBTOTAL(10x) depends on it
         Ok(Json::Null)

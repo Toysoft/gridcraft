@@ -309,8 +309,11 @@ pub struct Ctx<'a> {
     pub changed: Vec<Key>,
     pub structural: bool,
     pub sel: &'a mut Selection,
-    /// Rows whose automatic height should be recomputed (sheet, row).
+    /// Rows whose automatic height should be recomputed after the edit (sheet, row): see
+    /// [`RowFit::Edit`].
     pub fit_rows: Vec<(usize, u32)>,
+    /// Rows AutoFit Row Height sizes from their content (sheet, row): see [`RowFit::AutoFit`].
+    pub autofit_rows: Vec<(usize, u32)>,
     /// The command applied sheet protection itself (row/column inserts and deletes the
     /// protection allows), so cells it shifts aren't refused as edits of locked cells.
     pub protection_checked: bool,
@@ -331,9 +334,17 @@ pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>)
     #[allow(clippy::disallowed_methods)]
     let t0 = if cfg!(target_arch = "wasm32") { None } else { std::env::var_os("GRIDCRAFT_PROFILE").map(|_| std::time::Instant::now()) };
     let mut sel = d.selection.clone();
-    let mut ctx = Ctx { wb: (*d.wb).clone(), changed: Vec::new(), structural: false, sel: &mut sel, fit_rows: Vec::new(), protection_checked: false };
+    let mut ctx = Ctx {
+        wb: (*d.wb).clone(),
+        changed: Vec::new(),
+        structural: false,
+        sel: &mut sel,
+        fit_rows: Vec::new(),
+        autofit_rows: Vec::new(),
+        protection_checked: false,
+    };
     let r = f(&mut ctx)?;
-    let Ctx { mut wb, changed, structural, mut fit_rows, protection_checked, .. } = ctx;
+    let Ctx { mut wb, changed, structural, mut fit_rows, mut autofit_rows, protection_checked, .. } = ctx;
     if !protection_checked {
         check_protection(&d.wb, &wb, &d.unlocked_ranges)?;
     }
@@ -356,10 +367,14 @@ pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>)
     }
     fit_rows.sort_unstable();
     fit_rows.dedup();
-    for sheet_rows in fit_rows.chunk_by(|a, b| a.0 == b.0) {
-        if let Some(&(si, _)) = sheet_rows.first() {
-            let rows: Vec<u32> = sheet_rows.iter().map(|&(_, row)| row).collect();
-            auto_row_heights(&mut wb, si, &rows);
+    autofit_rows.sort_unstable();
+    autofit_rows.dedup();
+    for (lines, fit) in [(&fit_rows, RowFit::Edit), (&autofit_rows, RowFit::AutoFit)] {
+        for sheet_rows in lines.chunk_by(|a, b| a.0 == b.0) {
+            if let Some(&(si, _)) = sheet_rows.first() {
+                let rows: Vec<u32> = sheet_rows.iter().map(|&(_, row)| row).collect();
+                auto_row_heights(&mut wb, si, &rows, fit);
+            }
         }
     }
     if let Some(t0) = t0 {
@@ -456,11 +471,30 @@ fn same_content(a: Option<&gridcraft_model::Cell>, b: Option<&gridcraft_model::C
     }
 }
 
+/// How [`auto_row_heights`] treats a row that a merged area crosses. Merged cells never size a
+/// row, so the height such a row has may be what its merged text needs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowFit {
+    /// After an edit: the row may grow, but keeps at least the height it has, so the merged
+    /// text it was sized for isn't cut off.
+    Edit,
+    /// AutoFit Row Height, and rows a file saved no height for: the row is sized by its other
+    /// cells alone, and may shrink.
+    AutoFit,
+}
+
+/// Recomputes one row's automatic height as an edit does ([`RowFit::Edit`]). Kept for callers
+/// of the single-row API: use [`auto_row_heights`], which fits many rows in one pass.
+pub fn auto_row_height(wb: &mut Workbook, si: usize, row: u32) {
+    auto_row_heights(wb, si, &[row], RowFit::Edit);
+}
+
 /// Recomputes the automatic heights of `rows` on sheet `si` from their content: the largest
 /// font, and wrapped or multi-line text. Rows with a user-set height keep it. Merged cells
-/// don't count: their text spans several columns or rows, which the line count doesn't
-/// measure, and Excel's AutoFit leaves merged cells out too (as AutoFit Column Width does).
-pub fn auto_row_heights(wb: &mut Workbook, si: usize, rows: &[u32]) {
+/// don't count — their text spans several columns or rows, which the line count doesn't
+/// measure, and Excel's AutoFit doesn't fit rows to merged cells either (our AutoFit Column
+/// Width skips them too) — and `fit` says whether a row they cross may shrink.
+pub fn auto_row_heights(wb: &mut Workbook, si: usize, rows: &[u32], fit: RowFit) {
     let mut rows = rows.to_vec();
     rows.sort_unstable();
     rows.dedup();
@@ -479,17 +513,19 @@ pub fn auto_row_heights(wb: &mut Workbook, si: usize, rows: &[u32]) {
             crossing.push(m);
         }
         crossing.retain(|m| m.end.row >= row);
-        auto_row_height(wb, si, row, &crossing);
+        fit_row_height(wb, si, row, &crossing, fit);
     }
 }
 
 /// One row of [`auto_row_heights`]; `merged` holds the merged areas crossing it.
-fn auto_row_height(wb: &mut Workbook, si: usize, row: u32, merged: &[RangeRef]) {
+fn fit_row_height(wb: &mut Workbook, si: usize, row: u32, merged: &[RangeRef], fit: RowFit) {
     let Some(sh) = wb.sheet(si) else { return };
     if sh.rows.get(&row).is_some_and(|i| i.custom) {
         return;
     }
     let default = sh.default_row_height;
+    // The height an edit leaves a row merged areas cross at least (see `RowFit::Edit`).
+    let floor = if fit == RowFit::Edit && !merged.is_empty() { sh.rows.get(&row).and_then(|i| i.size) } else { None };
     let unmerged = |&(c, _): &(u32, &gridcraft_model::Cell)| !merged.iter().any(|m| m.start.col <= c && c <= m.end.col);
     // Fast path: rows of default-size, unwrapped, single-line content keep the default height.
     let plain = sh.cells.row(row, 0, gridcraft_core::MAX_COLS - 1).filter(unmerged).all(|(_, cell)| {
@@ -497,7 +533,8 @@ fn auto_row_height(wb: &mut Workbook, si: usize, row: u32, merged: &[RangeRef]) 
         st.font.size <= gridcraft_model::DEFAULT_FONT_SIZE && !st.align.wrap && !cell.value.as_text().is_some_and(|t| t.contains('\n'))
     });
     if plain {
-        if sh.rows.get(&row).is_some_and(|i| i.size.is_some())
+        if floor.is_none()
+            && sh.rows.get(&row).is_some_and(|i| i.size.is_some())
             && let Some(shm) = wb.sheet_mut(si)
             && let Some(e) = shm.rows.get_mut(&row)
         {
@@ -533,6 +570,9 @@ fn auto_row_height(wb: &mut Workbook, si: usize, row: u32, merged: &[RangeRef]) 
         }
         let h = if lines > 1.0 { (size * 96.0 / 72.0 * 1.22 * lines + 5.0).ceil() } else { line };
         need = need.max(h.min(546.0));
+    }
+    if floor.is_some_and(|f| need <= f) {
+        return;
     }
     let Some(shm) = wb.sheet_mut(si) else { return };
     let e = shm.rows.entry(row).or_default();

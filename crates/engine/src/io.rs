@@ -76,11 +76,11 @@ pub fn open_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>
     Ok((wb, warnings))
 }
 
-/// Excel auto-fits rows to their tallest font when opening a file: rows the file saved no
-/// height for grow to fit their content (#833). A height the file saved is kept as it is —
-/// Excel wrote it from its own fit (or the user's), and our estimate of the content differs
-/// from Excel's, so fitting those rows changed files that were only opened and saved.
-/// Custom-height rows are never fitted.
+/// Rows a file saved no height for are fitted to their content when it opens: they grow to
+/// their tallest font (#833). A row the file saved a height for keeps the height the file
+/// saved, whatever our estimate of its content says (the estimate is approximate, and fitting
+/// those rows changed files that were only opened and saved). Custom-height rows are never
+/// fitted.
 fn fit_imported_rows(wb: &mut Workbook) {
     for si in 0..wb.sheets.len() {
         let Some(sh) = wb.sheet(si) else { continue };
@@ -88,7 +88,7 @@ fn fit_imported_rows(wb: &mut Workbook) {
         rows.sort_unstable();
         rows.dedup();
         rows.retain(|r| sh.rows.get(r).is_none_or(|i| i.size.is_none()));
-        crate::cmd::auto_row_heights(wb, si, &rows);
+        crate::cmd::auto_row_heights(wb, si, &rows, crate::cmd::RowFit::AutoFit);
     }
 }
 

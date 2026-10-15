@@ -1071,7 +1071,7 @@ fn spill_references_roundtrip_through_xlsx() {
 
 /// Fixture for the open-time row fit (issue #833): `row_info` = (size, custom, hidden) for
 /// row 5 (index 4), `None` = no row entry at all. Cell A5 = "plain big bold" — whole-cell
-/// font 20pt with `big_font`, plain 11pt without (a tall plain row's fit removes its entry).
+/// font 20pt with `big_font`, plain 11pt without.
 /// 11pt cell in A1 for contrast rows. Built with the model API, never through commands —
 /// commands would auto-fit the rows — and exported with `write_xlsx`, which omits `ht` for
 /// rows without a size: exactly the bug's input.
@@ -1111,23 +1111,23 @@ fn open_keeps_custom_height_rows() {
     assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), 25.0, "custom-height rows are left alone on open");
 }
 
-#[test] // C — Review Focus 2 (the fit would shrink the row; rows the file saved a height for aren't fitted)
-fn open_never_shrinks_taller_auto_rows() {
+#[test] // C — Review Focus 2 (a row saved taller than its content needs isn't fitted on open)
+fn open_keeps_a_taller_saved_height() {
     let mut s = Session::new();
     s.execute("file.open", json!({"name": "tall.xlsx", "base64": crate::io::base64_encode(&big_font_workbook(Some((60.0, false, false)), true))}))
         .unwrap();
-    assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), 60.0, "open is grow-only: a 60px auto-height row keeps its height");
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), 60.0, "a 60px height the file saved is kept on open");
 }
 
-#[test] // C′ — Review Focus 2 (the fit would remove a plain tall row's entry; its saved height is kept)
-fn open_restores_height_of_plain_rows_the_fit_removed() {
+#[test] // C′ — Review Focus 2 (the same for plain text, whose fit would drop the row's height)
+fn open_keeps_the_saved_height_of_a_plain_row() {
     let mut s = Session::new();
     s.execute(
         "file.open",
         json!({"name": "tall-plain.xlsx", "base64": crate::io::base64_encode(&big_font_workbook(Some((60.0, false, false)), false))}),
     )
     .unwrap();
-    assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), 60.0, "a tall plain row keeps its height after the fit removes its entry");
+    assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), 60.0, "a tall row of plain text keeps the height the file saved");
 }
 
 #[test] // D — Review Focus 5 (the row keeps its saved height; D′ fits a hidden row saved without one)
@@ -1137,8 +1137,8 @@ fn open_fitting_keeps_hidden_rows_hidden() {
         .unwrap();
     let sh = s.doc().unwrap().wb.active().unwrap();
     let info = sh.rows.get(&4).unwrap();
-    assert!(info.size.is_some_and(|h| h >= 20.0), "hidden row grows or keeps its height, got {:?}", info.size);
-    assert!(info.hidden, "fitting a hidden row must not unhide it");
+    assert_eq!(info.size, Some(20.0), "the hidden row keeps the height the file saved");
+    assert!(info.hidden, "opening must not unhide it");
 }
 
 #[test] // E — Review Focus 4
@@ -1244,6 +1244,60 @@ fn merged_cells_do_not_grow_their_row() {
     // Opening a file that saved no height for such a row doesn't grow it either.
     let s = open_xlsx(&merged_wrap_workbook(None));
     assert_eq!(s.doc().unwrap().wb.active().unwrap().row_height(4), default_h, "merged text doesn't grow a row on open");
+}
+
+fn row_px(s: &Session, row: u32) -> f32 {
+    s.doc().unwrap().wb.active().unwrap().row_height(row)
+}
+
+#[test] // J — an edit never shrinks a row that a merged area crosses: its merged text isn't measured
+fn edits_keep_the_height_of_rows_merged_cells_cross() {
+    // Row 5 saved at 42.75pt (57px) under a wrapped paragraph merged across A5:H5.
+    let mut s = open_xlsx(&merged_wrap_workbook(Some(57.0)));
+    s.execute("cell.set", json!({"cell": "J5", "input": "1"})).unwrap();
+    assert_eq!(row_px(&s, 4), 57.0, "an edit elsewhere in the row keeps 42.75pt");
+    s.execute("cell.set", json!({"cell": "A5", "input": "edited merged paragraph ".repeat(20)})).unwrap();
+    assert_eq!(row_px(&s, 4), 57.0, "editing the merged paragraph keeps 42.75pt");
+    assert_eq!(saved_row_size(&save_xlsx(&mut s), 4), Some(57.0), "and the row is saved at 42.75pt");
+    // A taller cell of the row's own still grows it.
+    s.execute("home.fontSize", json!({"range": "J5", "size": 48})).unwrap();
+    assert!(row_px(&s, 4) > 57.0, "a 48pt cell grows the row: {}", row_px(&s, 4));
+
+    // A merged area that spans rows protects every row it crosses.
+    let mut wb = gridcraft_model::Workbook::new();
+    let wrap = wb.styles.derive(gridcraft_model::StyleId::DEFAULT, |s| s.align.wrap = true);
+    let sh = wb.sheet_mut(0).unwrap();
+    sh.set_value(CellRef::new(3, 0), Value::text("merged wrapped text ".repeat(30)));
+    sh.set_style(CellRef::new(3, 0), wrap);
+    sh.merges.push(gridcraft_core::RangeRef::parse("A4:A6").unwrap());
+    sh.set_value(CellRef::new(4, 1), Value::text("b5"));
+    sh.rows.entry(4).or_default().size = Some(40.0);
+    let mut s = open_xlsx(&gridcraft_xlsx::write_xlsx(&wb).unwrap());
+    s.execute("cell.set", json!({"cell": "B5", "input": "edited"})).unwrap();
+    assert_eq!(row_px(&s, 4), 40.0, "row 5, inside A4:A6, keeps its 30pt");
+
+    // Rows no merged area crosses still follow their content when edited.
+    let mut s = open_xlsx(&big_font_workbook(Some((60.0, false, false)), false));
+    s.execute("cell.set", json!({"cell": "B5", "input": "x"})).unwrap();
+    assert_eq!(row_px(&s, 4), 20.0, "an edit refits a row of plain text to the default");
+}
+
+#[test] // K — AutoFit Row Height sizes a row by its unmerged cells alone, and may shrink it
+fn autofit_row_height_leaves_merged_cells_out() {
+    let mut s = open_xlsx(&merged_wrap_workbook(Some(57.0)));
+    s.execute("home.autofitRowHeight", json!({"rows": "5:5"})).unwrap();
+    assert_eq!(row_px(&s, 4), 20.0, "the merged paragraph doesn't size the row");
+    s.execute("cell.set", json!({"cell": "J5", "input": "big"})).unwrap();
+    s.execute("home.fontSize", json!({"range": "J5", "size": 20})).unwrap();
+    s.execute("home.rowHeight", json!({"rows": "5:5", "height": 100.0})).unwrap();
+    s.execute("home.autofitRowHeight", json!({"rows": "5:5"})).unwrap();
+    let h = row_px(&s, 4);
+    assert!((30.0..60.0).contains(&h), "the 20pt cell sizes the row, the merged paragraph doesn't: {h}");
+    // The same paragraph unmerged sizes its row.
+    s.execute("home.wrapText", json!({"range": "A7", "on": true})).unwrap();
+    s.execute("cell.set", json!({"cell": "A7", "input": "merged wrapped text ".repeat(30)})).unwrap();
+    s.execute("home.autofitRowHeight", json!({"rows": "7:7"})).unwrap();
+    assert!(row_px(&s, 6) > 100.0, "an unmerged wrapped paragraph sizes its row: {}", row_px(&s, 6));
 }
 
 #[test]
