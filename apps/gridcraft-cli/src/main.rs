@@ -165,12 +165,14 @@ fn exec(s: &mut Session, id: &str, params: Value) -> Result<Value, String> {
 
 fn open(path: &str) -> Result<Session, String> {
     let mut s = Session::new();
+    s.web_source = Some(gridcraft_webquery::provider());
     exec(&mut s, "file.open", json!({"path": path}))?;
     Ok(s)
 }
 
 fn blank() -> Session {
     let mut s = Session::new();
+    s.web_source = Some(gridcraft_webquery::provider());
     s.new_workbook();
     s
 }

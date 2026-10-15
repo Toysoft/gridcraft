@@ -57,6 +57,23 @@ pub struct TableColumn {
     pub xml: Option<XmlColumnPr>,
 }
 
+/// A saved From Web connection (Data ▸ Get Data ▸ From Web): one table imported from one page,
+/// which `data.webRefresh` re-fetches into the same sheet.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WebQuery {
+    /// The connection's name: the worksheet table it fills.
+    pub name: String,
+    /// The page the table came from.
+    pub url: String,
+    /// The page table's name, as the import saw it.
+    pub table: String,
+    /// The sheet the import wrote.
+    pub sheet: String,
+    /// When the connection last synced, in ms since the epoch; `None` until the first sync.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_synced: Option<u64>,
+}
+
 /// A table column's binding to an XML map (`<xmlColumnPr>`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct XmlColumnPr {

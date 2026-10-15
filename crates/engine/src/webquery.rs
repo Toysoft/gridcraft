@@ -1,0 +1,364 @@
+//! Web table import (Data ▸ Get Data ▸ From Web).
+//!
+//! The engine stays network-free and wasm-clean: the host (desktop app, CLI) injects a
+//! [`WebFetch`] into [`crate::Session::web_source`] that downloads a page; the engine
+//! extracts the tables (pure HTML parsing, like the clipboard flavour in
+//! [`crate::clip_html`]) and writes them to a sheet. Without a source, `data.fromWeb`
+//! returns an error.
+
+/// Rows imported by default (the sheet's row count minus the header row).
+pub const DEFAULT_MAX_ROWS: usize = 1_048_575;
+/// Columns imported at most (the sheet's column count).
+pub const MAX_COLS: usize = 16_384;
+/// Page size and download timeout, in bytes and seconds, when the caller gives none.
+pub const DEFAULT_MAX_BYTES: usize = 16 * 1024 * 1024;
+pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
+/// Longest text a cell holds (Excel's limit).
+pub const MAX_TEXT: usize = 32_767;
+
+/// One page download: the URL and the caps the fetch must honour.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebRequest {
+    pub url: String,
+    pub max_rows: usize,
+    pub max_cols: usize,
+    pub max_bytes: usize,
+}
+
+/// One table found on a page: its name, cell text row by row (padded to the widest row).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WebTable {
+    pub name: String,
+    pub rows: Vec<Vec<String>>,
+}
+
+/// Fetches a page and returns its tables. Implementations must honour the caps and never panic.
+pub type WebFetch = std::sync::Arc<dyn Fn(&WebRequest) -> Result<Vec<WebTable>, String> + Send + Sync>;
+
+/// The tables of `html`, in document order. Nested tables are flattened into the cell text of
+/// the enclosing table (like Excel's detection, a table inside a cell stays part of the cell).
+/// `max_rows`/`max_cols` cap each table's size; longer tables are reported truncated.
+pub fn extract_tables(html: &str, max_rows: usize, max_cols: usize) -> Vec<WebTable> {
+    let mut out: Vec<WebTable> = Vec::new();
+    if html.len() > DEFAULT_MAX_BYTES {
+        return out;
+    }
+    let mut rest = html;
+    let mut current: Option<TableState> = None;
+    let mut depth = 0usize;
+    while !rest.is_empty() {
+        let Some(lt) = rest.find('<') else { break };
+        let text = rest.get(..lt).unwrap_or_default();
+        if let Some(t) = current.as_mut() {
+            t.push_text(text);
+        }
+        rest = rest.get(lt..).unwrap_or_default();
+        if let Some(after) = rest.strip_prefix("<!--") {
+            rest = after.find("-->").and_then(|e| after.get(e + 3..)).unwrap_or_default();
+            continue;
+        }
+        let Some(gt) = tag_end(rest) else { break };
+        let tag = rest.get(1..gt).unwrap_or_default();
+        rest = rest.get(gt + 1..).unwrap_or_default();
+        let closing = tag.starts_with('/');
+        let body = tag.trim_start_matches('/');
+        let name_end = body.find(|c: char| c.is_whitespace() || c == '/').unwrap_or(body.len());
+        let name = body.get(..name_end).unwrap_or_default().to_ascii_lowercase();
+        match (name.as_str(), closing) {
+            ("style" | "script" | "noscript", false) => {
+                let end = format!("</{name}");
+                rest = find_ci(rest, &end).and_then(|i| rest.get(i..)).unwrap_or_default();
+            }
+            ("table", false) => {
+                match current.as_mut() {
+                    // A nested table: its markup stays part of the enclosing cell's text.
+                    Some(t) => {
+                        depth += 1;
+                        t.push_text(&format!("<{tag}>"));
+                    }
+                    None => {
+                        let id = attr(body, "id");
+                        let name = id.filter(|s| !s.trim().is_empty()).map(String::from).unwrap_or_else(|| format!("Table {}", out.len() + 1));
+                        current = Some(TableState::new(name, max_rows, max_cols));
+                        depth = 0;
+                    }
+                }
+            }
+            ("table", true) => {
+                if depth > 0 {
+                    depth -= 1;
+                    if let Some(t) = current.as_mut() {
+                        t.push_text(&format!("<{tag}>"));
+                    }
+                } else if let Some(mut t) = current.take() {
+                    t.close();
+                    if !t.rows.is_empty() {
+                        out.push(WebTable { name: t.name, rows: t.rows });
+                    }
+                }
+            }
+            ("tr" | "td" | "th", false) => {
+                match current.as_mut() {
+                    // Inside a nested table the markup stays part of the enclosing cell's text.
+                    Some(t) if depth > 0 => t.push_text(&format!("<{tag}>")),
+                    Some(t) if name == "tr" => t.start_row(),
+                    Some(t) => t.start_cell(),
+                    None => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// One `<table>` being read: cells accumulate text until the next `<td>`/`<th>`/`<tr>`.
+struct TableState {
+    name: String,
+    max_rows: usize,
+    max_cols: usize,
+    rows: Vec<Vec<String>>,
+    row: Vec<String>,
+    cell: String,
+    cell_open: bool,
+}
+
+impl TableState {
+    fn new(name: String, max_rows: usize, max_cols: usize) -> Self {
+        Self { name, max_rows, max_cols, rows: Vec::new(), row: Vec::new(), cell: String::new(), cell_open: false }
+    }
+
+    fn push_text(&mut self, text: &str) {
+        if self.cell_open {
+            self.cell.push_str(text);
+        }
+    }
+
+    fn start_cell(&mut self) {
+        self.close_cell();
+        self.cell_open = true;
+    }
+
+    fn start_row(&mut self) {
+        self.close_cell();
+        self.flush_row();
+    }
+
+    /// Close the current cell (collapsing whitespace) into the current row.
+    fn close_cell(&mut self) {
+        if !self.cell_open {
+            return;
+        }
+        self.cell_open = false;
+        let text = collapse_ws(&std::mem::take(&mut self.cell));
+        if self.row.len() < self.max_cols {
+            self.row.push(text.chars().take(MAX_TEXT).collect());
+        }
+    }
+
+    fn flush_row(&mut self) {
+        if self.row.is_empty() || self.rows.len() >= self.max_rows {
+            self.row.clear();
+            return;
+        }
+        self.rows.push(std::mem::take(&mut self.row));
+    }
+
+    /// `</table>`: close the open cell and row, pad every row to the table's width.
+    fn close(&mut self) {
+        self.close_cell();
+        self.flush_row();
+        let w = self.rows.iter().map(Vec::len).max().unwrap_or(0).min(self.max_cols);
+        for r in &mut self.rows {
+            r.resize(w, String::new());
+        }
+    }
+}
+
+/// Cell text as one line: runs of whitespace collapse to single spaces, entities decode.
+fn collapse_ws(s: &str) -> String {
+    let decoded = decode_entities(s).replace('\u{a0}', " ");
+    let mut out = String::with_capacity(decoded.len());
+    let mut in_ws = false;
+    for ch in decoded.trim().chars() {
+        if ch.is_whitespace() {
+            in_ws = true;
+        } else {
+            if in_ws && !out.is_empty() {
+                out.push(' ');
+            }
+            in_ws = false;
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// The common named and numeric HTML entities; unknown ones stay as written.
+fn decode_entities(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        out.push_str(rest.get(..i).unwrap_or_default());
+        rest = rest.get(i..).unwrap_or_default();
+        let end = rest.find(';').unwrap_or(rest.len());
+        let ent = rest.get(..end.min(rest.len())).unwrap_or_default();
+        let value = match ent.strip_prefix("&#") {
+            Some(num) => num
+                .strip_prefix('x')
+                .map(|h| u32::from_str_radix(h.trim(), 16).ok())
+                .unwrap_or_else(|| num.trim().parse::<u32>().ok())
+                .and_then(char::from_u32),
+            None => named_entity(ent.strip_prefix('&').unwrap_or(ent)),
+        };
+        match value {
+            Some(ch) => {
+                out.push(ch);
+                rest = rest.get(end + 1..).unwrap_or_default();
+            }
+            None => {
+                out.push('&');
+                rest = rest.get(1..).unwrap_or_default();
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn named_entity(name: &str) -> Option<char> {
+    Some(match name {
+        "amp" => '&',
+        "lt" => '<',
+        "gt" => '>',
+        "quot" => '"',
+        "apos" => '\'',
+        "nbsp" => '\u{a0}',
+        "copy" => '©',
+        "reg" => '®',
+        "trade" => '™',
+        "hellip" => '…',
+        "mdash" => '—',
+        "ndash" => '–',
+        "lsquo" => '‘',
+        "rsquo" => '’',
+        "ldquo" => '“',
+        "rdquo" => '”',
+        "bull" => '•',
+        "middot" => '·',
+        "deg" => '°',
+        "euro" => '€',
+        "pound" => '£',
+        "yen" => '¥',
+        "cent" => '¢',
+        "sect" => '§',
+        "para" => '¶',
+        "times" => '×',
+        "divide" => '÷',
+        "plusmn" => '±',
+        "frac12" => '½',
+        "frac14" => '¼',
+        "frac34" => '¾',
+        "sup2" => '²',
+        "sup3" => '³',
+        _ => return None,
+    })
+}
+
+/// The end of the tag starting at `rest` (`<tr class="x">` → index of `>`), tolerating quotes.
+fn tag_end(rest: &str) -> Option<usize> {
+    let bytes = rest.as_bytes();
+    let mut quote = 0u8;
+    for (i, &b) in bytes.iter().enumerate().skip(1) {
+        match (quote, b) {
+            (0, b'"') | (0, b'\'') => quote = b,
+            (q, b) if q == b => quote = 0,
+            (0, b'>') => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The value of `attr` in the tag body `body` ("id" of `<table id="x">`).
+fn attr<'a>(body: &'a str, attr: &str) -> Option<&'a str> {
+    let lower = body.to_ascii_lowercase();
+    let needle = format!("{attr}=");
+    let i = lower.find(&needle)?;
+    let rest = body.get(i + needle.len()..)?;
+    let rest = rest.trim_start();
+    let q = rest.as_bytes().first()?;
+    if *q == b'"' || *q == b'\'' {
+        let rest = rest.get(1..)?;
+        let end = rest.find(*q as char)?;
+        Some(rest.get(..end).unwrap_or_default())
+    } else {
+        Some(rest.split(|c: char| c.is_whitespace() || c == '>').next().unwrap_or_default())
+    }
+}
+
+/// Case-insensitive `find`.
+fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
+    let h = haystack.as_bytes();
+    let n = needle.as_bytes();
+    if n.is_empty() || h.len() < n.len() {
+        return None;
+    }
+    (0..=h.len() - n.len()).find(|&i| h[i..i + n.len()].eq_ignore_ascii_case(n))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_named_and_unnamed_tables() {
+        let html = "<p>intro</p><TABLE id=\"prices\"><tr><th>Sym</th><th>Price</th></tr>\
+                    <tr><td>ABCD</td><td>12.50</td></tr></table>\
+                    <table><tr><td>x</td><td>y &amp; z</td></tr></table>";
+        let t = extract_tables(html, 100, 100);
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0].name, "prices");
+        assert_eq!(t[0].rows, vec![vec!["Sym", "Price"], vec!["ABCD", "12.50"]]);
+        assert_eq!(t[1].name, "Table 2");
+        assert_eq!(t[1].rows, vec![vec!["x", "y & z"]]);
+    }
+
+    #[test]
+    fn ragged_rows_are_padded_and_spans_ignored() {
+        let html = "<table><tr><td>a</td><td>b</td><td>c</td></tr><tr><td>d</td></tr></table>";
+        let t = extract_tables(html, 100, 100);
+        assert_eq!(t[0].rows, vec![vec!["a", "b", "c"], vec!["d", "", ""]]);
+    }
+
+    #[test]
+    fn collapses_whitespace_decodes_entities_and_skips_scripts() {
+        let html = "<table><tr><td>  Red&nbsp;&amp;&nbsp;Blue\n  Widget  </td>\
+                    <script>evil(1<2)</script><td>&#65;&#x42;</td></tr></table>";
+        let t = extract_tables(html, 100, 100);
+        assert_eq!(t[0].rows[0], vec!["Red & Blue Widget", "AB"]);
+    }
+
+    #[test]
+    fn honours_row_and_col_caps() {
+        let html = "<table><tr><td>1</td><td>2</td></tr><tr><td>3</td><td>4</td></tr></table>";
+        assert_eq!(extract_tables(html, 1, 100)[0].rows, vec![vec!["1", "2"]]);
+        assert_eq!(extract_tables(html, 100, 1)[0].rows, vec![vec!["1"], vec!["3"]]);
+    }
+
+    #[test]
+    fn empty_or_broken_markup_yields_nothing_without_panicking() {
+        assert!(extract_tables("", 10, 10).is_empty());
+        assert!(extract_tables("<table><tr><td>no end", 10, 10).is_empty());
+        assert!(extract_tables("<table><tr><td a=\"b>c\">x</td></tr></table>", 10, 10)[0].rows[0][0].contains("x"));
+        assert!(extract_tables("<table><!--<tr>--><tr><td>1</td></tr></table>", 10, 10)[0].rows == vec![vec!["1"]]);
+    }
+
+    #[test]
+    fn nested_table_text_stays_in_the_cell() {
+        let html = "<table><tr><td>outer <table><tr><td>inner</td></tr></table> end</td></tr></table>";
+        let t = extract_tables(html, 100, 100);
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].rows[0][0], "outer <table><tr><td>inner</table> end");
+    }
+}

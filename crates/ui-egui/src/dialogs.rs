@@ -437,6 +437,7 @@ impl Dialog {
                 vec![Check { key: "header", label: "My data has headers" }, Text { key: "columnsText", label: "Columns (blank = all, e.g. A,C):" }],
                 json!({"header": true}),
             ),
+            "fromWeb" => Dialog::custom("fromWeb", "From Web", json!({"url": "", "pick": 0})),
             "goalSeek" => Dialog::custom("goalSeek", "Goal Seek", json!({"set": active, "to": "0", "changing": ""})),
             "forecastSheet" => Dialog::form(
                 "forecastSheet",
@@ -1057,6 +1058,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "recommendedCharts" => recommended_charts(app, ui, &mut d, &mut confirm, &mut open),
                 "selectData" => select_data(app, ui, &mut d, &mut confirm, &mut open),
                 "commandSearch" => command_search(app, ui, &mut d, &mut confirm),
+                "fromWeb" => from_web(app, ui, &mut d, &mut confirm, &mut open),
                 "goalSeek" => goal_seek(app, ui, &mut d, &mut confirm),
                 "analysisToolPak" => analysis_toolpak(app, ui, &mut d, &mut confirm, &mut open),
                 "solver" => solver(ui, &mut d, &mut confirm, &mut open),
@@ -2274,6 +2276,90 @@ fn command_search(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm
         let id = id.clone();
         app.dialog = None;
         app.run_or_alert(&id, json!({}));
+    }
+}
+
+/// Data ▸ From Web: Excel's Navigator. Enter a URL, the page's detected tables are previewed
+/// on the right, and Load imports the selected one into a new sheet.
+fn from_web(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+    let get = |k: &str| d.values.get(k).and_then(Json::as_str).unwrap_or("").to_string();
+    let mut url = get("url");
+    egui::Grid::new("fw").show(ui, |ui| {
+        ui.label("URL:");
+        ui.add(egui::TextEdit::singleline(&mut url).desired_width(360.0).hint_text("https://example.com/table.html"));
+        if ui.button("Go").clicked() && !url.trim().is_empty() {
+            d.values.insert("url".into(), json!(url.trim()));
+            d.values.insert("tables".into(), Json::Null);
+            let r = app.run("data.webPreview", json!({"url": url.trim()}));
+            match r {
+                Ok(res) => d.values.insert("tables".into(), res["tables"].clone()),
+                Err(e) => {
+                    app.message = Some(("From Web".into(), crate::clean_error(&e)));
+                    d.values.insert("tables".into(), Json::Null)
+                }
+            };
+        }
+        ui.end_row();
+    });
+    let tables: Vec<Json> = d.values.get("tables").and_then(Json::as_array).cloned().unwrap_or_default();
+    if !tables.is_empty() {
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.strong("Suggested Tables");
+                let mut pick = d.values.get("pick").and_then(Json::as_u64).unwrap_or(0) as usize;
+                for (i, t) in tables.iter().enumerate() {
+                    let name = t["name"].as_str().unwrap_or("Table");
+                    let rows = t["rows"].as_u64().unwrap_or(0);
+                    if ui.selectable_label(i == pick, format!("{name}  ({rows} rows)")).clicked() {
+                        pick = i;
+                        d.values.insert("pick".into(), json!(i));
+                    }
+                }
+            });
+            ui.separator();
+            let pick = d.values.get("pick").and_then(Json::as_u64).unwrap_or(0) as usize;
+            if let Some(t) = tables.get(pick) {
+                ui.vertical(|ui| {
+                    ui.strong("Preview");
+                    egui::ScrollArea::vertical().max_height(200.0).id_salt("fw_preview").show(ui, |ui| {
+                        egui::Grid::new("fw_preview_grid").striped(true).show(ui, |ui| {
+                            if let Some(rows) = t["preview"].as_array() {
+                                for row in rows {
+                                    for cell in row.as_array().into_iter().flatten() {
+                                        ui.label(cell.as_str().unwrap_or_default());
+                                    }
+                                    ui.end_row();
+                                }
+                            }
+                        });
+                    });
+                });
+            }
+        });
+    } else if d.values.get("tables").is_some_and(|t| t.is_null()) {
+        ui.label("No tables were found on this page.");
+    } else {
+        ui.label("Enter an address and choose Go to detect the page's tables.");
+    }
+    d.values.insert("url".into(), json!(url.clone()));
+    let mut load = true;
+    ok_cancel(ui, confirm, &mut load);
+    if *confirm && !url.trim().is_empty() {
+        let pick = d.values.get("pick").and_then(Json::as_u64).unwrap_or(0);
+        let table = tables.get(pick as usize).and_then(|t| t["name"].as_str()).map(String::from);
+        let params = match table {
+            Some(t) => json!({"url": url.trim(), "table": t}),
+            None => json!({"url": url.trim()}),
+        };
+        match app.run("data.fromWeb", params) {
+            Ok(r) => app.toast = Some((format!("Imported {} rows into {}", r["rows"], r["sheet"]), crate::now_ms())),
+            Err(e) => app.message = Some(("From Web".into(), crate::clean_error(&e))),
+        }
+    }
+    if !load {
+        *confirm = true;
+        *open = false;
     }
 }
 

@@ -289,6 +289,7 @@ fn main() -> eframe::Result<()> {
         }
     }
     let mut session = Session::new();
+    session.web_source = Some(gridcraft_webquery::provider());
     if let Some(s) = &sample
         && let Err(e) = session.execute("file.new", json!({"sample": s}))
     {
