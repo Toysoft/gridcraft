@@ -69,6 +69,15 @@ fn active_input(app: &SheetApp) -> String {
     if let Some(picture) = sh.cell_pictures.get(&a) {
         return if picture.alt.is_empty() { "Picture in cell".into() } else { format!("Picture: {}", picture.alt) };
     }
+    // A data table's results show its formula in braces, `{=TABLE(B1,B2)}`, with the formula
+    // language's separators (`{=TABLE(B1;B2)}`) and function name.
+    if let Some(t) = sh.data_table_at(a) {
+        if gridcraft_engine::display::formula_hidden(&d.wb, sh, a) {
+            return String::new();
+        }
+        let shown = crate::formula_locale::display(&format!("={}", t.formula_text()), app.ui.language.formula_locale(), &d.wb, d.wb.active_sheet);
+        return format!("{{{shown}}}");
+    }
     if let Some(c) = sh.cell(a) {
         if c.formula.is_some() && d.wb.styles.get(c.style).protection.hidden && sh.is_protected() {
             return String::new();

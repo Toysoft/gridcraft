@@ -531,6 +531,13 @@ fn display_text(
     {
         return (format!("={}", f.text), None, false, None);
     }
+    // A data table's results show its formula, `=TABLE(B1,B2)`.
+    if sh.show_formulas
+        && let Some(t) = sh.data_table_at(c)
+        && !gridcraft_engine::display::formula_hidden(wb, sh, c)
+    {
+        return (format!("={}", t.formula_text()), None, false, None);
+    }
     if !sh.show_zeros && v.as_f64() == Some(0.0) {
         return (String::new(), None, false, None);
     }
@@ -1160,7 +1167,7 @@ pub(crate) fn paint_quadrant(
         let char_w = p.layout_no_wrap("0".to_string(), font.clone(), Color32::PLACEHOLDER).size().x.max(1.0);
         let avail_w = rect.right() - text_left;
         let (mut text, ncolor, numeric, fill_char) = display_text(wb, sh, c, &v, st, avail_w / z.max(0.1) * z, char_w);
-        if sh.show_formulas && sh.cell(c).is_some_and(|cell| cell.formula.is_some()) {
+        if sh.show_formulas && (sh.cell(c).is_some_and(|cell| cell.formula.is_some()) || sh.data_table_at(c).is_some()) {
             text = crate::formula_locale::display(&text, crate::i18n::current(p.ctx()).formula_locale(), wb, si);
         }
         if text.is_empty() {

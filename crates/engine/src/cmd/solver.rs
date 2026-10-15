@@ -28,7 +28,7 @@ use gridcraft_core::{CellRef, RangeRef, Value};
 use gridcraft_model::{Cell, DefinedName, Sheet, Workbook};
 use serde_json::{Value as Json, json};
 
-use super::whatif::Trial;
+use super::whatif::{Trial, trial};
 use super::*;
 
 const CMD: &str = "data.solver";
@@ -1707,7 +1707,7 @@ fn title(out: &mut Lines, kind: ReportKind, sheet: &str) -> u32 {
 
 fn answer_report(d: &DocState, sh: &Sheet, inp: &ReportInput) -> Lines {
     let m = inp.model;
-    let mut trial = Trial::new(d);
+    let mut trial = trial(d);
     let read = |trial: &mut Trial, x: &[f64], cells: &[CellRef]| -> Vec<f64> {
         let sets: Vec<(usize, CellRef, Value)> = m.vars.iter().zip(x).map(|(c, v)| (m.sheet, *c, Value::number(*v))).collect();
         let reads: Vec<(usize, CellRef)> = cells.iter().map(|c| (m.sheet, *c)).collect();
@@ -1810,7 +1810,7 @@ fn limits_report(d: &DocState, sh: &Sheet, inp: &ReportInput) -> Result<Lines> {
     // Each variable is minimised and maximised with the others held at the solution.
     let per = (inp.budget / (2 * n as u64).max(1)).max(n as u64 + 3);
     let mut ev = Evaluator {
-        trial: Trial::new(d),
+        trial: trial(d),
         sheet: m.sheet,
         vars: m.vars.clone(),
         objective: m.objective,
@@ -2014,7 +2014,7 @@ fn run(s: &mut Session, p: &Json) -> Result<Json> {
     let sh = d.wb.sheet(model.sheet).ok_or(EngineError::NoDocument)?;
     let x0: Vec<f64> = model.vars.iter().map(|c| as_num(&sh.value(*c))).map(|v| if v.is_finite() { v } else { 0.0 }).collect();
     let mut ev = Evaluator {
-        trial: Trial::new(d),
+        trial: trial(d),
         sheet: model.sheet,
         vars: model.vars.clone(),
         objective: model.objective,

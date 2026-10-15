@@ -781,6 +781,7 @@ const CURATED: &[(&str, usize)] = &[
     ("data.filterBy", 2),
     ("data.clearFilter", 1),
     ("data.removeDuplicates", 1),
+    ("data.dataTable", 2),
     ("formulas.defineName", 2),
     ("formulas.deleteName", 1),
     ("edit.replace", 1),
@@ -917,6 +918,24 @@ fn curated_params(rng: &mut Rng, wb: &Workbook, id: &str) -> Json {
             }
         }
         "data.removeDuplicates" => json!({"range": near_range(rng).a1(), "header": rng.chance(50)}),
+        "data.dataTable" => {
+            // Live (mostly) or static What-If data tables near the data: one- or two-variable,
+            // input cells near the data too (sometimes inside the table, which is refused).
+            let a = near_cell(rng);
+            let r = RangeRef::new(a, CellRef::new(a.row + rng.int(1, 6) as u32, a.col + rng.int(1, 3) as u32));
+            let mut p = json!({"range": r.a1()});
+            let which = rng.below(3);
+            if which != 1 {
+                p["columnInput"] = json!(near_cell(rng).a1());
+            }
+            if which != 0 {
+                p["rowInput"] = json!(near_cell(rng).a1());
+            }
+            if rng.chance(15) {
+                p["static"] = json!(true);
+            }
+            p
+        }
         "formulas.defineName" => {
             let sheet = other_sheet(rng, wb);
             let r = near_range(rng);

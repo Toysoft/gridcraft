@@ -880,8 +880,10 @@ impl SheetApp {
         let current = if sh.cell_pictures.contains_key(&at) {
             String::new()
         } else {
-            match sh.cell(at) {
-                Some(c) if c.formula.is_some() => formula_locale::display(&c.input_text(), locale, &d.wb, d.wb.active_sheet),
+            match (sh.cell(at), sh.data_table_at(at)) {
+                (Some(c), _) if c.formula.is_some() => formula_locale::display(&c.input_text(), locale, &d.wb, d.wb.active_sheet),
+                // A data table's result edits as its formula, `=TABLE(B1,B2)` (Enter keeps it).
+                (_, Some(t)) => formula_locale::display(&format!("={}", t.formula_text()), locale, &d.wb, d.wb.active_sheet),
                 _ => gridcraft_engine::display::edit_text(&d.wb, sh, at),
             }
         };
@@ -916,6 +918,17 @@ impl SheetApp {
             }
             None => text,
         };
+        // Enter on a data table's result with its `=TABLE()` formula unchanged changes nothing;
+        // any other entry there is refused by the engine ("Cannot change part of a data table.").
+        if let Some(d) = self.session.active()
+            && let Some(t) = d.wb.sheet(ed.sheet).and_then(|sh| sh.data_table_at(ed.cell))
+            && text == format!("={}", t.formula_text())
+        {
+            if dr != 0 || dc != 0 {
+                self.move_after_enter(dr, dc);
+            }
+            return true;
+        }
         // Data validation.
         if let Some(d) = self.session.active()
             && let Some((dv, msg)) = gridcraft_engine::cmd::data::check_validation(&d.wb, ed.sheet, ed.cell, &text)

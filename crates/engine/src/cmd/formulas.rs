@@ -578,10 +578,12 @@ fn calc_options(s: &mut Session, p: &Json) -> Result<Json> {
             cx.wb.calc.set_max_change(v);
         }
         let c = &cx.wb.calc;
-        // Switching to automatic, or changing how circular references are calculated outside
-        // manual mode, recalculates the workbook.
+        // Switching to automatic (or from manual to automatic except for data tables), or
+        // changing how circular references are calculated outside manual mode, recalculates the
+        // workbook.
         let iteration_changed = (c.iterative, c.max_iterations, c.max_change) != (before.iterative, before.max_iterations, before.max_change);
-        if mode == Some(CalcMode::Automatic) || (iteration_changed && c.mode != CalcMode::Manual) {
+        let leaves_manual = before.mode == CalcMode::Manual && c.mode == CalcMode::AutomaticExceptTables;
+        if mode == Some(CalcMode::Automatic) || leaves_manual || (iteration_changed && c.mode != CalcMode::Manual) {
             cx.structural = true;
         }
         Ok(json!({"mode": format!("{:?}", c.mode), "iterative": c.iterative, "maxIterations": c.max_iterations, "maxChange": c.max_change}))

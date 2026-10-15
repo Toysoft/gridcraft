@@ -2311,7 +2311,7 @@ fn keytip_aws_() {
 fn keytip_awt_() {
     let mut h = harness(blank());
     sequence(&mut h, "AWT", false);
-    assert!(h.state().message.is_some() || h.state().toast.is_some(), "AWT must invoke data.dataTable and surface its missing-params error");
+    assert!(h.state().dialog.is_some(), "AWT must open the dataTable dialog");
 }
 
 #[test]

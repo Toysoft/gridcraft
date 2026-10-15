@@ -438,6 +438,11 @@ impl Dialog {
                 json!({"header": true}),
             ),
             "goalSeek" => Dialog::custom("goalSeek", "Goal Seek", json!({"set": active, "to": "0", "changing": ""})),
+            // What-If Analysis › Data Table over the selection; OK runs `data.dataTable`, and an
+            // input cell Excel would refuse keeps the dialog open behind the message.
+            "dataTable" => {
+                Dialog::form("dataTable", "Data Table", "data.dataTable", vec![], json!({"range": sel, "rowInput": "", "columnInput": ""}))
+            }
             "forecastSheet" => Dialog::form(
                 "forecastSheet",
                 "Create Forecast Worksheet",
@@ -1058,6 +1063,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "selectData" => select_data(app, ui, &mut d, &mut confirm, &mut open),
                 "commandSearch" => command_search(app, ui, &mut d, &mut confirm),
                 "goalSeek" => goal_seek(app, ui, &mut d, &mut confirm),
+                "dataTable" => data_table(app, ui, &mut d, &mut confirm, &mut open),
                 "analysisToolPak" => analysis_toolpak(app, ui, &mut d, &mut confirm, &mut open),
                 "solver" => solver(ui, &mut d, &mut confirm, &mut open),
                 "solverResults" => solver_results(app, ui, &mut d, &mut open),
@@ -2305,6 +2311,25 @@ fn goal_seek(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mu
     if !open {
         *confirm = true;
     }
+}
+
+/// Data Table: Excel's two fields, the row input cell (receives the values across the top row)
+/// and the column input cell (receives the values down the left column). Either may stay blank.
+fn data_table(app: &SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+    let lang = app.ui.language;
+    egui::Grid::new("dataTable").num_columns(2).spacing(vec2(8.0, 6.0)).show(ui, |ui| {
+        for (key, label) in [("rowInput", "Row input cell:"), ("columnInput", "Column input cell:")] {
+            ui.label(lang.tr(label));
+            let mut text = d.values.get(key).and_then(Json::as_str).unwrap_or("").to_string();
+            let response = ui.add(egui::TextEdit::singleline(&mut text).desired_width(150.0));
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, label));
+            if response.changed() {
+                d.values.insert(key.into(), json!(text));
+            }
+            ui.end_row();
+        }
+    });
+    ok_cancel(ui, confirm, open);
 }
 
 /// The fields of one Analysis ToolPak tool's form (input and options; output is drawn apart).

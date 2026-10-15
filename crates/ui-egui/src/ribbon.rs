@@ -1958,9 +1958,11 @@ fn data(app: &mut SheetApp, ui: &mut Ui) {
         );
     });
     sep(ui);
+    // Excel's Forecast group: What-If Analysis ▾ (Scenario Manager…, Goal Seek…, Data Table…),
+    // then Forecast Sheet.
     let wi = big_button(ui, Icon::Calc, "What-If\nAnalysis", "What-If Analysis", true);
     for sequence in
-        keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["dialog:goalSeek", "data.scenarioManager", "data.dataTable"])
+        keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["data.scenarioManager", "dialog:goalSeek", "dialog:dataTable"])
     {
         keytip(app, ui, sequence, wi.rect.center_bottom());
     }
@@ -1969,9 +1971,9 @@ fn data(app: &mut SheetApp, ui: &mut Ui) {
             app,
             ui,
             &[
-                ("Goal Seek…", "dialog:goalSeek", json!({})),
                 ("Scenario Manager…", "data.scenarioManager", json!({})),
-                ("Data Table…", "data.dataTable", json!({})),
+                ("Goal Seek…", "dialog:goalSeek", json!({})),
+                ("Data Table…", "dialog:dataTable", json!({})),
             ],
         );
     });
