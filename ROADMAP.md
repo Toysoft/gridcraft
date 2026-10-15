@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~25 points of "ready for real work" and ~160–240 h away
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** minor (rows auto-fit oversized fonts on open and whole-row/column formatting) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-15 · **Change:** minor (rows auto-fit oversized fonts on open and whole-row/column formatting) · **Target:** Microsoft Excel (Microsoft 365)
 
 GridCraft aims at full Microsoft Excel parity, and at being better in places: faster, open (XLSX
 is the native format), fully scriptable by agents (MCP, control channel, CLI), and on the web.
@@ -129,6 +129,10 @@ Ranked; estimates in Opus 5.5 agent-hours. Detail and the full beta-gate list in
 7. **Localization**: extend the catalog past the ribbon, then the twelve languages: 100–165 h.
 
 ## Progress log
+
+2026-10-15: Linux desktop builds enable the Adwaita Wayland frame and vector window
+controls. See README → Linux window controls; full GTK theme parity is not claimed.
+
 
 | Date | What landed |
 |---|---|
