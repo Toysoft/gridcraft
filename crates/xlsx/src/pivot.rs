@@ -41,6 +41,9 @@ const MAX_FIELDS: usize = 16_384;
 /// The `x14:dataField` extension (Excel 2010 show-values-as additions such as rank).
 const EXT_X14_DATA_FIELD: &str = "{E15A36E0-9728-4e99-A89B-3F7291B0FE68}";
 const NS_X14: &str = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main";
+/// SpreadsheetML has separate page and axis field lists, but no combined filter display order.
+const EXT_FILTER_ORDER: &str = "{9189856B-82B7-4F3C-895E-34A918DB704C}";
+const NS_FILTER_ORDER: &str = "https://gridcraft.app/xlsx/pivot-filter-order/1";
 
 const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -1001,6 +1004,15 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
         let _ = write!(s, " name=\"{}\"", esc_attr(&pt.style));
     }
     s.push_str(" showRowHeaders=\"1\" showColHeaders=\"1\" showRowStripes=\"0\" showColStripes=\"0\" showLastColumn=\"1\"/>");
+    if pt.filters.len() > 1 {
+        // Keep GridCraft's mixed page/axis filter order without changing standard PivotTable
+        // elements. Other readers may ignore this optional extension and retain the filters.
+        let _ = write!(s, "<extLst><ext uri=\"{EXT_FILTER_ORDER}\" xmlns:gc=\"{NS_FILTER_ORDER}\"><gc:filterOrder>");
+        for filter in &pt.filters {
+            let _ = write!(s, "<gc:field name=\"{}\"/>", esc_attr(&filter.source_col));
+        }
+        s.push_str("</gc:filterOrder></ext></extLst>");
+    }
     s.push_str("</pivotTableDefinition>");
     s
 }
@@ -1341,6 +1353,32 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
         if pt.values_on_rows { rows_values.or_else(|| x.attr_u32("dataPosition").map(|p| p as usize)).filter(|p| *p < pt.rows.len()) } else { None };
     filters.extend(page_filters);
     filters.extend(axis_filters);
+    // The native pageFields and rowFields/colFields lists do not encode their interleaving.
+    // Honour our optional extension only if it names every reconstructed filter exactly once;
+    // malformed or stale metadata falls back to the native lists without dropping anything.
+    if let Some(order) = x
+        .child("extLst")
+        .into_iter()
+        .flat_map(|list| list.kids("ext"))
+        .find(|ext| ext.attr("uri") == Some(EXT_FILTER_ORDER))
+        .and_then(|ext| ext.child("filterOrder"))
+    {
+        let names: Vec<&str> = order.kids("field").filter_map(|field| field.attr("name")).collect();
+        if names.len() == filters.len() {
+            let mut remaining = filters.clone();
+            let mut ordered = Vec::with_capacity(filters.len());
+            for name in names {
+                if let Some(pos) = remaining.iter().position(|filter| same(&filter.source_col, name)) {
+                    ordered.push(remaining.remove(pos));
+                } else {
+                    break;
+                }
+            }
+            if remaining.is_empty() {
+                filters = ordered;
+            }
+        }
+    }
     pt.filters = filters;
 
     // Values.
