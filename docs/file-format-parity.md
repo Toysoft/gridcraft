@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-12 · **Change:** trivial (XLSX chart sheets are kept on save (#727); previously minor: CSV save keeps the separator it was opened with) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-14 · **Change:** minor (XLSX dynamic-array formulas keep their `cm` metadata on save; previously trivial: XLSX chart sheets are kept on save (#727)) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Every format Excel opens or saves, with GridCraft's read and write support, fidelity and tests.
 Part of [target-app-parity.md](target-app-parity.md). **File formats: ~50% ready, 80–120 h**
@@ -19,6 +19,16 @@ colour, integer width and anchor. Curves, filled paths, transforms and unsupport
 not interpreted as ink. This does not implement Office InkML or fix inserted icons (#551).
 Command and package tests cover repeated saves and unrelated cell edits; external Excel rendering
 and repair-free opening remain unverified.
+
+Dynamic-array formulas keep their mark on save. A formula read with dynamic-array cell metadata
+(`cm`, the `XLDAPR` record in `xl/metadata.xml`) is written back with it, together with the
+metadata part, even when it returns one value and GridCraft's own shape analysis would not need
+array evaluation. Dropping the mark turned such formulas into legacy ones, which Excel evaluates
+with implicit intersection: `SUMPRODUCT(IFERROR(B1:B3/C1:C3,0))` recalculated to a different
+value in Excel. Moving the formula, inserting or deleting rows and columns, and renaming sheets or
+names keep the mark; retyping the formula drops it, and the writer then decides from the
+formula's shape. Rich-value metadata other than cell pictures (data types, `#SPILL!` error
+values) is still dropped.
 
 | Format | Excel | GridCraft read | GridCraft write | Fidelity / notes | Tests |
 |---|---|---|---|---|---|
@@ -85,6 +95,7 @@ refresh. Counted under features (Get & Transform, ~10% ready), not here.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | XLSX formulas read with dynamic-array metadata (`cm`) keep it on save, so Excel does not recalculate them with implicit intersection |
 | 2026-10-12 | trivial | XLSX chart sheets are kept on save (#727) |
 | 2026-10-12 | trivial | CSV and TSV export is capped at 512 MiB and refuses a larger used range with an error (#528) |
 | 2026-10-12 | minor | `.xls` import reads the calculation settings (CalcMode, CalcIter, CalcCount, CalcDelta, CalcPrecision), so circular models calculate instead of showing `#CIRC!` (#724) |
