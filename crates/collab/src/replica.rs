@@ -104,6 +104,9 @@ struct Changes {
 struct Line {
     ids: Vec<Arc<str>>,
     ix: HashMap<Arc<str>, u32>,
+    /// The block number the line grows by next (schema 1, "Ids"): the larger of the sheet's
+    /// `rowBlocks`/`colBlocks` and one past the highest block present.
+    next: u64,
 }
 
 impl Line {
@@ -118,7 +121,39 @@ impl Line {
                 l.ids.push(id);
             }
         }
+        l.next = l.highest_next();
         l
+    }
+    /// One past the highest block number present (0 without block ids).
+    fn highest_next(&self) -> u64 {
+        self.ids.iter().filter_map(|id| block_of(id)).max().map(|b| b.saturating_add(1)).unwrap_or(0)
+    }
+    /// The id of position `p`, or past the end, the deterministic block id it gets when the
+    /// line grows to it (`~<next + k / 64>.<k % 64>` for the `k`-th position past the end).
+    /// Awareness names positions with these without writing to the document.
+    fn id_or_block(&self, p: u32) -> String {
+        match self.id(p) {
+            Some(id) => id.to_string(),
+            None => {
+                let k = u64::from(p.saturating_sub(self.len()));
+                format!("~{}.{}", self.next.saturating_add(k / u64::from(BLOCK)), k % u64::from(BLOCK))
+            }
+        }
+    }
+    /// The position of `id`, or, for a block id the line hasn't grown to yet, the position it
+    /// will have ([`Line::id_or_block`] reversed). `None` for unknown ids, positions at or past
+    /// `limit` and blocks numbered below `next` that aren't there (deleted).
+    fn pos_or_block(&self, id: &str, limit: u32) -> Option<u32> {
+        if let Some(p) = self.pos(id) {
+            return Some(p);
+        }
+        let (b, i) = block_parts(id)?;
+        if i >= u64::from(BLOCK) || b < self.next {
+            return None;
+        }
+        let k = (b - self.next).checked_mul(u64::from(BLOCK))?.checked_add(i)?;
+        let p = u64::from(self.len()).checked_add(k)?;
+        u32::try_from(p).ok().filter(|p| *p < limit)
     }
     fn len(&self) -> u32 {
         self.ids.len() as u32
@@ -131,6 +166,7 @@ impl Line {
     }
     fn reindex(&mut self) {
         self.ix = self.ids.iter().enumerate().map(|(i, id)| (id.clone(), i as u32)).collect();
+        self.next = self.next.max(self.highest_next());
     }
 }
 
@@ -267,9 +303,21 @@ fn foreign_meta(update: &[u8]) -> Result<(), CollabError> {
 
 /// The block number of a block id (`~12.5` → 12).
 fn block_of(id: &str) -> Option<u64> {
+    block_parts(id).map(|(b, _)| b)
+}
+
+/// A block id's block number and index (`~12.5` → (12, 5)).
+fn block_parts(id: &str) -> Option<(u64, u64)> {
     let (b, i) = id.strip_prefix('~')?.split_once('.')?;
-    i.parse::<u64>().ok()?;
-    b.parse().ok()
+    Some((b.parse().ok()?, i.parse().ok()?))
+}
+
+/// A sheet's `rowBlocks`/`colBlocks` counter (0 when missing or out of range).
+fn block_counter<R: ReadTxn>(root: &MapRef, txn: &R, key: &str) -> u64 {
+    match root.get(txn, key) {
+        Some(Out::Any(Any::Number(n))) => n.as_f64().filter(|x| *x >= 0.0 && *x < 1e9).map(|x| x as u64).unwrap_or(0),
+        _ => 0,
+    }
 }
 
 /// Removes every occurrence of the ids in `gone` from `a`.
@@ -740,10 +788,7 @@ impl Replica {
             return false;
         }
         let counter_key = if limit == MAX_ROWS { "rowBlocks" } else { "colBlocks" };
-        let counter = match root.get(txn, counter_key) {
-            Some(Out::Any(Any::Number(n))) => n.as_f64().filter(|x| *x >= 0.0 && *x < 1e9).map(|x| x as u64).unwrap_or(0),
-            _ => 0,
-        };
+        let counter = block_counter(root, txn, counter_key);
         let highest = line.ids.iter().filter_map(|id| block_of(id)).max().map(|b| b + 1).unwrap_or(0);
         let mut next = counter.max(highest);
         let mut new = Vec::new();
@@ -761,6 +806,7 @@ impl Replica {
         let at = arr.len(txn);
         arr.insert_range(txn, at, new);
         root.insert(txn, counter_key, next as i64);
+        line.next = next;
         true
     }
 
@@ -1515,8 +1561,12 @@ impl Replica {
         sh.rows.clear();
         sh.cols.clear();
         sh.merges.clear();
-        let rows = Line::from_ids(read_ids(root.as_ref().and_then(|r| sub_array(r, txn, "rows")).as_ref(), txn), MAX_ROWS);
-        let cols = Line::from_ids(read_ids(root.as_ref().and_then(|r| sub_array(r, txn, "cols")).as_ref(), txn), MAX_COLS);
+        let mut rows = Line::from_ids(read_ids(root.as_ref().and_then(|r| sub_array(r, txn, "rows")).as_ref(), txn), MAX_ROWS);
+        let mut cols = Line::from_ids(read_ids(root.as_ref().and_then(|r| sub_array(r, txn, "cols")).as_ref(), txn), MAX_COLS);
+        if let Some(r) = root.as_ref() {
+            rows.next = rows.next.max(block_counter(r, txn, "rowBlocks"));
+            cols.next = cols.next.max(block_counter(r, txn, "colBlocks"));
+        }
         let ids = SheetIds { id: id.to_string(), rows, cols };
         let Some(root) = root else {
             read_sheet_fields(txn, None, None, &mut sh);
@@ -1644,31 +1694,25 @@ impl Replica {
     // ------------------------------------------------------------ selections
 
     /// A selection as awareness carries it: `{sheet, ranges: [[rowId, colId, rowId, colId]]}`.
-    /// Rows and columns past the room's last id are clamped to it.
+    /// Rows and columns past the end of the room's ids are named by the block ids they get when
+    /// the sheet grows to them (schema 1, "Awareness"), so a selection on an empty sheet, or
+    /// below its last row, travels without writing to the document.
     pub fn selection_to_ids(&self, sheet: usize, ranges: &[RangeRef]) -> Option<Json> {
         let ids = self.proj.get(sheet)?;
-        let (nr, nc) = (ids.rows.len(), ids.cols.len());
-        if nr == 0 || nc == 0 {
-            return None;
-        }
         let list: Vec<Json> = ranges
             .iter()
             .take(64)
-            .filter_map(|r| {
-                let g = |line: &Line, p: u32, n: u32| line.id(p.min(n - 1)).map(|s| s.to_string());
-                Some(Json::Array(vec![
-                    g(&ids.rows, r.start.row, nr)?.into(),
-                    g(&ids.cols, r.start.col, nc)?.into(),
-                    g(&ids.rows, r.end.row, nr)?.into(),
-                    g(&ids.cols, r.end.col, nc)?.into(),
-                ]))
+            .map(|r| {
+                let row = |p: u32| ids.rows.id_or_block(p.min(MAX_ROWS - 1));
+                let col = |p: u32| ids.cols.id_or_block(p.min(MAX_COLS - 1));
+                Json::Array(vec![row(r.start.row).into(), col(r.start.col).into(), row(r.end.row).into(), col(r.end.col).into()])
             })
             .collect();
         Some(serde_json::json!({"sheet": ids.id, "ranges": list}))
     }
 
-    /// A peer's selection in the model: `(sheet index, ranges)`; ranges whose ids are gone are
-    /// left out.
+    /// A peer's selection in the model: `(sheet index, ranges)`; block ids past the end resolve
+    /// to the positions they will have, and ranges whose ids are gone are left out.
     pub fn selection_from_ids(&self, sel: &Json) -> Option<(usize, Vec<RangeRef>)> {
         let sid = sel.get("sheet")?.as_str()?;
         let si = self.proj.iter().position(|p| p.id == sid)?;
@@ -1681,8 +1725,10 @@ impl Replica {
             .filter_map(|r| {
                 let r = r.as_array()?;
                 let s = |i: usize| r.get(i).and_then(Json::as_str);
-                let a = CellRef::new(ids.rows.pos(s(0)?)?, ids.cols.pos(s(1)?)?);
-                let b = CellRef::new(ids.rows.pos(s(2)?)?, ids.cols.pos(s(3)?)?);
+                let row = |id: &str| ids.rows.pos_or_block(id, MAX_ROWS);
+                let col = |id: &str| ids.cols.pos_or_block(id, MAX_COLS);
+                let a = CellRef::new(row(s(0)?)?, col(s(1)?)?);
+                let b = CellRef::new(row(s(2)?)?, col(s(3)?)?);
                 Some(RangeRef::new(a, b))
             })
             .collect();

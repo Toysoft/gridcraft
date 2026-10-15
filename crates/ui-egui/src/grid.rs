@@ -747,6 +747,9 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
         paint_freeze_handles(&painter, &geo, sh, &app.grid.drag, &t);
     }
     crate::outline::paint(&painter, &geo, sh, &t);
+    if geo.paper.is_none() {
+        crate::collab_ui::paint_remote_tags(&painter, &geo, sh, app, &quads);
+    }
     if geo.rtl {
         let mirror_to = painter.add(egui::Shape::Noop);
         mirror_painted(ui.ctx(), painter.layer_id(), mirror_from.0..mirror_to.0, &geo, &objects);

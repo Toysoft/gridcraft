@@ -1,13 +1,13 @@
 //! Live sessions (co-editing, plugin protocol 2) in the interface: the engine's pump each frame,
 //! Share and the people in the title bar (with the session's popover), the Share dialog, others'
-//! selections drawn in their colours with name tags, others' edits briefly highlighted, and the
+//! selections drawn in their colours with name tags (fading after they stop moving), others' edits briefly highlighted, and the
 //! room's state kept for recovery.
 //!
 //! The engine does the work (`gridcraft_engine::collab`); this only shows it.
 
 use egui::{Align2, Color32, Painter, Rect, Stroke, StrokeKind, Ui, pos2, vec2};
 use gridcraft_engine::collab::RoomState;
-use gridcraft_engine::core::RangeRef;
+use gridcraft_engine::core::{CellRef, RangeRef};
 use gridcraft_engine::model::Sheet;
 use serde_json::json;
 
@@ -17,6 +17,19 @@ use crate::theme::{self, Tokens};
 
 /// How long others' edits stay highlighted (milliseconds).
 const HIGHLIGHT_MS: f64 = 2_000.0;
+/// How long a person's name tag stays after they last moved their selection, then how long it
+/// takes to fade out (milliseconds).
+const TAG_MS: f64 = 3_000.0;
+const TAG_FADE_MS: f64 = 400.0;
+
+/// Where a person's selection was, and when it last moved (for their name tag).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Moved {
+    pub selection: Option<(usize, Vec<RangeRef>)>,
+    pub cursor: Option<(usize, CellRef)>,
+    pub at: f64,
+}
+
 /// How often the rooms' state is written for recovery.
 const RECOVERY_MS: f64 = 30_000.0;
 
@@ -42,6 +55,7 @@ pub fn pump(app: &mut SheetApp, ctx: &egui::Context) {
         let extra = app.collab_highlights.len() - 2_000;
         app.collab_highlights.drain(..extra);
     }
+    note_moves(app, now);
     for n in app.session.collab_take_notices() {
         app.status_message = Some((n, now));
     }
@@ -53,6 +67,18 @@ pub fn pump(app: &mut SheetApp, ctx: &egui::Context) {
     if !app.session.collab.rooms.is_empty() {
         // Remote messages arrive between frames: keep looking.
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
+    }
+}
+
+/// Notes when each person in the active room last moved their selection.
+fn note_moves(app: &mut SheetApp, now: f64) {
+    let peers = app.session.active_room().map(|r| r.peers()).unwrap_or_default();
+    app.collab_moved.retain(|id, _| peers.iter().any(|p| p.client_id == *id));
+    for p in peers {
+        let moved = app.collab_moved.get(&p.client_id).is_none_or(|m| m.selection != p.selection || m.cursor != p.cursor);
+        if moved {
+            app.collab_moved.insert(p.client_id, Moved { selection: p.selection, cursor: p.cursor, at: now });
+        }
     }
 }
 
@@ -192,8 +218,10 @@ pub fn circles(total: usize, slots: usize) -> (usize, usize) {
 /// Circles shown before "+N".
 pub const MAX_CIRCLES: usize = 4;
 /// A circle's diameter, and how far each one is from the previous (they overlap).
-pub const CIRCLE: f32 = if cfg!(target_os = "macos") { 20.0 } else { 24.0 };
-pub const CIRCLE_STEP: f32 = CIRCLE - 3.0;
+pub const CIRCLE: f32 = if cfg!(target_os = "macos") { 22.0 } else { 26.0 };
+/// A light overlap: the next circle's ring covers only the edge of the previous one, so two
+/// initials stay clear of it.
+pub const CIRCLE_STEP: f32 = CIRCLE - 1.5;
 
 /// The width the people's circles take: `shown` circles and a "+N" when `more` > 0.
 pub fn people_width(shown: usize, more: usize) -> f32 {
@@ -205,7 +233,7 @@ fn person_circle(ui: &Ui, center: egui::Pos2, c: Color32, text: &str, ring: Colo
     let r = CIRCLE / 2.0;
     ui.painter().circle_filled(center, r + 1.5, ring);
     ui.painter().circle_filled(center, r, c);
-    let size = if text.chars().count() > 1 { CIRCLE * 0.33 } else { CIRCLE * 0.42 };
+    let size = if text.chars().count() > 1 { CIRCLE * 0.38 } else { CIRCLE * 0.46 };
     ui.painter().text(center, Align2::CENTER_CENTER, text, theme::ui_bold(size), text_on(c));
 }
 
@@ -246,7 +274,7 @@ pub fn people_circles(app: &mut SheetApp, ui: &mut Ui, slots: usize) {
         let label = format!("+{more}");
         person_circle(ui, center, t.hover, "", t.window);
         ui.painter().circle_stroke(center, CIRCLE / 2.0, Stroke::new(1.0, t.separator));
-        ui.painter().text(center, Align2::CENTER_CENTER, &label, theme::ui_bold(CIRCLE * 0.33), t.text);
+        ui.painter().text(center, Align2::CENTER_CENTER, &label, theme::ui_bold(CIRCLE * 0.38), t.text);
         let resp = ui.interact(Rect::from_center_size(center, vec2(CIRCLE, CIRCLE)), ui.id().with("people_more"), egui::Sense::hover());
         let mut hidden: Vec<String> = others.iter().skip(others_shown).map(|p| p.name.clone()).collect();
         if shown == 0
@@ -483,14 +511,70 @@ pub fn paint_remote(p: &Painter, geo: &Geo, sh: &Sheet, app: &SheetApp, rows: (u
             _ => None,
         };
         if let Some(cell) = corner.filter(|c| visible(&RangeRef::cell(*c))) {
-            let rect = geo.cell_rect(sh, cell);
-            p.rect_stroke(rect, 0.0, Stroke::new(2.0, c), StrokeKind::Inside);
-            let font = theme::ui_font(10.5);
-            let galley = p.layout_no_wrap(peer.user.name.clone(), font, Color32::WHITE);
-            let tag = Rect::from_min_size(pos2(rect.left(), rect.top() - galley.size().y - 2.0), galley.size() + vec2(6.0, 2.0));
-            p.rect_filled(tag, 2.0, c);
-            p.galley(tag.min + vec2(3.0, 1.0), galley, Color32::WHITE);
+            p.rect_stroke(geo.cell_rect(sh, cell), 0.0, Stroke::new(2.0, c), StrokeKind::Inside);
         }
+    }
+}
+
+/// How visible a name tag is: fully for [`TAG_MS`] after the person last moved, then fading out
+/// over [`TAG_FADE_MS`]; fully again while the pointer is over their outline.
+pub fn tag_alpha(since_move_ms: f64, hovered: bool) -> f32 {
+    if hovered {
+        return 1.0;
+    }
+    (1.0 - (since_move_ms - TAG_MS) / TAG_FADE_MS).clamp(0.0, 1.0) as f32
+}
+
+/// Others' name tags, painted after the headers: above the top edge of their selection (the
+/// range holding their active cell), in the column headers when it's at the top of the view, so
+/// they don't cover the cells. A tag fades out a few seconds after its person stops moving and
+/// comes back while the pointer is over their outline. `quads` are the panes (rows, columns,
+/// clip) as painted.
+pub fn paint_remote_tags(p: &Painter, geo: &Geo, sh: &Sheet, app: &SheetApp, quads: &[((u32, u32), (u32, u32), Rect)]) {
+    let Some(d) = app.session.active() else { return };
+    let si = d.wb.active_sheet;
+    let Some(room) = app.session.active_room() else { return };
+    let now = crate::now_ms();
+    let pointer = p.ctx().pointer_hover_pos().map(|q| geo.mirror_pos(q)).filter(|q| geo.cells.contains(*q));
+    let area = Rect::from_min_max(pos2(geo.cells.left(), geo.cells.top() - geo.header_h), geo.cells.max);
+    let p = p.with_clip_rect(area);
+    // A range's visible part: its top-left-most piece over the panes.
+    let shown = |r: &RangeRef| -> Option<Rect> {
+        quads
+            .iter()
+            .filter(|(rows, cols, _)| r.start.row <= rows.1 && r.end.row >= rows.0 && r.start.col <= cols.1 && r.end.col >= cols.0)
+            .map(|(_, _, clip)| geo.range_rect(sh, *r).intersect(*clip))
+            .filter(|v| v.is_positive())
+            .min_by(|a, b| a.top().total_cmp(&b.top()).then(a.left().total_cmp(&b.left())))
+    };
+    for peer in room.peers() {
+        let Some((s, ranges)) = &peer.selection else { continue };
+        if *s != si {
+            continue;
+        }
+        // Over the outline: near the edge of one of their ranges (a small one: anywhere on it).
+        let hovered = pointer.is_some_and(|q| {
+            ranges
+                .iter()
+                .filter_map(&shown)
+                .any(|v| v.expand(4.0).contains(q) && (v.width() < 40.0 || v.height() < 30.0 || !v.shrink(4.0).contains(q)))
+        });
+        let since = app.collab_moved.get(&peer.client_id).map_or(0.0, |m| now - m.at);
+        let alpha = tag_alpha(since, hovered);
+        if alpha <= 0.0 {
+            continue;
+        }
+        let active = peer.cursor.filter(|(cs, _)| *cs == si).map(|(_, c)| c);
+        let Some(anchor) = active.and_then(|c| ranges.iter().find(|r| r.contains(c))).or(ranges.first()) else { continue };
+        let Some(vis) = shown(anchor) else { continue };
+        let c = color(&peer.user.color);
+        let galley = p.layout_no_wrap(peer.user.name.clone(), theme::ui_font(10.5), text_on(c).gamma_multiply(alpha));
+        let size = galley.size() + vec2(8.0, 2.0);
+        let left = vis.left().min(geo.cells.right() - size.x).max(geo.cells.left());
+        let tag = Rect::from_min_size(pos2(left, vis.top() - size.y), size);
+        let corners = egui::CornerRadius { nw: 3, ne: 3, sw: if left == vis.left() { 0 } else { 3 }, se: 3 };
+        p.rect_filled(tag, corners, c.gamma_multiply(alpha));
+        p.galley(tag.min + vec2(4.0, 1.0), galley, Color32::WHITE);
     }
 }
 
@@ -689,5 +773,14 @@ mod tests {
         assert_eq!(text_on(Color32::from_rgb(0x3B, 0x7D, 0xD8)), Color32::WHITE, "white on blue");
         assert_eq!(text_on(Color32::WHITE), Color32::BLACK);
         assert_eq!(text_on(Color32::BLACK), Color32::WHITE);
+    }
+
+    #[test]
+    fn name_tags_fade_after_three_seconds_and_come_back_on_hover() {
+        assert_eq!(tag_alpha(0.0, false), 1.0);
+        assert_eq!(tag_alpha(TAG_MS, false), 1.0);
+        assert!((tag_alpha(TAG_MS + TAG_FADE_MS / 2.0, false) - 0.5).abs() < 1e-4);
+        assert_eq!(tag_alpha(TAG_MS + TAG_FADE_MS, false), 0.0);
+        assert_eq!(tag_alpha(60_000.0, true), 1.0);
     }
 }

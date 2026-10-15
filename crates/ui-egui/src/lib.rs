@@ -251,6 +251,9 @@ pub struct SheetApp {
     pub collab_invites: std::collections::HashMap<String, String>,
     /// A person's selection flashing after a click on their circle in the title bar.
     pub collab_flash: Option<collab_ui::Flash>,
+    /// When each person in the live session last moved their selection (awareness client id →
+    /// where and when), so their name tag fades after a while.
+    pub collab_moved: HashMap<u64, collab_ui::Moved>,
     print_feedback_seen: Option<printing::Feedback>,
     /// Synthetic input from agents, one batch per frame (drags need several frames).
     pub synthetic: std::collections::VecDeque<Vec<egui::Event>>,
@@ -317,6 +320,7 @@ impl SheetApp {
             collab_recovery_at: 0.0,
             collab_invites: Default::default(),
             collab_flash: None,
+            collab_moved: HashMap::new(),
             print_feedback_seen: None,
             synthetic: Default::default(),
             control_rx: None,

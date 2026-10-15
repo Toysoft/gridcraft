@@ -196,6 +196,21 @@ fn two_sessions_edit_through_the_transport() {
             && b.active_room().is_some_and(|r| r.peers().iter().any(|p| p.user.name == "Ann"))
     });
 
+    // Selections far below the materialized rows, and on a fresh sheet with no row or column
+    // ids at all, reach the other side (as block ids).
+    let sel_of = |b: &Session| b.active_room().and_then(|r| r.peers().into_iter().find(|p| p.user.name == "Ann")).and_then(|p| p.selection);
+    a.execute("selection.set", json!({"range": "B200:C210"})).unwrap();
+    let far = gridcraft_engine::core::RangeRef::parse("B200:C210").unwrap();
+    wait(&mut a, &mut b, "a selection past the last row", |_, b| sel_of(b) == Some((0, vec![far])));
+    a.execute("home.insertSheet", json!({"name": "Fresh"})).unwrap();
+    let fresh = |s: &Session| s.active().unwrap().wb.sheets.iter().position(|sh| sh.name == "Fresh");
+    wait(&mut a, &mut b, "the new sheet", |_, b| fresh(b).is_some());
+    a.execute("sheet.activate", json!({"sheet": fresh(&a).unwrap()})).unwrap();
+    a.execute("selection.set", json!({"range": "C3:D5"})).unwrap();
+    let on_fresh = gridcraft_engine::core::RangeRef::parse("C3:D5").unwrap();
+    wait(&mut a, &mut b, "a selection on an empty sheet", |_, b| sel_of(b) == fresh(b).map(|i| (i, vec![on_fresh])));
+    a.execute("sheet.activate", json!({"sheet": 0})).unwrap();
+
     // Per-user undo: Bob's undo removes only his row insert.
     b.execute("edit.undo", json!({})).unwrap();
     wait(&mut a, &mut b, "the undo", |a, _| value(a, "A3") == Value::Text("from b".into()) && value(a, "A2") == Value::Text("from a".into()));

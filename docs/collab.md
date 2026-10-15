@@ -1,6 +1,6 @@
 # Live sessions (co-editing)
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (Share and the session's people in the title bar; previously major: created: plugin protocol 2 in GridCraft, schema 1) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (selections on empty sheets and past the last row or column, clearer people circles, name tags above selections that fade; previously major: created: plugin protocol 2 in GridCraft, schema 1) · **Target:** Microsoft Excel (Microsoft 365)
 
 Several people edit one workbook at the same time, each in their own GridCraft, and see each
 other's selections and edits as they happen. This is GridCraft's equivalent of Excel's
@@ -32,7 +32,7 @@ encrypted or view-only, the transport's message, everyone in it (circle, name, "
 invitation* when the transport's Share or Join returned a link (`result.link`), and *Leave*
 (the workbook stays open, with every edit, as an ordinary workbook; not saved automatically).
 
-To the left of Share, the people in the session are overlapping circles with their initials on
+To the left of Share, the people in the session are lightly overlapping circles with their initials on
 their colour (black or white text, whichever reads better), the others by name and then you,
 at most four circles and then "+N" (hovering it lists the rest). Hover a circle for the name
 ("(you)" for yourself); click it to go to that person's selection, switching sheet if needed,
@@ -40,8 +40,11 @@ which flashes in their colour. In a narrow window the theme switch, Comments and
 way first, then circles; the document title is cut short with "…" before anything overlaps it.
 In full screen on macOS the title bar's controls move into the traffic lights' space.
 
-Others' selections are outlined in their colours with a name tag on their active cell, and cells
-they change are highlighted for two seconds. The status bar only says why the workbook can't be
+Others' selections are outlined in their colours, anywhere on the sheet (an empty sheet, or below
+its last used row, too). Each has a name tag just above the top edge of the range holding their
+active cell (in the column headers when that edge is at the top of the view); it fades out three
+seconds after the person last moved and comes back while the pointer is over their outline, so
+it doesn't hide the cells. Cells they change are highlighted for two seconds. The status bar only says why the workbook can't be
 edited now ("Joining…", view only, another app's room) and the transport's or app's problems
 ("Wrong room key?"). The `collab.*` commands are in the command palette (they no longer have a
 Review tab group).
@@ -53,6 +56,7 @@ undo history. Saving works as usual: each person saves their own copy.
 
 | Command | Params | Does |
 |---|---|---|
+| 2026-10-15 | minor | Selections on a sheet with no row or column ids, and past the last ones, travel as the block ids those rows and columns would get (no document write; schema 1 clarified in craft-collab); people circles slightly larger, with less overlap and clearer initials; name tags sit above the selection's top edge (in the column headers at the top of the view), fade after 3 s without movement and come back on hover over the outline |
 | `collab.share` | `{plugin, room, user?, role?, key?, title?}` | Starts a session from the active workbook (no params: the Share dialog) |
 | `collab.join` | `{plugin, room, mode: share\|join, user?: {id, name, color}, role?: edit\|view, key?, path?, title?}` | Joins or starts a session (no params: the dialog). `share` seeds the room from the active workbook (or `path`); `join` opens a new workbook (or `path`, whose unshared parts are kept) filled from the room |
 | `collab.leave` | `{room?}` | Leaves (default: the active workbook's room) |
@@ -163,7 +167,11 @@ nothing; the selection goes to awareness.
 Each peer's state is `{user: {id, name, color}, selection?, cursor?}`:
 `selection` = `{sheet: <sheetId>, ranges: [[rowId, colId, rowId, colId], …]}` (top-left and
 bottom-right cells), `cursor` = `{sheet, cell: [rowId, colId]}` (the active cell). Rows and
-columns past the last id are clamped to it. GridCraft sends its state at most 20 times a second
+columns past the last id are named by the block id they would get if the sheet grew to them now
+(`~<n + k div 64>.<k mod 64>` for the `k`-th position past the end, `n` the next block number);
+nothing is written to the document for it. A reader resolves a block id it doesn't have yet to
+that position, so selections on an empty sheet, or below the last row, show; when the sheet grows,
+the same ids name the same cells (schema 1, "Awareness"). GridCraft sends its state at most 20 times a second
 and renews it every 15 s; a peer not heard from for 30 s is gone.
 
 ## Behaviour
@@ -209,7 +217,9 @@ and renews it every 15 s; a peer not heard from for 30 s is gone.
 - `crates/collab/src/tests.rs`: two and three replicas with random concurrent edits (cells,
   styles, rows, columns, sheets, merges) and updates delivered out of order and twice converge,
   equal what a newcomer builds, and each model equals its own document; per-user undo; another
-  app's room refused; garbage never crashes. `GRIDCRAFT_COLLAB_SEEDS` soaks it.
+  app's room refused; garbage never crashes; selections on an empty sheet and past the last
+row or column (whole columns too) travel as block ids, write nothing, and name the same cells
+after the sheet grows. `GRIDCRAFT_COLLAB_SEEDS` soaks it.
 - `crates/engine/tests/collab_convergence.rs`: two and three sessions run random command
   sequences (cell edits, formats, row and column inserts and deletes, merges, sheets, per-user
   undo and redo) with updates exchanged in random order and duplicated; they end with identical
@@ -218,7 +228,8 @@ and renews it every 15 s; a peer not heard from for 30 s is gone.
   transcripts (`CRAFT_COLLAB_DIR`, or a `craft-collab` checkout next to this one).
 - `crates/engine/tests/collab_push.rs`: a fake transport (the test binary) relays between two
   sessions through the push channel: joining from a plugin command's result, sync, edits both
-  ways, `collab/snapshot` with the file, awareness, undo, leaving.
+  ways, `collab/snapshot` with the file, awareness (a selection below the last row and one on a
+new, empty sheet reach the other session), undo, leaving.
 - `crates/engine/tests/collab_loopback.rs`: two GridCraft processes through craft-collab's
   loopback transport (`CRAFT_COLLAB_LOOPBACK` = the built plugin).
 

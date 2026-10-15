@@ -480,3 +480,38 @@ fn selections_travel_as_ids() {
     });
     assert_eq!(peers[1].rep.selection_from_ids(&sel), Some((0, vec![RangeRef::new(CellRef::new(3, 1), CellRef::new(5, 2))])));
 }
+
+#[test]
+fn selections_on_an_empty_sheet_and_past_the_end_travel() {
+    let mut peers = room(2, 11);
+    let before = peers[0].rep.full_state();
+    // "Notes" (sheet 1) has no row or column ids yet: the selection is named by block ids.
+    let range = RangeRef::new(CellRef::new(1, 2), CellRef::new(70, 3));
+    let sel = peers[0].rep.selection_to_ids(1, &[range]).expect("ids");
+    assert_eq!(sel["ranges"][0], serde_json::json!(["~0.1", "~0.2", "~1.6", "~0.3"]));
+    assert_eq!(peers[1].rep.selection_from_ids(&sel), Some((1, vec![range])));
+    // Naming them wrote nothing.
+    assert_eq!(peers[0].rep.full_state(), before);
+    // Past the materialized rows of a non-empty sheet (64 row ids): rows 100 to 200 and a whole
+    // column.
+    let far = RangeRef::new(CellRef::new(100, 1), CellRef::new(200, 1));
+    let whole = RangeRef::new(CellRef::new(0, 4), CellRef::new(gridcraft_core::MAX_ROWS - 1, 4));
+    let sel = peers[0].rep.selection_to_ids(0, &[far, whole]).expect("ids");
+    assert_eq!(peers[1].rep.selection_from_ids(&sel), Some((0, vec![far, whole])));
+    // Once the sheet grows there (peer 1 types in row 150 of Notes), the same ids resolve to the
+    // same cells on both sides.
+    let sel = peers[0].rep.selection_to_ids(1, &[RangeRef::new(CellRef::new(149, 0), CellRef::new(160, 0))]).expect("ids");
+    let up = peers[1]
+        .edit(|wb| {
+            Arc::make_mut(&mut wb.sheets[1]).set_value(CellRef::new(149, 0), Value::Text("here".into()));
+            vec![]
+        })
+        .expect("update");
+    let want = Some((1, vec![RangeRef::new(CellRef::new(149, 0), CellRef::new(160, 0))]));
+    assert_eq!(peers[1].rep.selection_from_ids(&sel), want);
+    peers[0].receive(&up);
+    assert_eq!(peers[0].rep.selection_from_ids(&sel), want);
+    // Garbage and deleted blocks resolve to nothing, not a crash.
+    let bad = serde_json::json!({"sheet": sel["sheet"], "ranges": [["~0.64", "~0.0", "~0.0", "~0.0"], ["~99999999999.1", "~0.0", "~0.0", "~0.0"], ["~x.1", "~0.0", "~0.0", "~0.0"]]});
+    assert_eq!(peers[0].rep.selection_from_ids(&bad), Some((1, vec![])));
+}
