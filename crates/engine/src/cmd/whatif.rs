@@ -873,6 +873,12 @@ fn advanced_filter(s: &mut Session, p: &Json) -> Result<Json> {
         }
         let mut rows_out: Vec<u32> = vec![list.start.row];
         rows_out.extend(keep.iter().filter(|(_, k)| *k).map(|(r, _)| *r));
+        // The clear footprint is the real output, not the whole list height: cells below it survive.
+        // An output that leaves the sheet is refused before any mutation instead of dropping cells.
+        let out_range = RangeRef::new(
+            dest,
+            dest.offset(rows_out.len() as i64 - 1, list.width() as i64 - 1).ok_or_else(|| bad(CMD, "the extract range doesn't fit on the sheet"))?,
+        );
         let cells: Vec<(CellRef, Cell)> = rows_out
             .iter()
             .enumerate()
@@ -885,10 +891,9 @@ fn advanced_filter(s: &mut Session, p: &Json) -> Result<Json> {
                 })
             })
             .collect();
-        let out_range = RangeRef::new(dest, dest.offset_clamped(rows_out.len() as i64 - 1, list.width() as i64 - 1));
         edit(s, |cx| {
             let shm = cx.sheet_mut(dsi)?;
-            let old: Vec<CellRef> = shm.cells.iter_range(extract).map(|(c, _)| c).collect();
+            let old: Vec<CellRef> = shm.cells.iter_range(out_range).map(|(c, _)| c).collect();
             for c in &old {
                 shm.remove_cell(*c);
             }
@@ -1315,6 +1320,55 @@ mod tests {
         assert_eq!(r["matched"], 4);
         // Overlap is rejected.
         assert!(s.execute("data.advancedFilter", json!({"range": "A1:B6", "criteria": "H1:I3", "copyTo": "B2"})).is_err());
+    }
+
+    #[test]
+    fn advanced_filter_copy_preserves_cells_below_the_output() {
+        let mut s = s();
+        s.execute(
+            "range.setValues",
+            json!({"range": "A1", "values": [["Region", "Sales"], ["East", 50], ["West", 150], ["North", 120], ["South", 80], ["East", 200]]}),
+        )
+        .unwrap();
+        // One match (East AND Sales > 100) → a two-row output (header + match).
+        s.execute("range.setValues", json!({"range": "H1", "values": [["Region", "Sales"], ["East", ">100"]]})).unwrap();
+        s.execute(
+            "range.setValues",
+            json!({"range": "K1", "values": [["a1", "b1"], ["a2", "b2"], ["a3", "b3"], ["a4", "b4"], ["a5", "b5"], ["a6", "b6"]]}),
+        )
+        .unwrap();
+        let r = s.execute("data.advancedFilter", json!({"range": "A1:B6", "criteria": "H1:I2", "copyTo": "K1"})).unwrap();
+        assert_eq!(r["matched"], 1);
+        assert_eq!(r["range"], "K1:L2");
+        assert_eq!(v(&s, "K1"), Value::from("Region"));
+        assert_eq!(v(&s, "K2"), Value::from("East"));
+        // Rows below the two-row output are outside the extract range and survive.
+        assert_eq!(v(&s, "K3"), Value::from("a3"));
+        assert_eq!(v(&s, "L3"), Value::from("b3"));
+        assert_eq!(v(&s, "K4"), Value::from("a4"));
+        assert_eq!(v(&s, "L4"), Value::from("b4"));
+    }
+
+    #[test]
+    fn advanced_filter_copy_refuses_overflow_atomically() {
+        let mut s = s();
+        s.execute(
+            "range.setValues",
+            json!({"range": "A1", "values": [["Region", "Sales"], ["East", 50], ["West", 150], ["North", 120], ["South", 80], ["East", 200]]}),
+        )
+        .unwrap();
+        s.execute("range.setValues", json!({"range": "H1", "values": [["Region", "Sales"], ["East", ">100"]]})).unwrap();
+        // The output is two columns wide; the last cell of the sheet has no room for the second.
+        let before = v(&s, "A2");
+        assert!(s.execute("data.advancedFilter", json!({"range": "A1:B6", "criteria": "H1:I2", "copyTo": "XFD1048576"})).is_err());
+        // Refusal is atomic: no filter applied, no cell written, no row hidden.
+        let sh = || s.doc().unwrap().wb.active().unwrap().clone();
+        assert_eq!(v(&s, "A2"), before);
+        assert!(!sh().is_row_hidden(1));
+        assert!(sh().value(CellRef::new(1_048_575, 16_383)).is_empty());
+        // One row and one column left of the edge fits exactly.
+        let r = s.execute("data.advancedFilter", json!({"range": "A1:B6", "criteria": "H1:I2", "copyTo": "XFC1048575"})).unwrap();
+        assert_eq!(r["range"], "XFC1048575:XFD1048576");
     }
 
     #[test]
