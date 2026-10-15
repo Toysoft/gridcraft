@@ -38,3 +38,8 @@ harness = false
 [[test]]
 name = "macros"
 harness = false
+
+# Runs without libtest: the test binary doubles as the protocol 1.2 plugin it starts.
+[[test]]
+name = "plugin_protocol"
+harness = false

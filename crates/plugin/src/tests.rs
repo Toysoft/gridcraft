@@ -428,3 +428,172 @@ mod office {
         assert!(matches!(&a[0], Action::Load { path, .. } if path[1] == Step::Method { m: "getSelectedRange".into(), a: vec![] }));
     }
 }
+
+// ---------------------------------------------------------------- protocol 1.2
+
+mod protocol_1_2 {
+    use serde_json::{Map, json};
+
+    use crate::dialog::{Content, Dialog, FieldKind, OpenRequest};
+    use crate::{Manifest, parse_reply};
+
+    #[test]
+    fn manifests_declare_events() {
+        let m = Manifest::parse(
+            &json!({"id": "t.ev", "name": "Ev", "run": {"command": "true"}, "events": ["documentSaved", "documentClosed", "somethingLater"]})
+                .to_string(),
+        )
+        .unwrap();
+        assert_eq!(m.events, ["documentSaved", "documentClosed", "somethingLater"], "names this host doesn't know are kept and ignored");
+        let none = Manifest::parse(&json!({"id": "t.ev", "name": "Ev", "run": {"command": "true"}}).to_string()).unwrap();
+        assert!(none.events.is_empty());
+        assert!(Manifest::parse(&json!({"id": "t.ev", "name": "Ev", "run": {"command": "true"}, "events": "documentSaved"}).to_string()).is_err());
+        assert!(crate::FEATURES.contains(&"dialogs") && crate::FEATURES.contains(&"events"));
+    }
+
+    #[test]
+    fn list_dialogs_are_validated_and_truncated() {
+        let items: Vec<_> = (0..10_050).map(|i| json!({"id": format!("/f/{i}"), "label": format!("File {i}"), "icon": "workbook"})).collect();
+        let d = Dialog::parse(&json!({
+            "title": "t".repeat(300),
+            "kind": "list",
+            "prompt": "p".repeat(5000),
+            "items": items,
+            "command": "browse",
+            "params": {"account": "me"},
+            "buttons": (0..6).map(|i| json!({"label": format!("B{i}"), "command": "browse", "params": {"n": i}})).collect::<Vec<_>>(),
+        }))
+        .unwrap();
+        assert_eq!(d.title.chars().count(), 200);
+        assert_eq!(d.prompt.chars().count(), 4000);
+        assert_eq!(d.ok_label, "OK");
+        assert_eq!(d.buttons.len(), 4);
+        let Content::List { items, multi } = &d.content else { panic!("a list") };
+        assert_eq!(items.len(), 10_000);
+        assert!(!multi);
+        assert_eq!(items[3].label, "File 3");
+        // OK runs the command with the dialog's params plus the item.
+        assert_eq!(d.ok_params(&["/f/3".into()], &Map::new()), json!({"account": "me", "id": "/f/3"}));
+        // A button gets its own params, plus the selection when there is one.
+        assert_eq!(d.button_params(1, &[], &Map::new()), Some(("browse".into(), json!({"n": 1}))));
+        assert_eq!(d.button_params(1, &["/f/1".into()], &Map::new()), Some(("browse".into(), json!({"n": 1, "id": "/f/1"}))));
+        assert_eq!(d.button_params(9, &[], &Map::new()), None);
+        // Long texts are cut, ids at 4,096 characters.
+        let long = Dialog::parse(&json!({"kind": "list", "command": "go", "multi": true,
+            "items": [{"id": "i".repeat(5000), "label": "l".repeat(300), "detail": "d".repeat(300)}]}))
+        .unwrap();
+        let Content::List { items, multi } = &long.content else { panic!("a list") };
+        assert!(multi);
+        assert_eq!((items[0].id.len(), items[0].label.len(), items[0].detail.len()), (4096, 256, 256));
+        assert_eq!(long.ok_params(&["a".into(), "b".into()], &Map::new()), json!({"ids": ["a", "b"]}));
+        // The normalized form round-trips.
+        assert_eq!(Dialog::parse(&d.to_json()).unwrap(), d);
+    }
+
+    #[test]
+    fn form_and_message_dialogs() {
+        let d = Dialog::parse(&json!({
+            "title": "Sign in", "kind": "form", "command": "login", "okLabel": "Sign In",
+            "fields": [
+                {"id": "server", "label": "Server", "value": "https://cloud.example"},
+                {"id": "password", "label": "Password", "kind": "secret"},
+                {"id": "port", "label": "Port", "kind": "number", "value": "443"},
+                {"id": "remember", "label": "Remember", "kind": "checkbox", "value": true},
+                {"id": "mode", "label": "Mode", "kind": "choice", "value": "nope", "options": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}]}
+            ]
+        }))
+        .unwrap();
+        let Content::Form { fields } = &d.content else { panic!("a form") };
+        assert_eq!(
+            fields.iter().map(|f| f.kind).collect::<Vec<_>>(),
+            [FieldKind::Text, FieldKind::Secret, FieldKind::Number, FieldKind::Checkbox, FieldKind::Choice]
+        );
+        assert_eq!(fields[1].value, json!(""));
+        assert_eq!(fields[2].value, json!(443.0));
+        assert_eq!(fields[4].value, json!("a"), "an unknown choice falls back to the first option");
+        let mut values = Map::new();
+        values.insert("server".into(), json!("x"));
+        assert_eq!(d.ok_params(&[], &values), json!({"fields": {"server": "x"}}));
+        let many: Vec<_> = (0..20).map(|i| json!({"id": format!("f{i}")})).collect();
+        let Content::Form { fields } = Dialog::parse(&json!({"kind": "form", "command": "go", "fields": many})).unwrap().content else {
+            panic!("a form")
+        };
+        assert_eq!(fields.len(), 16);
+
+        // A message needs no command: OK just closes.
+        let m = Dialog::parse(&json!({"kind": "message", "title": "Done", "prompt": "Uploaded.\nAll good."})).unwrap();
+        assert_eq!(m.command, None);
+        assert_eq!(m.commands().count(), 0);
+    }
+
+    #[test]
+    fn malformed_dialogs_are_errors() {
+        for bad in [
+            json!("a dialog"),
+            json!({"title": "No kind", "command": "go"}),
+            json!({"kind": "web", "command": "go"}),
+            json!({"kind": "list"}),
+            json!({"kind": "list", "command": "go", "items": "nope"}),
+            json!({"kind": "list", "command": "go", "items": [{"label": "no id"}]}),
+            json!({"kind": "list", "command": "go", "items": [3]}),
+            json!({"kind": "list", "command": "bad command", "items": []}),
+            json!({"kind": "list", "command": "go", "params": [1, 2]}),
+            json!({"kind": "list", "command": "go", "multi": "yes"}),
+            json!({"kind": "form", "command": "go", "fields": [{"id": "x", "kind": "slider"}]}),
+            json!({"kind": "form", "command": "go", "fields": [{"label": "no id"}]}),
+            json!({"kind": "form", "command": "go", "fields": [{"id": "x", "kind": "checkbox", "value": "yes"}]}),
+            json!({"kind": "message", "buttons": [{"label": "Retry"}]}),
+            json!({"kind": "message", "buttons": [{"command": "go"}]}),
+            json!({"kind": "message", "title": 7}),
+        ] {
+            assert!(Dialog::parse(&bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn open_requests_are_checked() {
+        let o = OpenRequest::parse(&json!({"path": "/tmp/a.xlsx", "label": "x".repeat(300), "readOnly": true})).unwrap();
+        assert_eq!((o.path.as_str(), o.label.as_ref().map(|l| l.chars().count()), o.read_only), ("/tmp/a.xlsx", Some(200), true));
+        assert_eq!(OpenRequest::parse(&json!({"path": "/tmp/a.xlsx"})).unwrap().label, None);
+        for bad in [
+            json!("/tmp/a.xlsx"),
+            json!({}),
+            json!({"path": ""}),
+            json!({"path": 3}),
+            json!({"path": "/a\u{0}b.xlsx"}),
+            json!({"path": "/a.xlsx", "readOnly": 1}),
+        ] {
+            assert!(OpenRequest::parse(&bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn replies_carry_open_and_dialog() {
+        let r = parse_reply(json!({"open": {"path": "/tmp/b.xlsx"}, "dialog": {"kind": "message", "prompt": "hi"}, "message": "m"})).unwrap();
+        assert_eq!(r.open.map(|o| o.path), Some("/tmp/b.xlsx".into()));
+        assert!(matches!(r.dialog.map(|d| d.content), Some(Content::Message)));
+        assert!(parse_reply(json!({"dialog": {"kind": "nope"}})).is_err());
+        assert!(parse_reply(json!({"open": {"label": "no path"}})).is_err());
+        let plain = parse_reply(json!({"open": null, "dialog": null})).unwrap();
+        assert!(plain.open.is_none() && plain.dialog.is_none());
+    }
+
+    #[test]
+    fn events_refuse_host_sync() {
+        let e = crate::events::host_during_event("t.p", "documentSaved", "host/sync", &json!({"actions": []})).unwrap_err();
+        assert_eq!(e.data["code"], "AccessDenied");
+        assert!(crate::events::host_during_event("t.p", "documentSaved", "host/vbaProject/set", &json!({})).is_err());
+        assert_eq!(crate::events::host_during_event("t.p", "documentSaved", "host/log", &json!({"text": "hi"})).unwrap(), json!({}));
+        assert_eq!(crate::events::host_during_event("t.p", "documentSaved", "host/nope", &json!({})).unwrap_err().code, -32601);
+        assert_eq!(crate::events::timeout("documentClosed").as_secs(), 5);
+        assert_eq!(crate::events::timeout("documentSaved").as_secs(), 30);
+    }
+
+    #[test]
+    fn the_host_language_is_a_tag() {
+        crate::set_host_language("pt-BR; rm -rf /");
+        assert_eq!(crate::host_language(), "pt-BRrm-rf");
+        crate::set_host_language("it");
+        assert_eq!(crate::host_language(), "it");
+    }
+}

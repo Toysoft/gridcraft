@@ -1,6 +1,11 @@
 //! What plugins add to the app: ribbon groups (on a built-in tab or a tab of their own) and
 //! right-click menu items, declared in their manifest's `ui` section. Each runs one of the
 //! plugin's commands through `plugins.run`.
+//!
+//! Protocol 1.2: when a button, menu item or plugin dialog ran the command, its result's `open`
+//! opens the file as File › Open does and its `dialog` is drawn here ([`dialog_window`]), whose
+//! OK and buttons run the next plugin command the same way (so dialogs chain). What plugins
+//! answer to document events shows in the status bar or the info bar ([`poll_events`]).
 
 use egui::Ui;
 use gridcraft_engine::plugin::{self, ButtonSize, MenuKind};
@@ -93,6 +98,336 @@ pub fn run(app: &mut SheetApp, item: &Item, extra: Json) {
         }
     }
     app.run_or_alert("plugins.run", json!({"plugin": item.plugin, "command": item.command, "params": params}));
+}
+
+/// `plugins.run` from the interface (a button, a menu item, a plugin dialog): runs the command,
+/// shows its error, and performs what its result asks for after the step: opens `open` and shows
+/// `dialog`.
+pub fn run_command(app: &mut SheetApp, params: Json) {
+    let plugin = params.get("plugin").and_then(Json::as_str).unwrap_or("").to_string();
+    match app.run("plugins.run", params) {
+        Ok(r) => follow(app, &plugin, &r),
+        Err(e) => app.alert(e),
+    }
+}
+
+/// Performs a plugin command's `open` and `dialog` (already validated by the engine).
+pub fn follow(app: &mut SheetApp, plugin: &str, r: &Json) {
+    if let Some(o) = r.get("open").and_then(|o| plugin::dialog::OpenRequest::parse(o).ok()) {
+        app.open_path(&o.path);
+        // The label shows where the app shows the document's location (the status bar). GridCraft
+        // has no read-only mode: `readOnly` is ignored.
+        if let Some(d) = app.session.active().filter(|d| d.path.as_deref() == Some(o.path.as_str())) {
+            let uid = d.uid;
+            match o.label {
+                Some(l) => {
+                    app.doc_labels.insert(uid, l);
+                }
+                None => {
+                    app.doc_labels.remove(&uid);
+                }
+            }
+        }
+    }
+    if let Some(d) = r.get("dialog") {
+        // A message that comes with a dialog goes to the status bar, so two modals don't stack.
+        if let Some(m) = r.get("message").and_then(Json::as_str)
+            && app.message.as_ref().is_some_and(|(_, shown)| shown == m)
+        {
+            app.message = None;
+            app.status_message = Some((m.to_string(), crate::now_ms()));
+        }
+        match plugin::dialog::Dialog::parse(d) {
+            Ok(dialog) => app.plugin_dialog = Some(DialogState::new(plugin, dialog)),
+            Err(e) => app.alert(e),
+        }
+    }
+}
+
+// ---------------------------------------------------------------- dialogs (protocol 1.2)
+
+/// A form field being edited.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FieldValue {
+    /// Text, secret and number fields (a number is parsed on OK).
+    Text(String),
+    Check(bool),
+    /// A choice field's option id.
+    Choice(String),
+}
+
+/// A plugin's dialog on screen.
+pub struct DialogState {
+    pub plugin: String,
+    pub dialog: plugin::dialog::Dialog,
+    /// The list's filter text.
+    pub filter: String,
+    /// The selected items (indices into the list), in the order they were picked.
+    pub selected: Vec<usize>,
+    pub values: Vec<FieldValue>,
+}
+
+impl DialogState {
+    pub fn new(plugin: &str, dialog: plugin::dialog::Dialog) -> DialogState {
+        let values = match &dialog.content {
+            plugin::dialog::Content::Form { fields } => fields
+                .iter()
+                .map(|f| match f.kind {
+                    plugin::dialog::FieldKind::Checkbox => FieldValue::Check(f.value.as_bool().unwrap_or(false)),
+                    plugin::dialog::FieldKind::Choice => FieldValue::Choice(f.value.as_str().unwrap_or("").to_string()),
+                    plugin::dialog::FieldKind::Number => FieldValue::Text(match &f.value {
+                        Json::Number(n) => n.to_string(),
+                        _ => String::new(),
+                    }),
+                    _ => FieldValue::Text(f.value.as_str().unwrap_or("").to_string()),
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        DialogState { plugin: plugin.to_string(), dialog, filter: String::new(), selected: Vec::new(), values }
+    }
+
+    /// The selected items' ids.
+    pub fn selection(&self) -> Vec<String> {
+        match &self.dialog.content {
+            plugin::dialog::Content::List { items, .. } => self.selected.iter().filter_map(|i| items.get(*i)).map(|it| it.id.clone()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The form's values by field id: text, a number (null when it isn't one), true/false, an
+    /// option id.
+    pub fn fields(&self) -> serde_json::Map<String, Json> {
+        let mut out = serde_json::Map::new();
+        if let plugin::dialog::Content::Form { fields } = &self.dialog.content {
+            for (f, v) in fields.iter().zip(&self.values) {
+                let value = match (f.kind, v) {
+                    (plugin::dialog::FieldKind::Number, FieldValue::Text(t)) => {
+                        t.trim().replace(',', ".").parse::<f64>().ok().filter(|x| x.is_finite()).map_or(Json::Null, |x| json!(x))
+                    }
+                    (_, FieldValue::Text(t)) => json!(t),
+                    (_, FieldValue::Check(b)) => json!(b),
+                    (_, FieldValue::Choice(c)) => json!(c),
+                };
+                out.insert(f.id.clone(), value);
+            }
+        }
+        out
+    }
+
+    /// The `plugins.run` params OK runs (None for a message dialog without a command).
+    pub fn ok_run(&self) -> Option<Json> {
+        let command = self.dialog.command.as_ref()?;
+        let params = self.dialog.ok_params(&self.selection(), &self.fields());
+        Some(json!({"plugin": self.plugin, "command": command, "params": params}))
+    }
+
+    /// The `plugins.run` params extra button `i` runs.
+    pub fn button_run(&self, i: usize) -> Option<Json> {
+        let (command, params) = self.dialog.button_params(i, &self.selection(), &self.fields())?;
+        Some(json!({"plugin": self.plugin, "command": command, "params": params}))
+    }
+
+    /// Whether OK can run: a list needs a selected item.
+    pub fn can_ok(&self) -> bool {
+        match &self.dialog.content {
+            plugin::dialog::Content::List { .. } => !self.selected.is_empty(),
+            _ => true,
+        }
+    }
+
+    /// The list items the filter lets through (indices), all of them when there's no filter box.
+    pub fn visible(&self) -> Vec<usize> {
+        let plugin::dialog::Content::List { items, .. } = &self.dialog.content else { return Vec::new() };
+        let needle = self.filter.trim().to_lowercase();
+        if items.len() <= plugin::dialog::FILTER_AFTER || needle.is_empty() {
+            return (0..items.len()).collect();
+        }
+        items.iter().enumerate().filter(|(_, it)| it.label.to_lowercase().contains(&needle)).map(|(i, _)| i).collect()
+    }
+}
+
+enum DialogAction {
+    Keep,
+    Close,
+    Run(Json),
+}
+
+/// Draws the plugin's dialog, if one is up: a modal the app draws itself, with the theme's
+/// colours. OK, a double-clicked item or a button runs the next plugin command; Cancel and Escape
+/// close it.
+pub fn dialog_window(app: &mut SheetApp, ctx: &egui::Context) {
+    let Some(mut st) = app.plugin_dialog.take() else { return };
+    let lang = app.ui.language;
+    let t = crate::theme::Tokens::get(ctx);
+    let mut action = DialogAction::Keep;
+    egui::Modal::new(egui::Id::new("plugin_dialog")).show(ctx, |ui| {
+        ui.set_width(460.0);
+        if !st.dialog.title.is_empty() {
+            ui.label(egui::RichText::new(&st.dialog.title).strong().size(15.0).color(t.text));
+            ui.add_space(4.0);
+        }
+        if !st.dialog.prompt.is_empty() {
+            ui.add(egui::Label::new(egui::RichText::new(&st.dialog.prompt).color(t.text)).wrap());
+            ui.add_space(6.0);
+        }
+        match st.dialog.content.clone() {
+            plugin::dialog::Content::List { items, multi } => {
+                if items.len() > plugin::dialog::FILTER_AFTER {
+                    ui.add(egui::TextEdit::singleline(&mut st.filter).hint_text(lang.tr("Filter")).desired_width(f32::INFINITY));
+                    ui.add_space(4.0);
+                }
+                let visible = st.visible();
+                let row_h = 26.0;
+                egui::Frame::NONE.stroke(egui::Stroke::new(1.0, t.input_border)).fill(t.input_bg).show(ui, |ui| {
+                    egui::ScrollArea::vertical().max_height(320.0).auto_shrink([false, true]).show_rows(ui, row_h, visible.len(), |ui, range| {
+                        for &i in visible.get(range).unwrap_or(&[]) {
+                            let Some(it) = items.get(i) else { continue };
+                            let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), row_h), egui::Sense::click());
+                            let on = st.selected.contains(&i);
+                            if on {
+                                ui.painter().rect_filled(rect, 2.0, t.accent_soft);
+                            } else if resp.hovered() {
+                                ui.painter().rect_filled(rect, 2.0, t.hover);
+                            }
+                            let mut x = rect.left() + 6.0;
+                            if multi {
+                                let b = egui::Rect::from_center_size(egui::pos2(x + 7.0, rect.center().y), egui::vec2(12.0, 12.0));
+                                ui.painter().rect_stroke(b, 2.0, egui::Stroke::new(1.0, t.text_dim), egui::StrokeKind::Inside);
+                                if on {
+                                    crate::icons::paint(ui.painter(), b.shrink(1.0), Icon::Check, t.accent);
+                                }
+                                x += 20.0;
+                            }
+                            let icon = icon_named(&it.icon).unwrap_or(Icon::Paper);
+                            crate::icons::paint(
+                                ui.painter(),
+                                egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), egui::vec2(16.0, 16.0)),
+                                icon,
+                                t.text_dim,
+                            );
+                            x += 24.0;
+                            let font = crate::theme::ui_font(13.0);
+                            ui.painter().text(egui::pos2(x, rect.center().y), egui::Align2::LEFT_CENTER, &it.label, font.clone(), t.text);
+                            if !it.detail.is_empty() {
+                                ui.painter().text(
+                                    egui::pos2(rect.right() - 8.0, rect.center().y),
+                                    egui::Align2::RIGHT_CENTER,
+                                    &it.detail,
+                                    crate::theme::ui_font(12.0),
+                                    t.text_dim,
+                                );
+                            }
+                            let label = it.label.clone();
+                            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, &label));
+                            if resp.double_clicked() && !multi {
+                                st.selected = vec![i];
+                                if let Some(run) = st.ok_run() {
+                                    action = DialogAction::Run(run);
+                                }
+                            } else if resp.clicked() {
+                                if multi {
+                                    if let Some(k) = st.selected.iter().position(|s| *s == i) {
+                                        st.selected.remove(k);
+                                    } else {
+                                        st.selected.push(i);
+                                    }
+                                } else {
+                                    st.selected = vec![i];
+                                }
+                            }
+                        }
+                    });
+                });
+            }
+            plugin::dialog::Content::Form { fields } => {
+                egui::Grid::new("plugin_dialog_form").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                    for (i, f) in fields.iter().enumerate() {
+                        ui.label(egui::RichText::new(&f.label).color(t.text));
+                        match st.values.get_mut(i) {
+                            Some(FieldValue::Text(text)) => {
+                                let edit =
+                                    egui::TextEdit::singleline(text).desired_width(280.0).password(f.kind == plugin::dialog::FieldKind::Secret);
+                                let label = f.label.clone();
+                                ui.add(edit).widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, &label));
+                            }
+                            Some(FieldValue::Check(b)) => {
+                                ui.checkbox(b, "");
+                            }
+                            Some(FieldValue::Choice(c)) => {
+                                let shown = f.options.iter().find(|(id, _)| id == c).map(|(_, l)| l.clone()).unwrap_or_default();
+                                egui::ComboBox::from_id_salt(("plugin_dialog_choice", i)).selected_text(shown).width(280.0).show_ui(ui, |ui| {
+                                    for (id, label) in &f.options {
+                                        ui.selectable_value(c, id.clone(), label);
+                                    }
+                                });
+                            }
+                            None => {
+                                ui.label("");
+                            }
+                        }
+                        ui.end_row();
+                    }
+                });
+            }
+            plugin::dialog::Content::Message => {}
+        }
+        ui.add_space(10.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let has_command = st.dialog.command.is_some();
+            if has_command && ui.button(lang.tr("Cancel")).clicked() {
+                action = DialogAction::Close;
+            }
+            if ui.add_enabled(st.can_ok(), egui::Button::new(&st.dialog.ok_label)).clicked() {
+                action = match st.ok_run() {
+                    Some(run) => DialogAction::Run(run),
+                    None => DialogAction::Close,
+                };
+            }
+            for i in (0..st.dialog.buttons.len()).rev() {
+                let label = st.dialog.buttons.get(i).map(|b| b.label.clone()).unwrap_or_default();
+                if ui.button(label).clicked()
+                    && let Some(run) = st.button_run(i)
+                {
+                    action = DialogAction::Run(run);
+                }
+            }
+        });
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            action = DialogAction::Close;
+        }
+    });
+    match action {
+        DialogAction::Keep => app.plugin_dialog = Some(st),
+        DialogAction::Close => {}
+        DialogAction::Run(params) => run_command(app, params),
+    }
+}
+
+/// Shows what plugins answered to document events: a message in the status bar, an error in the
+/// info bar, a `host/message` in a message box. Keeps painting while events are on their way.
+pub fn poll_events(app: &mut SheetApp, ctx: &egui::Context) {
+    for o in plugin::events::take_outcomes() {
+        let name = plugin::get(&o.plugin).map(|p| p.manifest.name.clone()).unwrap_or_else(|| o.plugin.clone());
+        match o.kind {
+            plugin::events::OutcomeKind::Message => app.status_message = Some((o.text, crate::now_ms())),
+            plugin::events::OutcomeKind::Error => {
+                app.notice = Some(crate::Notice { text: format!("{name}: {}", o.text), kind: crate::NoticeKind::Warning, action: None });
+            }
+            plugin::events::OutcomeKind::HostMessage => app.message = Some((name, o.text)),
+        }
+    }
+    if plugin::events::pending() > 0 {
+        ctx.request_repaint_after(std::time::Duration::from_millis(250));
+    }
+    // Plugins started from now on are told the interface's language.
+    let tag = match app.ui.language {
+        crate::i18n::Language::PtBr => "pt-BR",
+        l => l.code(),
+    };
+    if plugin::host_language() != tag {
+        plugin::set_host_language(tag);
+    }
 }
 
 /// Draws the plugin groups on `tab`, each after a separator; small buttons stack three high.

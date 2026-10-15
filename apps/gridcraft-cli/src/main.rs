@@ -101,6 +101,9 @@ fn main() -> ExitCode {
         Some(other) => Err(format!("unknown subcommand `{other}`\n{USAGE}")),
         None => Err(USAGE.to_string()),
     };
+    // Plugins that asked to hear of opens and saves get them before the process ends (each event
+    // has its own timeout; this waits only while one is on its way).
+    gridcraft_engine::plugin::events::wait_idle(std::time::Duration::from_secs(35));
     match r {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

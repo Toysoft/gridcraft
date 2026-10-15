@@ -1,8 +1,6 @@
 # Plugins
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (commands see the workbook's sheets and names; previously minor: commands see the selection's formulas) · **Target:** Microsoft Excel (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (commands see the selection's formulas; previously minor: one plugin for several apps: `apps`, `uiFor`, `host.id`) · **Target:** Microsoft Excel (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (plugin functions in autocomplete and Insert Function; previously minor: ribbon buttons that run macros: `macros/run` gets the button; previously minor: protocol 1.1: host requests, macros and the Developer tab; previously minor: Office add-ins load as plugins, officejs.md; previously minor: one plugin for several apps: `apps`, `uiFor`, `host.id`; previously minor: install plugins from a GitHub repository) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (protocol 1.2: host-drawn dialogs, opening files, document events, `context.document`; previously minor: commands see the workbook's sheets and names; previously minor: commands see the selection's formulas; previously minor: plugin functions in autocomplete and Insert Function; previously minor: ribbon buttons that run macros; previously minor: protocol 1.1: host requests, macros and the Developer tab) · **Target:** Microsoft Excel (Microsoft 365)
 
 A plugin adds **functions** that formulas call and **commands** the user (or an agent) runs,
 and can put its commands on the ribbon (a group on a built-in tab, or a tab of its own) and in
@@ -151,6 +149,7 @@ Install plugins only from people you trust. GridCraft doesn't sandbox them.
 | `uiFor.<app>` | Ribbon groups and menu items for one app: `uiFor.gridcraft` is used instead of `ui` when it's there |
 | `ui.ribbon[]` | A group of buttons: `tab`, `group`, `buttons`. A built-in tab's English name (`Home`, `Insert`, `Draw`, `Page Layout`, `Formulas`, `Data`, `Review`, `View`, `Automate`) adds the group at the end of that tab; any other name makes a new tab after Automate, shared by the plugins that name it |
 | `buttons[]` | `command` (one of the plugin's `commands[].id`), `label` and `tooltip` (default: the command's label and description), `icon`, `size` (`large`, the default, or `small`: stacked three high), `params` (passed to the command) |
+| `events` | The document events the plugin wants (protocol 1.2): `documentOpened`, `documentSaved`, `documentClosed`. Other names are ignored |
 | `ui.menus[]` | A right-click menu item: `menu` (`cell`, the default; `row` or `column` for the headers; `sheetTab`), `command`, `label`, `params`. Items go at the end of the menu, after a separator. A `sheetTab` item also gets `sheet` (the tab's index) in its params |
 
 Icons are named from GridCraft's own icon set: `script` (the default), `refresh`, `calc`, `sum`,
@@ -320,6 +319,114 @@ default, runs a workbook's macros once the user enabled them for it (the message
 Content** on a workbook with macros, `developer.enableMacros`); `disable` runs none; `enable` runs
 all. A macro is a program: agents and the CLI are bound by the same setting.
 
+## Protocol 1.2: dialogs, opening files, document events
+
+Protocol 1.2 adds to 1.1 and changes nothing that exists; WordCraft and DeckCraft speak it too, so
+one plugin works the same in all three. A plugin can show a dialog GridCraft draws without
+blocking the app, open a local file in GridCraft, and hear when workbooks open, save and close.
+[craft-nextcloud](https://github.com/storytold/craft-nextcloud) is the first plugin that uses it.
+
+**Detection.** `initialize`'s `host` gains `features`, `["dialogs", "open", "events", "document"]`
+(later versions may add more), and `language`, the interface language as a BCP 47 tag (`it`,
+`pt-BR`), so the plugin can translate its labels. Check for a feature before relying on it.
+`protocolVersion` stays `1`.
+
+```json
+"host": {"id": "gridcraft", "name": "GridCraft", "version": "0.7.0", "features": ["dialogs", "open", "events", "document"], "language": "it"}
+```
+
+**`context.document`.** `commands/run` and `macros/run` get the workbook's file in `context`:
+
+```json
+"document": {"path": "/home/me/Book1.xlsx", "name": "Book1.xlsx", "dirty": false}
+```
+
+`path` is the local file it was opened from or last saved to (absolute), or `null` for a new
+workbook that was never saved; `dirty` says whether it has unsaved changes. `macros/run` gets
+`context` with `workbook`, `sheet`, `active`, `selection` and `document` (not the selection's
+values: macros read the workbook through `host/sync`).
+
+### Opening a file: `open`
+
+A `commands/run` result may hold `open`, besides `commands`, `message` and `result` (all may come
+together):
+
+```json
+"open": {"path": "/home/me/.local/share/craft-nextcloud/files/ab12/Documents/Budget.xlsx",
+         "label": "Nextcloud · Documents/Budget.xlsx", "readOnly": false}
+```
+
+The path must be absolute, an existing regular file, and have an extension GridCraft opens
+(`.xlsx`, `.xlsm`, `.xltx`, `.xltm`, `.xls`, `.xlsb`, `.ods`, `.csv`, `.tsv`, `.txt`, `.json`);
+otherwise the command fails with a message and nothing changes. When a ribbon button, a menu item,
+Automate › Add-ins or a plugin dialog ran the command, GridCraft opens the file after the step,
+exactly as File › Open does (a workbook already open is brought to the front). `label` (at most 200
+characters) shows in the status bar while that workbook is active. GridCraft has no read-only mode
+yet, so `readOnly` is ignored. `plugins.run` from the CLI, MCP or the control channel opens
+nothing: it returns `open` in its result for the caller to act on.
+
+### Dialogs: `dialog`
+
+```json
+"dialog": {
+  "title": "Open from Nextcloud",
+  "kind": "list",
+  "prompt": "Documents",
+  "items": [
+    {"id": "/Documents/Reports", "label": "Reports", "detail": "Folder", "icon": "folder"},
+    {"id": "/Documents/Budget.xlsx", "label": "Budget.xlsx", "detail": "12 KB · 2026-10-14 18:02", "icon": "workbook"}
+  ],
+  "command": "browse",
+  "params": {"account": "me@cloud.example"},
+  "okLabel": "Open",
+  "buttons": [{"label": "Up", "command": "browse", "params": {"path": "/"}}]
+}
+```
+
+After the step, GridCraft shows a modal dialog it draws itself, with its own widgets and theme.
+Nothing waits: the plugin has already answered. What the user does runs another of the plugin's
+commands exactly as a ribbon button does (one step; its result may carry another `dialog`, an
+`open`, a `message` or commands, so a plugin can walk folders one dialog at a time). A message
+that comes with a dialog shows in the status bar, so it doesn't cover the dialog.
+
+| `kind` | Shows | OK runs `command` with `params` plus |
+|---|---|---|
+| `list` | `items` (at most 10,000; `id` up to 4,096 characters, `label` and `detail` up to 256) with their icon (the ribbon's icon names; others get a page), label and detail. A filter box (by label) above more than 20 items. `"multi": true` allows several | `"id"` (double-click also runs it), or `"ids": [...]` with `multi` |
+| `form` | `fields` (at most 16): `{id, label, value?, kind?}` with `kind` `text` (the default), `secret` (a password box), `number`, `checkbox` (`value` true or false) or `choice` (`options: [{id, label}]`, `value` an option id) | `"fields": {"<id>": value, …}` (a number field that isn't a number gives `null`) |
+| `message` | `prompt` (several lines, at most 4,000 characters) | nothing; without `command`, OK just closes |
+
+Every kind has `title` (at most 200 characters), `prompt` (text above the content), `okLabel`
+(default `OK`) and up to 4 `buttons`, `{label, command, params?}`, left of OK. A button runs its
+command with its own `params` plus, for a list, the selected `id`/`ids` when something is selected
+and, for a form, `fields`. Cancel and Escape close the dialog. Labels show as given: the plugin
+translates them (see `host.language`). Anything over a limit is truncated; a malformed dialog, or
+one whose OK or buttons name a command the plugin doesn't declare, fails the command with a
+message. Programmatic runs don't show the dialog: `plugins.run` returns it (validated and
+truncated) in its result.
+
+### Document events
+
+A plugin that declares `"events"` in its manifest gets them as JSON-RPC requests, after the event
+happened, from a background thread:
+
+| Request | Params | When |
+|---|---|---|
+| `events/documentOpened` | `{path, name}` | A workbook was opened from a local file (File › Open, Recent, drag and drop, a plugin's `open`, `file.open {path}`) |
+| `events/documentSaved` | `{path, name, format}` | Save or Save As to a local file succeeded (`format`: the extension, lower case). Not AutoSave (`file.save {autosave: true}`), and not Save as PDF |
+| `events/documentClosed` | `{path, name}` | A workbook that has a file was closed, or GridCraft quits with it open |
+
+Paths are absolute. The answer is `{}` or `{"message": "Uploaded to Nextcloud"}`, shown in the
+status bar for 10 seconds; an error answer shows in the info bar. `documentOpened` and
+`documentSaved` time out after 30 s, `documentClosed` after 5 s; on quitting GridCraft waits at most
+5 s for them (and the CLI waits for events still on their way before it exits). An event is never
+part of an undo step, and a slow or failing plugin never stops the save, the open or the close;
+timeouts count as failures as usual. During an event a plugin may send `host/log` and
+`host/message` (shown in a message box), but `host/sync` and `host/vbaProject/*` are refused with
+an error whose `data.code` is `AccessDenied`: events are notifications, not edits.
+
+The web app has no plugins, so none of this applies there. The dialog isn't a web view and can't
+hold HTML.
+
 ## Publishing a plugin on GitHub
 
 Put `plugin.json` at the root of the repository (or in one folder of it). A plugin written in
@@ -361,6 +468,7 @@ are kept.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Protocol 1.2: `host.features` and `host.language`, `context.document`, command results that open a file (`open`) or show a host-drawn dialog (`dialog`: list, form, message; chained), manifest `events` and `events/documentOpened`, `documentSaved`, `documentClosed` |
 | 2026-10-14 | minor | `context.sheets` and `context.names`: commands see every sheet and the defined names |
 | 2026-10-14 | minor | `context.formulas`: commands see the selection's formula text, so plugins can tell inputs from calculations |
 | 2026-10-14 | minor | Plugin functions are suggested while typing (signature hint, description) and listed in Insert Function and `formulas.functions` (category Add-ins) |

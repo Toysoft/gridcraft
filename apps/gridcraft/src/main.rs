@@ -67,6 +67,8 @@ impl eframe::App for App {
     fn on_exit(&mut self) {
         print::finish_pending_jobs();
         save_prefs(&self.0);
+        // Plugins that asked hear that the open workbooks close (best effort, at most 5 s).
+        gridcraft_engine::cmd::plugins::quitting(&self.0.session);
         // macOS (#117): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
         // AppKit's Touch Bar support observes that view (KVO), so in the next display cycle

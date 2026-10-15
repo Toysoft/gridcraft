@@ -235,6 +235,13 @@ pub struct SheetApp {
     pub office: office_pane::Panes,
     /// The Developer tab's windows (Macros, Visual Basic, Macro Security).
     pub dev: developer_ui::DevState,
+    /// A plugin command's dialog (protocol 1.2).
+    pub plugin_dialog: Option<plugin_ui::DialogState>,
+    /// Where documents opened by a plugin come from (`open.label`), by document uid: shown in the
+    /// status bar.
+    pub doc_labels: HashMap<u64, String>,
+    /// A message for the status bar (a plugin's answer to a document event) and when it came.
+    pub status_message: Option<(String, f64)>,
     print_feedback_seen: Option<printing::Feedback>,
     /// Synthetic input from agents, one batch per frame (drags need several frames).
     pub synthetic: std::collections::VecDeque<Vec<egui::Event>>,
@@ -294,6 +301,9 @@ impl SheetApp {
             plugin_install: Default::default(),
             office: Default::default(),
             dev: Default::default(),
+            plugin_dialog: None,
+            doc_labels: HashMap::new(),
+            status_message: None,
             print_feedback_seen: None,
             synthetic: Default::default(),
             control_rx: None,
@@ -518,6 +528,11 @@ impl SheetApp {
         // Programmatic callers use `run` and keep getting the PDF bytes back.
         if id == "file.exportPdf" && self.services.pick_save.is_some() && params.get("path").and_then(Json::as_str).is_none_or(str::is_empty) {
             return self.export_pdf_with_picker(params);
+        }
+        // A plugin command run from a button, a menu item or a plugin dialog: the interface opens
+        // the file and shows the dialog its result asks for (programmatic callers get them back).
+        if id == "plugins.run" {
+            return plugin_ui::run_command(self, params);
         }
         if let Err(e) = self.run(id, params) {
             self.alert(e);
@@ -1118,6 +1133,7 @@ impl SheetApp {
         let ctx = ui.ctx().clone();
         self.poll_printing(&ctx);
         plugin_ui::poll_install(self, &ctx);
+        plugin_ui::poll_events(self, &ctx);
         office_pane::pump(self);
         if !self.fonts_ready || self.fonts_rebind {
             ctx.request_repaint();
@@ -1157,6 +1173,7 @@ impl SheetApp {
             });
         }
         dialogs::show(self, &ctx);
+        plugin_ui::dialog_window(self, &ctx);
         developer_ui::windows(self, &ctx);
         widgets::message_box(self, &ctx);
         widgets::toast(self, &ctx);
@@ -1183,7 +1200,7 @@ impl SheetApp {
         {
             self.grid.last_autosave = now;
             self.store_view_state();
-            let _ = self.session.run("file.save", json!({}));
+            let _ = self.session.run("file.save", json!({"autosave": true}));
         }
         // Window title.
         if let Some(d) = self.session.active() {

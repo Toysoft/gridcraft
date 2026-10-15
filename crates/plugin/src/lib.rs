@@ -14,6 +14,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod dialog;
+pub mod events;
 pub mod install;
 pub mod office;
 mod process;
@@ -32,6 +34,10 @@ pub use process::{Connection, HostError, HostHandler, RequestError};
 
 /// The protocol version this host speaks (sent in `initialize`).
 pub const PROTOCOL_VERSION: u32 = 1;
+/// What this host does beyond protocol 1.1 (`initialize`'s `host.features`; protocol 1.2): host
+/// drawn dialogs and opening files from a command's result, document events, and
+/// `context.document`.
+pub const FEATURES: &[&str] = &["dialogs", "open", "events", "document"];
 /// This app's id in a manifest's `apps` and `uiFor`, and in `initialize`'s `host.id`. The
 /// manifest and protocol are shared with the other craft apps (WordCraft), so one plugin can
 /// serve several.
@@ -92,6 +98,10 @@ pub struct Manifest {
     /// A scripting language the plugin runs macros in (protocol 1.1: `macros/*`), e.g. VBA.
     #[serde(default)]
     pub macros: Option<MacrosDecl>,
+    /// The document events the plugin wants (protocol 1.2): `documentOpened`, `documentSaved`,
+    /// `documentClosed`. Names this host doesn't know are ignored.
+    #[serde(default)]
+    pub events: Vec<String>,
     /// An Office add-in (read from its `manifest.xml`): its task panes and permissions.
     #[serde(skip)]
     pub office: Option<office::OfficeInfo>,
@@ -300,6 +310,9 @@ impl Manifest {
         if !office && self.run.command.trim().is_empty() {
             return Err(format!("{MANIFEST}: `run.command` is empty"));
         }
+        if self.events.len() > MAX_DECLARATIONS {
+            return Err(format!("{MANIFEST}: at most {MAX_DECLARATIONS} events"));
+        }
         if self.functions.len() > MAX_DECLARATIONS || self.commands.len() > MAX_DECLARATIONS {
             return Err(format!("{MANIFEST}: at most {MAX_DECLARATIONS} functions and {MAX_DECLARATIONS} commands"));
         }
@@ -444,9 +457,14 @@ impl Plugin {
         }
         if !matches!(state, State::Running(_)) {
             let mut conn = Connection::start(&self.manifest, &self.dir)?;
+            let mut host_info = json!({"id": HOST_ID, "name": "GridCraft", "version": env!("CARGO_PKG_VERSION"), "features": FEATURES});
+            let language = host_language();
+            if !language.is_empty() {
+                host_info["language"] = json!(language);
+            }
             let init = json!({
                 "protocolVersion": PROTOCOL_VERSION,
-                "host": {"id": HOST_ID, "name": "GridCraft", "version": env!("CARGO_PKG_VERSION")},
+                "host": host_info,
                 "plugin": {"id": self.manifest.id, "dir": self.dir.display().to_string()},
             });
             if let Err(e) = conn.request("initialize", init, INIT_TIMEOUT) {
@@ -581,6 +599,23 @@ impl gridcraft_calc::external::ExternalFunction for PluginFunction {
 }
 
 // ---------------------------------------------------------------- the registry
+
+fn language_slot() -> &'static Mutex<String> {
+    static LANGUAGE: OnceLock<Mutex<String>> = OnceLock::new();
+    LANGUAGE.get_or_init(|| Mutex::new(String::new()))
+}
+
+/// Sets the UI language plugins are told about (`initialize`'s `host.language`, a BCP 47 tag
+/// such as `it`). Plugins started from now on get it; empty leaves it out.
+pub fn set_host_language(tag: &str) {
+    let tag: String = tag.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(35).collect();
+    *lock(language_slot()) = tag;
+}
+
+/// The UI language plugins are told about (empty: none).
+pub fn host_language() -> String {
+    lock(language_slot()).clone()
+}
 
 /// Plugins are application-wide, like Excel's add-ins: one set per process.
 fn loaded() -> &'static Mutex<Vec<Arc<Plugin>>> {
@@ -743,6 +778,10 @@ pub struct CommandReply {
     pub result: Json,
     /// An Office add-in's command: what the app opens or calls (no process is involved).
     pub office: Option<office::OfficeCommand>,
+    /// A local file to open after the step (protocol 1.2).
+    pub open: Option<dialog::OpenRequest>,
+    /// A dialog to show after the step (protocol 1.2).
+    pub dialog: Option<dialog::Dialog>,
 }
 
 /// Most engine commands one plugin command may run.
@@ -767,7 +806,14 @@ pub fn run_command_with(plugin_id: &str, command: &str, params: Json, context: J
         return Ok(CommandReply { office: Some(what), ..Default::default() });
     }
     let r = plugin.request_with("commands/run", json!({"command": command, "params": params, "context": context}), COMMAND_TIMEOUT, host)?;
-    parse_reply(r)
+    let reply = parse_reply(r)?;
+    // A dialog's buttons run the plugin's own commands, nothing else.
+    if let Some(d) = &reply.dialog
+        && let Some(c) = d.commands().find(|c| plugin.manifest.command(c).is_none())
+    {
+        return Err(format!("the dialog runs `{c}`, which isn't one of plugin {plugin_id}'s commands"));
+    }
+    Ok(reply)
 }
 
 /// Sends a macro plugin one of its `macros/…` requests (protocol 1.1), answering its `host/…`
@@ -807,6 +853,12 @@ fn parse_reply(r: Json) -> Result<CommandReply, String> {
             let id = c.get("command").and_then(Json::as_str).ok_or("each entry of `commands` needs a `command` id")?;
             reply.commands.push((id.to_string(), c.get("params").cloned().unwrap_or(Json::Null)));
         }
+    }
+    if let Some(o) = r.get("open").filter(|o| !o.is_null()) {
+        reply.open = Some(dialog::OpenRequest::parse(o)?);
+    }
+    if let Some(d) = r.get("dialog").filter(|d| !d.is_null()) {
+        reply.dialog = Some(dialog::Dialog::parse(d)?);
     }
     Ok(reply)
 }

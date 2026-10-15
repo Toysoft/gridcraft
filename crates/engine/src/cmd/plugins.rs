@@ -43,7 +43,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Run Plugin Command",
             [],
             None,
-            "{plugin, command, params?} → {ran, message?, result?}. The plugin's commands run as one undoable step",
+            "{plugin, command, params?} → {ran, message?, result?, open?, dialog?}. The plugin's commands run as one undoable step; `open` (a file) and `dialog` (protocol 1.2) are returned for the caller, and the interface performs them when a button, menu item or plugin dialog ran the command",
             always,
             run
         ),
@@ -147,6 +147,73 @@ fn recalc_users(s: &mut Session, names: &[String]) {
     }
 }
 
+/// An absolute form of `path` (as given when it can't be made absolute).
+pub fn absolute_path(path: &str) -> String {
+    std::path::absolute(path).map(|p| p.display().to_string()).unwrap_or_else(|_| path.to_string())
+}
+
+/// `context.document` (protocol 1.2): the local file the workbook was opened from or last saved
+/// to (`null` for a new, never-saved one), its name, and whether it has unsaved changes.
+pub fn document_json(d: &crate::DocState) -> Json {
+    json!({"path": d.path.as_deref().map(absolute_path), "name": d.display_title(), "dirty": d.is_dirty()})
+}
+
+/// The context every plugin request about the workbook gets: its title, active sheet, active
+/// cell, selection and `document` (macros get this much; commands get [`context`]).
+pub fn brief_context(s: &Session) -> Json {
+    let Some(d) = s.active() else { return json!({}) };
+    let sel = &d.selection;
+    let range = sel.ranges.last().copied().unwrap_or(RangeRef::cell(sel.active));
+    json!({
+        "workbook": d.display_title(),
+        "sheet": d.wb.active().map(|sh| sh.name.clone()).unwrap_or_default(),
+        "active": sel.active.to_string(),
+        "selection": range.to_string(),
+        "document": document_json(d),
+    })
+}
+
+/// Sends a document event (protocol 1.2) to the plugins that declared it, after it happened. It
+/// never waits for them: they answer on the events thread, and the interface shows what they say.
+pub fn emit(event: &str, path: &str, format: Option<&str>) {
+    let path = absolute_path(path);
+    let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.clone());
+    let mut params = json!({"path": path, "name": name});
+    if let Some(f) = format {
+        params["format"] = json!(f.to_ascii_lowercase());
+    }
+    gridcraft_plugin::events::dispatch(event, params);
+}
+
+/// The app is quitting: `documentClosed` for every open workbook that has a file, waiting at most
+/// 5 s for the plugins (best effort).
+pub fn quitting(s: &Session) {
+    for d in s.documents() {
+        if let Some(p) = &d.path {
+            emit(gridcraft_plugin::events::DOCUMENT_CLOSED, p, None);
+        }
+    }
+    gridcraft_plugin::events::wait_idle(gridcraft_plugin::events::timeout(gridcraft_plugin::events::DOCUMENT_CLOSED));
+}
+
+/// Checks the file a plugin command asked to open: absolute, an existing regular file, with an
+/// extension GridCraft opens.
+fn check_open(o: &gridcraft_plugin::dialog::OpenRequest) -> std::result::Result<(), String> {
+    let path = std::path::Path::new(&o.path);
+    if !path.is_absolute() {
+        return Err(format!("can't open {}: the path isn't absolute", o.path));
+    }
+    let opens = crate::io::FileKind::from_path(&o.path).is_some_and(|k| k != crate::io::FileKind::Html);
+    if !opens {
+        return Err(format!("can't open {}: GridCraft doesn't open this kind of file", o.path));
+    }
+    match std::fs::metadata(path) {
+        Ok(m) if m.is_file() => Ok(()),
+        Ok(_) => Err(format!("can't open {}: it isn't a file", o.path)),
+        Err(e) => Err(format!("can't open {}: {e}", o.path)),
+    }
+}
+
 /// What a plugin command sees of the workbook: its title, the active sheet, the selection and,
 /// for a selection up to 100,000 cells, its values (rows of values, as functions get them) and
 /// formulas (rows of formula text, `null` where a cell has none); plus every sheet (index, name,
@@ -155,12 +222,7 @@ fn context(s: &Session) -> Json {
     let Some(d) = s.active() else { return json!({}) };
     let sel = &d.selection;
     let range = sel.ranges.last().copied().unwrap_or(RangeRef::cell(sel.active));
-    let mut ctx = json!({
-        "workbook": d.display_title(),
-        "sheet": d.wb.active().map(|sh| sh.name.clone()).unwrap_or_default(),
-        "active": sel.active.to_string(),
-        "selection": range.to_string(),
-    });
+    let mut ctx = brief_context(s);
     if let Some(sh) = d.wb.active()
         && range.count() <= MAX_CONTEXT_CELLS
     {
@@ -245,6 +307,11 @@ fn run(s: &mut Session, p: &Json) -> Result<Json> {
         }
     }
     let reply = reply.map_err(|e| bad(ID, e))?;
+    // A file the plugin asks to open must be one GridCraft can open; otherwise the command fails
+    // before anything changed.
+    if let Some(o) = &reply.open {
+        check_open(o).map_err(|e| bad(ID, format!("{plugin} › {command}: {e}")))?;
+    }
     // An Office add-in's command opens its task pane or calls its function: nothing runs here.
     if let Some(office) = reply.office {
         let title = gridcraft_plugin::get(plugin).map(|p| p.manifest.name.clone()).unwrap_or_default();
@@ -295,6 +362,14 @@ fn run(s: &mut Session, p: &Json) -> Result<Json> {
     }
     if !reply.result.is_null() {
         out["result"] = reply.result;
+    }
+    // Protocol 1.2: returned for the caller. The interface opens the file and shows the dialog
+    // when one of its buttons ran the command; programmatic callers act on them themselves.
+    if let Some(o) = &reply.open {
+        out["open"] = o.to_json();
+    }
+    if let Some(d) = &reply.dialog {
+        out["dialog"] = d.to_json();
     }
     Ok(out)
 }

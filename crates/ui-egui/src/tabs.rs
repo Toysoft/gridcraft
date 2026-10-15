@@ -247,6 +247,21 @@ pub fn status_bar(app: &mut SheetApp, ui: &mut Ui) {
                     gridcraft_engine::Mode::Point => "Point",
                 };
                 ui.label(egui::RichText::new(app.ui.language.tr(mode)).font(theme::ui_font(12.5)).color(t.text_dim));
+                // Where a plugin opened the workbook from (protocol 1.2 `open.label`).
+                if let Some(label) = app.session.active().and_then(|d| app.doc_labels.get(&d.uid)) {
+                    ui.add_space(12.0);
+                    ui.label(egui::RichText::new(label).font(theme::ui_font(12.5)).color(t.text_dim));
+                }
+                // A plugin's answer to a document event, for 10 seconds.
+                if let Some((text, at)) = &app.status_message {
+                    if crate::now_ms() - at < 10_000.0 {
+                        ui.add_space(12.0);
+                        ui.label(egui::RichText::new(text).font(theme::ui_font(12.5)).color(t.text_dim));
+                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+                    } else {
+                        app.status_message = None;
+                    }
+                }
                 if let Some(d) = app.session.active() {
                     if d.wb.vba_project.is_some() {
                         ui.add_space(12.0);
