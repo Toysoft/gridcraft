@@ -1545,6 +1545,7 @@ version = "0.7.0"
 dependencies = [
  "gridcraft-engine",
  "gridcraft-mcp",
+ "gridcraft-ui-egui",
  "log",
  "quick-xml",
  "serde_json",

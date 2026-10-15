@@ -2,6 +2,9 @@
 //!
 //! - The 14 standard fonts (no embedding) with WinAnsiEncoding, plus approximate width tables
 //!   ([`text_width`]) so callers can measure, align and wrap text.
+//! - Text WinAnsiEncoding can't carry (Greek, Cyrillic, …) is set in an embedded TrueType font
+//!   (Identity-H, with a ToUnicode map so it stays searchable and copyable) when the app has
+//!   registered one with [`set_unicode_font_loader`]; without one it falls back to `?`.
 //! - Vector drawing: rectangles, lines (solid or dashed), polygons, circles (Bézier), clipping.
 //! - RGBA images as RGB image XObjects with a soft mask for alpha (run-length encoded).
 //! - Coordinates are points with a **top-left origin** (y grows down); text `y` is the baseline.
@@ -12,8 +15,53 @@
 #![forbid(unsafe_code)]
 
 mod metrics;
+mod truetype;
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::sync::{Arc, OnceLock};
+
+pub use truetype::UnicodeFont;
+
+/// Regular and bold fonts for text outside WinAnsiEncoding.
+pub type UnicodeFonts = [Option<Arc<UnicodeFont>>; 2];
+
+/// Loads the raw `.ttf` bytes of the regular and bold fallback fonts. Runs at most once, the
+/// first time a PDF needs them.
+pub type UnicodeFontLoader = fn() -> [Option<Vec<u8>>; 2];
+
+static LOADER: OnceLock<UnicodeFontLoader> = OnceLock::new();
+static DEFAULT_FONTS: OnceLock<UnicodeFonts> = OnceLock::new();
+
+/// Registers how to find the system fonts used for non-Latin text (call once at start-up; the
+/// first registration wins). Without a loader, such text prints as `?` like before. On wasm
+/// there are no system fonts, so apps there simply don't register one.
+pub fn set_unicode_font_loader(loader: UnicodeFontLoader) {
+    let _ = LOADER.set(loader);
+}
+
+/// The registered fallback fonts, loaded and parsed on first use.
+pub fn default_unicode_fonts() -> &'static UnicodeFonts {
+    DEFAULT_FONTS.get_or_init(|| {
+        let Some(load) = LOADER.get() else { return [None, None] };
+        load().map(|bytes| bytes.and_then(UnicodeFont::parse).map(Arc::new))
+    })
+}
+
+/// Whether `text` has characters WinAnsiEncoding can't represent.
+fn needs_unicode(text: &str) -> bool {
+    text.chars().any(|c| c != '?' && win_ansi(c) == b'?')
+}
+
+/// The fallback font slot for `font` (bold or regular), when that text needs one and a font is
+/// available; either face stands in for the other.
+fn unicode_slot(fonts: &UnicodeFonts, font: Font, text: &str) -> Option<usize> {
+    if !needs_unicode(text) {
+        return None;
+    }
+    let want = usize::from(font.is_bold());
+    [want, 1 - want].into_iter().find(|i| fonts.get(*i).is_some_and(Option::is_some))
+}
 
 /// RGB colour, 0–255 per channel.
 pub type Rgb = [u8; 3];
@@ -116,6 +164,13 @@ impl Font {
         }
     }
 
+    fn is_bold(self) -> bool {
+        matches!(
+            self,
+            Font::HelveticaBold | Font::HelveticaBoldOblique | Font::TimesBold | Font::TimesBoldItalic | Font::CourierBold | Font::CourierBoldOblique
+        )
+    }
+
     /// Advance width of a character in 1/1000 em.
     pub fn char_width(self, c: char) -> u16 {
         let table: Option<&[u16; 95]> = match self {
@@ -145,8 +200,12 @@ impl Font {
 
 /// Width of `text` in points when set in `font` at `size` points.
 pub fn text_width(font: Font, size: f32, text: &str) -> f32 {
+    let fonts = if needs_unicode(text) { default_unicode_fonts() } else { &[None, None] };
     // u64: a u32 sum overflows for ~8 million characters.
-    let units: u64 = text.chars().map(|c| u64::from(font.char_width(c))).sum();
+    let units: u64 = match unicode_slot(fonts, font, text).and_then(|i| fonts.get(i)?.as_deref()) {
+        Some(uf) => text.chars().map(|c| u64::from(uf.char_width(c))).sum(),
+        None => text.chars().map(|c| u64::from(font.char_width(c))).sum(),
+    };
     units as f32 * size / 1000.0
 }
 
@@ -266,6 +325,9 @@ pub struct Page {
     height: f32,
     content: String,
     fonts: [bool; 12],
+    /// The fallback fonts and, per slot, the glyphs used with the character each one shows.
+    unicode: UnicodeFonts,
+    glyphs: [BTreeMap<u16, char>; 2],
     images: Vec<ImageData>,
     depth: u32,
 }
@@ -459,16 +521,22 @@ impl Page {
         if text.is_empty() || !extent(size) || !finite(&[x, y]) {
             return;
         }
-        let fi = font.index();
-        if let Some(f) = self.fonts.get_mut(fi) {
-            *f = true;
-        }
+        let (resource, shown) = match unicode_slot(&self.unicode, font, text) {
+            Some(slot) => (format!("/U{}", slot + 1), self.glyph_string(slot, text)),
+            None => {
+                let fi = font.index();
+                if let Some(f) = self.fonts.get_mut(fi) {
+                    *f = true;
+                }
+                (format!("/F{}", fi + 1), pdf_string(text))
+            }
+        };
         let (sn, cs) = if angle.is_finite() { angle.sin_cos() } else { (0.0, 1.0) };
         // Clockwise in y-down = counter-clockwise negated in PDF's y-up space.
         let s = format!(
-            "BT\n{}\n/F{} {} Tf\n{} {} {} {} {} {} Tm\n{} Tj\nET",
+            "BT\n{}\n{} {} Tf\n{} {} {} {} {} {} Tm\n{} Tj\nET",
             rgb_op(color, false),
-            fi + 1,
+            resource,
             n(size.min(10_000.0)),
             n(cs),
             n(-sn),
@@ -476,9 +544,28 @@ impl Page {
             n(cs),
             n(x),
             n(self.y(y)),
-            pdf_string(text)
+            shown
         );
         self.op(&s);
+    }
+
+    /// `text` as a hex string of 2-byte glyph ids in fallback font `slot`, recording the glyphs.
+    fn glyph_string(&mut self, slot: usize, text: &str) -> String {
+        let mut s = String::with_capacity(text.len() * 4 + 2);
+        s.push('<');
+        let font = self.unicode.get(slot).cloned().flatten();
+        for c in text.chars() {
+            let c = if c == '\t' { ' ' } else { c };
+            let g = font.as_deref().map_or(0, |f| f.glyph(c));
+            if g != 0
+                && let Some(used) = self.glyphs.get_mut(slot)
+            {
+                used.entry(g).or_insert(c);
+            }
+            let _ = write!(s, "{g:04X}");
+        }
+        s.push('>');
+        s
     }
 
     /// Draws an RGBA image (`pw`×`ph` pixels, row-major, straight alpha) into the box
@@ -516,6 +603,7 @@ pub struct Info {
 pub struct PdfDoc {
     pages: Vec<Page>,
     pub info: Info,
+    unicode: UnicodeFonts,
 }
 
 /// PackBits-style run-length encoding (PDF `RunLengthDecode`).
@@ -575,15 +663,30 @@ fn pdf_text_string(text: &str) -> String {
 }
 
 impl PdfDoc {
+    /// A document that uses the registered fallback fonts ([`set_unicode_font_loader`]).
     pub fn new() -> PdfDoc {
-        PdfDoc::default()
+        PdfDoc { unicode: default_unicode_fonts().clone(), ..PdfDoc::default() }
+    }
+
+    /// Replaces the fallback fonts for text outside WinAnsiEncoding (pages added afterwards).
+    pub fn set_unicode_fonts(&mut self, fonts: UnicodeFonts) {
+        self.unicode = fonts;
     }
 
     /// Adds a page of `width_pt` × `height_pt` points and returns it for drawing.
     pub fn add_page(&mut self, width_pt: f32, height_pt: f32) -> &mut Page {
         let width = if width_pt.is_finite() { width_pt.clamp(3.0, 14_400.0) } else { 612.0 };
         let height = if height_pt.is_finite() { height_pt.clamp(3.0, 14_400.0) } else { 792.0 };
-        self.pages.push(Page { width, height, content: String::new(), fonts: [false; 12], images: Vec::new(), depth: 0 });
+        self.pages.push(Page {
+            width,
+            height,
+            content: String::new(),
+            fonts: [false; 12],
+            unicode: self.unicode.clone(),
+            glyphs: Default::default(),
+            images: Vec::new(),
+            depth: 0,
+        });
         let i = self.pages.len() - 1;
         &mut self.pages[i]
     }
@@ -626,6 +729,24 @@ impl PdfDoc {
                 let name = Font::ALL.get(i).copied().unwrap_or_default().base_name();
                 let enc = if name.starts_with("Symbol") { "" } else { " /Encoding /WinAnsiEncoding" };
                 objects.push((*id, format!("<< /Type /Font /Subtype /Type1 /BaseFont /{name}{enc} >>").into_bytes()));
+            }
+        }
+        for slot in 0..2 {
+            let mut glyphs: BTreeMap<u16, char> = BTreeMap::new();
+            let mut font = None;
+            for p in &self.pages {
+                if let (Some(used), Some(Some(f))) = (p.glyphs.get(slot), p.unicode.get(slot))
+                    && !used.is_empty()
+                {
+                    glyphs.extend(used.iter().map(|(g, c)| (*g, *c)));
+                    font = Some(f.clone());
+                }
+            }
+            if let Some(font) = font {
+                let id = next;
+                next += 5;
+                let _ = write!(font_dict, "/U{} {} 0 R ", slot + 1, id);
+                objects.extend(unicode_font_objects(&font, &glyphs, slot, id));
             }
         }
         for page in &mut self.pages {
@@ -727,6 +848,61 @@ impl PdfDoc {
         out.extend_from_slice(x.as_bytes());
         out
     }
+}
+
+/// The five objects of an embedded fallback font, numbered from `id`: the Type0 font, its
+/// CIDFontType2 descendant, the font descriptor, the TrueType file and the ToUnicode CMap.
+fn unicode_font_objects(font: &UnicodeFont, glyphs: &BTreeMap<u16, char>, slot: usize, id: u32) -> Vec<(u32, Vec<u8>)> {
+    let name = format!("GridCraftUnicode{}", slot + 1);
+    let mut widths = String::new();
+    for g in glyphs.keys() {
+        let _ = write!(widths, "{} [{}] ", g, font.glyph_width(*g));
+    }
+    let [x0, y0, x1, y1] = font.bbox;
+    let mut file = format!("<< /Length {0} /Length1 {0} >>\nstream\n", font.data.len()).into_bytes();
+    file.extend_from_slice(&font.data);
+    file.extend_from_slice(b"\nendstream");
+    let mut cmap = String::from(
+        "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n",
+    );
+    let entries: Vec<(&u16, &char)> = glyphs.iter().collect();
+    for chunk in entries.chunks(100) {
+        let _ = writeln!(cmap, "{} beginbfchar", chunk.len());
+        for (g, c) in chunk {
+            let mut units = [0u16; 2];
+            let hex: String = c.encode_utf16(&mut units).iter().map(|u| format!("{u:04X}")).collect();
+            let _ = writeln!(cmap, "<{g:04X}> <{hex}>");
+        }
+        cmap.push_str("endbfchar\n");
+    }
+    cmap.push_str("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend");
+    let mut to_unicode = format!("<< /Length {} >>\nstream\n", cmap.len()).into_bytes();
+    to_unicode.extend_from_slice(cmap.as_bytes());
+    to_unicode.extend_from_slice(b"\nendstream");
+    vec![
+        (id, format!("<< /Type /Font /Subtype /Type0 /BaseFont /{name} /Encoding /Identity-H /DescendantFonts [{} 0 R] /ToUnicode {} 0 R >>", id + 1, id + 4).into_bytes()),
+        (
+            id + 1,
+            format!(
+                "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /{name} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor {} 0 R /DW 1000 /W [{widths}] /CIDToGIDMap /Identity >>",
+                id + 2
+            )
+            .into_bytes(),
+        ),
+        (
+            id + 2,
+            format!(
+                "<< /Type /FontDescriptor /FontName /{name} /Flags 32 /FontBBox [{x0} {y0} {x1} {y1}] /ItalicAngle 0 /Ascent {} /Descent {} /CapHeight {} /StemV 80 /FontFile2 {} 0 R >>",
+                font.ascent,
+                font.descent,
+                font.cap_height,
+                id + 3
+            )
+            .into_bytes(),
+        ),
+        (id + 3, file),
+        (id + 4, to_unicode),
+    ]
 }
 
 #[cfg(test)]

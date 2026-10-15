@@ -60,6 +60,9 @@ fn stdout_failed(e: std::io::Error) -> ! {
 }
 
 fn main() -> ExitCode {
+    // Headless PDF export and printing set Greek, Cyrillic and other non-Latin text in a system
+    // font, like the desktop app; without this, `file.exportPdf` writes it as `?`.
+    gridcraft_engine::pdf::set_unicode_font_loader(gridcraft_ui_egui::theme::pdf_unicode_fonts);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let rest = args.get(1..).unwrap_or_default();
     let r = match args.first().map(String::as_str) {
