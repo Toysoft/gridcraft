@@ -1,6 +1,6 @@
 # Plugins
 
-> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (protocol 2: the push channel and co-editing transports; previously minor: protocol 1.2: host-drawn dialogs, opening files, document events, `context.document`; previously minor: commands see the workbook's sheets and names; previously minor: commands see the selection's formulas; previously minor: plugin functions in autocomplete and Insert Function; previously minor: ribbon buttons that run macros; previously minor: protocol 1.1: host requests, macros and the Developer tab) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (manifest 1.3: add-ins that require other add-ins, with version ranges; previously minor: protocol 2: the push channel and co-editing transports; previously minor: protocol 1.2: host-drawn dialogs, opening files, document events, `context.document`; previously minor: commands see the workbook's sheets and names; previously minor: commands see the selection's formulas; previously minor: plugin functions in autocomplete and Insert Function; previously minor: ribbon buttons that run macros; previously minor: protocol 1.1: host requests, macros and the Developer tab) · **Target:** Microsoft Excel (Microsoft 365)
 
 A plugin adds **functions** that formulas call and **commands** the user (or an agent) runs,
 and can put its commands on the ribbon (a group on a built-in tab, or a tab of its own) and in
@@ -74,11 +74,13 @@ the same:
 
 | Command | Params | Does |
 |---|---|---|
-| `plugins.list` (also `home.addIns`) | `{}` | The loaded plugins with their status, functions and commands |
-| `plugins.load` | `{path}` | Loads the plugin in a folder (or a manifest file). A plugin with the same id is replaced |
-| `plugins.install` | `{url, dir?}` | Installs the plugin in a GitHub repository into `dir` (default: the app's plugins folder) and loads it |
-| `plugins.unload` | `{id}` | Unloads a plugin and stops its process (until the next start) |
-| `plugins.setEnabled` | `{id, enabled}` | Turns a plugin off or back on, and remembers it in the preferences |
+| `plugins.list` (also `home.addIns`) | `{}` | The loaded plugins with their status, `state` (`loaded`, `running`, `failed`, `blocked`, `disabled`), `blockedBy`, `requires`, `requiredBy`, functions and commands |
+| `plugins.load` | `{path, force?}` | Loads the plugin in a folder (or a manifest file). A plugin with the same id is replaced; with a version outside the range a turned-on plugin requires, only with `force` |
+| `plugins.install` | `{url (or github), dir?, version?, withRequirements?, force?}` | Installs the plugin in a GitHub repository into `dir` (default: the app's plugins folder) and loads it. The result adds `release` and `missing`; see [Requirements](#requirements-manifest-13) |
+| `plugins.installMissing` | `{id, dir?, force?}` | Installs the missing required add-ins of `id` that name `github` |
+| `plugins.requirements` | `{id}` | `{id, satisfied, blockedBy, tree}`: what `id` needs and what's installed |
+| `plugins.unload` | `{id}` | Unloads a plugin and stops its process (until the next start); `dependentsBlocked` lists the plugins that needed it |
+| `plugins.setEnabled` | `{id, enabled}` | Turns a plugin off or back on, and remembers it in the preferences; turning off reports `dependentsBlocked` |
 | `plugins.openHomepage` | `{id}` | Opens the plugin's web page in the browser |
 | `plugins.run` | `{plugin, command, params?}` | Runs a plugin command (one undoable step) |
 
@@ -152,6 +154,10 @@ Install plugins only from people you trust. GridCraft doesn't sandbox them.
 | `buttons[]` | `command` (one of the plugin's `commands[].id`), `label` and `tooltip` (default: the command's label and description), `icon`, `size` (`large`, the default, or `small`: stacked three high), `params` (passed to the command) |
 | `events` | The document events the plugin wants (protocol 1.2): `documentOpened`, `documentSaved`, `documentClosed`. Other names are ignored |
 | `ui.menus[]` | A right-click menu item: `menu` (`cell`, the default; `row` or `column` for the headers; `sheetTab`), `command`, `label`, `params`. Items go at the end of the menu, after a separator. A `sheetTab` item also gets `sheet` (the tab's index) in its params |
+| `requires.apps` | Manifest 1.3. Per app id, the app versions the plugin works with (`{"gridcraft": ">=0.7.0"}`); an app missing from the map isn't constrained. See [Requirements](#requirements-manifest-13) |
+| `requires.protocol` | The plugin protocol versions it needs (`">=1.2"`), checked against `host.protocol` (`"2.0"`) |
+| `requires.features` | Names from `host.features` (`dialogs`, `open`, `events`, `document`, `push`, `collab`) that must all be present |
+| `requires.addins[]` | Other plugins it needs: `id`, `version` (a range; default `*`), `github` (`owner/repo` to install it from), `optional` (default false), `why` (shown to the person, at most 200 characters). At most 32 |
 
 Icons are named from GridCraft's own icon set: `script` (the default), `refresh`, `calc`, `sum`,
 `function`, `fx`, `table`, `pivotTable`, `chart`, `chartBar`, `chartLine`, `chartPie`,
@@ -179,6 +185,11 @@ Sent once, after the process starts. Answer within 10 s with any result, for exa
 ```json
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"host":{"id":"gridcraft","name":"GridCraft","version":"0.6.1"},"plugin":{"id":"org.example.finance","dir":"/home/me/plugins/finance"}}}
 ```
+
+Since manifest 1.3, `host.protocol` is the protocol version as text (`"2.0"`, what
+`requires.protocol` is checked against), and `addins` lists every installed plugin as
+`{id, version, enabled}` (`enabled`: turned on, not blocked and not failed), so a plugin can adapt
+to the optional ones it found.
 
 ### `functions/call`
 
@@ -452,6 +463,82 @@ GridCraft's shared document (schema 1), commands and behaviour: [collab.md](coll
 transport that relays between two rooms is `crates/engine/tests/collab_push.rs`; craft-collab
 has MQTT and loopback transports.
 
+## Requirements (manifest 1.3)
+
+A plugin can say which other plugins it needs, in which versions, and which app versions and
+protocol features. GridCraft checks this before starting it, says what's missing, and offers to
+install it. The contract is shared with WordCraft and DeckCraft:
+[Craft plugin manifests 1.3](https://github.com/sirmmo/craft-collab/blob/main/docs/plugin-requirements.md).
+
+```json
+{
+  "id": "org.example.reports",
+  "version": "1.4.0",
+  "requires": {
+    "apps": {"gridcraft": ">=0.7.0", "wordcraft": ">=0.7.0"},
+    "protocol": ">=1.2",
+    "features": ["dialogs", "events"],
+    "addins": [
+      {"id": "org.craft.vba", "version": "^0.1.4", "github": "sirmmo/craft-vba", "why": "Runs the report macros"},
+      {"id": "org.craft.mqtt", "version": ">=0.1, <0.3", "github": "sirmmo/craft-collab", "optional": true, "why": "Live editing"}
+    ]
+  }
+}
+```
+
+**Versions** are `MAJOR.MINOR.PATCH`; missing parts are 0, a pre-release (`1.0.0-beta.1`) sorts
+before its release, `+build` is ignored, and an Office add-in's `1.0.0.0` compares on its first
+three parts. **Ranges** are Cargo's: comma-separated comparators that must all hold. `^1.2.3` (also
+a bare `1.2.3`) is `>=1.2.3, <2.0.0`, and for 0.x `^0.1.4` is `>=0.1.4, <0.2.0`; `~1.2.3` is
+`>=1.2.3, <1.3.0`; `>=`, `>`, `<=`, `<`, `=` take a full or partial version (`>=0.1` is `>=0.1.0`;
+as in Cargo, `=1.2` and `<=1.2` mean `1.2.*`, `>1.2` means `>=1.3.0`); `1.*` and `1.2.*` are
+wildcards; `*` or nothing is any version, pre-releases included. Otherwise a pre-release only
+matches a comparator that names a pre-release of the same version (`>=1.0.0-rc.1`). For the
+protocol write `>=1.2`: Cargo's `^1.2` leaves out 2.0. Ranges are at most 128 characters.
+
+**Blocked.** Whenever the plugins change (start-up, install, `plugins.load`, turning one on or
+off, unloading, one failing for good), GridCraft resolves them all together. A plugin is
+**blocked**, with its reasons in `blockedBy` and in Options › Add-ins, when:
+
+| `kind` | When | Message |
+|---|---|---|
+| `app` | `requires.apps.gridcraft` doesn't match this version | Needs GridCraft 0.8 or later (this is 0.7.0) |
+| `protocol` | `requires.protocol` doesn't match `host.protocol` | Needs plugin protocol 3.0 or later (this GridCraft has 2.0) |
+| `feature` | A name in `requires.features` isn't in `host.features`; an Office add-in's requirement set or method isn't supported | Needs `x`, which this GridCraft doesn't have |
+| `addin` | A required (not optional) plugin isn't installed, is turned off, failed, is blocked itself, or its version is out of range | Needs craft-vba ^0.1.4 (installed: 0.1.3) |
+| `cycle` | Required plugins need each other | Requirement cycle: Reports → craft-vba → Reports |
+| `depth` | The chain of required plugins below it is more than 8 deep | Its required add-ins go 9 deep (at most 8) |
+| `range` | A range in its manifest doesn't parse | Its manifest's requirement for craft-vba (`soon`) isn't a version range |
+
+A blocked plugin isn't started; its functions (cells show `#NAME?`), commands, ribbon groups and
+menu items are absent, as for a plugin that's turned off. Installing what it needs unblocks it at
+once, without restarting, and the workbooks using its functions recalculate. Optional plugins
+never block. Required plugins start before the plugins that need them.
+
+**Turning off or unloading** a plugin others need asks first in Options and Manage Add-ins
+("Reports needs craft-vba. Turn both off?"). Programmatically it just happens: the plugins that
+needed it are blocked, and the result's `dependentsBlocked` lists them. **Installing or updating**
+a plugin to a version a turned-on plugin's range doesn't accept asks first ("Reports needs
+craft-vba ^0.1.4; 0.2.0 doesn't match. Install craft-vba 0.2.0 anyway?"); programmatically
+(`plugins.install`, `plugins.load`) it fails unless `force: true`, and then that plugin is blocked.
+
+**Installing what's missing.** After installing a plugin from GitHub, GridCraft offers its
+missing or out-of-range required plugins that name `github` ("Reports needs craft-vba ^0.1.4 (Runs
+the report macros). Install it too?"), ticked; optional ones are offered unticked. For each it
+takes **the newest release whose tag is a version in range** (`v0.1.5` or `0.1.5`; drafts are
+skipped, and so are pre-releases unless the range names one), not just the latest, and says which.
+What they need in turn is offered next. A blocked plugin whose missing plugins name `github` shows
+**Install Missing** in Options › Add-ins and Manage Add-ins.
+
+| Command | Does |
+|---|---|
+| `plugins.install {url, withRequirements?, force?, version?}` | `withRequirements` (default false here; the interface always asks) also installs the missing required plugins that name `github`, with `installed` and `failed` in the result. The result always lists `missing` (`[{id, name, version, github?, optional, why, installed?}]`) for the caller to install. `version`, a range, picks the newest release in it |
+| `plugins.installMissing {id, force?}` | Installs `id`'s missing required plugins that name `github`, then theirs (at most 8 deep): `{installed: [{id, name, version, release}], failed: [{id, error}], missing, satisfied}` |
+| `plugins.requirements {id}` | `{id, satisfied, blockedBy, tree: [{id, name, need, have, state, optional, why, github, children}]}`; `state` is `missing` for a plugin that isn't installed |
+| `plugins.list` | Per plugin: `state` (`blocked` among `loaded`, `running`, `failed`, `disabled`), `blockedBy: [{id?, kind, need, have?, message}]`, `requires` (the manifest's), `requiredBy` (the ids of the plugins that need it) |
+
+Office add-ins' `<Requirements>` are checked the same way; see [officejs.md](officejs.md).
+
 ## Publishing a plugin on GitHub
 
 Put `plugin.json` at the root of the repository (or in one folder of it). A plugin written in
@@ -493,6 +580,7 @@ are kept.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Manifest 1.3: `requires` (apps, protocol, features, other add-ins with Cargo-style version ranges), blocked add-ins (`state`, `blockedBy`, `requiredBy`), start order, `host.protocol` and `addins` in `initialize`, `plugins.requirements`, `plugins.installMissing`, `plugins.install` `withRequirements`/`force`/`version` (newest release in range), Install Missing, asking before turning off a needed add-in or updating out of range; Office add-ins' requirement sets |
 | 2026-10-15 | minor | Protocol 2: the push channel (plugins speak any time; `host.features` `push`, `collab`; `host.collab`), manifest `collab` (transports), `collab.join` in command results; co-editing in [collab.md](collab.md) |
 | 2026-10-15 | minor | Protocol 1.2: `host.features` and `host.language`, `context.document`, command results that open a file (`open`) or show a host-drawn dialog (`dialog`: list, form, message; chained), manifest `events` and `events/documentOpened`, `documentSaved`, `documentClosed` |
 | 2026-10-14 | minor | `context.sheets` and `context.names`: commands see every sheet and the defined names |

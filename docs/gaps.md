@@ -1,6 +1,6 @@
 # Gaps
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-15 · **Change:** minor (§21: co-editing, plugin protocol 2; previously minor: §21: plugin protocol 1.2: dialogs, opening files, document events; previously minor: §21: plugin functions in autocomplete and Insert Function; previously minor: §21: ribbon buttons that run macros; previously minor: §21: VBA through a macro add-in and the Developer tab; previously minor: Office add-ins on top of the plugins; previously minor: §21: install plugins from GitHub) · **Target:** Microsoft Excel (Microsoft 365)
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-15 · **Change:** minor (§21: add-ins that require other add-ins, manifest 1.3; previously minor: §21: co-editing, plugin protocol 2; previously minor: §21: plugin protocol 1.2: dialogs, opening files, document events; previously minor: §21: plugin functions in autocomplete and Insert Function; previously minor: §21: ribbon buttons that run macros; previously minor: §21: VBA through a macro add-in and the Developer tab; previously minor: Office add-ins on top of the plugins; previously minor: §21: install plugins from GitHub) · **Target:** Microsoft Excel (Microsoft 365)
 
 Every known shortfall against Excel, one entry each, ranked by user impact (what blocks someone
 using GridCraft for real work first). This is the work list: pick from the top, check the open
@@ -167,7 +167,12 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
   Protocol 2: the push channel and native co-editing (live sessions through transport plugins,
   Yjs schema 1, end-to-end encryption, per-user undo, others' selections, Review › Share;
   [collab.md](collab.md)); co-editing still lacks shared cell text (last writer wins per cell) and
-  per-element merging of tables, charts and other features.
+  per-element merging of tables, charts and other features. Manifest 1.3 (shared): add-ins require
+  other add-ins with Cargo-style version ranges, app versions, protocol and features; unmet ones
+  are blocked with the reason, installing the missing ones from their newest GitHub release in
+  range (Install Missing); Office add-ins' requirement sets are checked
+  ([plugins.md](plugins.md#requirements-manifest-13)). Missing: updating installed add-ins (no
+  update check), more than one page (100) of a repository's releases.
   **Estimate:** 15–25 h.
 
 ### 22. AI features (F)
@@ -185,6 +190,7 @@ No alpha blockers: every core workflow passes the [alpha gate](roadmap.md#alpha-
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | §21: manifest 1.3: add-ins require other add-ins (version ranges, blocked add-ins with reasons, start order, Install Missing from the newest release in range); Office add-ins' requirement sets checked |
 | 2026-10-15 | minor | §21: co-editing (plugin protocol 2): the push channel, live sessions through transport plugins, schema 1, encryption, per-user undo, Review › Share ([collab.md](collab.md)) |
 | 2026-10-15 | minor | §21: plugin protocol 1.2: host-drawn dialogs, opening files from a command, document events, `context.document` |
 | 2026-10-14 | minor | §21: plugin functions are suggested while typing a formula (with their signature hint and description) and listed in Insert Function under Add-ins |

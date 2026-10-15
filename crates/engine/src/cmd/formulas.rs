@@ -165,7 +165,7 @@ pub fn function_list() -> Vec<Json> {
 /// name. A function without a signature in its manifest shows as `NAME(…)`.
 pub fn plugin_functions() -> Vec<Json> {
     let mut v = Vec::new();
-    for p in crate::plugin::list().into_iter().filter(|p| p.enabled()) {
+    for p in crate::plugin::list().into_iter().filter(|p| p.active()) {
         let m = &p.manifest;
         for f in &m.functions {
             let signature = if f.signature.trim().is_empty() { format!("{}(…)", f.name) } else { f.signature.clone() };

@@ -36,6 +36,11 @@ zip = { workspace = true }
 name = "plugins"
 harness = false
 
+# Runs without libtest: the test binary doubles as the add-ins whose requirements it checks.
+[[test]]
+name = "plugin_requires"
+harness = false
+
 # Runs without libtest: the test binary doubles as the macro add-in it starts.
 [[test]]
 name = "macros"

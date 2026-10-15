@@ -320,6 +320,9 @@ fn join_with(s: &mut Session, p: &Json, in_memory: bool) -> Result<Json> {
         if !plugin.enabled() {
             return Err(EngineError::Other(format!("plugin {plugin_id} is turned off (File › Options › Add-ins)")));
         }
+        if let Some(b) = plugin.blocked_by().first() {
+            return Err(EngineError::Other(format!("plugin {plugin_id} is blocked: {}", b.message)));
+        }
         if !plugin.is_transport() {
             return Err(EngineError::Other(format!("plugin {plugin_id} isn't a co-editing transport (its manifest has no `collab`)")));
         }

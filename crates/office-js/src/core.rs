@@ -189,11 +189,20 @@ pub fn load_props(arg: &Json) -> Vec<String> {
     }
 }
 
+/// The requirement sets this library supports, with the highest version of each. The plugin
+/// host checks Office add-ins' `<Requirements>` against the same table
+/// (`gridcraft_plugin::office::API_SETS`; a test keeps them equal).
+pub const SUPPORTED_SETS: &[(&str, (u32, u32))] =
+    &[("ExcelApi", (1, 4)), ("Settings", (1, 1)), ("Selection", (1, 1)), ("TextCoercion", (1, 1)), ("MatrixCoercion", (1, 1))];
+
+/// The Common API methods this library implements (`<Requirements><Methods>`), as the plugin
+/// host checks them (`gridcraft_plugin::office::API_METHODS`).
+pub const SUPPORTED_METHODS: &[&str] =
+    &["Document.getSelectedDataAsync", "Document.setSelectedDataAsync", "Settings.get", "Settings.set", "Settings.remove", "Settings.saveAsync"];
+
 /// `Office.context.requirements.isSetSupported(name, minVersion)`.
 pub fn is_set_supported(name: &str, min: Option<&str>) -> bool {
-    let supported: &[(&str, (u32, u32))] =
-        &[("ExcelApi", (1, 4)), ("Settings", (1, 1)), ("Selection", (1, 1)), ("TextCoercion", (1, 1)), ("MatrixCoercion", (1, 1))];
-    let Some((_, have)) = supported.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) else { return false };
+    let Some((_, have)) = SUPPORTED_SETS.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) else { return false };
     let want = min.map(version).unwrap_or((1, 1));
     want <= *have
 }
@@ -206,6 +215,17 @@ fn version(v: &str) -> (u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The plugin host blocks Office add-ins that need more than this library reports: both read
+    /// the same table.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_plugin_host_checks_the_same_requirement_sets() {
+        let host: Vec<(String, (u64, u64))> = gridcraft_plugin::office::API_SETS.iter().map(|(n, v)| (n.to_string(), *v)).collect();
+        let here: Vec<(String, (u64, u64))> = SUPPORTED_SETS.iter().map(|(n, (a, b))| (n.to_string(), (u64::from(*a), u64::from(*b)))).collect();
+        assert_eq!(host, here);
+        assert_eq!(gridcraft_plugin::office::API_METHODS, SUPPORTED_METHODS);
+    }
 
     fn range() -> Path {
         vec![prop("workbook"), method("getSelectedRange", vec![])]
