@@ -109,6 +109,7 @@ fn another_workbook_without_a_sheet_is_not_a_cell_reference() {
     }
     for (src, name) in [("[1]!Rate", "[1]!Rate"), ("[Source.xlsx]!Rate", "[Source.xlsx]!Rate"), ("Source.xlsx!Rate", "Source.xlsx!Rate")] {
         assert_eq!(parse(src).ok(), Some(Expr::Name(name.into())), "{src}");
+        assert_eq!(print(&Expr::Name(name.into())), src, "{src}");
     }
 }
 

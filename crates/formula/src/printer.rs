@@ -10,13 +10,16 @@ use crate::ast::*;
 pub fn needs_quotes(name: &str) -> bool {
     // A sheet in a linked workbook, `[1]Prices` or `[Source.xlsx]Prices`: Excel quotes it only
     // when the sheet name needs it.
-    if let Some((book, sheet)) = name.strip_prefix('[').and_then(|s| s.split_once(']'))
-        && !book.is_empty()
-        && book.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '.'))
-    {
-        return sheet_needs_quotes(sheet);
+    match linked_sheet(name) {
+        Some(sheet) => sheet_needs_quotes(sheet),
+        None => sheet_needs_quotes(name),
     }
-    sheet_needs_quotes(name)
+}
+
+/// The sheet after a linked workbook's `[1]` or `[Source.xlsx]`, empty when there is none.
+fn linked_sheet(name: &str) -> Option<&str> {
+    let (book, sheet) = name.strip_prefix('[')?.split_once(']')?;
+    (!book.is_empty() && book.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '.'))).then_some(sheet)
 }
 
 /// Whether a sheet name, without a linked workbook's `[n]`, needs quotes.
@@ -208,6 +211,9 @@ fn write_expr(s: &mut String, e: &Expr, r1c1: Option<CellRef>) {
             None => s.push_str(&reference_a1(r)),
         },
         Expr::Name(n) => match n.rsplit_once('!') {
+            // A linked workbook's own name (`[1]!Rate`) has no sheet to quote: `'[1]'!Rate` would
+            // read as a sheet named `[1]`.
+            Some((book, _)) if linked_sheet(book) == Some("") => s.push_str(n),
             // A sheet-qualified name is stored with the bare sheet name (`My Sheet!Total`): quote it so it parses back.
             Some((sheet, name)) => {
                 s.push_str(&quote_sheet(sheet));

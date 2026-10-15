@@ -136,13 +136,13 @@ impl Workbook {
         Some(format!("{}[{}]{sheet}", book.folder(), book.file_name()))
     }
 
-    /// `[1]!Rate` → `'C:\links\Source.xlsx'!Rate`, `[1]Sheet1!Rate` →
-    /// `'C:\links\[Source.xlsx]Sheet1'!Rate`.
+    /// `[1]!Rate` → `C:\links\Source.xlsx!Rate`, `[1]Sheet1!Rate` →
+    /// `C:\links\[Source.xlsx]Sheet1!Rate`: bare, as a parsed name is; the printer quotes them.
     fn shown_name(&self, s: &str) -> Option<String> {
         let (book, rest) = self.book_of(s)?;
         let (sheet, name) = rest.split_once('!')?;
         let qualifier = if sheet.is_empty() { book.path.clone() } else { format!("{}[{}]{sheet}", book.folder(), book.file_name()) };
-        Some(format!("{}!{name}", gridcraft_formula::quote_sheet(&qualifier)))
+        Some(format!("{qualifier}!{name}"))
     }
 }
 
